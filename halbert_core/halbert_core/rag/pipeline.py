@@ -9,7 +9,10 @@ DEPRECATED: This pipeline uses in-memory indexing which is separate from
 the main ChromaDB-based system. Use document_indexer.py + chroma_index.py
 for production RAG. This file is kept for reference/testing only.
 
-See: documentation/RAG_AUDIT_REPORT.md for architecture details.
+See: documentation/archive/RAG_AUDIT_REPORT.md for architecture details
+(archived 2026-09-02, RAG-20 — describes the ChromaDB era this file's own
+DEPRECATED note above refers to; current RAG architecture is SourcePrep/
+CodeIndex, see .handoff/HANDOFF-STATE-OF-WORK-2026-09-01.md §6.8).
 """
 
 import logging

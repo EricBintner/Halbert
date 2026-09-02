@@ -45,9 +45,29 @@ project:
 scopes:
   # Template `id` maps to the daemon scope's display_name; daemon assigns
   # the real id. Reconciliation is keyed on display_name.
+  #
+  # `assigned_to_role` (U4-14/RAG-06) is a SEPARATE, "-ops"-suffixed naming
+  # scheme from the ids below: it is the `role:` field skills/builtin/*/SKILL.md
+  # declares (network-ops, service-ops, ...), read by
+  # SourcePrepRetrievalBackend._available_scope_ids() into `_roles_to_scope`
+  # and consumed by resolve_role() (sourceprep_retrieval_backend.py:351-375).
+  # Without it, a skill-scoped query never finds its scope by role and always
+  # falls back to the keyword heuristic. The scope `id`s below are the
+  # UNDERSCORED "_admin" names from config/roles.py's ROLES registry (the
+  # role-scoped config harvesting design) — a different system that happens
+  # to cover mostly the same ground. The two vocabularies are NOT 1:1: only
+  # network/service/storage/security have a skill on the other side today.
+  # `_roles_to_scope` is built as {assigned_to_role: id} — giving the same
+  # assigned_to_role to two scopes silently drops one, so do not add one
+  # without removing/renaming whichever scope had it.
   - id: host
     paths: ["host"]
     pipeline_profile: system_config
+    # config-ops (skills/builtin/config-ops/SKILL.md) has no matching
+    # config/roles.py entry / config/scopes/*.yml manifest of its own — "any
+    # config file, anywhere" is exactly what the flat host scope already is,
+    # so it is the correct — and only sensible — target.
+    assigned_to_role: config-ops
   # Role axis (waves 1-3). Additive to the flat `host` scope above — these
   # are narrower siblings, not replacements. Each points at the subdirectory
   # stage_role_tree() writes, for every role in config/roles.py that is
@@ -57,30 +77,46 @@ scopes:
   - id: network_admin
     paths: ["host/network"]
     pipeline_profile: system_config
+    assigned_to_role: network-ops
   - id: service_admin
     paths: ["host/service"]
     pipeline_profile: system_config
+    assigned_to_role: service-ops
   - id: storage_admin
     paths: ["host/storage"]
     pipeline_profile: system_config
+    assigned_to_role: storage-ops
   - id: credentials_admin
     paths: ["host/credentials"]
     pipeline_profile: system_config
+    # No skills/builtin/*/SKILL.md names a "credentials-ops" role today —
+    # security-ops's own keywords/protected_paths (sshd, sudoers, certificate,
+    # keychain, /etc/ssh) overlap this domain, but assigning the SAME
+    # assigned_to_role to two scopes drops one from _roles_to_scope (see
+    # above), so this stays unassigned rather than silently losing
+    # security_admin's mapping. A skill that wants this scope by role needs
+    # its own `role: credentials-ops` first.
   - id: security_admin
     paths: ["host/security"]
     pipeline_profile: system_config
+    assigned_to_role: security-ops
   - id: shell_admin
     paths: ["host/shell"]
     pipeline_profile: system_config
+    # No matching skill role (config-ops covers dotfiles/shell config
+    # keywords but is already assigned to the broader `host` scope above).
   - id: package_admin
     paths: ["host/package"]
     pipeline_profile: system_config
+    # No matching skill role today.
   - id: boot_admin
     paths: ["host/boot"]
     pipeline_profile: system_config
+    # No matching skill role today.
   - id: sharing_admin
     paths: ["host/sharing"]
     pipeline_profile: system_config
+    # No matching skill role today.
   - id: knowledge-linux
     paths: ["knowledge/linux"]
     pipeline_profile: prose_docs
@@ -93,6 +129,17 @@ scopes:
   - id: knowledge-common
     paths: ["knowledge/common"]
     pipeline_profile: prose_docs
+
+  # discovery-ops, frigate-ops, home-ops (skills/builtin/{discovery,frigate,
+  # home}-ops/SKILL.md) are deliberately unassigned to anything above: none
+  # of the three has a config/roles.py entry or a config/scopes/*.yml
+  # manifest, so nothing in this "halbert" project's host/ or knowledge/
+  # trees is staged FOR them specifically — discovery-ops works from live
+  # tool calls (system inventory), frigate-ops/home-ops from Home
+  # Assistant/Frigate's own APIs, not from indexed host-config files. A
+  # query scoped to one of those roles correctly falls back to the keyword
+  # heuristic (resolve_role() returns None, logged, not silently wrong) —
+  # this is not a residual bug the way the four assignments above were.
 
 post_build:
   # Halbert's deterministic config edges, pushed with replace_origin=config

@@ -107,9 +107,14 @@ def _build_diagnostic_prompt(gpu_info: Dict[str, Any], system_context: Dict[str,
     """Build the structured diagnostic prompt for the agent specialist.
 
     The NVIDIA driver/CUDA compatibility tables that used to be hardcoded
-    here moved to the knowledge base (data/knowledge/linux/
-    nvidia_cuda_compatibility.md) — the specialist retrieves them through
-    the host scope instead of reading them out of the prompt.
+    here moved to the knowledge base — data/linux/nvidia-docs/
+    nvidia_cuda_compatibility.jsonl (U4-08: originally landed at
+    data/knowledge/linux/nvidia_cuda_compatibility.md, a directory nothing
+    stages or indexes; moved under the real corpus root so
+    scripts/jsonl_to_markdown.py's convert_corpus actually mirrors it into
+    the SourcePrep staging tree, ~/.local/share/halbert/sourceprep/knowledge/
+    linux/nvidia-docs/, on the next re-embed) — the specialist retrieves it
+    through the host scope instead of reading it out of the prompt.
     """
     import json
 

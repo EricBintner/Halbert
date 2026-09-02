@@ -196,6 +196,106 @@ def test_template_loads_and_has_contract_surface():
     )
 
 
+# ── Role -> scope mapping (U4-14 / RAG-06) ───────────────────────
+#
+# Two independent naming schemes for mostly the same domains: the daemon
+# scope `id`s above are config/roles.py's underscored "_admin" role-scoped
+# config harvesting names; a skill's `role:` frontmatter field
+# (skills/builtin/*/SKILL.md) is a separate "-ops"-suffixed vocabulary.
+# `assigned_to_role` on a scope is the bridge SourcePrepRetrievalBackend
+# reads (_available_scope_ids -> _roles_to_scope -> resolve_role). Without
+# it, a skill-scoped query can never find its scope by role and silently
+# falls back to the keyword heuristic (sourceprep_retrieval_backend.py:351).
+
+def _builtin_skill_roles() -> Dict[str, str]:
+    """{skill name: role} for every built-in skill that names a role."""
+    from halbert_core.skills.loader import BUILTIN_DIR, load_skills_from_dir
+
+    return {
+        skill.name: skill.role
+        for skill in load_skills_from_dir(BUILTIN_DIR)
+        if skill.role
+    }
+
+
+def test_every_assigned_to_role_is_a_real_skill_role():
+    """No template scope claims a role no skill actually declares — catches
+    a typo/rename drift between the two vocabularies in either direction."""
+    t = load_template(TEMPLATE_PATH)
+    assigned = {s["assigned_to_role"] for s in t["scopes"] if s.get("assigned_to_role")}
+    real_roles = set(_builtin_skill_roles().values())
+    assert assigned <= real_roles, f"assigned_to_role with no matching skill: {assigned - real_roles}"
+
+
+def test_assigned_to_role_is_unique_per_scope():
+    """_roles_to_scope is built as {assigned_to_role: id} — two scopes
+    sharing one assigned_to_role would silently drop one from the map."""
+    t = load_template(TEMPLATE_PATH)
+    assigned = [s["assigned_to_role"] for s in t["scopes"] if s.get("assigned_to_role")]
+    assert len(assigned) == len(set(assigned))
+
+
+def test_every_skill_role_with_a_file_backed_scope_is_mapped():
+    """The four `*_admin` roles that ARE file-backed (config/roles.py
+    ROLES + config/scopes/*.yml manifests exist for them) and DO have a
+    same-domain skill must actually be reachable by role, not just by luck
+    of the keyword heuristic. discovery-ops/frigate-ops/home-ops are
+    excluded on purpose: neither has a config/roles.py entry, so nothing in
+    this template's host/knowledge trees is staged for them at all — a
+    query scoped to one of those roles is SUPPOSED to fall back."""
+    t = load_template(TEMPLATE_PATH)
+    assigned_to_role = {s["assigned_to_role"]: s["id"] for s in t["scopes"] if s.get("assigned_to_role")}
+    expected = {
+        "network-ops": "network_admin",
+        "service-ops": "service_admin",
+        "storage-ops": "storage_admin",
+        "security-ops": "security_admin",
+        "config-ops": "host",
+    }
+    for role, scope_id in expected.items():
+        assert assigned_to_role.get(role) == scope_id, (
+            f"{role} should resolve to scope {scope_id!r}, got {assigned_to_role.get(role)!r}"
+        )
+
+
+def test_resolve_role_finds_the_scope_for_each_mapped_skill_role():
+    """End-to-end through the actual backend code, not just the template:
+    build a daemon /scopes response from this template's own scopes (the
+    shape apply() would produce), and confirm resolve_role() returns the
+    right scope id for every skill role this template maps."""
+    from halbert_core.integrations.sourceprep_retrieval_backend import (
+        SourcePrepRetrievalBackend,
+    )
+
+    t = load_template(TEMPLATE_PATH)
+    daemon_scopes = [
+        {"id": s["id"], "display_name": s["id"], "assigned_to_role": s.get("assigned_to_role")}
+        for s in t["scopes"]
+    ]
+
+    class _FakeClient:
+        def list_scopes(self, project_id=None):
+            # Matches SourcePrepClient.list_scopes's own return contract:
+            # the unwrapped list of scope dicts (it does the {"data": {...}}
+            # envelope-unwrapping itself; this is what it hands back).
+            return daemon_scopes
+
+    backend = SourcePrepRetrievalBackend(client=_FakeClient())
+    for role, scope_id in {
+        "network-ops": "network_admin",
+        "service-ops": "service_admin",
+        "storage-ops": "storage_admin",
+        "security-ops": "security_admin",
+        "config-ops": "host",
+    }.items():
+        assert backend.resolve_role(role) == scope_id, f"resolve_role({role!r})"
+
+    # The three genuinely unmapped roles must fall back cleanly (None, not
+    # an exception, not a wrong scope) rather than crash query routing.
+    for role in ("discovery-ops", "frigate-ops", "home-ops"):
+        assert backend.resolve_role(role) is None
+
+
 # ── Edge remapping ──────────────────────────────────────────────
 
 

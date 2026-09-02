@@ -95,11 +95,11 @@
       "mac_build": false
     },
     "vendor_and_distro_docs": {
-      "document_count": 82,
+      "document_count": 83,
       "license": "Various (permissive)",
       "license_spdx": "LicenseRef-Mixed-Permissive",
       "scraped_at": "2026-08-23",
-      "description": "Vendor and distro documentation (Docker, K8s, Helm, NVIDIA, ROCm, Ubuntu)",
+      "description": "Vendor and distro documentation (Docker, K8s, Helm, NVIDIA, ROCm, Ubuntu). One record under linux/nvidia-docs/ (nvidia_cuda_compatibility.jsonl, added 2026-09-02, U4-08) is Halbert-authored under LicenseRef-Halbert-Corpus-1.0, not scraped vendor content — permissive either way, kept in this bucket rather than split out because it shares the directory with the scraped CUDA docs.",
       "paths": [
         "linux/vendor-docs/",
         "linux/kubernetes-docs/",
@@ -215,7 +215,7 @@
       "note": "Enforced by config/licensing.yml (record_quarantine: ss64-macos) and scripts/corpus_license_gate.py. Never add this path to a build target."
     }
   },
-  "total_documents": 28956,
+  "total_documents": 28957,
   "total_chunks": 0,
   "index_schema_version": "2.0",
   "remote_url": "",
