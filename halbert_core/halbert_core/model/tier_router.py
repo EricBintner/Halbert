@@ -322,17 +322,34 @@ class TierRouter:
         return {}
 
     def refresh(self) -> bool:
-        """Re-resolve the config when the bound session changed. True if it did.
+        """Re-resolve the config when the bound session OR the underlying
+        models.yml content changed. True if either did.
 
         The router is cached for the life of the process, so a session pinned
         after it was built would be honoured by every other resolution in the
-        turn and ignored by this one.
+        turn and ignored by this one — that was the original reason this
+        method exists. R05-F7: it used to check ONLY the session, so an edit
+        to models.yml via Settings -> AI Models within the same session (a
+        different guide model, a new endpoint) was never picked up until the
+        process restarted or an unrelated session change happened to also
+        trigger a re-parse. _load_raw_config() delegates to llm_config's own
+        freshness-checked read (already cheap — a 1s TTL/file-stamp cache,
+        not a disk hit every call), so comparing its result here on every
+        refresh() costs nothing extra when nothing has changed.
         """
+        old_session = self._config_session
         session = self._active_session()
-        if session == self._config_session:
-            return False
+        # _load_raw_config() reads through self._config_session (the layered
+        # store needs to know which session to resolve pins against), so it
+        # must be updated before the read — not after, or a session change
+        # would load the OLD session's layer here while still reporting the
+        # NEW session as active. old_session is captured above so the
+        # "did anything change" comparison below still has both sides.
         self._config_session = session
-        self.raw_config = self._load_raw_config()
+        raw = self._load_raw_config()
+        if session == old_session and raw == self.raw_config:
+            return False
+        self.raw_config = raw
         self.config = self._parse_config(self.raw_config)
         return True
 

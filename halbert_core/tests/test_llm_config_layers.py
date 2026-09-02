@@ -696,6 +696,22 @@ def test_the_tier_router_re_resolves_when_a_session_binds(models_config_dir):
     assert router.config.models["guide-model"].model_id == "chat-a"
 
 
+def test_the_tier_router_re_resolves_when_the_file_changes_mid_session(models_config_dir):
+    """R05-F7: TierRouter used to cache models.yml for the life of the
+    process, checking only whether the bound session changed — an edit to
+    models.yml via Settings -> AI Models within the same session (no
+    session pin involved at all) was never picked up."""
+    _global(models_config_dir)
+    router = _tier_router()
+    assert router.config.models["guide-model"].model_id == "chat-a"
+
+    store.set_slot("chat_model", "chat-b", "e_local")
+    assert router.refresh() is True
+    assert router.config.models["guide-model"].model_id == "chat-b"
+    # Nothing changed since the last refresh: no re-parse.
+    assert router.refresh() is False
+
+
 def test_an_explicit_path_is_still_parsed_as_one_file(models_config_dir, tmp_path, monkeypatch):
     """A caller that names a file means that file — not the store's layers."""
     from halbert_core.model.tier_router import TierRouter

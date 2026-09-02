@@ -836,8 +836,15 @@ def _env_chat_model_override() -> Optional[ResolvedModel]:
     ``cognition_wiring._get_variant()`` (being.yml > env > sysadmin) so the
     backend gating and this override agree on which instance they are on;
     the import is lazy because integrations has no place in model's import
-    time, and any failure there simply disables the override rather than
-    breaking model resolution.
+    time.
+
+    R05-P2: a failure resolving the variant fails OPEN (proceeds as if
+    sysadmin, the same default ``_get_variant()`` itself falls back to on
+    error) rather than closed. ``HALBERT_MODEL`` exists specifically as a
+    sysadmin box's reliable fallback when it has no models.yml at all — an
+    unrelated import error transiently disabling the ONLY chat model that
+    box has configured would be a worse failure mode than the home-variant
+    check this try/except exists for occasionally being skipped.
     """
     model = os.environ.get("HALBERT_MODEL", "").strip()
     if not model:
@@ -847,8 +854,11 @@ def _env_chat_model_override() -> Optional[ResolvedModel]:
 
         if _get_variant() == "home":
             return None
-    except Exception:
-        return None
+    except Exception as e:
+        logger.debug(
+            "HALBERT_MODEL: variant resolution failed (%s); "
+            "proceeding as sysadmin rather than disabling the override", e,
+        )
     return ResolvedModel(
         model=model,
         url=DEFAULT_OLLAMA_URL,
