@@ -5,7 +5,11 @@
  * - Browser / `vite` dev: '' (relative URLs; vite.config.ts proxies /api,/llm,/ws,...).
  * - Tauri webview (origin tauri://localhost): absolute http://127.0.0.1:<port>,
  *   injected synchronously by the Rust 'halbert-env' plugin init script.
- * - Multi-instance: setInstanceEndpoint() overrides the base for cross-instance switching.
+ * - Multi-body: setInstanceEndpoint() overrides the base when the Presence Pill
+ *   switches to another linked body. The switch reloads the page, so the
+ *   override is persisted (localStorage) and hydrated here at module init,
+ *   before any fetch runs. A stored override wins over the Tauri-injected
+ *   base; with none stored the injected base wins as before.
  */
 declare global {
   interface Window {
@@ -18,15 +22,39 @@ export function isTauri(): boolean {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
 }
 
-// Multi-instance: runtime override set by the Instance Switcher
-let _instanceOverride: string | null = null
+/** Where the active-body override lives between page loads. */
+const ACTIVE_BODY_KEY = 'halbert:active-body'
 
-/** Set the active instance endpoint (e.g., 'http://localhost:8001'). Pass null to reset to local. */
-export function setInstanceEndpoint(url: string | null): void {
-  _instanceOverride = url ? url.replace(/\/$/, '') : null
+function normalizeEndpoint(url: string | null | undefined): string | null {
+  return url ? url.replace(/\/$/, '') : null
 }
 
-/** Get the current instance override (or null if using local). */
+function readStoredEndpoint(): string | null {
+  try {
+    if (typeof localStorage === 'undefined') return null
+    return normalizeEndpoint(localStorage.getItem(ACTIVE_BODY_KEY))
+  } catch {
+    // private mode / storage disabled — the local body it is
+    return null
+  }
+}
+
+// The active-body override set by the Presence Pill, hydrated at module init
+// so the very first fetch after a reload already talks to the switched-to body.
+let _instanceOverride: string | null = readStoredEndpoint()
+
+/** Set the active body endpoint (e.g., 'http://localhost:8001'). Pass null to reset to local. */
+export function setInstanceEndpoint(url: string | null): void {
+  _instanceOverride = normalizeEndpoint(url)
+  try {
+    if (_instanceOverride) localStorage.setItem(ACTIVE_BODY_KEY, _instanceOverride)
+    else localStorage.removeItem(ACTIVE_BODY_KEY)
+  } catch {
+    // non-fatal: the override still applies for this page load
+  }
+}
+
+/** Get the current active-body override (or null if using the local body). */
 export function getInstanceEndpoint(): string | null {
   return _instanceOverride
 }
