@@ -87,12 +87,31 @@ def _parse_requirement(spec: str) -> Tuple[str, str]:
     return name.strip().lower(), marker.strip()
 
 
+def _project_name(text: str) -> str:
+    """Read `[project]`'s own `name = "..."`.
+
+    Needed so self-referential extras — `light = ["halbert-core[dashboard]"]`,
+    `full = ["halbert-core[rag-legacy,dashboard,cloud-apis,vision]"]` — can be
+    filtered out. Those are this project re-including its OWN other extras
+    (a convenience alias, `pip install halbert-core[light]`), not a dependency
+    on anything outside the project; treating "halbert-core" as a third-party
+    package with no licence-register entry was blocking every App Store check.
+    """
+    match = re.search(r'^\[project\]\s*$.*?^name\s*=\s*"([^"]+)"', text, re.S | re.M)
+    return match.group(1) if match else ""
+
+
+def _is_self_reference(name: str, project_name: str) -> bool:
+    return bool(project_name) and name.lower() == project_name.lower()
+
+
 def parse_pyproject(path: Path) -> List[Dict[str, Any]]:
     """Extract dependencies from `dependencies` and `optional-dependencies`."""
     if not path.exists():
         return []
     text = path.read_text(encoding="utf-8")
     out: List[Dict[str, Any]] = []
+    project_name = _project_name(text)
 
     try:
         import tomllib  # type: ignore[import-not-found]
@@ -101,10 +120,14 @@ def parse_pyproject(path: Path) -> List[Dict[str, Any]]:
         project = data.get("project", {})
         for spec in project.get("dependencies", []) or []:
             name, marker = _parse_requirement(spec)
+            if _is_self_reference(name, project_name):
+                continue
             out.append({"name": name, "marker": marker, "extra": ""})
         for extra, specs in (project.get("optional-dependencies", {}) or {}).items():
             for spec in specs or []:
                 name, marker = _parse_requirement(spec)
+                if _is_self_reference(name, project_name):
+                    continue
                 out.append({"name": name, "marker": marker, "extra": extra})
         return out
     except ImportError:
@@ -123,7 +146,7 @@ def parse_pyproject(path: Path) -> List[Dict[str, Any]]:
     if deps_match:
         for spec in specs_in(deps_match.group(1)):
             name, marker = _parse_requirement(spec)
-            if name:
+            if name and not _is_self_reference(name, project_name):
                 out.append({"name": name, "marker": marker, "extra": ""})
 
     opt = re.search(r"^\[project\.optional-dependencies\](.*?)(?=^\[|\Z)", text, re.S | re.M)
@@ -132,7 +155,7 @@ def parse_pyproject(path: Path) -> List[Dict[str, Any]]:
             extra = extra_match.group(1)
             for spec in specs_in(extra_match.group(2)):
                 name, marker = _parse_requirement(spec)
-                if name:
+                if name and not _is_self_reference(name, project_name):
                     out.append({"name": name, "marker": marker, "extra": extra})
     return out
 

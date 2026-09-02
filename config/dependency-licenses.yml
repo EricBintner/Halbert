@@ -120,6 +120,73 @@ python:
   tokenizers: {spdx: Apache-2.0}
   torch: {spdx: BSD-3-Clause}
 
+  # [vision] — screen capture + webcam for vision model input
+  mss:
+    spdx: MIT
+    notes: "Confirmed via PyPI metadata (license field + OSI classifier)."
+  opencv-python:
+    spdx: Apache-2.0
+    notes: >-
+      OpenCV itself is Apache-2.0; the wrapper scripts opencv-python adds are
+      MIT (see LICENSE-3RD-PARTY.txt in the wheel). NEEDS FOUNDER REVIEW before
+      an App Store submission that ships this extra: the published
+      opencv-python wheels are documented (opencv/opencv-python#353 and the
+      project's own wheel notes) to bundle an FFmpeg build under LGPL-2.1, and
+      non-headless Linux wheels additionally bundle Qt5 under LGPL-3.0. This
+      register's own SPDX-classification model only sees the top-level
+      package's declared licence (Apache-2.0, permissive) — it does not model
+      binary components bundled inside a wheel, so it cannot mechanically
+      catch this the way it catches a declared LGPL *dependency*. Two things
+      need a human legal call, not a script: (a) whether the macOS wheel
+      actually used at build time is the one bundling FFmpeg or one built with
+      WITH_FFMPEG=OFF relying on AVFoundation instead; (b) whether FFmpeg is
+      linked dynamically (relinkable, satisfies LGPL) or statically inside
+      that wheel, and whether the App Store's code-signing/sandboxing breaks
+      the user's practical ability to relink. See "SONNET-05 additions" in
+      DISPATCH-2026-09-01-FOUNDER-DECISIONS.md.
+
+  # [audio-inference] — VAD/ASR/speaker-ID/audio-tagging/TTS via ONNX Runtime
+  sherpa-onnx:
+    spdx: Apache-2.0
+    notes: >-
+      Confirmed via PyPI metadata (license field states "Apache licensed, as
+      found in the LICENSE file"). Its own runtime dependency onnxruntime is
+      already registered above (MIT).
+
+  # [audio-wake-word] — wake word spotting
+  openwakeword:
+    spdx: Apache-2.0
+    notes: >-
+      The package's own code is Apache-2.0 (OSI classifier confirmed via PyPI
+      metadata) — permissive, fine for this register's purpose (software
+      linked into the App Store binary). Separate, NOT a copyleft-code
+      question this checker models: openwakeword's own docs state its
+      default pretrained wake-word models use CC-BY-NC-4.0/CC-BY-NC-SA-4.0
+      (non-commercial) due to training-data restrictions — a content-licensing
+      concern analogous to LEG-CRIT-01 (the SS64 corpus quarantine), not a
+      dependency-licence one. Halbert's own extra comment says it "requires a
+      trained 'Hey Halbert' model" (i.e. a custom-trained model, not the
+      stock ones) — flagged to the founder to confirm no default pretrained
+      model ships or is downloaded as part of a commercial build. See
+      "SONNET-05 additions" in DISPATCH-2026-09-01-FOUNDER-DECISIONS.md.
+
+  # [audio-fingerprint] — acoustic fingerprinting via Chromaprint/AcoustID
+  pyacoustid:
+    spdx: MIT
+    notes: >-
+      Confirmed via PyPI metadata (SPDX field "MIT"). Needs the separately
+      installed `chromaprint` C library at runtime (dynamically loaded via
+      ctypes, not a pip/PyPI dependency — never appears in any manifest this
+      checker parses, so it is not itself a register entry). chromaprint's own
+      code is MIT, but it incorporates FFmpeg fragments under LGPL-2.1 and is
+      commonly described as LGPL as a whole (acoustid/chromaprint#LICENSE.md).
+      Not a blocker today: nothing in this repo bundles a compiled chromaprint
+      binary into the App Store target, the user provides their own (e.g. via
+      Homebrew). If a future build ever vendors/statically links chromaprint
+      instead of dynamically loading the user's system copy, this needs the
+      same LGPL relink-obligation review as opencv-python's bundled FFmpeg,
+      above.
+
 # -----------------------------------------------------------------------------
 # Rust — halbert_core/halbert_core/dashboard/frontend/src-tauri/Cargo.toml
 # -----------------------------------------------------------------------------
@@ -134,10 +201,42 @@ rust:
   chrono: {spdx: MIT OR Apache-2.0}
   image: {spdx: MIT OR Apache-2.0}
 
+  # `voice-capture` feature (opt-in, audio workstream T2.3)
+  cpal:
+    spdx: Apache-2.0
+    notes: "Confirmed via crates.io metadata (license field)."
+
+  # `aec` feature (opt-in, audio workstream T2.4) — neither feature is on by
+  # default (Cargo.toml `[features] default = []`).
+  webrtc-audio-processing:
+    spdx: BSD-3-Clause
+    notes: >-
+      crates.io reports this crate's license as "non-standard" — that is a
+      packaging technicality, not an unusual set of terms: Cargo.toml uses
+      `license-file = "COPYING"` instead of an SPDX `license` string. Fetched
+      COPYING directly (github.com/tonarino/webrtc-audio-processing) and it is
+      Google's verbatim 2011 BSD-3-Clause text. The `aec` feature's `bundled`
+      build compiles the vendored C++ submodule (PulseAudio's fork,
+      gitlab.freedesktop.org/pulseaudio/webrtc-audio-processing) — fetched its
+      COPYING too and it is the identical BSD-3-Clause text. Both the Rust
+      binding and the C++ it builds are BSD-3-Clause; nothing hidden under the
+      "non-standard" label.
+
 # -----------------------------------------------------------------------------
 # npm — halbert_core/halbert_core/dashboard/frontend/package.json
 # -----------------------------------------------------------------------------
 npm:
+  # First-party — same author/copyright holder as halbert-core, same
+  # convention as `haloysius` above (not a third-party dependency for
+  # App Store §7-exception purposes; the exception is the project's own to
+  # grant over its own code).
+  "@halbert/design-system":
+    spdx: LicenseRef-Halbert-FirstParty
+    notes: "First-party monorepo package (packages/design-system), GPL-3.0-or-later, same author."
+  "@halbert/model-picker":
+    spdx: LicenseRef-Halbert-FirstParty
+    notes: "First-party monorepo package (packages/model-picker), GPL-3.0-or-later, same author."
+
   "@monaco-editor/react": {spdx: MIT}
   "@radix-ui/react-alert-dialog": {spdx: MIT}
   "@radix-ui/react-dialog": {spdx: MIT}

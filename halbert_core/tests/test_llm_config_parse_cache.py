@@ -22,6 +22,7 @@ whose timestamps are coarser than a turn. Resolution semantics are untouched:
 every getter still resolves per call, against current file contents.
 """
 import copy
+import sys
 from pathlib import Path
 
 import pytest
@@ -53,13 +54,28 @@ def _write(user: Path, data: dict) -> Path:
 
 @pytest.fixture
 def parses(monkeypatch):
-    """Count full YAML parses of models.yml, and start from a cold cache."""
+    """Count full YAML parses of models.yml, and start from a cold cache.
+
+    ``store.yaml`` is the same shared module object as every other caller's
+    ``import yaml`` — patching ``store.yaml.safe_load`` patches
+    ``yaml.safe_load`` process-wide, so a naive counter here also picks up
+    unrelated parses that happen to run during the same call graph (most
+    visibly ``load_being_config``'s per-turn reload of being.yml —
+    ``routes/agent.py:487``, ``capabilities.py:266``/``:276``/``:119`` — which
+    is itself un-cached and its own, separate perf issue; not this test's
+    concern). Scope the count to parses this module's own code performs
+    (``_read_raw`` / ``_read_for_write``) by checking the immediate caller's
+    frame, so a models.yml-specific measurement survives call graphs that
+    also touch other YAML-backed config.
+    """
     store.invalidate_cache()
     counter = {"n": 0}
     original = yaml.safe_load
 
     def counting(stream):
-        counter["n"] += 1
+        caller = sys._getframe(1)
+        if caller.f_code.co_filename == store.__file__:
+            counter["n"] += 1
         return original(stream)
 
     monkeypatch.setattr(store.yaml, "safe_load", counting)
