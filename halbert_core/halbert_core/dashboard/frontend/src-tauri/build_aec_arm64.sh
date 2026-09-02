@@ -1,4 +1,6 @@
 #!/bin/bash
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 # Build the `aec` feature for arm64 on this machine.
 #
 # The default toolchain drifts to x86_64: this Mac's Homebrew prefix is

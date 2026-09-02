@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 """Plan B: B22 — End-to-end terminal integration tests.
 
 Tests the full flow: state machine → pool → store → watched shell → hint → stage.
