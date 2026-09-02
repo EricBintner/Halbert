@@ -3,8 +3,24 @@
 **Date:** 2026-08-31
 **Parent handoff:** `HANDOFF-SINGULAR-ENTITY-MULTI-BODY-2026-08-31.md`
 **Worktree:** `feat/singular-entity` at `~/.config/superpowers/worktrees/Halbert/singular-entity`
-**Status:** COMPLETE — all Fable/Opus/GLM tasks implemented and green
-(2026-08-31 wrap-up).
+**Status (corrected 2026-09-02, RAG/state-of-work review + SONNET-05):** ~~COMPLETE~~ — **code units complete; not usable end to end.** Every task row below did land and its own tests do pass, but the 2026-09-01 audit found the merged feature unusable as a whole (state-of-work §6.3), and the OPUS-03 packet closed several — not all — of those gaps on 2026-09-02 (`.handoff/RESULTS-OPUS-BATCH-2026-09-01.md`). Current status, not the 08-31 wrap-up's:
+
+**Fixed by OPUS-03 (verified against its results doc, not re-audited here):**
+- `ROUTE-01`/`R10-N1` — devices router now mounted at `/api/devices/*`; Settings › Devices is reachable.
+- `SE-09`/`R10-F2`, `SE-08`/`R10-F3` — the workstation compute endpoint is mounted and the three components' health-route disagreement is resolved.
+- `SE-16`/`R10-F1`, `R10-F5` — pairing no longer hands the requester their own PIN with no confirmation/expiry/rate limit; revocation is scoped per-peer, not any-peer-revokes-any.
+- `FED-01`/`R10-F10`/`R10-F11` — unbuilt federation surfaces answer cleanly instead of 500ing.
+- `R05-F1` — a `peer://` turn now raises a clear error on the unwired scheme instead of behaving unpredictably. This is a **clean failure, not a fix**: see `SE-05` below — the turn still does not route anywhere.
+
+**Still open (P7's actual acceptance gap, and the reason "pair through the UI, no YAML" is not met):**
+- `SE-15` — UI-driven pairing still cannot complete end to end: the mDNS discovery list is hardcoded empty, the manual-entry tab throws, and a successfully-issued token never reaches the other machine's `being.yml`. `PeerPairingModal.tsx`/`DevicesTab.tsx`/`DiscoveredPeerCard.tsx` exist and have tests, but the flow they drive cannot finish without hand-editing YAML on both ends.
+- `SE-05` (**explicit founder decision, not a bug** — `.handoff/DISPATCH-2026-09-01-FOUNDER-DECISIONS.md`) — `ComputeRouter.route()` is still never instantiated by production code; chat goes through `TierRouter`. Recommendation on file: wire it for the HOME variant only.
+- `SE-10` — `PeerToolProxy` still never injected into the live tool-execution path (P5a/P5d's own security tests exercise it directly, not through a real turn).
+- `SE-12` — the deferred-turn queue is still unbounded and `replay_deferred` is still unimplemented; gated on `SE-05`.
+- `SE-28` — still no real two-machine LAN pairing/compute-peer test; only single-process security-property tests exist (13 of them, per OPUS-03).
+- `PERS-02`/`PERS-03`/`PERS-05` — the two-sources-of-truth persona issue (`/switch` vs `/activate`) is unstarted.
+
+`test_cognition_tick_once`'s "order-sensitive" note two paragraphs down is also wrong as of 2026-09-01: `R06-F2` (the `response_modality` UnboundLocalError OPUS-01 fixed) made it deterministic, not order-sensitive.
 
 ## Completion record
 
@@ -45,8 +61,11 @@ for the cross-node begin_turn race (P3d note); CAP_LOCAL_LLM has no
 consumer yet (natural home: ComputeRouter's local tier); no capability
 re-probe path in a running process; frontend capabilities endpoint;
 ManualPairingForm's pre-existing TODO(federation-9.1) gap (out of G12
-scope by review decision); `test_cognition_tick_once` is order-sensitive
-(fails solo, passes in the full suite — pre-existing on base).
+scope by review decision); ~~`test_cognition_tick_once` is order-sensitive
+(fails solo, passes in the full suite — pre-existing on base)~~ — **wrong,
+see the corrected Status block above**: it was a deterministic
+`response_modality` UnboundLocalError (`R06-F2`), not order-sensitivity,
+fixed by OPUS-01 on 2026-09-02.
 
 ---
 

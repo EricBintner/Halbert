@@ -4,6 +4,13 @@
 **From:** Architecture / product planning  
 **Date:** 2026-08-30  
 **Status:** Install instructions for N150 home server  
+**Correction (2026-09-02, SONNET-05):** every `home-light`/`HALBERT_VARIANT=home-light`
+reference below is stale — that variant was merged into `home` (U6
+ratification, `U6-D2`); there is no separate `home-light` variant in the code
+any more (confirmed: zero references left in `halbert_core/`). Use
+`HALBERT_VARIANT=home` / `variant: home` wherever this doc says
+`home-light`; the "no secure_model, no SourcePrep, Compute Peer UI" gating
+this doc describes is still accurate, just under the `home` name.  
 
 ---
 

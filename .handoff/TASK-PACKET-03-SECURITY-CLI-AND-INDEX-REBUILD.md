@@ -1,5 +1,14 @@
 # Task Packet 03: Security CLI Tools Migration & Operational Index Rebuild
 
+> **Header status update (2026-09-02, SONNET-05): fully done.** Task 3.1 was
+> already done when this doc's "Status" line below was written (2026-08-30);
+> Task 3.2 (the operational unredacted rebuild script) was retargeted to the
+> unified `halbert` project by `SONNET-01` (`b2e69190`, `SEC-03/04/11`) —
+> the real script run against a live daemon is still deferred (daemon health
+> concerns, see `RESULTS-SONNET-01-2026-09-02.md`), but the script itself and
+> its tests are done. `test_cli_security.py` exists now. See
+> `.handoff/MASTER-TODO.md`'s "Review remediation backlog" for current state.
+
 **Target Model:** **GLM-5.3 medium** (reassigned 2026-08-30; Batch U1 — runs with TASK-09 verification and REV-01/REV-02 security reviews)  
 **Domain:** Security Tooling Packaging, CLI Console Scripts, and Operational SourcePrep Indexing  
 **Target Date:** 2026-08-29  

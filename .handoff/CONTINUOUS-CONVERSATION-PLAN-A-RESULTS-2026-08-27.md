@@ -1,6 +1,13 @@
 # Continuous Conversation — Plan A: Execution Results
 
 **Date:** 2026-08-27
+**Status update (2026-09-02, SONNET-05/DOC-01):** ~~not merged to `main`~~ —
+**merged** (`c1840008`, `ddf22122`); the worktree was removed after merge.
+§3.1's "`num_ctx` ceiling has no producer" operational risk below is also
+fixed (`5d0e3405`: `/api/show` architecture window published from the picker
+listing plus a non-blocking lazy probe). It landed as primitives, not full
+wiring — see `.handoff/HANDOFF-STATE-OF-WORK-2026-09-01.md` §6.4/§2.3 for
+what actually reaches production today.
 **Branch:** `feat/continuous-conversation` (worktree
 `~/.config/superpowers/worktrees/Halbert/continuous-conversation`) — **not merged to `main`**.
 **Base:** `6c90faa` · **Head:** `d70ba46` · 87 commits · 18,314 insertions / 2,618 deletions

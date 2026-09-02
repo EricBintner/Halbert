@@ -1,6 +1,18 @@
 # Continuous Conversation — Plan B: Terminal Sessions, Blocks, Watched Shell, Pool, Tasks Column, Light
 
 > **Status: DRAFT** — 2026-08-27. Contracts and task outline only; full inline code not yet generated. Not independently verified. Plan A must be complete before this plan is finalised or executed.
+>
+> **Status update (2026-09-02, SONNET-05/DOC-01):** ~~DRAFT~~ — executed and
+> merged (`0ba316b2`, B1–B22), despite this banner still saying DRAFT. It
+> landed as primitives, not wiring: user shells are still spawned `oneshot`
+> and (until OPUS-04's fixes this session) were killed by the reaper after
+> 60s of quiet; the watched-shell pipeline has no production reader so the
+> stage/watched endpoints are dead; the agent PTY pool is enabled only by
+> tests; `TasksColumn`/`YourShellRegion` are built but never mounted
+> (`TerminalAccordionDock` is still the dock). See
+> `.handoff/HANDOFF-STATE-OF-WORK-2026-09-01.md` §6.4 and the `R04-POOL`/
+> `R04-F2`/`TERM-08` rows in `DISPATCH-2026-09-01-FOUNDER-DECISIONS.md` for
+> the wiring decisions still open.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 

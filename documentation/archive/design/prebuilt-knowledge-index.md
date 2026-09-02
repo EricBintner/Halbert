@@ -1,3 +1,13 @@
+> **ARCHIVED 2026-09-02 (RAG-21-adjacent, SONNET-05).** Proposes a
+> distribution mechanism for a ChromaDB embedding index; the corpus is now
+> staged and indexed by SourcePrep/CodeIndex instead, with a different
+> distribution problem (`RAG-13`/`RAG-14` — 13 corpus JSONL files gitignored,
+> no shipped index asset, both open founder decisions in
+> `.handoff/DISPATCH-2026-09-01-FOUNDER-DECISIONS.md`). Kept for the framing
+> of the problem (identical corpus, deterministic embedding, build-once
+> distribute-many is still the right shape), not for its ChromaDB-specific
+> mechanics.
+
 # Pre-built Knowledge Index Distribution
 
 ## Problem

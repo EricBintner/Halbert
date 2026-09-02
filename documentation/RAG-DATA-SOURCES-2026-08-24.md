@@ -54,21 +54,67 @@ Linux, macOS, and BSD. It is organized into four platform buckets:
 
 ### 1.1 Git tracking and user access
 
-All 53 JSONL data files plus `manifest.json` and the cleanup reports are
-**committed to git** (~25MB tracked, ~95MB on disk uncompressed). Users
-get the full corpus on `git clone` — no download or scraping step is
-required to run Halbert with RAG.
+**Corrected 2026-09-02 (RAG-13, SONNET-05) — verified against the actual
+tree, not the manifest's document counts.** Of the corpus's 58 JSONL data
+files, **45 are committed to git** and **13 (≈71 MB) are not** — silently
+excluded by `.gitignore`'s blanket `*.jsonl` rule (line 123 as of this
+writing), which the `!data/macos/support/*.jsonl` / `!data/non-commercial/**/*.jsonl`
+exceptions do not cover. A fresh `git clone` gets an incomplete corpus with
+no error or warning: four whole manifest sources are missing outright
+(`arch_wiki` — 2,397 docs, `tldr_pages` — 7,049 docs across four platform
+subdirectories, `macos_man_pages` — 5,280 docs, and most of `common_tools`
+— all but one of its 68 docs), roughly **half the corpus's claimed 28,869
+documents**. The 13 files, confirmed present only on the machine this was
+written on (`/Volumes/4TB-BAD/Halbert`), never in git history on any
+branch:
+
+| File | Size |
+|---|---|
+| `data/macos/man-pages/macos_man_pages.jsonl` | 44 MB |
+| `data/linux/arch-wiki/arch_wiki.jsonl` | 18 MB |
+| `data/common/tldr/tldr.jsonl` | 5.0 MB |
+| `data/linux/tldr/tldr.jsonl` | 2.0 MB |
+| `data/common/devtools-docs/devtools_docs.jsonl` | 1.1 MB |
+| `data/macos/tldr/tldr.jsonl` | 300 KB |
+| `data/common/python-tools-docs/python-tools_docs.jsonl` | 208 KB |
+| `data/common/aws-cli/aws_cli.jsonl` | 140 KB |
+| `data/common/docker-docs/docker_docs.jsonl` | 68 KB |
+| `data/common/containers-docs/containers_docs.jsonl` | 28 KB |
+| `data/common/git-docs/git_docs.jsonl` | 24 KB |
+| `data/bsd/tldr/tldr.jsonl` | 32 KB |
+| `data/common/shell-docs/shell_docs.jsonl` | 32 KB |
+
+This is `RAG-13` — open, pending a founder decision
+(`.handoff/DISPATCH-2026-09-01-FOUNDER-DECISIONS.md`) between tracking
+these 13 files (default assumed: publish the HuggingFace datasets in §2
+instead and have onboarding download them, rather than growing the git
+history by 71 MB) and force-adding them the way the other 45 apparently
+were at some point (`git add -f`, since the blanket rule predates most of
+them and they stayed tracked through it). Whichever way it resolves, the
+claim below that `data/macos/`, `data/bsd/`, and `data/common/` are
+uniformly "public" via git tracking is not true today — it is true of the
+44 files under those trees that happen to already be tracked, and false of
+9 more (the man-pages, three of the four tldr files, and six of the seven
+common_tools files) that live in the exact same directories.
 
 The `.gitignore` explicitly marks `data/macos/`, `data/bsd/`, and
-`data/common/` as public. `data/linux/` is also tracked. The only
-gitignored data paths are `data/.cache/` (model/embedding cache) and
-`data/memory/` (runtime memory).
+`data/common/` as public in a comment, but the blanket `*.jsonl` rule two
+lines above it overrides that intent for any new or re-added file in those
+trees — see the block starting `# Scraped datasets - download from
+HuggingFace instead` in `.gitignore`. `data/linux/` is mostly tracked, with
+the same two exceptions (`arch-wiki/`, `tldr/`) above. The only
+*deliberately* gitignored data paths are `data/.cache/` (model/embedding
+cache), `data/memory/` (runtime memory), and `data/staging/` (SourcePrep's
+generated markdown mirror, §1.2).
 
 **For users who want fresh data without re-scraping:** the HuggingFace
 datasets (§2) will provide versioned snapshots. The `remote_url` and
 `check_updates_url` fields in `manifest.json` are currently empty —
 they will be populated by `scripts/upload_hf_dataset.py` on first
-publish.
+publish. Until `RAG-13` resolves, this is also the only way a fresh clone
+can obtain the 13 missing files at all — see `RAG-14` (how a new install
+gets the ~20-hour built index) for the closely related open question of
+distributing the built index itself, not just the source corpus.
 
 ### 1.2 SourcePrep staging
 

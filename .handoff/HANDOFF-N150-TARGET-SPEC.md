@@ -4,6 +4,10 @@
 **From:** Architecture / product planning  
 **Date:** 2026-08-30  
 **Status:** Ready for procurement  
+**Correction (2026-09-02, SONNET-05):** every `home-light` reference below is
+stale — that variant was merged into `home` (U6 ratification, `U6-D2`); there
+is no separate `home-light` variant any more. Read every `home-light` mention
+below as `home`.  
 
 ---
 
