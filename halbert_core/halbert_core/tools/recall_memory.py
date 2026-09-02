@@ -76,10 +76,31 @@ RECALL_MEMORY_SCHEMA = {
     },
 }
 
+#: Said on every abstain path, in these words. The distinction it draws is
+#: the entire point of the tool: a model that reads an empty answer as
+#: "unchanged" will tell someone their config is untouched when the truth is
+#: that nobody wrote down what happened to it.
+_RIDER = "this does not mean nothing changed."
+
 _ABSTAIN = (
     "No record for {subject} ({predicate}) in the change ledger. "
-    "Nothing was recorded here — this does not mean nothing changed."
+    "Nothing was recorded here — " + _RIDER
 )
+
+_EMPTY_LEDGER = (
+    "The change ledger is empty — nothing has been recorded yet. " + _RIDER
+)
+
+
+def _unavailable(err: object) -> str:
+    return (f"The change ledger could not be read: {err}. "
+            f"This is a failure to look, not an absence of records — no "
+            f"conclusion about what changed can be drawn from it.")
+
+
+def _more(shown: list, total: int) -> str:
+    """Say when a list is partial, rather than letting it read as complete."""
+    return f" (showing {len(shown)} of {total})" if total > len(shown) else ""
 
 
 def _when(ts: Optional[float]) -> str:
@@ -185,7 +206,8 @@ async def recall_memory(args: Dict[str, Any]) -> str:
                 return (
                     f"No {predicate} recorded for {result['subject']}, but the "
                     f"change ledger does hold: {', '.join(held)}. "
-                    f"Ask again with one of those as the predicate."
+                    f"Ask again with one of those as the predicate. "
+                    f"Nothing was recorded under {predicate} — {_RIDER}"
                 )
             return _render(result)
 
@@ -197,28 +219,28 @@ async def recall_memory(args: Dict[str, Any]) -> str:
                     f"'{query}':\n{_choose_from(matches)}\n"
                     f"Ask again with one of them as the subject."
                 )
-            known = recorded_subjects()
+            known, total = recorded_subjects()
             if not known:
-                return (
-                    "The change ledger is empty — nothing has been recorded yet. "
-                    "This does not mean nothing has changed."
-                )
+                return _EMPTY_LEDGER
             return (
-                f"Nothing in the change ledger matches '{query}'. It currently "
-                f"holds:\n{_choose_from(known, subject_only=True)}"
+                f"Nothing in the change ledger matches '{query}' — {_RIDER} "
+                f"It currently holds{_more(known, total)}:\n"
+                f"{_choose_from(known, subject_only=True)}"
             )
 
-        known = recorded_subjects()
+        known, total = recorded_subjects()
         if not known:
-            return (
-                "The change ledger is empty — nothing has been recorded yet. "
-                "This does not mean nothing has changed."
-            )
-        return ("The change ledger holds these subjects:\n"
+            return _EMPTY_LEDGER
+        return (f"The change ledger holds these subjects{_more(known, total)}:\n"
                 f"{_choose_from(known, subject_only=True)}\n"
                 "Ask again with one of them as the subject, or a path.")
 
     except LedgerUnavailable as e:
         # Never an empty success: "I could not look" is not "there is nothing".
-        return (f"The change ledger could not be read: {e}. "
-                f"No conclusion about what changed can be drawn from this.")
+        return _unavailable(e)
+    except Exception as e:
+        # Backstop. Anything that reaches here is still a failure to look,
+        # and must not reach the model as an empty answer -- which is what
+        # an uncaught exception out of a tool handler eventually becomes.
+        logger.warning(f"recall_memory failed unexpectedly: {e}")
+        return _unavailable(e)

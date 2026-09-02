@@ -93,3 +93,39 @@ class TestHistoryAndJoin:
     def test_an_unknown_request_is_empty(self, client):
         assert client.get("/api/state/by-request",
                           params={"request_id": "nope"}).json() == []
+
+
+class TestAReadFailureIsNotFoundFalse:
+    """503, not a 200 with found=false.
+
+    This route's own contract says an empty answer means "not recorded".
+    Answering that when the ledger could not be read at all is the exact
+    conflation the module docstring forbids — and it was what the route did.
+    """
+
+    def test_why_returns_503_when_the_ledger_cannot_be_opened(self, client, monkeypatch):
+        import halbert_core.continuity.recall as rc
+
+        _change("/etc/a.conf", "a reason", ACTOR_USER)
+        monkeypatch.setattr(
+            rc, "StateStore",
+            lambda **kw: (_ for _ in ()).throw(OSError("disk image malformed")))
+
+        r = client.get("/api/state/why", params={"path": "/etc/a.conf"})
+        assert r.status_code == 503
+        assert "failure to look" in r.json()["detail"]
+
+    def test_history_returns_503_rather_than_an_empty_list(self, client, monkeypatch):
+        import halbert_core.dashboard.routes.state as state_routes
+
+        monkeypatch.setattr(
+            state_routes, "_store",
+            lambda: (_ for _ in ()).throw(OSError("disk image malformed")))
+        assert client.get("/api/state/history",
+                          params={"subject": "file:/etc/a.conf"}).status_code == 503
+
+    def test_a_genuine_miss_is_still_a_200(self, client):
+        """Abstaining is not failing, and must not start looking like it."""
+        _change("/etc/a.conf", "a reason", ACTOR_USER)
+        r = client.get("/api/state/why", params={"path": "/etc/never.conf"})
+        assert r.status_code == 200 and r.json()["found"] is False

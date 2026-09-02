@@ -480,8 +480,19 @@ class StateStore:
         self,
         subject: Optional[str] = None,
         predicate: Optional[str] = None,
+        *,
+        strict: bool = False,
     ) -> List[StateTriple]:
-        """Everything true right now, optionally narrowed to a subject/predicate."""
+        """Everything true right now, optionally narrowed to a subject/predicate.
+
+        ``strict`` re-raises a read failure instead of returning an empty
+        list. The default exists for state trackers on the hot path, which
+        would rather lose a reading than break a turn. Any caller that
+        REPORTS the result must pass ``strict=True``: an empty list and a
+        failed read are the same value here, and rendering the second as the
+        first tells the reader that nothing was recorded when the truth is
+        that nothing could be looked at.
+        """
         sql = "SELECT * FROM state_triples WHERE valid_to IS NULL"
         args: List[Any] = []
         if subject is not None:
@@ -496,10 +507,16 @@ class StateStore:
                 return [_row(r) for r in self._conn.execute(sql, args).fetchall()]
         except Exception as e:
             logger.warning(f"Failed to read current state: {e}")
+            if strict:
+                raise
             return []
 
-    def state_history(self, subject: str, predicate: str) -> List[StateTriple]:
-        """Every value this key has held, oldest first."""
+    def state_history(self, subject: str, predicate: str, *,
+                      strict: bool = False) -> List[StateTriple]:
+        """Every value this key has held, oldest first.
+
+        See :meth:`current_state` on ``strict``.
+        """
         try:
             with self._lock:
                 return [
@@ -512,9 +529,12 @@ class StateStore:
                 ]
         except Exception as e:
             logger.warning(f"Failed to read history for {subject}/{predicate}: {e}")
+            if strict:
+                raise
             return []
 
-    def why(self, subject: str, predicate: str) -> StateWhy:
+    def why(self, subject: str, predicate: str, *,
+            strict: bool = False) -> StateWhy:
         """*What is true, since when, who changed it, and why* — in one query.
 
         Returns the open triple together with the value it replaced, which is
@@ -538,6 +558,8 @@ class StateStore:
                 ).fetchone()
         except Exception as e:
             logger.warning(f"Failed to read why for {subject}/{predicate}: {e}")
+            if strict:
+                raise
             return StateWhy(subject, predicate, None, None)
         return StateWhy(
             subject=subject,
@@ -546,7 +568,8 @@ class StateStore:
             superseded=_row(prev) if prev is not None else None,
         )
 
-    def by_request(self, request_id: str) -> List[StateTriple]:
+    def by_request(self, request_id: str, *,
+                   strict: bool = False) -> List[StateTriple]:
         """Every triple written under one request — the join to the audit log.
 
         ``request_id`` is the join key on purpose. An event sequence number is
@@ -565,6 +588,8 @@ class StateStore:
                 ]
         except Exception as e:
             logger.warning(f"Failed to read triples for request {request_id}: {e}")
+            if strict:
+                raise
             return []
 
     def close(self) -> None:

@@ -223,3 +223,98 @@ class TestRegistrationAndSafety:
         gate = RoleGate(ToolSafetyFramework())
         assert gate.classify("recall_memory", {"path": "/etc/x"},
                              speaker_role="restricted").allowed
+
+
+class TestAReadFailureIsNeverAnEmptyAnswer:
+    """The defect this class exists for: StateStore's reads are fail-soft, so
+    a broken ledger returned an empty result, LedgerUnavailable was
+    unreachable, and the model was told "nothing was recorded" with full
+    confidence. Found by review; these drive the real failures, not a
+    monkeypatched helper."""
+
+    def test_a_broken_connection_raises_rather_than_reporting_nothing(self):
+        from halbert_core.continuity.recall import LedgerUnavailable, recall_state
+
+        _seed_sshd()
+        broken = _ledger()
+        broken.close()
+
+        with pytest.raises(LedgerUnavailable):
+            recall_state(subject="file:/etc/ssh/sshd_config", store=broken)
+
+    def test_the_store_still_fails_soft_by_default(self):
+        """The hot path keeps its contract: a tracker would rather lose a
+        reading than break a turn. Only reporting callers pass strict."""
+        broken = _ledger()
+        broken.close()
+        assert broken.current_state() == []
+        assert broken.why("a", "b").found is False
+
+    def test_strict_is_what_reporting_callers_use(self):
+        broken = _ledger()
+        broken.close()
+        with pytest.raises(Exception):
+            broken.why("a", "b", strict=True)
+        with pytest.raises(Exception):
+            broken.current_state(strict=True)
+        with pytest.raises(Exception):
+            broken.state_history("a", "b", strict=True)
+        with pytest.raises(Exception):
+            broken.by_request("r", strict=True)
+
+    def test_a_store_that_cannot_be_opened_is_reported_not_raised(self, monkeypatch):
+        """It used to escape the handler as a raw OSError, straight past the
+        branch written to turn it into an honest sentence."""
+        import halbert_core.continuity.recall as rc
+
+        def boom(**kw):
+            raise OSError("database disk image is malformed")
+
+        monkeypatch.setattr(rc, "StateStore", boom)
+        out = _call(path="/etc/x.conf")
+
+        assert "could not be read" in out
+        assert "failure to look" in out
+        assert "no record" not in out.lower()
+
+
+class TestTheRiderIsOnEveryAbstainPath:
+    """A model that reads any empty answer as "unchanged" will tell someone
+    their config is untouched. Every path has to say otherwise."""
+
+    RIDER = "does not mean nothing changed"
+
+    def test_unknown_subject(self):
+        _seed_sshd()
+        assert self.RIDER in _call(path="/etc/nope.conf")
+
+    def test_predicate_miss(self):
+        store = _ledger()
+        store.record_state("service:sshd", "service_status", "running", "tracker",
+                           reason="tracker: sweep", actor=ACTOR_SYSTEM)
+        store.close()
+        assert self.RIDER in _call(subject="service:sshd")
+
+    def test_query_with_no_matches(self):
+        _seed_sshd()
+        assert self.RIDER in _call(query="nginx")
+
+    def test_empty_ledger(self):
+        assert self.RIDER in _call(query="anything")
+        assert self.RIDER in _call()
+
+
+class TestPartialListsSaySo:
+    def test_a_truncated_subject_list_is_labelled(self):
+        """A truncated list presented as complete quietly tells the reader
+        the ledger holds nothing else."""
+        for i in range(20):
+            record_file_change(path=f"/etc/f{i:02d}.conf", reason=f"r{i}",
+                               actor=ACTOR_USER, request_id=f"q{i}",
+                               tool="editor", after_text=f"{i}\n")
+        out = _call()
+        assert "showing 12 of 20" in out
+
+    def test_a_complete_list_is_not_labelled(self):
+        _seed_sshd()
+        assert "showing" not in _call()

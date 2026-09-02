@@ -47,10 +47,20 @@ def subject_for_path(path: str) -> str:
 
 def _open(store: Any) -> Tuple[Any, Optional[StateStore]]:
     """Return (store_to_use, store_we_own). Never cache one: the path is
-    resolved at call time so HALBERT_DATA_DIR is honoured per call."""
+    resolved at call time so HALBERT_DATA_DIR is honoured per call.
+
+    A store that cannot be opened at all is a read failure like any other,
+    and must arrive as one. Letting the raw OSError escape sent it straight
+    out of the tool handler, past the very branch written to turn it into
+    "the ledger could not be read".
+    """
     if store is not None:
         return store, None
-    owned = StateStore(db_path=str(default_state_db_path()))
+    try:
+        owned = StateStore(db_path=str(default_state_db_path()))
+    except Exception as e:
+        logger.warning(f"state ledger could not be opened: {e}")
+        raise LedgerUnavailable(str(e)) from e
     return owned, owned
 
 
@@ -80,10 +90,10 @@ def recall_state(
 
     target, owned = _open(store)
     try:
-        answer = target.why(subject, predicate)
+        answer = target.why(subject, predicate, strict=True)
         history: List[Dict[str, Any]] = []
         if include_history:
-            rows = target.state_history(subject, predicate)
+            rows = target.state_history(subject, predicate, strict=True)
             history = [t.to_dict() for t in rows[-history_limit:]][::-1]
     except Exception as e:
         logger.warning(f"recall_state({subject}, {predicate}) failed: {e}")
@@ -112,7 +122,8 @@ def predicates_for(subject: str, *, store: Any = None) -> List[str]:
     """
     target, owned = _open(store)
     try:
-        return sorted({t.predicate for t in target.current_state(subject=subject)})
+        return sorted({t.predicate for t in
+                       target.current_state(subject=subject, strict=True)})
     except Exception as e:
         logger.warning(f"predicates_for({subject}) failed: {e}")
         raise LedgerUnavailable(str(e)) from e
@@ -121,11 +132,18 @@ def predicates_for(subject: str, *, store: Any = None) -> List[str]:
             owned.close()
 
 
-def recorded_subjects(*, limit: int = 12, store: Any = None) -> List[str]:
-    """Subjects the ledger currently holds anything for."""
+def recorded_subjects(*, limit: int = 12,
+                      store: Any = None) -> Tuple[List[str], int]:
+    """``(first N subjects, total count)``.
+
+    The count is returned so a caller can say when a list is partial. A
+    truncated list presented as complete is a quiet way of telling someone
+    the ledger holds nothing else.
+    """
     target, owned = _open(store)
     try:
-        return sorted({t.subject for t in target.current_state()})[:limit]
+        subjects = sorted({t.subject for t in target.current_state(strict=True)})
+        return subjects[:limit], len(subjects)
     except Exception as e:
         logger.warning(f"recorded_subjects() failed: {e}")
         raise LedgerUnavailable(str(e)) from e
@@ -147,7 +165,7 @@ def matching_subjects(query: str, *, limit: int = 12,
         return []
     target, owned = _open(store)
     try:
-        rows = target.current_state()
+        rows = target.current_state(strict=True)
     except Exception as e:
         logger.warning(f"matching_subjects({query}) failed: {e}")
         raise LedgerUnavailable(str(e)) from e

@@ -16,7 +16,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from ...continuity.provenance import FILE_CONTENT_PREDICATE, forget_request
@@ -59,8 +59,15 @@ async def why(
     try:
         result = recall_state(subject=subject, path=path, predicate=predicate)
     except LedgerUnavailable as e:
+        # 503, not a 200 with found=false. This route's own contract says an
+        # empty answer means "not recorded"; answering that when the ledger
+        # could not be read at all is the exact conflation it forbids.
         logger.warning(f"why({subject or path}, {predicate}) failed: {e}")
-        return WhyResponse(subject=subject or "", predicate=predicate, found=False)
+        raise HTTPException(
+            503,
+            "The change ledger could not be read, so this cannot be answered. "
+            "That is a failure to look, not an absence of records.",
+        )
     # ``result`` already carries ``found``; passing it again alongside
     # ``**result`` would raise TypeError, which this route's own except
     # would then swallow into found=False for every request.
@@ -77,14 +84,20 @@ async def history(
     predicate: str = Query(FILE_CONTENT_PREDICATE),
 ) -> List[Dict[str, Any]]:
     """Every value this key has held, oldest first, each with its reason."""
-    store = _store()
+    store = None
     try:
-        return [t.to_dict() for t in store.state_history(subject, predicate)]
+        # Inside the try: opening the store is itself a read that can fail,
+        # and a failure there must reach the caller as "could not read"
+        # rather than as an unhandled 500.
+        store = _store()
+        return [t.to_dict() for t in
+                store.state_history(subject, predicate, strict=True)]
     except Exception as e:
         logger.warning(f"history({subject}, {predicate}) failed: {e}")
-        return []
+        raise HTTPException(503, "The change ledger could not be read.")
     finally:
-        store.close()
+        if store is not None:
+            store.close()
 
 
 @router.get("/by-request")
@@ -95,14 +108,16 @@ async def by_request(request_id: str = Query(...)) -> List[Dict[str, Any]]:
     sequence number: a seq is not unique under a concurrent append, so a
     seq-keyed join can silently point at the wrong record.
     """
-    store = _store()
+    store = None
     try:
-        return [t.to_dict() for t in store.by_request(request_id)]
+        store = _store()
+        return [t.to_dict() for t in store.by_request(request_id, strict=True)]
     except Exception as e:
         logger.warning(f"by_request({request_id}) failed: {e}")
-        return []
+        raise HTTPException(503, "The change ledger could not be read.")
     finally:
-        store.close()
+        if store is not None:
+            store.close()
 
 
 class ForgetResponse(BaseModel):
