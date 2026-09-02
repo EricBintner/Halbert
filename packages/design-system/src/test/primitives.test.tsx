@@ -234,5 +234,30 @@ describe('HalbertMark', () => {
     expect(rect).toBeInTheDocument()
     expect(rect).toHaveAttribute('fill', 'var(--color-accent, #D34E24)')
   })
+
+  it('supports explicit line counts: 7 lines, 4 lines, 8 lines', () => {
+    const { container: c7 } = render(<HalbertMark lines={7} />)
+    expect(c7.querySelector('svg')).toHaveClass('hb-mark--7lines')
+
+    const { container: c4 } = render(<HalbertMark lines={4} />)
+    expect(c4.querySelector('svg')).toHaveClass('hb-mark--4lines')
+
+    const { container: c8 } = render(<HalbertMark lines={8} />)
+    expect(c8.querySelector('svg')).toHaveClass('hb-mark--8lines')
+  })
+
+  it('falls back to density/auto resolution when `lines` is not a supported count', () => {
+    // The type only allows 3|4|5|6|7|8|10, but a caller crossing a JS boundary
+    // (or a stale prop) could still hand us something else. resolveLineCount
+    // must fall through to the density/auto branch rather than rendering
+    // nothing, and that branch always returns a real key into
+    // CONFIG_BY_LINE_COUNT — so this exercises the never-taken `|| CONFIG_BY_LINE_COUNT[6]`
+    // fallback path deliberately, rather than removing it.
+    const invalidLines = 9 as unknown as 7
+    const { container } = render(<HalbertMark size={128} lines={invalidLines} />)
+    const svg = container.querySelector('svg')
+    expect(svg).toBeInTheDocument()
+    expect(svg).toHaveClass('hb-mark--display')
+  })
 })
 
