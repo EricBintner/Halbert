@@ -41,8 +41,10 @@ import {
   Container,
   Code2,
   CheckCircle,
+  ShieldAlert,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
 import { ConfigEditor } from './ConfigEditor'
 import { HalbertMark, NavRail, type NavRailSection } from '@halbert/design-system'
 import { PanelToggle } from './shell/PanelToggle'
@@ -52,6 +54,7 @@ import { HostShell } from './shell/HostShell'
 import { useShellMode } from '@/contexts/ShellModeContext'
 import { askHost, runOnHost, configWithHost } from '@/lib/hostConversation'
 import { apiUrl } from '@/lib/apiBase'
+import { getPendingApprovals } from '@/lib/tauri'
 
 type NavItem = { id: string; label: string; icon: typeof LayoutDashboard }
 type NavSection = { label: string; items: NavItem[] }
@@ -76,7 +79,9 @@ type NavSection = { label: string; items: NavItem[] }
  */
 const SYSTEM = 'System'
 
-const navSections: NavSection[] = [
+/** Exported for the nav-coverage test (R08-01/NAV-01): every routed page in
+ * App.tsx must have an entry point somewhere in this rail. */
+export const navSections: NavSection[] = [
   {
     label: 'Overview',
     items: [
@@ -173,6 +178,9 @@ export function Layout({ children }: { children: React.ReactNode }) {
   // Multi-instance: current instance info for sidebar filtering
   const [instanceInfo, setInstanceInfo] = useState<InstanceInfo | null>(null)
 
+  // Pending-approvals count for the top-bar badge (R08-01/NAV-01).
+  const [pendingApprovalsCount, setPendingApprovalsCount] = useState(0)
+
   // Fetch instance info on mount
   useEffect(() => {
     const fetchInfo = async () => {
@@ -187,6 +195,26 @@ export function Layout({ children }: { children: React.ReactNode }) {
       }
     }
     fetchInfo()
+  }, [])
+
+  // Poll pending approvals for the top-bar badge — same 5s cadence as the
+  // Approvals page itself so the badge and the page never visibly disagree.
+  useEffect(() => {
+    let cancelled = false
+    const checkPendingApprovals = async () => {
+      try {
+        const data = await getPendingApprovals()
+        if (!cancelled) setPendingApprovalsCount(data.pending?.length ?? data.count ?? 0)
+      } catch {
+        // Non-fatal — the badge just stays at its last known count.
+      }
+    }
+    checkPendingApprovals()
+    const interval = setInterval(checkPendingApprovals, 5000)
+    return () => {
+      cancelled = true
+      clearInterval(interval)
+    }
   }, [])
 
   // Filter nav sections based on the connected instance. Home hides when the
@@ -212,6 +240,8 @@ export function Layout({ children }: { children: React.ReactNode }) {
   /** Settings is not a dashboard tab — it overtakes the shell. The gear in the
    * top bar is the only entry point, so the rail never shows a Settings item. */
   const isSettingsRoute = location.pathname === '/settings'
+
+  const isApprovalsRoute = location.pathname === '/approvals'
 
   /** Voice (O8) is a mode reached through a route: the /voice deep link and
    * the top-bar button beside the mode switch are the only ways in. The route
@@ -245,6 +275,13 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const openVoice = useCallback(() => {
     navigate('/voice')
   }, [navigate])
+
+  const openApprovals = useCallback(() => {
+    if (!centerVisible) {
+      setMode(rightVisible ? 'both' : 'browsing')
+    }
+    navigate('/approvals')
+  }, [navigate, centerVisible, rightVisible, setMode])
 
   const handleNavSelect = useCallback((id: string) => {
     // Clicking a nav item when center is hidden auto-shows the center
@@ -500,6 +537,29 @@ export function Layout({ children }: { children: React.ReactNode }) {
           )}
 
           <span className="text-[11px] text-muted-foreground font-mono hidden md:inline">v0.1.1</span>
+
+          {/* Pending approvals — the top-bar entry point for what needs human
+           * sign-off (R08-01/NAV-01). The rail's Approvals item is the full
+           * page; this is the always-visible count so a pending decision is
+           * never silent. Hidden at zero — an empty badge is noise. */}
+          <Button
+            variant={isApprovalsRoute ? 'default' : 'ghost'}
+            size="icon"
+            className="h-7 w-7 relative"
+            onClick={openApprovals}
+            title={pendingApprovalsCount > 0 ? `${pendingApprovalsCount} pending approval${pendingApprovalsCount === 1 ? '' : 's'}` : 'Approvals'}
+            aria-label="Open approvals"
+          >
+            <ShieldAlert className="h-4 w-4" />
+            {pendingApprovalsCount > 0 && (
+              <Badge
+                variant="destructive"
+                className="absolute -top-1 -right-1 h-4 min-w-4 px-1 py-0 text-[10px] leading-4 justify-center"
+              >
+                {pendingApprovalsCount > 9 ? '9+' : pendingApprovalsCount}
+              </Badge>
+            )}
+          </Button>
 
           {/* Settings entry — top-right corner, always present in both modes.
            * Not a dashboard tab: it overtakes the shell, so the gear is the
