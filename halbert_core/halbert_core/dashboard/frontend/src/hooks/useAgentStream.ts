@@ -926,7 +926,12 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
           setSession(prev => prev ? { 
             ...prev, 
             state: 'error',
-            error: `Connection timed out after ${timeoutMin} min. Try increasing timeout in Settings > AI > Performance Tweaks.` 
+            // The panel this used to name was removed with the GPU Tweaks
+            // override, and no setting replaced it — the timeout is fixed
+            // here and retry policy lives on the backend. Pointing at a
+            // screen that does not exist is worse than saying nothing
+            // (R11-04), so this says what actually happened instead.
+            error: `No response for ${timeoutMin} min, so the connection was closed. The model may still be loading; sending the message again usually works.` 
           } : null);
           optionsRef.current.onError?.('Connection timed out');
           if (timeoutCheckInterval) clearInterval(timeoutCheckInterval);

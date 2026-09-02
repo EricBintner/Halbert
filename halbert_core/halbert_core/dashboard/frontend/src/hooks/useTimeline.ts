@@ -196,7 +196,19 @@ export function useTimeline(pageSize = 50): UseTimelineReturn {
   const [anchored, setAnchored] = useState(false);
   const [currentThread, setCurrentThread] = useState<TimelineCurrentThread | null>(null);
   const [loadFailed, setLoadFailed] = useState(false);
-  const inFlight = useRef(false);
+  // Page loads supersede each other rather than blocking each other.
+  //
+  // This used to be a single boolean that every loader checked and returned
+  // early on, so a request arriving during another one was silently dropped
+  // — including the "Try again" button, whose whole contract (see
+  // loadLatest) is that the admin perceives its outcome, and a deep link's
+  // loadAround fired while the mount load was still running (R11-10). Now
+  // each load takes a ticket; a response whose ticket is no longer the
+  // newest writes nothing, which is also what an abort would have bought
+  // without needing one plumbed through the shared api layer.
+  const requestSeq = useRef(0);
+  const nextTicket = () => ++requestSeq.current;
+  const isCurrent = (ticket: number) => ticket === requestSeq.current;
   // Turn to scroll to once the page that contains it has rendered.
   const scrollTarget = useRef<string | null>(null);
   // Turns whose row ids are being read back right now (see hydrateMessageIds).
@@ -237,11 +249,11 @@ export function useTimeline(pageSize = 50): UseTimelineReturn {
 
   useEffect(() => {
     let cancelled = false;
-    inFlight.current = true;
+    const ticket = nextTicket();
     api
       .getTimeline({ limit: pageSize })
       .then((page) => {
-        if (cancelled) return;
+        if (cancelled || !isCurrent(ticket)) return;
         setTurns(page.turns);
         setHasMore(page.hasMore);
         setCurrentThread(page.currentThread);
@@ -253,13 +265,12 @@ export function useTimeline(pageSize = 50): UseTimelineReturn {
         // transport failure (network down, backend mid-restart). `turns`
         // still lands empty either way, so `loadFailed` is the only signal
         // a consumer has to tell that apart from a genuinely new install.
-        if (cancelled) return;
+        if (cancelled || !isCurrent(ticket)) return;
         console.warn('[TIMELINE] initial load failed:', err);
         setLoadFailed(true);
       })
       .finally(() => {
-        inFlight.current = false;
-        if (!cancelled) setLoading(false);
+        if (!cancelled && isCurrent(ticket)) setLoading(false);
       });
     return () => {
       cancelled = true;
@@ -278,28 +289,30 @@ export function useTimeline(pageSize = 50): UseTimelineReturn {
   }, [turns]);
 
   const loadOlder = useCallback(async () => {
-    if (inFlight.current || !hasMore || turns.length === 0) return;
-    inFlight.current = true;
+    if (!hasMore || turns.length === 0) return;
+    const ticket = nextTicket();
     setLoading(true);
     try {
       const page = await api.getTimeline({ before: turns[0].turnId, limit: pageSize });
+      if (!isCurrent(ticket)) return;
       setTurns((prev) => mergeOlder(page.turns, prev));
       setHasMore(page.hasMore);
       setLoadFailed(false);
     } catch (err) {
+      if (!isCurrent(ticket)) return;
       console.warn('[TIMELINE] older page failed:', err);
     } finally {
-      inFlight.current = false;
-      setLoading(false);
+      if (isCurrent(ticket)) setLoading(false);
     }
   }, [hasMore, turns, pageSize]);
 
   const loadAround = useCallback(async (turnId: string) => {
-    if (inFlight.current || !turnId) return;
-    inFlight.current = true;
+    if (!turnId) return;
+    const ticket = nextTicket();
     setLoading(true);
     try {
       const page = await api.getTimeline({ around: turnId, limit: pageSize });
+      if (!isCurrent(ticket)) return;
       if (page.turns.length === 0) return; // unknown id: keep what is on screen
       scrollTarget.current = turnId;
       setTurns(page.turns);
@@ -307,16 +320,15 @@ export function useTimeline(pageSize = 50): UseTimelineReturn {
       setAnchored(true);
       setLoadFailed(false);
     } catch (err) {
+      if (!isCurrent(ticket)) return;
       console.warn('[TIMELINE] around page failed:', err);
     } finally {
-      inFlight.current = false;
-      setLoading(false);
+      if (isCurrent(ticket)) setLoading(false);
     }
   }, [pageSize]);
 
   const loadLatest = useCallback(async (): Promise<boolean> => {
-    if (inFlight.current) return false;
-    inFlight.current = true;
+    const ticket = nextTicket();
     setLoading(true);
     // `loadFailed` is the retry's ONLY outcome an admin can perceive: the
     // failure notice is announced on the transition into it (AgentChat), and
@@ -328,6 +340,7 @@ export function useTimeline(pageSize = 50): UseTimelineReturn {
     setLoadFailed(false);
     try {
       const page = await api.getTimeline({ limit: pageSize });
+      if (!isCurrent(ticket)) return false;
       setTurns(page.turns);
       setHasMore(page.hasMore);
       setCurrentThread(page.currentThread);
@@ -339,12 +352,12 @@ export function useTimeline(pageSize = 50): UseTimelineReturn {
       // listening to a button that appears to have done nothing.
       return true;
     } catch (err) {
+      if (!isCurrent(ticket)) return false;
       console.warn('[TIMELINE] latest page failed:', err);
       setLoadFailed(true);
       return false;
     } finally {
-      inFlight.current = false;
-      setLoading(false);
+      if (isCurrent(ticket)) setLoading(false);
     }
   }, [pageSize]);
 

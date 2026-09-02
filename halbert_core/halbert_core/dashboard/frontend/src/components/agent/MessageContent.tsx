@@ -7,6 +7,8 @@
  * and a week later.
  */
 
+import { memo, useMemo } from 'react';
+
 import { CodeBlock } from '../domain/CodeBlock';
 
 export type RunCommand = (cmd: string) => Promise<{ output?: string; error?: string; exit_code?: number }>;
@@ -16,8 +18,10 @@ interface MessageContentProps {
   onRunCommand?: RunCommand;
 }
 
-export function MessageContent({ content, onRunCommand }: MessageContentProps) {
-  const parts: Array<{ type: 'text' | 'code', content: string, lang?: string }> = [];
+type Part = { type: 'text' | 'code'; content: string; lang?: string };
+
+function splitFences(content: string): Part[] {
+  const parts: Part[] = [];
   const codeBlockRegex = /```(\w+)?\n?([\s\S]*?)```/g;
   let lastIndex = 0;
   let match;
@@ -40,6 +44,16 @@ export function MessageContent({ content, onRunCommand }: MessageContentProps) {
     parts.push({ type: 'text', content });
   }
 
+  return parts;
+}
+
+function MessageContentImpl({ content, onRunCommand }: MessageContentProps) {
+  // A streaming reply re-renders on every animation frame, and every frame
+  // re-scanned the whole text for fences — quadratic in the length of the
+  // answer, on the render path (R11-12). Keyed on the text, so a frame that
+  // added no characters does no work at all.
+  const parts = useMemo(() => splitFences(content), [content]);
+
   return (
     <div className="space-y-2 min-w-0 overflow-hidden">
       {parts.map((part, i) => {
@@ -61,5 +75,7 @@ export function MessageContent({ content, onRunCommand }: MessageContentProps) {
     </div>
   );
 }
+
+export const MessageContent = memo(MessageContentImpl);
 
 export default MessageContent;

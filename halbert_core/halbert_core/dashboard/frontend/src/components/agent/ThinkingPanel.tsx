@@ -7,7 +7,7 @@
  * Supports collapsible sections and streaming updates.
  */
 
-import { useState, useRef, useEffect } from 'react';
+import { memo, useId, useMemo, useState, useRef, useEffect } from 'react';
 
 interface ThinkingPanelProps {
   thinking: string;
@@ -16,7 +16,7 @@ interface ThinkingPanelProps {
   className?: string;
 }
 
-export function ThinkingPanel({ 
+function ThinkingPanelImpl({ 
   thinking, 
   isStreaming = false,
   maxHeight = '200px',
@@ -24,6 +24,7 @@ export function ThinkingPanel({
 }: ThinkingPanelProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const contentRef = useRef<HTMLPreElement>(null);
+  const bodyId = useId();
 
   // Auto-scroll when new content arrives
   useEffect(() => {
@@ -36,19 +37,20 @@ export function ThinkingPanel({
     return null;
   }
 
-  // Parse thinking into sections if it has markers
-  const sections = parseThinkingSections(thinking);
+  // Reasoning streams in like the reply does, so this ran its four regexes
+  // over the whole text on every animation frame (R11-12). Keyed on the
+  // text: a frame that added nothing does no work.
+  const sections = useMemo(() => parseThinkingSections(thinking), [thinking]);
 
   return (
     <div className={`border rounded-lg overflow-hidden ${className}`}>
       <button
         onClick={() => setIsExpanded(!isExpanded)}
+        aria-expanded={isExpanded}
+        aria-controls={bodyId}
         className="w-full px-4 py-2 flex items-center justify-between bg-muted hover:bg-muted transition-colors"
       >
         <div className="flex items-center gap-2">
-          <span className="text-muted-foreground">
-            {isStreaming ? '🧠' : '💭'}
-          </span>
           <span className="text-sm font-medium text-foreground">
             {isStreaming ? 'Thinking...' : 'Thought Process'}
           </span>
@@ -64,7 +66,7 @@ export function ThinkingPanel({
       </button>
 
       {isExpanded && (
-        <div className="border-t">
+        <div id={bodyId} className="border-t">
           {sections.length > 1 ? (
             <div className="divide-y">
               {sections.map((section, idx) => (
@@ -80,7 +82,12 @@ export function ThinkingPanel({
           ) : (
             <pre 
               ref={contentRef}
-              className="p-4 text-xs text-muted-foreground whitespace-pre-wrap overflow-auto bg-muted"
+              // A scrollable region has to be reachable and scrollable from
+              // the keyboard alone (R11-09).
+              tabIndex={0}
+              role="region"
+              aria-label="Thought process"
+              className="p-4 text-xs text-muted-foreground whitespace-pre-wrap overflow-auto bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
               style={{ maxHeight }}
             >
               {thinking}
@@ -101,11 +108,14 @@ interface ThinkingSectionProps {
 
 function ThinkingSection({ title, content, isLast, isStreaming }: ThinkingSectionProps) {
   const [isOpen, setIsOpen] = useState(isLast);
+  const bodyId = useId();
 
   return (
     <div>
       <button
         onClick={() => setIsOpen(!isOpen)}
+        aria-expanded={Boolean(isOpen)}
+        aria-controls={bodyId}
         className="w-full px-4 py-2 flex items-center justify-between hover:bg-muted text-left"
       >
         <span className="text-xs font-medium text-muted-foreground">{title}</span>
@@ -117,7 +127,7 @@ function ThinkingSection({ title, content, isLast, isStreaming }: ThinkingSectio
         </div>
       </button>
       {isOpen && (
-        <pre className="px-4 pb-3 text-xs text-muted-foreground whitespace-pre-wrap">
+        <pre id={bodyId} className="px-4 pb-3 text-xs text-muted-foreground whitespace-pre-wrap">
           {content}
         </pre>
       )}
@@ -187,5 +197,7 @@ function parseThinkingSections(thinking: string): ParsedSection[] {
   
   return sections;
 }
+
+export const ThinkingPanel = memo(ThinkingPanelImpl);
 
 export default ThinkingPanel;

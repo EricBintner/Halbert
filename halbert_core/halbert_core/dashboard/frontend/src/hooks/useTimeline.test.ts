@@ -641,3 +641,66 @@ describe('useTimeline', () => {
     expect(result.current.anchored).toBe(false)
   })
 })
+
+describe('overlapping page loads (R11-10)', () => {
+  /** A fetch whose responses resolve only when the test says so. */
+  function gatedFetch(bodies: unknown[]) {
+    const gates: Array<() => void> = []
+    const fetchMock = vi.fn(() => {
+      const body = bodies.shift()
+      return new Promise((resolve) => {
+        gates.push(() => resolve({
+          ok: true, status: 200, text: async () => '', json: async () => body,
+        }))
+      })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    return { fetchMock, gates }
+  }
+
+  it('does not silently drop a load that starts during another one', async () => {
+    // The mount load is still in flight when loadLatest is called. The old
+    // shared inFlight flag made this a no-op that returned false, so "Try
+    // again" appeared to do nothing at all.
+    const { fetchMock, gates } = gatedFetch([
+      page([rawTurn('t-1', 1_784_000_000, 'one')]),
+      page([rawTurn('t-9', 1_784_000_900, 'nine')]),
+    ])
+
+    const { result } = renderHook(() => useTimeline())
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
+
+    let retry!: Promise<boolean>
+    act(() => { retry = result.current.loadLatest() })
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
+
+    await act(async () => {
+      gates[0]()  // the mount load lands first, but it is now stale
+      gates[1]()
+      await retry
+    })
+
+    expect(await retry).toBe(true)
+    expect(result.current.turns.map((t) => t.turnId)).toEqual(['t-9'])
+  })
+
+  it('lets the newest load win when an older one lands after it', async () => {
+    const { fetchMock, gates } = gatedFetch([
+      page([rawTurn('t-1', 1_784_000_000, 'one')]),
+      page([rawTurn('t-9', 1_784_000_900, 'nine')]),
+    ])
+
+    const { result } = renderHook(() => useTimeline())
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
+    act(() => { void result.current.loadLatest() })
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
+
+    await act(async () => {
+      gates[1]()  // newest resolves first
+      gates[0]()  // stale mount load resolves after it
+      await Promise.resolve()
+    })
+
+    expect(result.current.turns.map((t) => t.turnId)).toEqual(['t-9'])
+  })
+})

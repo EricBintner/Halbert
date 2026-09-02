@@ -98,7 +98,10 @@ export function StateBadge({ state, size = 'md', showPulse = true }: StateBadgeP
       <span>{config.label}</span>
       {showPulse && isActive && (
         <span className="relative flex h-2 w-2">
-          <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${config.pulseColor}`} />
+          {/* The ping is decoration; for a reader who has asked the system
+              for less movement it is nausea. The dot stays — it is the part
+              that carries the meaning (R11-06). */}
+          <span className={`motion-safe:animate-ping motion-reduce:hidden absolute inline-flex h-full w-full rounded-full opacity-75 ${config.pulseColor}`} />
           <span className={`relative inline-flex rounded-full h-2 w-2 ${config.pulseColor}`} />
         </span>
       )}
