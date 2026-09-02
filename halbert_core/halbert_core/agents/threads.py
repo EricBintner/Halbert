@@ -765,7 +765,9 @@ class ThreadManager:
         swallowed, never blocking thread close.
         """
         try:
-            from halbert_core.continuity.state_store import StateStore, default_state_db_path
+            from halbert_core.continuity.state_store import (
+                ACTOR_AGENT, StateStore, default_state_db_path,
+            )
             from halbert_core.agents.receipt import _command_lines, _file_lines
             store = StateStore(db_path=str(default_state_db_path()))
             messages = self.store.list_messages(thread_id)
@@ -781,18 +783,24 @@ class ThreadManager:
                 store.record_state(
                     f"thread:{thread_id}", "ran_command", cmd,
                     "thread_close", thread_id=thread_id, now=now,
+                    reason="receipt: command run during this thread",
+                    actor=ACTOR_AGENT,
                 )
             # Record files written as state
             for path in _file_lines(blocks, diffs)[-8:]:
                 store.record_state(
                     f"thread:{thread_id}", "file_written", path,
                     "thread_close", thread_id=thread_id, now=now,
+                    reason="receipt: file written during this thread",
+                    actor=ACTOR_AGENT,
                 )
             # Record canonical entities as state
             for entity in (thread.get("entities_json") or [])[:12]:
                 store.record_state(
                     f"thread:{thread_id}", "entity", entity,
                     "thread_close", thread_id=thread_id, now=now,
+                    reason="receipt: entity named in this thread",
+                    actor=ACTOR_AGENT,
                 )
         except Exception as e:
             logger.warning(f"Failed to record thread state for {thread_id}: {e}")
