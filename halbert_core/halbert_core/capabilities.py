@@ -39,6 +39,11 @@ Capabilities:
                        instead; `secure_model` stays the "already
                        configured" signal for the turn gate.
   audio             — the voice pipeline can run (config enabled + sherpa-onnx)
+  web               — web search may send query text off the machine
+                       (web_search.yml ``web_search.enabled``; OFF by
+                       default on every variant — C3-08). This is an
+                       egress switch, so no preset ever turns it on: only
+                       the file (probe) or a being.yml override does.
 
 Design:
 - Probes are cheap (config checks, file existence, not network probes).
@@ -71,6 +76,7 @@ CAP_LOCAL_LLM = "local_llm"
 CAP_SECURE_MODEL = "secure_model"
 CAP_SECURE_MODEL_ALLOWED = "secure_model_allowed"
 CAP_AUDIO = "audio"
+CAP_WEB = "web"
 
 ALL_CAPABILITIES: Set[str] = {
     CAP_TERMINAL,
@@ -84,6 +90,7 @@ ALL_CAPABILITIES: Set[str] = {
     CAP_SECURE_MODEL,
     CAP_SECURE_MODEL_ALLOWED,
     CAP_AUDIO,
+    CAP_WEB,
 }
 
 # ---------------------------------------------------------------------------
@@ -102,6 +109,7 @@ _PRESET_SYSADMIN: Dict[str, bool] = {
     CAP_SECURE_MODEL: False,   # only if a secure endpoint is configured
     CAP_SECURE_MODEL_ALLOWED: True,   # sysadmin may host a secure model
     CAP_AUDIO: True,           # any node can be the voice terminal (probe gates)
+    CAP_WEB: False,            # egress: never on by preset (C3-08)
 }
 
 _PRESET_HOME: Dict[str, bool] = {
@@ -119,6 +127,7 @@ _PRESET_HOME: Dict[str, bool] = {
     # never provisions or writes one (HOME-AUTOMATION-SIMPLIFICATION S1).
     CAP_SECURE_MODEL_ALLOWED: False,
     CAP_AUDIO: True,           # any node can be the voice terminal (probe gates)
+    CAP_WEB: False,            # egress: never on by preset (C3-08)
 }
 
 
@@ -254,6 +263,23 @@ def _probe_audio() -> bool:
         return False
 
 
+def _probe_web() -> bool:
+    """Has the operator switched web search on (web_search.yml)?
+
+    Presence of the setting, never a variant check: the switch is the
+    same on a home appliance and a sysadmin workstation. Missing file,
+    unreadable file, or anything but a boolean ``true`` reads as off —
+    query text must not leave the machine because a config was absent.
+    ``being.yml capabilities: {web: ...}`` remains the override that wins
+    over this probe.
+    """
+    try:
+        from .web.search_config import is_enabled
+        return bool(is_enabled())
+    except Exception:
+        return False
+
+
 # Capabilities that have active probes (test for actual presence).
 # Others use the variant preset default (which can be overridden in being.yml).
 _PROBES = {
@@ -263,6 +289,7 @@ _PROBES = {
     CAP_LOCAL_LLM: _probe_local_llm,
     CAP_SECURE_MODEL: _probe_secure_model,
     CAP_AUDIO: _probe_audio,
+    CAP_WEB: _probe_web,
 }
 
 

@@ -398,12 +398,24 @@ class ToolSafetyFramework:
                 requires_confirmation=False,
                 reason="Read-only operation"
             )
-        elif tool_name in ("search", "search_discoveries", "recall_memory", "web_search"):
+        elif tool_name in ("search", "search_discoveries", "recall_memory"):
             return SafetyCheckResult(
                 risk_level=RiskLevel.SAFE,
                 allowed=True,
                 requires_confirmation=False,
                 reason="Search operation"
+            )
+        elif tool_name == "web_search":
+            # Egress, not a local read: the query text leaves the machine.
+            # MEDIUM executes without confirmation (the switch — CAP_WEB,
+            # off by default — is what gates it), but it is no longer
+            # SAFE, so it is audited and visible like any other
+            # side-effecting tool (C3-08).
+            return SafetyCheckResult(
+                risk_level=RiskLevel.MEDIUM,
+                allowed=True,
+                requires_confirmation=False,
+                reason="Web search: the query text leaves the machine (network egress)"
             )
         elif tool_name == "terminal_blocks":
             return SafetyCheckResult(

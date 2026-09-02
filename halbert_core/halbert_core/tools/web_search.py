@@ -15,6 +15,10 @@ from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
 from urllib.parse import quote_plus
 
+# The switch and the refusal text are shared with the SearXNG client and
+# the /api/web-search routes so every egress path says the same thing.
+from ..web.search_config import WEB_SEARCH_OFF_MESSAGE, is_web_search_enabled
+
 logger = logging.getLogger('halbert.tools.web_search')
 
 
@@ -251,6 +255,12 @@ async def handle_web_search(args: Dict) -> str:
     """Handle web_search tool call."""
     query = args.get("query", "")
     num_results = args.get("num_results", 5)
+
+    # Defence in depth: the executor only registers this tool while the
+    # switch is on, but nothing here may reach the network if it is off.
+    if not is_web_search_enabled():
+        logger.info("web_search refused: switch is off")
+        return WEB_SEARCH_OFF_MESSAGE
     
     if not query:
         return "Error: No search query provided"
