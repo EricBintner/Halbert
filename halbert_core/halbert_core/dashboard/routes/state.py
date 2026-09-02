@@ -19,7 +19,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Query
 from pydantic import BaseModel
 
-from ...continuity.provenance import FILE_CONTENT_PREDICATE
+from ...continuity.provenance import FILE_CONTENT_PREDICATE, forget_request
 from ...continuity.recall import LedgerUnavailable, recall_state
 from ...continuity.state_store import StateStore, default_state_db_path
 
@@ -103,3 +103,39 @@ async def by_request(request_id: str = Query(...)) -> List[Dict[str, Any]]:
         return []
     finally:
         store.close()
+
+
+class ForgetResponse(BaseModel):
+    """What forgetting actually reached, and what it did not."""
+
+    request_id: str
+    ledger_rows: int
+    audit_records: int
+    vault_rebuilt: bool
+    complete: bool
+    #: Stated explicitly rather than implied. INTEG-05's rule: a surface must
+    #: not claim more than it can show.
+    limits: str
+    errors: List[str] = []
+
+
+@router.post("/forget", response_model=ForgetResponse)
+async def forget(request_id: str = Query(..., description="The join key across both planes")) -> ForgetResponse:
+    """Remove one request's recorded words from the ledger and the audit log.
+
+    A POST, not a GET: this is destructive and must not be reachable by a
+    prefetch or a link crawler.
+
+    It removes the *words*. The facts and their timeline stay — what was true
+    and when is not the thing being forgotten.
+    """
+    report = forget_request(request_id)
+    return ForgetResponse(
+        request_id=report["request_id"],
+        ledger_rows=report["ledger_rows"],
+        audit_records=report["audit_records"],
+        vault_rebuilt=report["vault_rebuilt"],
+        complete=report["complete"],
+        limits=report["limits"],
+        errors=report["errors"],
+    )

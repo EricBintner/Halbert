@@ -53,6 +53,7 @@ __all__ = [
     "render_verify_report",
     "verify_result_as_dict",
     "set_audit_signer",
+    "erase_audit_by_request",
     "get_audit_signer",
     "reset_audit_signer",
     "AUDIT_EVENT_KIND",
@@ -286,6 +287,41 @@ def write_audit(
     except Exception as exc:
         log.error("audit record for %s/%s could not be written: %s", tool, mode, exc)
         return ""
+
+
+def erase_audit_by_request(request_id: str) -> int:
+    """Erase every audit record written under one request; return the count.
+
+    Drops the payload and the salt, so the content is unrecoverable from the
+    log and unbrute-forceable from the commitment, while every downstream
+    hash and signature still verifies. The chain is not broken by this - that
+    is the whole point of the salted-commitment design.
+
+    Returns 0 rather than raising when nothing matches. An already-erased
+    record has no payload and so cannot be found a second time: that is the
+    idempotent path, not a failure.
+
+    Never raises. Forgetting must not fail loudly at the one moment a person
+    is asking for privacy; the count says what happened.
+    """
+    if not request_id:
+        return 0
+    try:
+        events = audit_log()
+    except Exception as exc:
+        log.warning("audit erase for %s unavailable: %s", request_id, exc)
+        return 0
+    try:
+        with _append_lock(events.directory):
+            seqs = events.seqs_where(
+                lambda payload: payload.get("request_id") == request_id
+            )
+            if not seqs:
+                return 0
+            return int(events.erase_many(seqs))
+    except Exception as exc:
+        log.error("audit erase for %s failed: %s", request_id, exc)
+        return 0
 
 
 def verify_audit(directory: Optional[Any] = None) -> "VerifyResult":

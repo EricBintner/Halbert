@@ -37,6 +37,8 @@ __all__ = [
     "record_file_mode_change",
     "FILE_CONTENT_PREDICATE",
     "FILE_MODE_PREDICATE",
+    "forget_request",
+    "ERASURE_LIMITS",
 ]
 
 #: Predicate under which a file's current content digest is held.
@@ -225,3 +227,81 @@ def record_file_mode_change(
     finally:
         if owned is not None:
             owned.close()
+
+
+#: What erasure does not reach. Stated positively next to what it does, per
+#: INTEG-05's rule against a badge that claims more than it can show.
+ERASURE_LIMITS = (
+    "This removes the recorded reason from the change ledger and the content "
+    "of the matching audit records. It does not reach copies held elsewhere: "
+    "conversation messages (redacted separately), Haloysius memory_v2's "
+    "plaintext store, or blocks of a rewritten log shard that the filesystem "
+    "has not yet reused."
+)
+
+
+def forget_request(request_id: str, *, actor: str = "forget",
+                   reproject: bool = True) -> Dict[str, Any]:
+    """Remove one request's recorded words from every plane that holds them.
+
+    Keyed on ``request_id`` because that is the join between the planes, and
+    never on an event sequence number, which is not unique under a concurrent
+    append.
+
+    What this removes is the **words** — a reason is where a human utterance
+    lives. The facts and their timeline stay: what was true and when is not
+    the thing being forgotten, and deleting those rows would make the history
+    lie about itself.
+
+    Returns a per-plane report. Nothing raises: forgetting must not fail
+    loudly at the one moment a person is asking for privacy, and a partial
+    result is still worth reporting honestly. ``complete`` is False when a
+    plane could not be reached, so a caller can say so rather than showing a
+    clean tick over a job half done.
+    """
+    from .state_store import StateStore, default_state_db_path
+
+    report: Dict[str, Any] = {
+        "request_id": request_id,
+        "ledger_rows": 0,
+        "audit_records": 0,
+        "vault_rebuilt": False,
+        "errors": [],
+        "limits": ERASURE_LIMITS,
+    }
+    if not request_id:
+        report["errors"].append("no request_id given")
+        report["complete"] = False
+        return report
+
+    store = None
+    try:
+        store = StateStore(db_path=str(default_state_db_path()))
+        report["ledger_rows"] = store.redact_request(request_id, actor=actor)
+    except Exception as e:
+        logger.warning(f"forget_request({request_id}): ledger: {e}")
+        report["errors"].append(f"ledger: {e}")
+    finally:
+        if store is not None:
+            store.close()
+
+    try:
+        from ..obs.audit import erase_audit_by_request
+
+        report["audit_records"] = erase_audit_by_request(request_id)
+    except Exception as e:
+        logger.warning(f"forget_request({request_id}): audit: {e}")
+        report["errors"].append(f"audit: {e}")
+
+    if reproject:
+        try:
+            from .vault import VaultProjector
+
+            VaultProjector().rebuild()
+            report["vault_rebuilt"] = True
+        except Exception as e:
+            logger.warning(f"forget_request({request_id}): vault: {e}")
+            report["errors"].append(f"vault: {e}")
+
+    report["complete"] = not report["errors"]
+    return report
