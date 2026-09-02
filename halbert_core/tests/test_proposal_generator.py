@@ -386,3 +386,48 @@ class TestHandleApprovalDecision:
         assert any(rb["kind"] == "chmod" for rb in result["rolled_back"]), (
             "a completed undo was dropped because it could not be audited"
         )
+
+
+class TestHasExecutableFix:
+    """J3-7: which findings get a proposal at detection time.
+
+    Executable = at least one generated change the executor can apply
+    without a human editing a file (chmod today). Drop-in / fstab changes
+    are prose marked requires_manual_review, so proposing them at
+    detection would queue a verified no-op.
+    """
+
+    def _finding(self, detector, paths):
+        return Finding(
+            id="", detector=detector, severity="warning", title="t",
+            description="d", why_now="n", why_care="c", why_so="s",
+            affected_paths=paths,
+        )
+
+    def test_permissions_hygiene_key_is_executable(self, tmpdir):
+        from halbert_core.findings.proposal_generator import has_executable_fix
+        key = _ssh_key(tmpdir)
+        assert has_executable_fix(self._finding("permissions_hygiene", [key])) is True
+
+    def test_permissions_hygiene_without_matching_paths_is_not(self):
+        from halbert_core.findings.proposal_generator import has_executable_fix
+        assert has_executable_fix(self._finding("permissions_hygiene", ["/etc/motd"])) is False
+
+    def test_dropin_and_fstab_are_manual_review(self):
+        from halbert_core.findings.proposal_generator import has_executable_fix
+        assert has_executable_fix(
+            self._finding("dropin_conflicts", ["/etc/ssh/sshd_config.d/10.conf"])
+        ) is False
+        assert has_executable_fix(self._finding("fstab_phantom", ["/etc/fstab"])) is False
+
+    def test_unknown_detector_is_not(self):
+        from halbert_core.findings.proposal_generator import has_executable_fix
+        assert has_executable_fix(self._finding("acoustic_anomaly", [])) is False
+
+    def test_generator_uses_the_same_change_set(self, generator, tmpdir):
+        """The method the generator executes against and the module-level
+        predicate must not drift apart."""
+        from halbert_core.findings.proposal_generator import generate_changes
+        key = _ssh_key(tmpdir)
+        f = self._finding("permissions_hygiene", [key])
+        assert generator._generate_changes(f) == generate_changes(f)

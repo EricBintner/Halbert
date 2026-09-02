@@ -116,6 +116,87 @@ def handle_approval_decision(
     return generator.execute_proposal(proposal.id, reason=reason)
 
 
+# ---------------------------------------------------------------------------
+# Change generation (module level: the sweep asks whether a finding's fix is
+# executable before it builds a generator — no ApprovalEngine needed)
+
+
+def generate_changes(finding: Finding) -> List[Dict[str, Any]]:
+    """Generate proposed config changes for a finding.
+
+    This is a heuristic mapping from detector type to fix action.
+    """
+    changes: List[Dict[str, Any]] = []
+
+    if finding.detector == "dropin_conflicts":
+        # Propose removing the conflicting directive from the drop-in
+        for path in finding.affected_paths:
+            if ".d/" in path or "sshd_config.d" in path:
+                # This is a drop-in file — propose removing the conflict
+                changes.append({
+                    "path": path,
+                    "action": "remove_conflicting_directive",
+                    "description": f"Remove or comment out the conflicting directive in {path}",
+                    "requires_manual_review": True,
+                })
+
+    elif finding.detector == "fstab_phantom":
+        # Propose commenting out the phantom entry
+        for path in finding.affected_paths:
+            if path.endswith("fstab"):
+                changes.append({
+                    "path": path,
+                    "action": "comment_out_entry",
+                    "description": "Comment out the fstab entry referencing the non-existent device",
+                    "requires_manual_review": True,
+                })
+
+    elif finding.detector == "permissions_hygiene":
+        # Propose chmod to fix permissions
+        for path in finding.affected_paths:
+            if path.endswith(".ssh") and os.path.isdir(path):
+                changes.append(_chmod_change(path, "700"))
+            elif "id_" in path or "authorized_keys" in path:
+                changes.append(_chmod_change(path, "600"))
+            elif path.replace("\\", "/").endswith(".ssh/config"):
+                changes.append(_chmod_change(path, "644"))
+
+    return changes
+
+
+def has_executable_fix(finding: Finding) -> bool:
+    """True when at least one generated change can be applied by the
+    executor without a human editing a file (chmod today).
+
+    Drop-in / fstab changes are prose marked ``requires_manual_review``;
+    executing them is a verified no-op, so the sweep must not propose them
+    at detection time (J3-7) — those are asked for through
+    POST /api/findings/{id}/propose or the conversation.
+    """
+    return any(
+        not change.get("requires_manual_review")
+        for change in generate_changes(finding)
+    )
+
+
+def _chmod_change(path: str, mode: str) -> Dict[str, Any]:
+    """Build a chmod change dict, recording the current mode so
+    execution-time drift (the file's mode having changed since the
+    proposal was generated) can be detected."""
+    change: Dict[str, Any] = {
+        "path": path,
+        "action": "chmod",
+        "mode": mode,
+        "description": f"chmod {mode} {path}",
+    }
+    try:
+        current = os.stat(path).st_mode & 0o777
+        change["expected_current_mode"] = oct(current)
+    except OSError:
+        pass  # no recorded expectation; drift check will be skipped
+    return change
+
+
 class ProposalGenerator:
     """Generate and execute config change proposals for findings."""
 
@@ -326,63 +407,11 @@ class ProposalGenerator:
     # Change generation
 
     def _generate_changes(self, finding: Finding) -> List[Dict[str, Any]]:
-        """Generate proposed config changes for a finding.
-
-        This is a heuristic mapping from detector type to fix action.
-        """
-        changes: List[Dict[str, Any]] = []
-
-        if finding.detector == "dropin_conflicts":
-            # Propose removing the conflicting directive from the drop-in
-            for path in finding.affected_paths:
-                if ".d/" in path or "sshd_config.d" in path:
-                    # This is a drop-in file — propose removing the conflict
-                    changes.append({
-                        "path": path,
-                        "action": "remove_conflicting_directive",
-                        "description": f"Remove or comment out the conflicting directive in {path}",
-                        "requires_manual_review": True,
-                    })
-
-        elif finding.detector == "fstab_phantom":
-            # Propose commenting out the phantom entry
-            for path in finding.affected_paths:
-                if path.endswith("fstab"):
-                    changes.append({
-                        "path": path,
-                        "action": "comment_out_entry",
-                        "description": "Comment out the fstab entry referencing the non-existent device",
-                        "requires_manual_review": True,
-                    })
-
-        elif finding.detector == "permissions_hygiene":
-            # Propose chmod to fix permissions
-            for path in finding.affected_paths:
-                if path.endswith(".ssh") and os.path.isdir(path):
-                    changes.append(self._chmod_change(path, "700"))
-                elif "id_" in path or "authorized_keys" in path:
-                    changes.append(self._chmod_change(path, "600"))
-                elif path.replace("\\", "/").endswith(".ssh/config"):
-                    changes.append(self._chmod_change(path, "644"))
-
-        return changes
+        """Generate proposed config changes for a finding (see generate_changes)."""
+        return generate_changes(finding)
 
     def _chmod_change(self, path: str, mode: str) -> Dict[str, Any]:
-        """Build a chmod change dict, recording the current mode so
-        execution-time drift (the file's mode having changed since the
-        proposal was generated) can be detected."""
-        change: Dict[str, Any] = {
-            "path": path,
-            "action": "chmod",
-            "mode": mode,
-            "description": f"chmod {mode} {path}",
-        }
-        try:
-            current = os.stat(path).st_mode & 0o777
-            change["expected_current_mode"] = oct(current)
-        except OSError:
-            pass  # no recorded expectation; drift check will be skipped
-        return change
+        return _chmod_change(path, mode)
 
     def _describe_action(self, finding: Finding, changes: List[Dict[str, Any]]) -> str:
         """Generate a human-readable description of the proposed action."""

@@ -257,3 +257,93 @@ class TestWhysOnTheEvent:
         events = asyncio.run(runner.run_all())
         assert events[0].finding_id == fid
         assert events[0].proposal_id == "prop-1"
+
+
+class FakeGenerator:
+    def __init__(self, proposal_id="prop-auto", fail=False):
+        self.proposal_id = proposal_id
+        self.fail = fail
+        self.calls = []
+
+    def generate_for_finding(self, finding_id):
+        self.calls.append(finding_id)
+        if self.fail:
+            raise RuntimeError("boom")
+        return self.proposal_id
+
+
+def _ssh_key(tmp_path):
+    ssh_dir = tmp_path / ".ssh"
+    ssh_dir.mkdir(exist_ok=True)
+    key = ssh_dir / "id_rsa"
+    key.write_text("key\n")
+    key.chmod(0o644)
+    return str(key)
+
+
+def _executable_finding(tmp_path):
+    f = make_finding(detector="permissions_hygiene", title="Loose key mode")
+    f.affected_paths = [_ssh_key(tmp_path)]
+    return f
+
+
+class TestProposeAtDetection:
+    """J3-7: a NEW finding with an executable fix gets its proposal on the
+    sweep; manual-review findings and re-surfaced ones do not."""
+
+    def _runner(self, store, findings, generator):
+        runner = make_runner(store, FakeGate(), findings)
+        runner.proposal_generator = generator
+        return runner
+
+    def test_executable_finding_is_proposed_and_event_links_it(self, store, bus, tmp_path):
+        gen = FakeGenerator()
+        runner = self._runner(store, [_executable_finding(tmp_path)], gen)
+        events = asyncio.run(runner.run_all())
+        fid = store.list_all()[0].id
+        assert gen.calls == [fid]
+        assert events[0].proposal_id == "prop-auto"
+
+    def test_manual_review_finding_gets_no_proposal(self, store, bus):
+        gen = FakeGenerator()
+        dropin = make_finding(detector="dropin_conflicts")
+        dropin.affected_paths = ["/etc/ssh/sshd_config.d/10.conf"]
+        fstab = make_finding(detector="fstab_phantom", title="Phantom mount")
+        fstab.affected_paths = ["/etc/fstab"]
+        runner = self._runner(store, [dropin, fstab], gen)
+        events = asyncio.run(runner.run_all())
+        assert gen.calls == []
+        assert [e.proposal_id for e in events] == [None, None]
+
+    def test_resurfaced_finding_is_not_reproposed(self, store, bus, tmp_path):
+        first = _executable_finding(tmp_path)
+        fid = store.add(first)
+        store.link_proposal(fid, "prop-old")
+        store.update_status(fid, FindingStatus.RESOLVED.value)
+        gen = FakeGenerator()
+        runner = self._runner(store, [_executable_finding(tmp_path)], gen)
+        events = asyncio.run(runner.run_all())
+        assert gen.calls == []
+        assert events[0].proposal_id == "prop-old"
+
+    def test_generator_failure_is_not_fatal(self, store, bus, tmp_path):
+        gen = FakeGenerator(fail=True)
+        runner = self._runner(store, [_executable_finding(tmp_path)], gen)
+        events = asyncio.run(runner.run_all())
+        assert len(events) == 1
+        assert events[0].proposal_id is None
+        assert store.count("open") == 1
+
+    def test_injected_generator_is_used_over_the_default(self, store, bus, tmp_path):
+        gen = FakeGenerator(proposal_id="prop-injected")
+        runner = DetectorRunner(
+            finding_store=store,
+            proposal_store=FakeProposalStore(),
+            being_config=BeingConfig(),
+            guardrails=SimpleNamespace(safe_mode_active=False),
+            gate=FakeGate(),
+            proposal_generator=gen,
+        )
+        runner.detectors = [FakeDetector([_executable_finding(tmp_path)])]
+        events = asyncio.run(runner.run_all())
+        assert events[0].proposal_id == "prop-injected"
