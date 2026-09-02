@@ -2,22 +2,28 @@
 // Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 /**
  * SendToChat - Universal component to send context to chat.
- * 
+ *
  * Usage:
- * - Click: Continue in current conversation
- * - Shift+Click or Right-Click: Open new conversation
- * 
+ * - Click: Continue in chat
+ *
  * Props:
  * - context: The text/data to send to chat
  * - title: Display title for the item
  * - type: Type of item (backup, service, storage, etc.)
  * - itemId: Optional ID for @mention
- * - alwaysNewChat: If true, always creates new conversation
  * - useSpecialist: If true, uses the configured specialist model for deep research
  * - className: Additional CSS classes
+ *
+ * CC-02: this used to distinguish "continue in the current conversation"
+ * (click) from "open a new conversation" (shift+click / right-click), via
+ * an OpenChatEvent.newConversation flag every producer set but Layout.tsx's
+ * halbert:open-chat handler never read — a dead affordance advertised by a
+ * tooltip and an icon swap that did nothing. Removed rather than wired up:
+ * the continuity direction is one seamless chat with hidden topic threads,
+ * not a chooser between conversations.
  */
 
-import { MessageSquare, MessageSquarePlus } from 'lucide-react'
+import { MessageSquare } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 
@@ -26,7 +32,6 @@ export interface SendToChatProps {
   title: string
   type: string
   itemId?: string
-  alwaysNewChat?: boolean
   useSpecialist?: boolean
   variant?: 'icon' | 'button' | 'text'
   label?: string
@@ -39,7 +44,6 @@ export interface OpenChatEvent {
   type: string
   context?: string
   itemId?: string
-  newConversation?: boolean
   useSpecialist?: boolean
   prefillMessage?: string
   reuseExisting?: boolean  // Phase 18: Reuse existing conversation with same title
@@ -82,7 +86,6 @@ export function SendToChat({
   title,
   type,
   itemId,
-  alwaysNewChat = false,
   useSpecialist = false,
   variant = 'icon',
   label,
@@ -91,82 +94,58 @@ export function SendToChat({
   const handleClick = (e: React.MouseEvent) => {
     e.preventDefault()
     e.stopPropagation()
-    
-    const newConversation = alwaysNewChat || e.shiftKey
-    
+
     openChat({
       title,
       type,
       context,
       itemId,
-      newConversation,
       useSpecialist,
     })
   }
-  
-  const handleContextMenu = (e: React.MouseEvent) => {
-    e.preventDefault()
-    e.stopPropagation()
-    
-    // Right-click always opens new conversation
-    openChat({
-      title,
-      type,
-      context,
-      itemId,
-      newConversation: true,
-      useSpecialist,
-    })
-  }
-  
-  const Icon = alwaysNewChat ? MessageSquarePlus : MessageSquare
-  const tooltipText = alwaysNewChat 
-    ? 'Discuss in new chat'
-    : 'Continue in chat (Shift+click for new)'
-  
+
+  const tooltipText = 'Continue in chat'
+
   if (variant === 'icon') {
     return (
       <button
         onClick={handleClick}
-        onContextMenu={handleContextMenu}
         title={tooltipText}
         className={cn(
           "p-1.5 rounded-md hover:bg-muted transition-colors text-muted-foreground hover:text-foreground",
           className
         )}
       >
-        <Icon className="h-4 w-4" />
+        <MessageSquare className="h-4 w-4" />
       </button>
     )
   }
-  
+
   if (variant === 'button') {
     return (
       <Button
         variant="outline"
         size="sm"
         onClick={handleClick}
-        onContextMenu={handleContextMenu}
         title={tooltipText}
         className={className}
       >
-        <Icon className="h-4 w-4 mr-2" />
+        <MessageSquare className="h-4 w-4 mr-2" />
         {label || 'Ask AI'}
       </Button>
     )
   }
-  
+
   // Text variant
   return (
     <button
       onClick={handleClick}
-      onContextMenu={handleContextMenu}
       className={cn(
         "inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors",
         className
       )}
     >
-      <Icon className="h-3 w-3" />
+      <MessageSquare className="h-3 w-3" />
       {label || 'Ask AI'}
     </button>
   )

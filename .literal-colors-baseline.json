@@ -1,7 +1,6 @@
 {
   "files": {
     "halbert_core/halbert_core/dashboard/frontend/src/components/ComponentLibraryViewer.tsx": 43,
-    "halbert_core/halbert_core/dashboard/frontend/src/components/CompressionSettings.tsx": 16,
     "halbert_core/halbert_core/dashboard/frontend/src/components/ConfigEditor.tsx": 16,
     "halbert_core/halbert_core/dashboard/frontend/src/components/Onboarding.tsx": 7,
     "halbert_core/halbert_core/dashboard/frontend/src/components/agent/ContextBar.tsx": 8,
@@ -29,5 +28,5 @@
     "halbert_core/halbert_core/dashboard/frontend/src/pages/Services.tsx": 10,
     "halbert_core/halbert_core/dashboard/frontend/src/pages/Sharing.tsx": 13
   },
-  "total": 227
+  "total": 211
 }

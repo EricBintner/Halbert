@@ -91,7 +91,6 @@ export function SystemItemActions({
       type: item.type,
       context: item.context,
       itemId: item.id,
-      newConversation: false,
       useSpecialist: false,
     })
   }
@@ -102,13 +101,11 @@ export function SystemItemActions({
       onChat()
       return
     }
-    // Default: new conversation with full item data
     openChat({
       title: item.name,
       type: item.type,
       context: item.context,
       itemId: item.id,
-      newConversation: true,
       useSpecialist: false,
       // Pass full item data for PageContext
       description: item.description,
@@ -123,13 +120,11 @@ export function SystemItemActions({
       onResearch()
       return
     }
-    // Default: new conversation with specialist model
     openChat({
       title: item.name,
       type: item.type,
       context: item.context,
       itemId: item.id,
-      newConversation: true,
       useSpecialist: true,
       prefillMessage: `Deep dive into ${item.name}: analyze configuration, potential issues, and optimization opportunities.`,
     })

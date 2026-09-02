@@ -19,12 +19,6 @@ export { CodeBlock } from './CodeBlock'
 export { MarkdownRenderer } from './MarkdownRenderer'
 export { PageHeader, type PageHeaderProps } from './PageHeader'
 
-// Phase 52: ChromaDB Storage Management
-export { ChromaDBSettings } from './ChromaDBSettings'
-
-// Dataset Download Manager
-export { DatasetManager } from './DatasetManager'
-
 // Phase 54: Data Version and Freshness
 export { DataVersionCard } from './DataVersionCard'
 

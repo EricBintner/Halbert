@@ -1003,7 +1003,6 @@ export function Sharing() {
                         type: 'config',
                         context: `Editing **${itemName}** sharing configuration.\n\nFile: \`${configPath}\`\n\nI can help you modify this config file. Just tell me what changes you'd like to make.`,
                         configPath: configPath,
-                        newConversation: true,
                       })
                       // Also open the config editor
                       window.dispatchEvent(new CustomEvent('halbert:open-config-editor', {

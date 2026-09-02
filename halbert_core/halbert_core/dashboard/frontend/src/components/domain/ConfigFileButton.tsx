@@ -106,7 +106,6 @@ export function ConfigFileButton({
             type: 'config',
             context: `Editing config file: \`${path}\`\n\nI can help you modify this config file. Just tell me what changes you'd like to make.`,
             configPath: path,
-            newConversation: true,
           }
         }))
       }
