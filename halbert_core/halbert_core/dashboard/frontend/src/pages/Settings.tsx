@@ -46,6 +46,7 @@ import { ComponentLibraryViewer } from '@/components/ComponentLibraryViewer'
 import { VoiceEnrollmentModal } from '@/components/audio'
 import { LegalNoticesModal } from '@/components/legal/LegalNoticesModal'
 import { apiUrl } from '@/lib/apiBase'
+import { WebSearchSwitch } from '@/components/settings/WebSearchSwitch'
 
 /**
  * U3-02/U3-04: the 12 settings tab bodies were all statically imported, so
@@ -798,6 +799,9 @@ export function Settings() {
             isDeepScanning={isDeepScanning}
             onDeepScan={handleDeepScan}
           />
+          {/* C3-08/C3-16: the outbound switches live with the host's own
+           * settings. The card owns its fetch, so nothing above changes. */}
+          <WebSearchSwitch />
         </TabsContent>
 
         {/* AI Models Tab - the full picker on sysadmin, the compute-peer link
