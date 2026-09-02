@@ -34,6 +34,12 @@ logger = logging.getLogger("halbert.streaming.pty")
 # dropped is still in the session's scrollback and comes back on re-attach.
 FANOUT_QUEUE_CHUNKS = 1024
 
+# After SIGKILL the child is collected by a WNOHANG wait, which can miss it if
+# the signal has not been delivered yet. Retry a few times rather than leaving
+# a zombie behind (R04-F12).
+_KILL_REAP_ATTEMPTS = 5
+_KILL_REAP_INTERVAL_S = 0.05
+
 _DEFAULT_BUFFER_BYTES = 1024 * 1024  # 1 MiB scrollback
 
 
@@ -397,22 +403,47 @@ class PTYSession:
                     pass
                 setattr(self, attr, None)
 
-    def _escalate_kill(self) -> None:
+    def _escalate_kill(self, _attempt: int = 0) -> None:
         """SIGKILL a child that did not go down on SIGTERM, then reap it.
 
         Split out of ``kill()`` so it can run from a loop callback instead of
         behind a blocking sleep. Idempotent, and safe if the child has since
         exited on its own -- ``_reap`` is non-blocking and ``os.kill`` on a
         gone pid raises OSError, which is what the guard is for.
+
+        The reap right after SIGKILL usually finds the child already gone, but
+        not always: the signal is delivered asynchronously, so a WNOHANG wait
+        in that same instant can return 0 and leave a zombie nothing would
+        ever collect (R04-F12). So it retries on the loop a few times before
+        giving up, rather than reaping once and hoping.
+
+        "Has the child been collected?" is ``_exit_code is not None``, not
+        ``_exited``: kill() sets ``_exited`` unconditionally on its way out to
+        mark the session torn down, which happens before any deferred attempt
+        runs. Reading _exited here would make every deferred attempt a no-op.
         """
+        if self._pid is None:
+            return
         self._reap(blocking=False)
-        if self._exited or self._pid is None:
+        if self._exit_code is not None:
+            return
+        if _attempt == 0:
+            try:
+                os.kill(self._pid, signal.SIGKILL)
+            except OSError:
+                pass
+            self._reap(blocking=False)
+        if self._exit_code is not None or _attempt >= _KILL_REAP_ATTEMPTS:
             return
         try:
-            os.kill(self._pid, signal.SIGKILL)
-        except OSError:
-            pass
-        self._reap(blocking=False)
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            time.sleep(_KILL_REAP_INTERVAL_S)
+            self._escalate_kill(_attempt + 1)
+            return
+        loop.call_later(
+            _KILL_REAP_INTERVAL_S, self._escalate_kill, _attempt + 1
+        )
 
     def _set_winsize(self, cols: int, rows: int) -> None:
         if self._master_fd is None:

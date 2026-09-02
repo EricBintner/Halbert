@@ -300,3 +300,50 @@ async def test_a_failed_fork_does_not_leak_the_pty_fd_pair():
     after = _open_fds()
     os.close(after)
     assert after <= before, f"fds leaked: next free fd moved {before} -> {after}"
+
+
+@pytest.mark.asyncio
+async def test_a_sigkilled_child_is_eventually_reaped_not_left_a_zombie():
+    """R04-F12. SIGKILL is delivered asynchronously, so the WNOHANG wait in
+    the same instant can return 0. Reaping once and hoping left a zombie
+    nothing would ever collect."""
+    import os
+    from unittest import mock
+
+    session = PTYSession("trap '' TERM; sleep 30")
+    await session.spawn()
+    await asyncio.sleep(0.2)
+    pid = session.pid
+
+    real_waitpid = os.waitpid
+    misses = {"n": 0}
+    MISS = 4  # more than the two reaps kill()+escalate do inline
+
+    def slow_to_die(target, flags):
+        """Pretend the child outlives the first few WNOHANG waits."""
+        if target == pid and flags & os.WNOHANG and misses["n"] < MISS:
+            misses["n"] += 1
+            return (0, 0)
+        return real_waitpid(target, flags)
+
+    attempts = []
+    real_escalate = session._escalate_kill
+
+    def counting_escalate(_attempt=0):
+        attempts.append(_attempt)
+        return real_escalate(_attempt)
+
+    session._escalate_kill = counting_escalate
+
+    with mock.patch("os.waitpid", side_effect=slow_to_die):
+        session.kill()
+        for _ in range(40):
+            await asyncio.sleep(0.02)
+            if session.exit_code is not None:
+                break
+
+    assert misses["n"] == MISS, "the child died too early to exercise the retry"
+    assert len(attempts) > 1, f"no deferred retry happened: {attempts}"
+    assert session.exit_code is not None, "the child was never collected"
+    with pytest.raises(OSError):
+        os.waitpid(pid, os.WNOHANG)  # already collected
