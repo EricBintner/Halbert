@@ -25,6 +25,7 @@ Voice Assistants handles the configuration.
 from __future__ import annotations
 
 import asyncio
+import hmac
 import json
 import logging
 import os
@@ -32,9 +33,17 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 
+from ..audio.ingress.wyoming_ingress import read_wyoming_frame
+
 logger = logging.getLogger("halbert.integrations.wyoming")
 
-DEFAULT_HOST = "0.0.0.0"
+# Loopback, not 0.0.0.0. This server accepts a transcript from anyone who can
+# reach the port and runs it as an agent turn at speaker_role="unknown", whose
+# RoleGate cap is MEDIUM without confirmation — i.e. anyone on the LAN could
+# drive the machine. A satellite on another host is a deliberate choice the
+# operator makes by setting WYOMING_HOST, and it should come with a token
+# (R9-F01).
+DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 10400
 
 # Ceiling on one voice turn. A module constant rather than a literal so the
@@ -53,17 +62,39 @@ class WyomingConfig:
     sleep_mode_entity: str = "input_boolean.sleeping"
     # Only speak proactively for Level 2+ (confirm-required and above)
     proactive_min_level: int = 2
+    # Shared secret a client must present before it can drive a turn. Empty
+    # is only allowed while the server is on loopback; see require_token.
+    auth_token: str = ""
+
+    @property
+    def is_loopback_only(self) -> bool:
+        return self.host in ("127.0.0.1", "::1", "localhost")
+
+    @property
+    def require_token(self) -> bool:
+        """Off-loopback listeners must authenticate; loopback need not."""
+        return not self.is_loopback_only
 
     @classmethod
     def from_env(cls) -> "WyomingConfig":
         return cls(
             host=os.environ.get("WYOMING_HOST", DEFAULT_HOST),
             port=int(os.environ.get("WYOMING_PORT", str(DEFAULT_PORT))),
-            enabled=os.environ.get("WYOMING_ENABLED", "1").lower() in ("1", "true", "yes"),
+            # Off unless asked for. It used to default on, so every install
+            # opened a port that runs agent turns (R9-F01).
+            enabled=os.environ.get("WYOMING_ENABLED", "0").lower() in ("1", "true", "yes"),
+            auth_token=os.environ.get("WYOMING_TOKEN", ""),
             guest_mode_entity=os.environ.get("WYOMING_GUEST_MODE_ENTITY", "input_boolean.guest_mode"),
             sleep_mode_entity=os.environ.get("WYOMING_SLEEP_MODE_ENTITY", "input_boolean.sleeping"),
             proactive_min_level=int(os.environ.get("WYOMING_PROACTIVE_MIN_LEVEL", "2")),
         )
+
+
+def _tokens_match(presented: str, expected: str) -> bool:
+    """Constant-time comparison, so a wrong token leaks no prefix length."""
+    if not expected:
+        return False
+    return hmac.compare_digest(str(presented or ""), str(expected))
 
 
 class HalbertWyomingAgent:
@@ -193,7 +224,19 @@ class HalbertWyomingAgent:
             logger.error(f"Agent processing error in Wyoming: {e}")
             return "I encountered an error processing that request."
 
-        return "".join(response_chunks).strip()
+        # This string goes back over the wire to HA's TTS, which reads it
+        # aloud verbatim — so it gets the same treatment proactive_speak
+        # already gave its text. Without it the satellite said "hash hash
+        # Samba shares, star star etc slash samba slash smb dot conf star
+        # star" (U2-05). Pronunciation substitutions ride along so domain
+        # terms (systemd, MQTT, NVMe) are said correctly.
+        spoken = _strip_markdown_for_speech("".join(response_chunks))
+        try:
+            from .modality_wiring import apply_pronunciation
+            spoken = apply_pronunciation(spoken)
+        except Exception:
+            pass  # engine not installed — skip pronunciation
+        return spoken.strip()
 
     async def _resolve_area_context(self, area_id: str) -> str:
         """Resolve area_id to a human-readable context string.
@@ -223,6 +266,22 @@ class HalbertWyomingAgent:
 
         return ""
 
+    def _set_channel_wyoming_active(self, active: bool) -> None:
+        """Tell the channel capability a satellite is (or is not) connected.
+
+        ``set_wyoming_active`` had no callers at all, so the capability never
+        learned that a satellite was on the line and ``has_speaker()`` stayed
+        False through the whole turn (U2-15). Never fatal to a voice turn.
+        """
+        try:
+            from haloysius.seam import get_app_seam
+            seam = get_app_seam()
+            cap = seam.get_channel_capability() if seam is not None else None
+            if cap is not None and hasattr(cap, "set_wyoming_active"):
+                cap.set_wyoming_active(active)
+        except Exception as e:
+            logger.debug(f"Channel capability not updated (non-fatal): {e}")
+
     def _get_agent(self):
         """Get the agent instance from the dashboard route."""
         if self._agent_factory:
@@ -245,22 +304,52 @@ class HalbertWyomingAgent:
         peer = writer.get_extra_info("peername")
         logger.info(f"Wyoming client connected: {peer}")
 
+        # A connected satellite is a mouth and an ear the machine did not
+        # have a moment ago; the channel capability decides the delivery
+        # modality from exactly that (U2-15).
+        self._set_channel_wyoming_active(True)
+        authed = not self.config.require_token
         try:
             while True:
-                line = await reader.readline()
-                if not line:
+                # The canonical Wyoming reader, not readline(). The protocol
+                # is a JSON header line optionally followed by a JSON data
+                # block and a binary payload, and both lengths live on the
+                # HEADER. This loop used to read payload_length out of
+                # data{} instead, so it never drained the PCM and then tried
+                # to parse raw audio as JSON — one audio-chunk frame produced
+                # eight "Invalid JSON" warnings and no pong (R3-F04). One
+                # parser now serves both sides (R9-F10).
+                frame = await read_wyoming_frame(reader)
+                if frame is None:
                     break
 
-                try:
-                    msg = json.loads(line.decode("utf-8").strip())
-                except json.JSONDecodeError:
-                    logger.warning(f"Invalid JSON from Wyoming client: {line!r}")
-                    continue
+                msg_type = frame.msg_type
+                data = frame.data
 
-                msg_type = msg.get("type", "")
-                data = msg.get("data", {})
+                if self.config.require_token and not authed:
+                    # Everything before the handshake is refused, including
+                    # transcripts: this port runs agent turns.
+                    if msg_type == "authenticate" and _tokens_match(
+                        data.get("token", ""), self.config.auth_token
+                    ):
+                        authed = True
+                        writer.write((json.dumps({"type": "authenticated"}) + "\n").encode("utf-8"))
+                        await writer.drain()
+                        continue
+                    logger.warning(f"Unauthenticated Wyoming frame from {peer}: {msg_type}")
+                    writer.write(
+                        (json.dumps({"type": "error", "data": {"text": "unauthenticated"}}) + "\n")
+                        .encode("utf-8")
+                    )
+                    await writer.drain()
+                    break
 
-                if msg_type == "transcript":
+                if msg_type == "authenticate":
+                    # Already authenticated, or none required.
+                    writer.write((json.dumps({"type": "authenticated"}) + "\n").encode("utf-8"))
+                    await writer.drain()
+
+                elif msg_type == "transcript":
                     text = data.get("text", "")
                     conversation_id = data.get("conversation_id", "")
                     # HA passes context with area_id from the satellite
@@ -285,13 +374,10 @@ class HalbertWyomingAgent:
                     await writer.drain()
 
                 elif msg_type == "audio-chunk":
-                    # Drain the binary PCM payload so it doesn't corrupt the
-                    # next readline() (REV-03 F4). Wyoming frames are:
-                    #   {"type":"audio-chunk","payload_length":N}\n + N bytes
-                    payload_len = data.get("payload_length", 0)
-                    if payload_len > 0:
-                        await reader.readexactly(payload_len)
-                    # We only handle text transcripts — audio is silently drained
+                    # read_wyoming_frame already consumed the PCM payload.
+                    # This endpoint is the text conversation handler; audio
+                    # ingestion is WyomingIngress's job.
+                    pass
 
                 elif msg_type == "describe":
                     # Wyoming discovery: reply with an "info" event per the
@@ -322,6 +408,7 @@ class HalbertWyomingAgent:
         except Exception as e:
             logger.error(f"Wyoming client error: {e}")
         finally:
+            self._set_channel_wyoming_active(False)
             writer.close()
             try:
                 await writer.wait_closed()
@@ -335,6 +422,15 @@ class HalbertWyomingAgent:
             logger.warning("Wyoming agent already running")
             return
 
+        if self.config.require_token and not self.config.auth_token:
+            # Fail closed rather than quietly exposing agent turns to the
+            # network. The operator asked for a non-loopback bind; they have
+            # to say who may use it.
+            raise RuntimeError(
+                f"Wyoming agent refuses to listen on {self.config.host} without "
+                "a shared secret — set WYOMING_TOKEN, or bind 127.0.0.1"
+            )
+
         self._loop = asyncio.get_running_loop()
         self._server = await asyncio.start_server(
             self._handle_client,
@@ -342,7 +438,10 @@ class HalbertWyomingAgent:
             port=self.config.port,
         )
         self._running = True
-        logger.info(f"Wyoming agent listening on {self.config.host}:{self.config.port}")
+        logger.info(
+            f"Wyoming agent listening on {self.config.host}:{self.config.port} "
+            f"({'token required' if self.config.require_token else 'loopback only'})"
+        )
 
     async def stop(self) -> None:
         """Stop the Wyoming TCP server.
@@ -371,10 +470,19 @@ class HalbertWyomingAgent:
         logger.info("Wyoming agent stopped")
 
     def _close_safely(self) -> None:
-        """Close the server from its own loop (called via call_soon_threadsafe)."""
-        if self._server:
-            asyncio.ensure_future(self._server.aclose(), loop=self._loop)
-            self._server = None
+        """Close the server from its own loop (called via call_soon_threadsafe).
+
+        ``asyncio.Server.aclose()`` does not exist on Python 3.10 (the floor
+        this project supports), so this raised AttributeError inside the
+        callback and the TCP server was never actually closed — the port
+        stayed bound for the life of the process (R3-F10b).
+        """
+        server, self._server = self._server, None
+        if server is None:
+            return
+        server.close()
+        if self._loop is not None and not self._loop.is_closed():
+            asyncio.ensure_future(server.wait_closed(), loop=self._loop)
 
     @property
     def is_running(self) -> bool:

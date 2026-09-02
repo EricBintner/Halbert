@@ -25,6 +25,31 @@ logger = logging.getLogger("halbert.audio.routes")
 router = APIRouter(prefix="/audio", tags=["audio"])
 
 
+# ---------------------------------------------------------------------------
+# Process-wide coordinator reference (get_event_bus pattern)
+# ---------------------------------------------------------------------------
+#
+# The coordinator lives on ``app.state.audio_coordinator``, which is reachable
+# from a request and from nowhere else. Everything outside a request that needs
+# to know whether audio is running — the channel capability, which decides
+# whether Halbert has a mouth at all — held no app reference, so it could only
+# ever answer "no". Same shape as the TTS egress hub's singleton, and set from
+# the same place in app.py's startup.
+
+_coordinator: Optional[object] = None
+
+
+def set_audio_pipeline(coordinator: Optional[object]) -> None:
+    """Publish (or clear) the running audio pipeline coordinator."""
+    global _coordinator
+    _coordinator = coordinator
+
+
+def get_audio_pipeline() -> Optional[object]:
+    """The running audio pipeline coordinator, or None if audio is not up."""
+    return _coordinator
+
+
 if FASTAPI_AVAILABLE:
 
     from ...audio.config import (

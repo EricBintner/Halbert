@@ -148,6 +148,10 @@ class HalbertChannelCapability:
             return self._audio_pipeline
         try:
             from ..dashboard.routes.audio import get_audio_pipeline
+        except Exception:
+            # No dashboard in this process (a bare CLI or test run).
+            return None
+        try:
             return get_audio_pipeline()
         except Exception:
             return None

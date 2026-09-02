@@ -656,6 +656,10 @@ def create_app(enable_cors: bool = True) -> FastAPI:
             logger.info("Audio pipeline skipped (no audio capability)")
         else:
             coordinator = None
+            # Imported before the try: the handler below calls it, so a
+            # failure in one of the audio imports must not turn into a
+            # NameError in the cleanup path.
+            from .routes.audio import set_audio_pipeline
             try:
                 from ..audio.config import load_config as load_audio_config
                 from ..audio.pipeline import AudioPipelineCoordinator
@@ -671,6 +675,13 @@ def create_app(enable_cors: bool = True) -> FastAPI:
                     )
                 await coordinator.start()
                 app.state.audio_coordinator = coordinator
+                # Publish it where code outside a request can see it. The
+                # channel capability asks this to decide whether Halbert has
+                # a mouth; until it did, has_speaker() was always False and
+                # every downstream voice seam — should_speak(), the TTS
+                # egress hook, the speaking state, the HUD relay — was
+                # unreachable in production (U2-15 / R9-F05).
+                set_audio_pipeline(coordinator)
                 logger.info(
                     "Audio pipeline coordinator started "
                     f"(dashboard ingress {'attached' if attached else 'NOT attached'})"
@@ -687,6 +698,7 @@ def create_app(enable_cors: bool = True) -> FastAPI:
                     except Exception as stop_err:
                         logger.debug(f"Coordinator cleanup after failed start: {stop_err}")
                 app.state.audio_coordinator = None
+                set_audio_pipeline(None)
 
         # Voice mode (O5): acoustic anomalies ride the findings chain. The
         # bridge sets the coordinator's on_acoustic_event callback; a tagged
@@ -886,6 +898,10 @@ def create_app(enable_cors: bool = True) -> FastAPI:
                 logger.info("Audio pipeline coordinator stopped")
             except Exception as e:
                 logger.warning(f"Failed to stop audio pipeline coordinator: {e}")
+        # Cleared unconditionally: a stop() that raised still leaves a
+        # coordinator nobody should answer has_speaker() from.
+        from .routes.audio import set_audio_pipeline as _clear_audio_pipeline
+        _clear_audio_pipeline(None)
 
         # Voice mode (O3): drop the hub's pipeline reference on shutdown so
         # it can never mint barge-in tokens against a stopped coordinator.

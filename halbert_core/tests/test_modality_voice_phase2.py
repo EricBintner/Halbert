@@ -220,6 +220,61 @@ class TestHalbertChannelCapability:
         assert cap.current_modality() == "voice"
 
 
+class TestChannelCapabilityFindsTheRunningPipeline:
+    """U2-15 / R9-F05: the production shape, which nothing tested.
+
+    Every test above hands the capability a pipeline at construction. The
+    seam builds it with no arguments (``HalbertChannelCapability()``), and
+    the lazy lookup behind that imported ``get_audio_pipeline`` from
+    ``dashboard.routes.audio`` — a function that did not exist. So in
+    production ``_get_pipeline()`` was always None, ``has_speaker()`` always
+    False, and every seam downstream of it — ``should_speak()``, the TTS
+    egress hook, the /voice speaking state, the HUD relay — was unreachable.
+    """
+
+    class _RunningPipeline:
+        """Status shaped the way AudioPipelineCoordinator reports it: the
+        mouth is ``tts``, the ear is ``vad``/``wake_word``."""
+
+        def get_status(self):
+            return {"engines": {"tts": True, "vad": True, "wake_word": True}}
+
+    def teardown_method(self):
+        from halbert_core.dashboard.routes.audio import set_audio_pipeline
+        set_audio_pipeline(None)
+
+    def test_a_seam_built_capability_sees_a_running_pipeline(self):
+        from halbert_core.dashboard.routes.audio import set_audio_pipeline
+        from halbert_core.integrations.channel_capability import HalbertChannelCapability
+
+        cap = HalbertChannelCapability()  # exactly how app_seam builds it
+        assert cap.has_speaker() is False
+
+        set_audio_pipeline(self._RunningPipeline())
+        assert cap.has_speaker() is True
+        assert cap.has_microphone() is True
+
+    def test_stopping_the_pipeline_takes_the_mouth_away_again(self):
+        from halbert_core.dashboard.routes.audio import set_audio_pipeline
+        from halbert_core.integrations.channel_capability import HalbertChannelCapability
+
+        set_audio_pipeline(self._RunningPipeline())
+        cap = HalbertChannelCapability()
+        assert cap.has_speaker() is True
+
+        set_audio_pipeline(None)
+        assert cap.has_speaker() is False
+
+    def test_an_injected_pipeline_still_wins(self):
+        """Construction-time injection stays authoritative for tests."""
+        from halbert_core.dashboard.routes.audio import set_audio_pipeline
+        from halbert_core.integrations.channel_capability import HalbertChannelCapability
+
+        set_audio_pipeline(None)
+        cap = HalbertChannelCapability(audio_pipeline=self._RunningPipeline())
+        assert cap.has_speaker() is True
+
+
 # ---------------------------------------------------------------------------
 # HalbertVoiceAuthGate
 # ---------------------------------------------------------------------------
