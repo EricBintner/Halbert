@@ -24,10 +24,10 @@ interface AudioStatus {
 
 const STATE_COLORS: Record<AudioState, string> = {
   idle: 'text-muted-foreground',
-  listening: 'text-blue-500',
-  recognized: 'text-green-500',
-  thinking: 'text-purple-500',
-  speaking: 'text-orange-500',
+  listening: 'text-vermilion-strong',
+  recognized: 'text-success',
+  thinking: 'text-info',
+  speaking: 'text-warning',
   error: 'text-destructive',
 }
 

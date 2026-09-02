@@ -56,7 +56,7 @@ function BeingSettings() {
 
   const loadPersonas = async () => {
     try {
-      const resp = await fetch(`${API_BASE}/api/persona/list`)
+      const resp = await fetch(`${API_BASE}/persona/list`)
       if (resp.ok) {
         const data = await resp.json()
         setPersonas(data.personas || [])
@@ -70,7 +70,7 @@ function BeingSettings() {
   const createPersona = async () => {
     if (!newPersonaName.trim()) return
     try {
-      const resp = await fetch(`${API_BASE}/api/persona`, {
+      const resp = await fetch(`${API_BASE}/persona`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ display_name: newPersonaName.trim() }),
@@ -89,7 +89,7 @@ function BeingSettings() {
   const activatePersona = async (id: string) => {
     if (id === activePersonaId) return
     try {
-      const resp = await fetch(`${API_BASE}/api/persona/${id}/activate`, { method: 'POST' })
+      const resp = await fetch(`${API_BASE}/persona/${id}/activate`, { method: 'POST' })
       if (resp.ok) {
         setActivePersonaId(id)
         await loadConfig()
@@ -105,7 +105,7 @@ function BeingSettings() {
   const deletePersona = async (id: string) => {
     if (!confirm('Delete this persona? This cannot be undone.')) return
     try {
-      const resp = await fetch(`${API_BASE}/api/persona/${id}`, { method: 'DELETE' })
+      const resp = await fetch(`${API_BASE}/persona/${id}`, { method: 'DELETE' })
       if (resp.ok) {
         await loadPersonas()
       } else {

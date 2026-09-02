@@ -22,22 +22,22 @@ const STATE_CONFIG: Record<AgentState, { label: string; color: string; bgColor: 
     bgColor: 'bg-muted',
     pulseColor: 'bg-muted-foreground'
   },
-  planning: { 
-    label: 'Planning', 
-    color: 'text-info dark:text-info', 
-    bgColor: 'bg-blue-100 dark:bg-info/20',
+  planning: {
+    label: 'Planning',
+    color: 'text-info dark:text-info',
+    bgColor: 'bg-info-muted dark:bg-info/20',
     pulseColor: 'bg-info'
   },
-  searching: { 
-    label: 'Searching', 
-    color: 'text-purple-600 dark:text-purple-400', 
-    bgColor: 'bg-purple-100 dark:bg-purple-500/20',
-    pulseColor: 'bg-purple-500'
+  searching: {
+    label: 'Searching',
+    color: 'text-info dark:text-info',
+    bgColor: 'bg-info-muted dark:bg-info/20',
+    pulseColor: 'bg-info'
   },
-  reading: { 
-    label: 'Reading', 
-    color: 'text-info dark:text-info', 
-    bgColor: 'bg-cyan-100 dark:bg-info/20',
+  reading: {
+    label: 'Reading',
+    color: 'text-info dark:text-info',
+    bgColor: 'bg-info-muted dark:bg-info/20',
     pulseColor: 'bg-info'
   },
   executing: { 
@@ -54,9 +54,9 @@ const STATE_CONFIG: Record<AgentState, { label: string; color: string; bgColor: 
   },
   reflecting: {
     label: 'Reflecting',
-    color: 'text-purple-600 dark:text-purple-400',
-    bgColor: 'bg-purple-100 dark:bg-purple-500/20',
-    pulseColor: 'bg-purple-500'
+    color: 'text-info dark:text-info',
+    bgColor: 'bg-info-muted dark:bg-info/20',
+    pulseColor: 'bg-info'
   },
   responding: {
     label: 'Responding', 

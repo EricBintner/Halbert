@@ -19,6 +19,11 @@ export function VisionTab() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
+  // R08-07: the blocklist textarea used to PUT the whole config on every
+  // keystroke. Track the in-progress edit locally and commit on blur —
+  // null means "show the saved config value," matching the
+  // defaultValue+onBlur pattern BeingTab uses for its own free-text fields.
+  const [blocklistDraft, setBlocklistDraft] = useState<string | null>(null)
 
   useEffect(() => {
     loadConfig()
@@ -132,13 +137,13 @@ export function VisionTab() {
         </CardHeader>
         <CardContent className="space-y-2">
           <div className="flex items-center gap-2 text-sm">
-            <span className={deps.mss ? 'text-green-500' : 'text-red-500'}>
+            <span className={deps.mss ? 'text-success' : 'text-destructive'}>
               {deps.mss ? '✓' : '✗'} mss
             </span>
-            <span className={deps.cv2 ? 'text-green-500' : 'text-red-500'}>
+            <span className={deps.cv2 ? 'text-success' : 'text-destructive'}>
               {deps.cv2 ? '✓' : '✗'} opencv-python
             </span>
-            <span className={deps.numpy ? 'text-green-500' : 'text-red-500'}>
+            <span className={deps.numpy ? 'text-success' : 'text-destructive'}>
               {deps.numpy ? '✓' : '✗'} numpy
             </span>
           </div>
@@ -332,10 +337,13 @@ export function VisionTab() {
               id="redaction-blocklist"
               className="flex min-h-[100px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
               placeholder={"password\ntoken\napi_key\nsecret\n..."}
-              value={(config?.redaction?.blocklist ?? []).join('\n')}
-              onChange={(e) => {
-                const lines = e.target.value.split('\n').map((s: string) => s.trim()).filter(Boolean)
+              value={blocklistDraft ?? (config?.redaction?.blocklist ?? []).join('\n')}
+              onChange={(e) => setBlocklistDraft(e.target.value)}
+              onBlur={() => {
+                if (blocklistDraft === null) return
+                const lines = blocklistDraft.split('\n').map((s: string) => s.trim()).filter(Boolean)
                 updateConfig('redaction_blocklist', lines)
+                setBlocklistDraft(null)
               }}
               disabled={saving}
             />

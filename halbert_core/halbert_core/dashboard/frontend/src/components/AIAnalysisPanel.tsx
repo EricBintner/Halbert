@@ -214,7 +214,6 @@ export function AIAnalysisPanel({
                   title,
                   type,
                   context: buildContext ? buildContext() : defaultContext(),
-                  newConversation: true,
                   prefillMessage: researchQuestion || defaultQuestion,
                 })}
               >
@@ -248,7 +247,6 @@ export function AIQuickAnalysis({ type, itemName, context }: AIQuickAnalysisProp
           title: itemName,
           type,
           context,
-          newConversation: true,
           prefillMessage: `Analyze ${itemName} and suggest improvements.`,
         })}
       >

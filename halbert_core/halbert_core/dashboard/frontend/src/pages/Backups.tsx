@@ -12,10 +12,9 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { api } from '@/lib/api'
-import { 
-  Archive, 
-  RefreshCw, 
-  Play, 
+import {
+  Archive,
+  RefreshCw,
   Clock,
   CheckCircle,
   AlertCircle,
@@ -165,9 +164,6 @@ export function Backups() {
       } finally {
         setLogsLoading(false)
       }
-    } else if (action === 'run') {
-      // TODO: Implement run backup
-      alert(`Would run backup: ${backup.name}`)
     }
   }
 
@@ -518,7 +514,6 @@ export function Backups() {
                                 type: 'config',
                                 context: `Editing **${backup.name}** backup configuration.\n\nFile: \`${configPath}\`\n\nI can help you modify this config file. Just tell me what changes you'd like to make.`,
                                 configPath: configPath,
-                                newConversation: true,
                               })
                               // Also open the config editor
                               window.dispatchEvent(new CustomEvent('halbert:open-config-editor', {
@@ -640,17 +635,12 @@ export function Backups() {
                     )}
                   </div>
 
-                  {/* Actions - only for non-fused or show per item */}
+                  {/* Actions - only for non-fused or show per item.
+                   * FEAT-02: "Run Now" used to be alert('Would run backup…')
+                   * — a placebo with no gated run-backup route behind it
+                   * (none exists). Removed until one does. */}
                   {!isFused && (
                   <div className="border-t p-3 bg-muted/30 flex gap-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => handleAction(backup, 'run')}
-                    >
-                      <Play className="h-4 w-4 mr-1" />
-                      Run Now
-                    </Button>
                     <Button
                       variant="ghost"
                       size="sm"
@@ -664,18 +654,11 @@ export function Backups() {
               </div>
             )
           })}
-          
-          {/* Shared actions for fused groups */}
+
+          {/* Shared actions for fused groups. FEAT-02: "Run All" removed
+           * along with "Run Now" above, same reason. */}
           {isFused && (
             <div className="border-t p-3 bg-muted/30 flex gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => handleAction(group.items[0], 'run')}
-              >
-                <Play className="h-4 w-4 mr-1" />
-                Run All
-              </Button>
               <Button
                 variant="ghost"
                 size="sm"

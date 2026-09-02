@@ -315,7 +315,6 @@ export function Services() {
       type: 'service',
       context: context,
       itemId: service.name,
-      newConversation: true,
       useSpecialist: false,
     })
   }

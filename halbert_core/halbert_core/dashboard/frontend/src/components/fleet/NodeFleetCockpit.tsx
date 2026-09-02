@@ -63,18 +63,18 @@ function getNodeStatus(node: FleetNodeStatus): NodeStatus {
 
 const STATUS_STYLES: Record<NodeStatus, { badge: string; icon: string; label: string }> = {
   online: {
-    badge: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-500/30',
-    icon: 'text-emerald-600 dark:text-emerald-400',
+    badge: 'bg-success/15 text-success border-success/30',
+    icon: 'text-success',
     label: 'Online',
   },
   fallback: {
-    badge: 'bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/30',
-    icon: 'text-amber-600 dark:text-amber-400',
+    badge: 'bg-warning/15 text-warning border-warning/30',
+    icon: 'text-warning',
     label: 'Fallback',
   },
   offline: {
-    badge: 'bg-slate-500/15 text-slate-600 dark:text-slate-400 border-slate-500/30',
-    icon: 'text-slate-500 dark:text-slate-400',
+    badge: 'bg-muted text-muted-foreground border-border',
+    icon: 'text-muted-foreground',
     label: 'Offline',
   },
 }
@@ -388,7 +388,7 @@ function VitalRow({
     <div className="flex items-center gap-2 text-[11px]">
       <span className="text-muted-foreground">{icon}</span>
       <span className="text-muted-foreground w-12">{label}</span>
-      <span className={cn('font-mono', warn && 'text-amber-600 dark:text-amber-400')}>
+      <span className={cn('font-mono', warn && 'text-warning')}>
         {value}
       </span>
     </div>

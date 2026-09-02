@@ -150,7 +150,7 @@ export function PresencePill() {
           <span
             className={cn(
               'h-1.5 w-1.5 rounded-full shrink-0',
-              isLocal ? 'bg-success' : 'bg-amber-500',
+              isLocal ? 'bg-success' : 'bg-warning',
             )}
             aria-hidden="true"
           />

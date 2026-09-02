@@ -70,7 +70,7 @@ export function AudioSettings() {
 
   const loadQuietHours = useCallback(async () => {
     try {
-      const resp = await fetch(apiUrl('/api/being'))
+      const resp = await fetch(apiUrl('/api/settings/being'))
       if (resp.ok) {
         const data = await resp.json()
         const cfg = data.config || data
@@ -105,7 +105,7 @@ export function AudioSettings() {
   const updateQuietHours = async (value: { start: string; end: string } | null) => {
     setSaving(true)
     try {
-      await fetch(apiUrl('/api/being'), {
+      await fetch(apiUrl('/api/settings/being'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ quiet_hours: value }),

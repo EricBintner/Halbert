@@ -373,9 +373,8 @@ export function Network() {
       type: 'network',
       context: context,
       itemId: iface.data.interface || iface.name,
-      newConversation: true,
       useSpecialist: false,
-      prefillMessage: iface.severity === 'critical' 
+      prefillMessage: iface.severity === 'critical'
         ? 'This interface has issues. What could be wrong?' 
         : 'Tell me more about this network interface.',
     })
@@ -816,7 +815,6 @@ export function Network() {
                             type: 'config',
                             context: `Editing **${ifaceName}** network configuration.\n\nFile: \`${configPath}\`\n\nI can help you modify this config file. Just tell me what changes you'd like to make.`,
                             configPath: configPath,
-                            newConversation: true,
                           })
                           // Also open the config editor
                           window.dispatchEvent(new CustomEvent('halbert:open-config-editor', {

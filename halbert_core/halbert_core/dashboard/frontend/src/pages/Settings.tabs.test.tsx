@@ -73,8 +73,16 @@ function renderAt(entry: string) {
   )
 }
 
-/** The trigger for one tab, by its visible name. */
-const tab = (name: RegExp) => screen.getByRole('tab', { name })
+/**
+ * The trigger for one settings section, by its visible name.
+ *
+ * R08-02: the settings rail switched which item to render, exactly like the
+ * dashboard's primary NavRail — it never had the arrow-key/roving-tabindex
+ * navigation the WAI-ARIA Tabs pattern requires alongside `role="tab"`, so
+ * it now carries plain nav semantics (`aria-current="page"`) instead of
+ * `role="tab"`/`aria-selected`.
+ */
+const tab = (name: RegExp) => screen.getByRole('button', { name })
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -95,15 +103,15 @@ describe('Settings tabs follow the URL', () => {
   it('opens the tab named in the URL, so a deep link lands where it points', async () => {
     renderAt('/settings?tab=ai')
     await waitFor(() =>
-      expect(tab(/Models & Providers/i)).toHaveAttribute('aria-selected', 'true'),
+      expect(tab(/Models & Providers/i)).toHaveAttribute('aria-current', 'page'),
     )
-    expect(tab(/System Info/i)).toHaveAttribute('aria-selected', 'false')
+    expect(tab(/System Info/i)).not.toHaveAttribute('aria-current')
   })
 
   it('still opens System when the URL names no tab', async () => {
     renderAt('/settings')
     await waitFor(() =>
-      expect(tab(/System Info/i)).toHaveAttribute('aria-selected', 'true'),
+      expect(tab(/System Info/i)).toHaveAttribute('aria-current', 'page'),
     )
   })
 
@@ -112,7 +120,7 @@ describe('Settings tabs follow the URL', () => {
     // unrecognised ?tab= would otherwise show a page of nothing but tabs.
     renderAt('/settings?tab=not-a-tab')
     await waitFor(() =>
-      expect(tab(/System Info/i)).toHaveAttribute('aria-selected', 'true'),
+      expect(tab(/System Info/i)).toHaveAttribute('aria-current', 'page'),
     )
   })
 
@@ -126,7 +134,7 @@ describe('Settings tabs follow the URL', () => {
     await waitFor(() =>
       expect(screen.getByTestId('url')).toHaveTextContent('/settings?tab=ai'),
     )
-    expect(tab(/Models & Providers/i)).toHaveAttribute('aria-selected', 'true')
+    expect(tab(/Models & Providers/i)).toHaveAttribute('aria-current', 'page')
   })
 })
 

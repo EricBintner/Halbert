@@ -17,6 +17,10 @@ FRONTEND_SRC = REPO_ROOT / "halbert_core/halbert_core/dashboard/frontend/src"
 EXCLUDED = {
     "lib/apiBase.ts",              # the resolver itself
     "hooks/useSourcePrepDaemon.ts",  # talks to the external SourcePrep daemon (absolute URL)
+    # DISPLAY_REPORT_PATH is a bare path *constant*, not a fetch call — it is
+    # only ever consumed via apiUrl(DISPLAY_REPORT_PATH) elsewhere in this
+    # same file, so the guard's string-literal pattern is a false positive.
+    "components/voice/StandbyController.tsx",
 }
 
 # Test files are never bundled, and apiBase's own tests have to *assert* on the

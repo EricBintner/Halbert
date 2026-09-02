@@ -23,6 +23,8 @@
  *      calls DELETE /api/peers/{nodeId} for surgical revocation.
  */
 
+import { apiUrl } from './apiBase'
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -137,8 +139,6 @@ export interface InspectResponse {
 // API client
 // ---------------------------------------------------------------------------
 
-const API_BASE = ''  // Relative paths — same-origin (Phase 7 runtime config)
-
 /** Get the bearer token from localStorage (set during pairing). */
 function getPeerToken(): string | null {
   return localStorage.getItem('halbert:peer-token')
@@ -166,7 +166,7 @@ function authHeaders(): Record<string, string> {
 
 /** Request pairing with a Desktop (satellite-side call). */
 export async function requestPairing(req: PairRequest): Promise<PairResponse> {
-  const res = await fetch(`${API_BASE}/api/peers/pair`, {
+  const res = await fetch(apiUrl(`/api/peers/pair`), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(req),
@@ -177,7 +177,7 @@ export async function requestPairing(req: PairRequest): Promise<PairResponse> {
 
 /** Pairings waiting for approval on this machine, with their PINs. */
 export async function listPendingPairings(): Promise<PendingPairing[]> {
-  const res = await fetch(`${API_BASE}/api/peers/pending`)
+  const res = await fetch(apiUrl(`/api/peers/pending`))
   if (!res.ok) throw new Error(`Pending pairings failed: ${res.status}`)
   return res.json()
 }
@@ -186,7 +186,7 @@ export async function listPendingPairings(): Promise<PendingPairing[]> {
  * without this — it is the difference between a handshake and self-service. */
 export async function approvePairing(requestId: string): Promise<void> {
   const res = await fetch(
-    `${API_BASE}/api/peers/pending/${encodeURIComponent(requestId)}/approve`,
+    apiUrl(`/api/peers/pending/${encodeURIComponent(requestId)}/approve`),
     { method: 'POST' },
   )
   if (!res.ok) throw new Error(`Approve failed: ${res.status} ${await res.text()}`)
@@ -195,7 +195,7 @@ export async function approvePairing(requestId: string): Promise<void> {
 /** Refuse a pairing outright rather than letting it lapse. */
 export async function rejectPairing(requestId: string): Promise<void> {
   const res = await fetch(
-    `${API_BASE}/api/peers/pending/${encodeURIComponent(requestId)}`,
+    apiUrl(`/api/peers/pending/${encodeURIComponent(requestId)}`),
     { method: 'DELETE' },
   )
   if (!res.ok) throw new Error(`Reject failed: ${res.status} ${await res.text()}`)
@@ -203,7 +203,7 @@ export async function rejectPairing(requestId: string): Promise<void> {
 
 /** Verify pairing with PIN (satellite-side call). */
 export async function verifyPairing(req: VerifyRequest): Promise<VerifyResponse> {
-  const res = await fetch(`${API_BASE}/api/peers/verify`, {
+  const res = await fetch(apiUrl(`/api/peers/verify`), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(req),
@@ -214,7 +214,7 @@ export async function verifyPairing(req: VerifyRequest): Promise<VerifyResponse>
 
 /** List all paired peers (requires auth). */
 export async function listPairedPeers(): Promise<PairedPeer[]> {
-  const res = await fetch(`${API_BASE}/api/peers/list`, {
+  const res = await fetch(apiUrl(`/api/peers/list`), {
     headers: authHeaders(),
   })
   if (!res.ok) throw new Error(`List peers failed: ${res.status}`)
@@ -223,7 +223,7 @@ export async function listPairedPeers(): Promise<PairedPeer[]> {
 
 /** Revoke a peer's token (M14 — surgical revocation). */
 export async function revokePeer(nodeId: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/peers/${nodeId}`, {
+  const res = await fetch(apiUrl(`/api/peers/${nodeId}`), {
     method: 'DELETE',
     headers: authHeaders(),
   })
@@ -232,7 +232,7 @@ export async function revokePeer(nodeId: string): Promise<void> {
 
 /** List peers discovered via mDNS (unauthenticated). */
 export async function listDiscoveredPeers(): Promise<DiscoveredPeer[]> {
-  const res = await fetch(`${API_BASE}/api/peers/discovered`)
+  const res = await fetch(apiUrl(`/api/peers/discovered`))
   if (!res.ok) throw new Error(`Discovered peers failed: ${res.status}`)
   return res.json()
 }
@@ -243,7 +243,7 @@ export async function listDiscoveredPeers(): Promise<DiscoveredPeer[]> {
 
 /** List all fleet nodes with live status. */
 export async function listFleetNodes(): Promise<FleetNodeStatus[]> {
-  const res = await fetch(`${API_BASE}/api/fleet/nodes`, {
+  const res = await fetch(apiUrl(`/api/fleet/nodes`), {
     headers: authHeaders(),
   })
   if (!res.ok) throw new Error(`Fleet nodes failed: ${res.status}`)
@@ -252,7 +252,7 @@ export async function listFleetNodes(): Promise<FleetNodeStatus[]> {
 
 /** Get a satellite's instance info. */
 export async function getNodeInfo(nodeId: string): Promise<Record<string, unknown>> {
-  const res = await fetch(`${API_BASE}/api/fleet/${nodeId}/info`, {
+  const res = await fetch(apiUrl(`/api/fleet/${nodeId}/info`), {
     headers: authHeaders(),
   })
   if (!res.ok) throw new Error(`Node info failed: ${res.status}`)
@@ -261,7 +261,7 @@ export async function getNodeInfo(nodeId: string): Promise<Record<string, unknow
 
 /** Get a satellite's latest telemetry. */
 export async function getNodeTelemetry(nodeId: string): Promise<Record<string, unknown>> {
-  const res = await fetch(`${API_BASE}/api/fleet/${nodeId}/telemetry`, {
+  const res = await fetch(apiUrl(`/api/fleet/${nodeId}/telemetry`), {
     headers: authHeaders(),
   })
   if (!res.ok) throw new Error(`Node telemetry failed: ${res.status}`)
@@ -270,7 +270,7 @@ export async function getNodeTelemetry(nodeId: string): Promise<Record<string, u
 
 /** Proxy an MCP tool call to a satellite (C5 — no bespoke inspect API). */
 export async function inspectNode(nodeId: string, req: InspectRequest): Promise<InspectResponse> {
-  const res = await fetch(`${API_BASE}/api/fleet/${nodeId}/inspect`, {
+  const res = await fetch(apiUrl(`/api/fleet/${nodeId}/inspect`), {
     method: 'POST',
     headers: { ...authHeaders(), 'Content-Type': 'application/json' },
     body: JSON.stringify(req),
@@ -281,7 +281,7 @@ export async function inspectNode(nodeId: string, req: InspectRequest): Promise<
 
 /** Get a satellite's discovery snapshot. */
 export async function getNodeDiscoveries(nodeId: string): Promise<Record<string, unknown>> {
-  const res = await fetch(`${API_BASE}/api/fleet/${nodeId}/discoveries`, {
+  const res = await fetch(apiUrl(`/api/fleet/${nodeId}/discoveries`), {
     headers: authHeaders(),
   })
   if (!res.ok) throw new Error(`Node discoveries failed: ${res.status}`)
@@ -309,7 +309,7 @@ export interface ComputePeerLinkSummary {
 
 /** Read the persisted compute-peer link from the model configuration. */
 export async function getComputePeerLink(): Promise<ComputePeerLinkSummary | null> {
-  const res = await fetch(`${API_BASE}/llm/config`)
+  const res = await fetch(apiUrl(`/llm/config`))
   if (!res.ok) throw new Error(`Model config failed: ${res.status}`)
   const payload = await res.json()
   const llm = payload?.data?.llm_config ?? payload?.llm_config
@@ -344,7 +344,7 @@ export async function probeComputePeer(
   endpoint: string,
   token = '',
 ): Promise<ComputePeerProbeResult> {
-  const res = await fetch(`${API_BASE}/compute/peer-probe`, {
+  const res = await fetch(apiUrl(`/compute/peer-probe`), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ endpoint, token }),
@@ -377,7 +377,7 @@ export async function linkComputePeer(
   token = '',
   name = '',
 ): Promise<ComputePeerLink> {
-  const res = await fetch(`${API_BASE}/api/peers/compute-peer`, {
+  const res = await fetch(apiUrl(`/api/peers/compute-peer`), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ endpoint, token, name }),
@@ -429,14 +429,14 @@ export interface EntityModeRequest {
 
 /** List paired devices + this node's entity identity. */
 export async function listDevices(): Promise<DevicesState> {
-  const res = await fetch(`${API_BASE}/api/devices`)
+  const res = await fetch(apiUrl(`/api/devices`))
   if (!res.ok) throw new Error(`Devices failed: ${res.status}`)
   return res.json()
 }
 
 /** Toggle this node between singular and independent entity mode. */
 export async function setEntityMode(req: EntityModeRequest): Promise<DevicesState> {
-  const res = await fetch(`${API_BASE}/api/devices/entity-mode`, {
+  const res = await fetch(apiUrl(`/api/devices/entity-mode`), {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(req),
@@ -447,7 +447,7 @@ export async function setEntityMode(req: EntityModeRequest): Promise<DevicesStat
 
 /** Label which physical body this node is ("desk", "home", "kitchen"). */
 export async function setBodyName(bodyName: string): Promise<DevicesState> {
-  const res = await fetch(`${API_BASE}/api/devices/body-name`, {
+  const res = await fetch(apiUrl(`/api/devices/body-name`), {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ body_name: bodyName }),
@@ -458,7 +458,7 @@ export async function setBodyName(bodyName: string): Promise<DevicesState> {
 
 /** Store (or clear — empty string) the peer token for the canonical host. */
 export async function setDevicePeerToken(token: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/devices/peer-token`, {
+  const res = await fetch(apiUrl(`/api/devices/peer-token`), {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ token }),
@@ -476,7 +476,7 @@ export interface WolToggleRequest {
 export async function toggleDeviceWol(
   nodeId: string, req: WolToggleRequest,
 ): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/devices/${encodeURIComponent(nodeId)}/wol`, {
+  const res = await fetch(apiUrl(`/api/devices/${encodeURIComponent(nodeId)}/wol`), {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(req),
@@ -496,7 +496,7 @@ export async function discoverCapabilities(
   nodeId: string, token?: string,
 ): Promise<DiscoverResult> {
   const res = await fetch(
-    `${API_BASE}/api/devices/${encodeURIComponent(nodeId)}/discover`,
+    apiUrl(`/api/devices/${encodeURIComponent(nodeId)}/discover`),
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -511,7 +511,7 @@ export async function discoverCapabilities(
  *  record entirely with forget ("Permanently Forget"). */
 export async function removeDevice(nodeId: string, forget = false): Promise<void> {
   const res = await fetch(
-    `${API_BASE}/api/devices/${encodeURIComponent(nodeId)}${forget ? '?forget=true' : ''}`,
+    apiUrl(`/api/devices/${encodeURIComponent(nodeId)}${forget ? '?forget=true' : ''}`),
     { method: 'DELETE' },
   )
   if (!res.ok) throw new Error(`Remove failed: ${res.status}`)

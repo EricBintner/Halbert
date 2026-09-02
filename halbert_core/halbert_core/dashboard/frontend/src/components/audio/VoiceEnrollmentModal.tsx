@@ -189,7 +189,7 @@ export function VoiceEnrollmentModal({ onClose, onEnrolled }: {
                   {recording ? 'Stop Recording' : 'Start Recording'}
                 </Button>
                 {audioBlob && (
-                  <div className="flex items-center gap-2 text-sm text-green-600">
+                  <div className="flex items-center gap-2 text-sm text-success">
                     <Check className="h-4 w-4" />
                     Recording captured ({(audioBlob.size / 1024).toFixed(0)} KB)
                   </div>
@@ -242,8 +242,8 @@ export function VoiceEnrollmentModal({ onClose, onEnrolled }: {
           {step === 'confirm' && (
             <div className="space-y-4">
               <div className="text-center py-4">
-                <div className="w-12 h-12 rounded-full bg-green-100 flex items-center justify-center mx-auto mb-3">
-                  <Check className="h-6 w-6 text-green-600" />
+                <div className="w-12 h-12 rounded-full bg-success-muted flex items-center justify-center mx-auto mb-3">
+                  <Check className="h-6 w-6 text-success" />
                 </div>
                 <p className="font-medium">Speaker enrolled successfully</p>
                 <p className="text-sm text-muted-foreground mt-1">
