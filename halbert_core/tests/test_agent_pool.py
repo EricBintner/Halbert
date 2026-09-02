@@ -7,7 +7,7 @@ import time
 
 import pytest
 
-from halbert_core.streaming.agent_pool import TerminalPool
+from halbert_core.streaming.agent_pool import TerminalPool, _BoundedBlockOutput
 from halbert_core.streaming.session_manager import TerminalSessionManager, AtCapacityError
 
 
@@ -245,4 +245,115 @@ class TestRunBlock:
             assert result is not None
             assert result["exit_code"] == 0
             assert tmpdir in result["output_head"] or tmpdir in result.get("output_tail", "")
+        await pool.shutdown()
+
+
+# ---------------------------------------------------------------------------
+# Resource safety (R04-F3, R04-F4)
+# ---------------------------------------------------------------------------
+
+class TestPoolDoesNotLeakBusySlots:
+    """R04-F3. acquire() marks a session busy; the reaper then exempts an
+    agent-pool session with an open block. So every path out of run_block has
+    to clear the flag, or the slot is busy forever AND immune to the reaper —
+    three of those and a cap-3 pool is dead for the life of the process."""
+
+    async def _pool_that_fails_at(self, step):
+        m, pool = _make_manager_with_pool(cap=3)
+        sid, session = await pool.acquire()
+        m.set_block_open(sid, False)  # undo; run_block acquires its own
+
+        real_attach = session.attach
+
+        async def boom_attach(maxsize=0):
+            raise OSError("fanout queue unavailable")
+
+        async def never_replays(maxsize=0):
+            return asyncio.Queue()  # nothing to get -> the 5s replay wait times out
+
+        async def boom_write(data):
+            raise BrokenPipeError("shell went away")
+
+        if step == "attach":
+            session.attach = boom_attach
+        elif step == "replay":
+            session.attach = never_replays
+        elif step == "write":
+            session.attach = real_attach
+            session.write_stdin = boom_write
+        return m, pool, sid
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("step", ["attach", "write"])
+    async def test_a_failure_before_the_drain_loop_releases_the_slot(self, step):
+        m, pool, sid = await self._pool_that_fails_at(step)
+
+        with pytest.raises(Exception):
+            await pool.run_block("echo hi", timeout=5.0)
+
+        assert m._block_open.get(sid) is not True, (
+            f"failure at {step} left the pool slot permanently busy"
+        )
+        await pool.shutdown()
+
+    @pytest.mark.asyncio
+    async def test_a_slot_released_by_an_error_can_be_acquired_again(self):
+        m, pool, sid = await self._pool_that_fails_at("attach")
+        with pytest.raises(Exception):
+            await pool.run_block("echo hi", timeout=5.0)
+
+        again = await pool.acquire()
+        assert again is not None, "the pool could not reuse the released slot"
+        await pool.shutdown()
+
+
+class TestBlockOutputIsBounded:
+    """R04-F4. block_output accumulated every byte the command produced and
+    only cut it down to a 20-line head and a 4 KiB tail after completion, so
+    `cat` on a large file was held whole in memory (~800 MB reproduced by the
+    review). The bound has to apply as the bytes arrive, which is a property
+    of the accumulator, not of the returned result."""
+
+    def test_the_accumulator_keeps_both_ends_and_drops_the_middle(self):
+        acc = _BoundedBlockOutput(head_cap=10, tail_cap=10)
+        acc.extend(b"HEAD______")
+        acc.extend(b"x" * 1000)
+        acc.extend(b"______TAIL")
+
+        assert len(acc) == 20, "the accumulator grew past its caps"
+        assert acc.dropped == 1000
+        out = acc.bytes()
+        assert out.startswith(b"HEAD______")
+        assert out.endswith(b"______TAIL")
+        assert b"1000 bytes elided" in out
+
+    def test_output_under_the_cap_is_kept_whole_and_unmarked(self):
+        acc = _BoundedBlockOutput(head_cap=10, tail_cap=10)
+        acc.extend(b"short")
+        assert acc.dropped == 0
+        assert acc.bytes() == b"short"
+        assert len(acc) == 5
+
+    def test_a_chunk_straddling_the_head_cap_is_split_not_lost(self):
+        acc = _BoundedBlockOutput(head_cap=4, tail_cap=100)
+        acc.extend(b"abcdefgh")
+        assert acc.dropped == 0
+        assert acc.bytes() == b"abcdefgh"
+
+    def test_peak_retention_is_capped_no_matter_how_much_arrives(self):
+        acc = _BoundedBlockOutput(head_cap=1024, tail_cap=1024)
+        for _ in range(4096):
+            acc.extend(b"y" * 1024)  # 4 MiB through a 2 KiB accumulator
+        assert len(acc) <= 2048
+
+    @pytest.mark.asyncio
+    async def test_head_and_tail_still_come_from_the_right_ends(self):
+        m, pool = _make_manager_with_pool(cap=3)
+        result = await pool.run_block(
+            "echo FIRSTLINE; for i in $(seq 1 2000); do echo padding-$i; done; echo LASTLINE",
+            timeout=60.0,
+        )
+        assert result is not None
+        assert "FIRSTLINE" in result["output_head"]
+        assert "LASTLINE" in result["output_tail"]
         await pool.shutdown()

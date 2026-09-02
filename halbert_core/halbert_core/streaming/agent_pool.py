@@ -29,6 +29,62 @@ logger = logging.getLogger("halbert.streaming.agent_pool")
 _POOL_SHELL = "bash --norc --noprofile"
 
 
+# A block's output is cut down to a 20-line head and a 4 KiB tail before it
+# is returned, but it used to be accumulated whole first — so `cat` on a
+# large file was held entirely in memory (R04-F4). These bounds keep both
+# ends intact with room to spare while capping the peak at ~128 KiB.
+_BLOCK_HEAD_BYTES = 64 * 1024
+_BLOCK_TAIL_BYTES = 64 * 1024
+
+
+class _BoundedBlockOutput:
+    """Accumulate a block's output keeping only both ends.
+
+    Whatever falls between the head and the tail is dropped as it arrives
+    rather than after the fact, and ``bytes()`` splices an elision marker in
+    its place so the caller can see that output is missing rather than
+    silently reading a truncated command result.
+    """
+
+    __slots__ = ("_head", "_tail", "_dropped", "_head_cap", "_tail_cap")
+
+    def __init__(self, head_cap: int = _BLOCK_HEAD_BYTES,
+                 tail_cap: int = _BLOCK_TAIL_BYTES):
+        self._head = bytearray()
+        self._tail = bytearray()
+        self._dropped = 0
+        self._head_cap = head_cap
+        self._tail_cap = tail_cap
+
+    def extend(self, data: bytes) -> None:
+        if not data:
+            return
+        room = self._head_cap - len(self._head)
+        if room > 0:
+            self._head.extend(data[:room])
+            data = data[room:]
+            if not data:
+                return
+        self._tail.extend(data)
+        overflow = len(self._tail) - self._tail_cap
+        if overflow > 0:
+            del self._tail[:overflow]
+            self._dropped += overflow
+
+    @property
+    def dropped(self) -> int:
+        return self._dropped
+
+    def __len__(self) -> int:
+        return len(self._head) + len(self._tail)
+
+    def bytes(self) -> bytes:
+        if not self._dropped:
+            return bytes(self._head) + bytes(self._tail)
+        marker = f"\n... [{self._dropped} bytes elided] ...\n".encode()
+        return bytes(self._head) + marker + bytes(self._tail)
+
+
 class TerminalPool:
     """Pool of PTY-backed bash sessions for agent run_command."""
 
@@ -127,95 +183,111 @@ class TerminalPool:
             f"printf '\\x1b]133;D;%d;id={block_id}\\x07' \"$?\"\n"
         )
 
-        # Attach a fanout queue to read output
-        q = await session.attach()
-        # Skip the replay item
-        replay = await asyncio.wait_for(q.get(), timeout=5.0)
-
-        # Set up OSC parser to detect block boundaries
-        parser = OSCParser()
-        block_output = bytearray()
-        exit_code: Optional[int] = None
-        block_closed = False
-
-        # Write the command
-        await session.write_stdin(block_cmd)
-
-        async def _drain_until_closed():
-            """Consume queue items until the D marker is seen or EOF."""
-            nonlocal exit_code, block_closed
-            while not block_closed:
-                item = await q.get()
-                if item is None:
-                    break
-                if isinstance(item, tuple):
-                    continue  # replay
-                out = parser.feed(item)
-                block_output.extend(out.block_bytes)
-                for b in out.boundaries:
-                    if b.kind == "D" and b.block_id == block_id:
-                        exit_code = b.exit_code
-                        block_closed = True
-                        break
+        # From here on the session is marked busy (acquire() set block_open),
+        # and the reaper deliberately never reclaims an agent-pool session
+        # with an open block. So every exit from this point -- including the
+        # attach, the replay wait and the first write, all of which used to
+        # sit outside the try -- has to clear the flag, or the slot is busy
+        # for the life of the process and immune to the reaper too. Three of
+        # those and a cap-3 pool is permanently dead (R04-F3).
+        released = False
 
         try:
-            # Wall-clock timeout for the D marker
-            await asyncio.wait_for(_drain_until_closed(), timeout=timeout)
-        except asyncio.TimeoutError:
-            # Command timed out — send ETX (Ctrl-C)
+            # Attach a fanout queue to read output
+            q = await session.attach()
+            # Skip the replay item
+            replay = await asyncio.wait_for(q.get(), timeout=5.0)
+
+            # Set up OSC parser to detect block boundaries
+            parser = OSCParser()
+            block_output = _BoundedBlockOutput()
+            exit_code: Optional[int] = None
+            block_closed = False
+
+            # Write the command
+            await session.write_stdin(block_cmd)
+
+            async def _drain_until_closed():
+                """Consume queue items until the D marker is seen or EOF."""
+                nonlocal exit_code, block_closed
+                while not block_closed:
+                    item = await q.get()
+                    if item is None:
+                        break
+                    if isinstance(item, tuple):
+                        continue  # replay
+                    out = parser.feed(item)
+                    block_output.extend(out.block_bytes)
+                    for b in out.boundaries:
+                        if b.kind == "D" and b.block_id == block_id:
+                            exit_code = b.exit_code
+                            block_closed = True
+                            break
+
             try:
-                await session.write_stdin("\x03")
-            except Exception:
-                pass
-            # Grace-wait 2s for D marker after ETX
-            try:
-                await asyncio.wait_for(_drain_until_closed(), timeout=2.0)
+                # Wall-clock timeout for the D marker
+                await asyncio.wait_for(_drain_until_closed(), timeout=timeout)
             except asyncio.TimeoutError:
-                pass
-            if not block_closed:
-                # Kill and evict
-                self._manager.kill(sid)
-                self._evict(sid)
-                exit_code = -1
+                # Command timed out — send ETX (Ctrl-C)
+                try:
+                    await session.write_stdin("\x03")
+                except Exception:
+                    pass
+                # Grace-wait 2s for D marker after ETX
+                try:
+                    await asyncio.wait_for(_drain_until_closed(), timeout=2.0)
+                except asyncio.TimeoutError:
+                    pass
+                if not block_closed:
+                    # Kill and evict
+                    self._manager.kill(sid)
+                    self._evict(sid)
+                    exit_code = -1
+            finally:
+                session.detach(q)
+
+            ended_at = time.time()
+            duration = time.monotonic() - started_monotonic
+
+            # Publish terminal_complete event (Plan B: B6).
+            publish_terminal_event({
+                "kind": "complete",
+                "terminal_session_id": sid,
+                "exit_code": exit_code if exit_code is not None else -1,
+                "block_id": block_id,
+            })
+
+            # Build output head (first 20 lines) and tail (last 4 KiB)
+            output_bytes = block_output.bytes()
+            output_text = output_bytes.decode("utf-8", errors="replace")
+            lines = output_text.split("\n")
+            head = "\n".join(lines[:20])
+            tail = output_text[-4096:] if len(output_text) > 4096 else output_text
+
+            # Redact
+            head, head_redacted = redact(head)
+            tail, tail_redacted = redact(tail)
+
+            # Released here on the success path so the slot is free before the
+            # result is built; the finally below is the backstop for every
+            # other exit.
+            self._manager.set_block_open(sid, False)
+            released = True
+
+            return {
+                "block_id": block_id,
+                "session_id": sid,
+                "exit_code": exit_code if exit_code is not None else -1,
+                "output_head": head,
+                "output_tail": tail,
+                "duration": duration,
+                "started_at": started_at,
+                "ended_at": ended_at,
+                "redacted": head_redacted or tail_redacted,
+            }
         finally:
-            session.detach(q)
-
-        ended_at = time.time()
-        duration = time.monotonic() - started_monotonic
-
-        # Publish terminal_complete event (Plan B: B6).
-        publish_terminal_event({
-            "kind": "complete",
-            "terminal_session_id": sid,
-            "exit_code": exit_code if exit_code is not None else -1,
-            "block_id": block_id,
-        })
-
-        # Build output head (first 20 lines) and tail (last 4 KiB)
-        output_bytes = bytes(block_output)
-        output_text = output_bytes.decode("utf-8", errors="replace")
-        lines = output_text.split("\n")
-        head = "\n".join(lines[:20])
-        tail = output_text[-4096:] if len(output_text) > 4096 else output_text
-
-        # Redact
-        head, head_redacted = redact(head)
-        tail, tail_redacted = redact(tail)
-
-        # Release the session
-        self._manager.set_block_open(sid, False)
-
-        return {
-            "block_id": block_id,
-            "session_id": sid,
-            "exit_code": exit_code if exit_code is not None else -1,
-            "output_head": head,
-            "output_tail": tail,
-            "duration": duration,
-            "started_at": started_at,
-            "ended_at": ended_at,
-            "redacted": head_redacted or tail_redacted,
-        }
+            if not released:
+                self._manager.set_block_open(sid, False)
 
     def release(self, session_id: str) -> None:
         """Mark a session as no longer busy (block closed). Does not kill."""
