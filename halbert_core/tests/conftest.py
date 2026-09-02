@@ -7,6 +7,47 @@ from halbert_core.model.config_locator import ENV_VAR, WORKSPACE_ENV_VAR
 
 
 @pytest.fixture(autouse=True)
+def _isolated_config_canon_store(monkeypatch, tmp_path):
+    """No suite writes to the real ~/.local/share/halbert/config/{canon,snapshots} store.
+
+    CANON_DIR/SNAP_DIR/RAW_DIR are plain strings computed once at import
+    in config/snapshot.py; config/queries.py, config/drift.py,
+    config/edge_extractor.py, and config/indexer.py each hold their OWN
+    copy (either their own independent ``data_subdir(...)`` call, or a
+    ``from .snapshot import CANON_DIR``-style binding) — patching
+    snapshot.py's globals alone does not reach any of those. Without
+    this, any test that exercises the real code path (not the handful
+    that already patch these themselves) writes pytest tmp paths into
+    the developer's actual canon DB — which is exactly how it ended up
+    holding nothing but junk records (SEC-03/04/11's operational rebuild
+    gate found ``latest.json`` full of stale tmp-path entries).
+
+    A test that wants a specific canon/snapshot layout still overrides
+    these itself (see test_config_queries.py, test_config_snapshot_redacted.py,
+    test_security_roles.py) — those explicit ``monkeypatch.setattr`` calls
+    simply run after this fixture, on the same ``monkeypatch`` instance,
+    and win.
+    """
+    from halbert_core.config import snapshot as snapshot_mod
+    from halbert_core.config import queries as queries_mod
+    from halbert_core.config import drift as drift_mod
+    from halbert_core.config import edge_extractor as edge_extractor_mod
+    from halbert_core.config import indexer as indexer_mod
+
+    store = tmp_path / "_conftest_config_canon"
+    raw_dir, canon_dir, snap_dir = str(store / "raw"), str(store / "canon"), str(store / "snapshots")
+
+    monkeypatch.setattr(snapshot_mod, "RAW_DIR", raw_dir)
+    monkeypatch.setattr(snapshot_mod, "CANON_DIR", canon_dir)
+    monkeypatch.setattr(snapshot_mod, "SNAP_DIR", snap_dir)
+    monkeypatch.setattr(queries_mod, "CANON_DIR", canon_dir)
+    monkeypatch.setattr(queries_mod, "SNAP_DIR", snap_dir)
+    monkeypatch.setattr(drift_mod, "CANON_DIR", canon_dir)
+    monkeypatch.setattr(edge_extractor_mod, "CANON_DIR", canon_dir)
+    monkeypatch.setattr(indexer_mod, "CANON_DIR", canon_dir)
+
+
+@pytest.fixture(autouse=True)
 def _no_declared_workspace_layer(monkeypatch):
     """No suite inherits a workspace layer from the developer's shell.
 

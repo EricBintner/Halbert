@@ -8,8 +8,11 @@ result passes through ``mcp_response()`` whether or not the handler
 remembered to call it. These tests pin that guarantee architecturally:
 
   1. A handler that returns raw secrets is still redacted by the choke point.
-  2. EVERY tools/call result — including notification calls — goes through
-     ``mcp_response``, exactly once, with the handler's raw result.
+  2. Every tools/call result that gets a response goes through
+     ``mcp_response``, exactly once, with the handler's raw result. A
+     notification (no ``id``) is the one exception — R2-P3 rejects it
+     before dispatch, so neither the handler nor the choke point runs
+     for it at all (see test_notification_tools_call_never_dispatches).
   3. The exception path cannot smuggle a secret out in an error message.
 
 The value-level guarantee (``describe_secret`` makes no network calls and
@@ -76,12 +79,15 @@ class TestDispatchChokePoint:
         # The spy saw the handler's raw (unwrapped) result.
         assert isinstance(calls[0], dict)
 
-    def test_notification_tools_call_still_wraps(self, srv, monkeypatch):
-        """A notification produces no response, but the boundary still ran.
+    def test_notification_tools_call_never_dispatches(self, srv, monkeypatch):
+        """A notification tools/call is rejected before dispatch (R2-P3).
 
-        The guarantee is about the code path, not the response: a handler
-        that runs must not be able to skip the choke point by being called
-        as a notification.
+        Superseded guarantee, kept for the historical record: this used to
+        assert the choke point still ran for a notification (handler runs,
+        response is merely discarded). That let a notification execute a
+        side-effecting tool (run_scanner, approve_proposal) whose caller
+        would never even learn the result — the bug R2-P3 fixed. A
+        notification must now never reach the handler OR the choke point.
         """
         calls = []
         real = server_module.mcp_response
@@ -96,7 +102,7 @@ class TestDispatchChokePoint:
             "params": {"name": "get_vitals", "arguments": {}},
         })
         assert resp is None  # notification — no response
-        assert len(calls) == 1  # but the boundary still ran
+        assert len(calls) == 0  # and no dispatch happened at all
 
     def test_exception_message_cannot_smuggle_a_secret(self, srv, monkeypatch):
         """A handler that embeds a secret in an exception must not leak it.

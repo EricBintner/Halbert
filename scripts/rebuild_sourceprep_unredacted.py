@@ -20,22 +20,44 @@ Steps
 -----
 1. Authenticate with the SourcePrep daemon (PREP_DAEMON_TOKEN via
    ``halbert_core.integrations.prep_token``).
-2. ``register_host_project(redact=False)`` — stage raw host config files
-   and register/update the project.
+2. ``SourcePrepSetup().apply(redact_host=False, build_fast_sync_only=True)``
+   — stage host config files raw and apply that to the unified ``halbert``
+   project (id ``735a592e-a2da-499b-a614-854a5fc461f5`` as of 2026-09,
+   daemon at ``127.0.0.1:8400``), NOT the legacy ``halbert-host`` project
+   ``register_host_project()`` targets — that project name is retired
+   (see ``sourceprep_setup.LEGACY_PROJECT_NAMES``). ``build_fast_sync_only``
+   re-stages ``host/`` plus an incremental fast_sync + CodeIndex build
+   only; it does not touch ``knowledge/``'s deep_enrichment, so a
+   config-only rebuild never re-embeds the ~16K-doc corpus.
 3. ``snapshot(<config-registry.yml>, redact=False)`` — populate the canon
    database with unredacted canonical JSON.
-4. Trigger the daemon's index build. (The task packet named a
-   ``POST /api/reindex`` route; the daemon exposes no such route — the
-   project build endpoint ``POST /projects/{id}/trace/build`` is the real
-   trigger and is what the registrar itself uses.)
+4. The daemon index build was triggered by step 2's ``apply()`` call
+   unless ``--skip-build``. (The task packet named a ``POST /api/reindex``
+   route; the daemon exposes no such route — ``apply()``'s own build
+   sequence, ultimately ``POST /projects/{id}/trace/build``, is the real
+   trigger.)
 5. Egress check: find the first secret-tier key in the freshly staged
    canon and query it through BOTH boundaries — tier routing and the MCP
    dispatch choke point — asserting only ``describe_secret`` metadata is
    emitted and the raw value appears nowhere in either response.
 
+   CAVEAT: boundary 2 goes through ``_tool_get_config_value ->
+   load_being_config()`` — the REAL host's current secret tier, unlike
+   boundary 1 which always probes against the hardcoded ``local_only``
+   default. If the host is UNLOCKED (``cloud_ok_acknowledged``, TTL not
+   expired) the value legitimately crosses with ``_egress_ack`` and
+   ``mcp_response()`` correctly lets it through (stripping the marker
+   before it reaches this script) — so treating that crossing as a leak
+   would be a false positive. This script is lock-aware: it checks the
+   host's current tier before failing boundary 2 and downgrades an
+   apparent leak to an informational note when the host is unlocked,
+   rather than a false ``exit 2``. For a fully trustworthy boundary-2
+   result, still prefer running this only while the host is locked
+   (``local_only``) — and only when no other SourcePrep build is running.
+
 Exit codes: 0 = rebuilt and egress verified; 1 = operational failure;
-2 = EGREGIOUS — the egress check FAILED (do not trust this host's raw
-staging until investigated).
+2 = EGREGIOUS — the egress check FAILED while the host was locked (do
+not trust this host's raw staging until investigated).
 
 ``--dry-run`` verifies the token, daemon reachability, and manifest
 readability and stages nothing, writes nothing.
@@ -139,12 +161,26 @@ def _egress_check(probe_key: Optional[str]) -> Dict[str, Any]:
 
     Boundary 2 — the MCP dispatch choke point: the same query through
     ``tools/call`` must come back redacted regardless of what the handler
-    returned.
+    returned. Unlike boundary 1, this goes through
+    ``_tool_get_config_value -> load_being_config()`` — the host's REAL
+    current secret tier. If the host is unlocked (``cloud_ok_acknowledged``,
+    TTL not expired), the value legitimately crosses with ``_egress_ack``
+    (stripped before it reaches here) — an apparent "leak" in that state
+    is a false positive, not a bug, so it's downgraded to a note instead
+    of failing. See the module docstring's step 5 caveat.
 
-    Returns a report dict; raises SystemExit(2) on any leak.
+    Returns a report dict; raises SystemExit(2) on a leak while the host
+    is locked (the only state where boundary 2 is fully trustworthy).
     """
     from halbert_core.config.queries import get_config_value
+    from halbert_core.config.being_config import load_being_config
     from halbert_core.mcp.server import MCPServer
+
+    host_unlocked = False
+    try:
+        host_unlocked = load_being_config().security.effective_secret_tier() != "local_only"
+    except Exception:
+        pass  # fail closed on the caveat: an unreadable config is treated as locked
 
     found = _first_secret_key(probe_key)
     if found is None:
@@ -181,9 +217,18 @@ def _egress_check(probe_key: Optional[str]) -> Dict[str, Any]:
     report["mcp_dispatch"] = {
         "redacted_marker": "<secret>" in body or "description" in body,
         "value_leaked": raw_value in json.dumps(resp, default=str),
+        "host_unlocked": host_unlocked,
     }
     if report["mcp_dispatch"]["value_leaked"] or not report["mcp_dispatch"]["redacted_marker"]:
-        _fail(2, f"MCP dispatch leaked {key!r} from {path}: {body[:400]}")
+        if host_unlocked:
+            report["mcp_dispatch"]["note"] = (
+                "host secret tier is not local_only — this crossing may be "
+                "the legitimate _egress_ack escape hatch, not a leak; "
+                "re-run while the host is locked (local_only) for a "
+                "trustworthy boundary-2 result"
+            )
+        else:
+            _fail(2, f"MCP dispatch leaked {key!r} from {path}: {body[:400]}")
 
     return report
 
@@ -213,13 +258,27 @@ def main() -> None:
         }, indent=2))
         return
 
-    # 1. Stage raw + register the project.
-    from halbert_core.tools.register_host_project import register_host_project
+    # 1. Stage raw + apply to the unified 'halbert' project — NOT the
+    #    legacy 'halbert-host' project register_host_project() targets.
+    #    build_fast_sync_only skips knowledge/'s deep_enrichment so this
+    #    config-only rebuild never re-embeds the doc corpus.
+    from halbert_core.integrations.sourceprep_setup import SourcePrepSetup
 
-    reg = register_host_project(base_url=args.base_url, build=not args.skip_build, redact=False)
-    if "error" in reg:
-        _fail(1, f"register_host_project failed: {reg['error']}")
-    print(f"staged {reg.get('files_staged')} raw files into {reg.get('staging_dir')}")
+    setup = SourcePrepSetup(base_url=args.base_url)
+    try:
+        reg = setup.apply(
+            build=not args.skip_build,
+            build_fast_sync_only=True,
+            redact_host=False,
+        )
+    except Exception as e:
+        _fail(1, f"SourcePrepSetup.apply(redact_host=False) failed: {e}")
+    if reg.get("status") == "skipped":
+        _fail(1, f"apply skipped: {reg.get('reason')}")
+    print(
+        f"staged {reg.get('files_staged')} raw files into project "
+        f"{reg.get('project_id')} at {reg.get('root')}"
+    )
 
     # 2. Raw canon snapshot for the tier-routed config brain.
     from halbert_core.config.snapshot import snapshot
@@ -230,9 +289,9 @@ def main() -> None:
     for e in errors[:5]:
         print(f"  {e.get('path')}: {e.get('error')}")
 
-    # 3. The daemon index build was triggered by register_host_project unless
-    #    skipped; nothing else to do here (see module docstring for why there
-    #    is no /api/reindex call).
+    # 3. The daemon index build was triggered by step 1's apply() call
+    #    unless --skip-build; nothing else to do here (see module
+    #    docstring for why there is no /api/reindex call).
 
     # 4. Prove the egress boundaries on the raw content just written.
     report = _egress_check(args.probe_key)
