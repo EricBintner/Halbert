@@ -191,15 +191,26 @@ class WolToggleRequest(BaseModel):
 # ---------------------------------------------------------------------------
 
 def _entity_state() -> Dict[str, Any]:
-    """This node's entity identity from being.yml (P1 fields)."""
+    """This node's entity identity from being.yml (P1 fields) plus its
+    place in the entity.
+
+    ``entity_role`` is the tri-state from ``halbert_core.identity``:
+    ``body`` (this node proxies to a canonical host), ``canonical`` (a
+    non-revoked peer is paired as a body, so this node is the memory host)
+    or ``independent``. ``entity_mode`` is its two-state view — singular on
+    BOTH sides of a pair, which is what /api/instance/info reports too.
+    """
+    from ...identity import resolve_entity_role
     from ...integrations.cognition_wiring import (
         _get_body_name,
         _get_canonical_memory_url,
         _get_canonical_thread_url,
     )
     memory_url = _get_canonical_memory_url()
+    entity_role = resolve_entity_role(get_peers_config().list_peers())
     return {
-        "entity_mode": "singular" if memory_url else "independent",
+        "entity_mode": "independent" if entity_role == "independent" else "singular",
+        "entity_role": entity_role,
         "body_name": _get_body_name(),
         "canonical_memory_url": memory_url,
         "canonical_thread_url": _get_canonical_thread_url(),

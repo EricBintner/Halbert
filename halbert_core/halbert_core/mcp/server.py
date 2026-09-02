@@ -47,6 +47,35 @@ def _hostname() -> str:
         return "unknown"
 
 
+def _entity_name(hostname: str) -> str:
+    """The machine's one name (onboarding ai_name > being.yml name > short
+    hostname > "Halbert") — the same resolver as the greeting and the
+    Presence Pill, so an MCP client meets the machine under the name its
+    owner gave it, never the raw hostname."""
+    try:
+        from ..identity import resolve_entity_name
+        return resolve_entity_name(hostname)
+    except Exception:
+        return hostname
+
+
+def _configured_voice() -> str:
+    """being.yml ``voice`` (first_person | the_computer | hybrid)."""
+    try:
+        from ..config.being_config import load_being_config
+        return load_being_config().voice or "first_person"
+    except Exception:
+        return "first_person"
+
+
+def _body_name() -> str:
+    try:
+        from ..identity import resolve_body_name
+        return resolve_body_name()
+    except Exception:
+        return ""
+
+
 # ---------------------------------------------------------------------------
 # Path allowlist — config-query tools may only read files the host staged
 # ---------------------------------------------------------------------------
@@ -1029,12 +1058,35 @@ class MCPServer:
     """MCP server speaking JSON-RPC 2.0 over stdin/stdout."""
 
     def __init__(self, instance_name: str = "", hostname: str = "") -> None:
-        self.instance_name = instance_name or hostname or _hostname()
+        # instance_name is the entity's name unless the operator pins one
+        # (--instance-name); hostname is kept separately as a body fact.
         self.hostname = hostname or _hostname()
+        self.instance_name = instance_name or _entity_name(self.hostname)
         self._initialized = False
 
+    def _instructions(self) -> str:
+        """The initialize result's ``instructions``: who this server is, in
+        the configured voice, and the rules every tool call lives under.
+        Tool names never change; only this text and the description prefix
+        carry the identity."""
+        body = _body_name()
+        where = f"hostname {self.hostname}" + (f", body '{body}'" if body else "")
+        rules = (
+            "every finding carries why_now/why_care/why_so/why_trust; "
+            "write tools need confirm and the phrase."
+        )
+        if _configured_voice() == "the_computer":
+            return (
+                f"This machine is {self.instance_name} ({where}). These tools read "
+                f"its own telemetry, config snapshots and findings; {rules}"
+            )
+        return (
+            f"I am {self.instance_name}, this machine ({where}). These tools read "
+            f"my own telemetry, config snapshots and findings; {rules}"
+        )
+
     def _tool_list(self) -> List[Dict[str, Any]]:
-        """Return tool schemas with instance name in descriptions."""
+        """Return tool schemas with the entity name in descriptions."""
         tools = []
         for schema in TOOL_SCHEMAS:
             tool = dict(schema)
@@ -1083,7 +1135,11 @@ class MCPServer:
                     "serverInfo": {
                         "name": f"halbert-{self.instance_name}",
                         "version": "0.1.0",
+                        # The hostname is a fact about the body, not the
+                        # identity — kept here for clients that need it.
+                        "hostname": self.hostname,
                     },
+                    "instructions": self._instructions(),
                 }
                 return None if is_notification else self._success(req_id, result)
 
@@ -1514,7 +1570,11 @@ def main() -> None:
         "--transport", choices=["stdio", "http"], default="stdio",
         help="Transport mode (default: stdio)",
     )
-    parser.add_argument("--instance-name", default="", help="Instance name for multi-instance disambiguation")
+    parser.add_argument(
+        "--instance-name", default="",
+        help="Name this server introduces itself by (default: the machine's "
+             "entity name — onboarding ai_name, being.yml name, else the short hostname)",
+    )
     parser.add_argument("--hostname", default="", help="Hostname override")
     parser.add_argument("--port", type=int, default=8765, help="HTTP port (default 8765)")
     parser.add_argument("--host", default="127.0.0.1", help="HTTP bind address (default 127.0.0.1)")

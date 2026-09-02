@@ -291,8 +291,12 @@ def get_node_identity() -> Dict[str, Any]:
     listed — it is local-only (the Mac's own slots), never a peer backend.
     """
     import os
+    from ..identity import resolve_entity_name
     node_id = os.environ.get("HALBERT_PERSONA_ID", "halbert") + "-" + socket.gethostname()
-    node_name = os.environ.get("HALBERT_DISPLAY_NAME", socket.gethostname())
+    # The name paired bodies see: the entity's one name (HALBERT_DISPLAY_NAME
+    # launch override > onboarding ai_name > being.yml name > short hostname),
+    # never the raw hostname.
+    node_name = resolve_entity_name()
     role = "compute_provider" if os.environ.get("HALBERT_ROLE", "host") == "host" else "satellite"
     port = int(os.environ.get("HALBERT_PORT", "8000"))
 

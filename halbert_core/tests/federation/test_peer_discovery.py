@@ -109,6 +109,14 @@ class TestPeerDiscovery:
         assert identity["port"] == 8001
         assert identity["role"] == "satellite"
 
+    def test_node_name_is_the_entity_name_not_the_hostname(self, tmp_path, monkeypatch):
+        """Paired bodies meet this machine by the name its owner gave it —
+        the same resolver as the greeting, not a fourth name source."""
+        monkeypatch.setenv("HALBERT_CONFIG_DIR", str(tmp_path))
+        monkeypatch.delenv("HALBERT_DISPLAY_NAME", raising=False)
+        (tmp_path / "preferences.yml").write_text("ai_name: Macky-Mac\n")
+        assert get_node_identity()["node_name"] == "Macky-Mac"
+
     def test_compute_backends_field_in_txt_record(self):
         """The TXT record includes compute_backends; Apple Intelligence is never a peer backend (M13).
 

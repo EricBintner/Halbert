@@ -11,6 +11,7 @@ from collections import namedtuple
 
 import pytest
 
+from halbert_core import identity as identity_mod
 from halbert_core.dashboard.routes import system as system_routes
 
 
@@ -85,18 +86,27 @@ class TestHumanizeUptime:
 
 
 class TestChosenName:
-    """Onboarding asks "What should I call this computer?" — that is the name."""
+    """Onboarding asks "What should I call this computer?" — that is the name.
+
+    The resolution itself lives in ``halbert_core.identity`` (pinned in
+    test_identity.py); this route must simply be one of its callers.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _no_other_name_source(self, monkeypatch):
+        monkeypatch.delenv("HALBERT_DISPLAY_NAME", raising=False)
+        monkeypatch.setattr(identity_mod, "being_name", lambda: None)
 
     def test_the_onboarding_name_wins_over_the_hostname(self, monkeypatch):
-        monkeypatch.setattr(system_routes, "_chosen_name", lambda: "Macky-Mac")
+        monkeypatch.setattr(identity_mod, "chosen_name", lambda: "Macky-Mac")
         assert system_routes._display_name("Erics-Mac-Studio.local") == "Macky-Mac"
 
     def test_hostname_is_the_fallback_when_onboarding_never_ran(self, monkeypatch):
-        monkeypatch.setattr(system_routes, "_chosen_name", lambda: None)
+        monkeypatch.setattr(identity_mod, "chosen_name", lambda: None)
         assert system_routes._display_name("workstation") == "workstation"
 
     def test_app_name_is_the_last_resort(self, monkeypatch):
-        monkeypatch.setattr(system_routes, "_chosen_name", lambda: None)
+        monkeypatch.setattr(identity_mod, "chosen_name", lambda: None)
         assert system_routes._display_name("") == "Halbert"
 
     @pytest.mark.parametrize("hostname,expected", [
@@ -125,7 +135,7 @@ class TestChosenName:
         assert system_routes._chosen_name() is None
 
     async def test_identity_introduces_itself_by_the_chosen_name(self, monkeypatch):
-        monkeypatch.setattr(system_routes, "_chosen_name", lambda: "Macky-Mac")
+        monkeypatch.setattr(identity_mod, "chosen_name", lambda: "Macky-Mac")
 
         identity = await system_routes.get_host_identity()
 

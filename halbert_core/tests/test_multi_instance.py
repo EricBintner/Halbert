@@ -90,13 +90,18 @@ class TestInstanceInfoEndpoint:
         assert result["features"]["home"] is False
         assert result["features"]["development"] is True
 
-    def test_instance_info_home(self):
+    def test_instance_info_home(self, tmp_path):
+        """Role follows the variant (REV-03 F8), not the persona id — so a
+        home node is one launched with HALBERT_VARIANT=home (or a being.yml
+        variant), and the test must say so."""
         from halbert_core.dashboard.routes.instance import get_instance_info
         env = {
             "HALBERT_PERSONA_ID": "home",
             "HALBERT_SCENE_CONTEXT": "smart home automation",
             "HALBERT_PORT": "8001",
             "WYOMING_PORT": "10401",
+            "HALBERT_VARIANT": "home",
+            "HALBERT_CONFIG_DIR": str(tmp_path),
         }
         with patch.dict(os.environ, env, clear=False):
             result = __import__("asyncio").run(get_instance_info())
@@ -146,6 +151,74 @@ class TestInstanceInfoEndpoint:
                 del os.environ["HALBERT_VARIANT"]
             result = __import__("asyncio").run(get_instance_info())
         assert result["variant"] == "sysadmin"
+
+
+class TestInstanceInfoIdentity:
+    """/api/instance/info must introduce the machine by the same name as
+    /api/identity (W4-04, C1-09): one resolver, no 'Host'/'Home' literal,
+    persona_id honouring being.yml, and the tri-state entity role (W4-05).
+    """
+
+    @pytest.fixture
+    def config_dir(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HALBERT_CONFIG_DIR", str(tmp_path))
+        for var in ("HALBERT_DISPLAY_NAME", "HALBERT_PERSONA_ID", "HALBERT_VARIANT"):
+            monkeypatch.delenv(var, raising=False)
+        return tmp_path
+
+    @staticmethod
+    def _info():
+        from halbert_core.dashboard.routes.instance import get_instance_info
+        return __import__("asyncio").run(get_instance_info())
+
+    def test_display_name_matches_the_greeting(self, config_dir):
+        from halbert_core.dashboard.routes.system import get_host_identity
+        (config_dir / "preferences.yml").write_text("ai_name: Macky-Mac\n")
+        info = self._info()
+        greeting = __import__("asyncio").run(get_host_identity())
+        assert info["display_name"] == "Macky-Mac"
+        assert info["display_name"] == greeting["display_name"]
+
+    def test_no_literal_host_or_home_default(self, config_dir, monkeypatch):
+        import socket
+        monkeypatch.setattr(socket, "gethostname", lambda: "Erics-Mac-Studio.local")
+        assert self._info()["display_name"] == "Erics-Mac-Studio"
+        monkeypatch.setenv("HALBERT_VARIANT", "home")
+        info = self._info()
+        assert info["role"] == "home"
+        assert info["display_name"] == "Erics-Mac-Studio"
+
+    def test_persona_id_honours_the_being_override(self, config_dir, monkeypatch):
+        (config_dir / "being.yml").write_text("persona_id_override: shared\n")
+        monkeypatch.setenv("HALBERT_PERSONA_ID", "home")
+        assert self._info()["persona_id"] == "shared"
+
+    def test_entity_role_independent_on_a_fresh_node(self, config_dir, monkeypatch):
+        from halbert_core.federation.peers_config import PeersConfig
+        peers = PeersConfig(config_path=config_dir / "peers.json")
+        monkeypatch.setattr(
+            "halbert_core.federation.peer_middleware.get_peers_config", lambda: peers)
+        info = self._info()
+        assert info["entity_role"] == "independent"
+        assert info["singular"] is False
+
+    def test_entity_role_body_when_proxying(self, config_dir):
+        (config_dir / "being.yml").write_text(
+            "canonical_memory_url: http://n150.lan:8001/api/memory\n"
+            "persona_id_override: shared\n")
+        info = self._info()
+        assert info["entity_role"] == "body"
+        assert info["singular"] is True
+
+    def test_entity_role_canonical_with_a_paired_body(self, config_dir, monkeypatch):
+        from halbert_core.federation.peers_config import PeersConfig
+        peers = PeersConfig(config_path=config_dir / "peers.json")
+        peers.add_peer(node_id="mac", node_name="Mac", role="body", raw_token="t" * 32)
+        monkeypatch.setattr(
+            "halbert_core.federation.peer_middleware.get_peers_config", lambda: peers)
+        info = self._info()
+        assert info["entity_role"] == "canonical"
+        assert info["singular"] is True
 
 
 class TestVariantResolution:

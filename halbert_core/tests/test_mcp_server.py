@@ -33,6 +33,54 @@ class TestProtocol:
         assert "serverInfo" in resp["result"]
         assert "halbert-test" in resp["result"]["serverInfo"]["name"]
 
+    def test_initialize_carries_the_hostname_and_first_person_instructions(
+        self, server, tmp_path, monkeypatch
+    ):
+        """MCP-05: the server introduces itself by the entity's name, keeps
+        the hostname as metadata, and tells the client what it is in the
+        configured voice."""
+        monkeypatch.setenv("HALBERT_CONFIG_DIR", str(tmp_path))
+        req = {"jsonrpc": "2.0", "id": 1, "method": "initialize"}
+        result = server.handle_request(req)["result"]
+        assert result["serverInfo"]["name"] == "halbert-test"
+        assert result["serverInfo"]["hostname"] == "test-host"
+        instructions = result["instructions"]
+        assert instructions.startswith("I am test, this machine")
+        assert "test-host" in instructions
+        assert "why_now/why_care/why_so/why_trust" in instructions
+        assert "confirm" in instructions and "phrase" in instructions
+
+    def test_instructions_follow_the_configured_voice(self, server, tmp_path, monkeypatch):
+        monkeypatch.setenv("HALBERT_CONFIG_DIR", str(tmp_path))
+        (tmp_path / "being.yml").write_text("voice: the_computer\n")
+        req = {"jsonrpc": "2.0", "id": 1, "method": "initialize"}
+        result = server.handle_request(req)["result"]
+        assert result["instructions"].startswith("This machine is test")
+
+    def test_default_instance_name_is_the_entity_name(self, tmp_path, monkeypatch):
+        """No --instance-name: the name is the one the machine has
+        everywhere else (onboarding ai_name), not the raw hostname. Tool
+        names are untouched; only the description prefix carries it."""
+        monkeypatch.setenv("HALBERT_CONFIG_DIR", str(tmp_path))
+        monkeypatch.delenv("HALBERT_DISPLAY_NAME", raising=False)
+        (tmp_path / "preferences.yml").write_text("ai_name: Macky-Mac\n")
+        s = MCPServer(hostname="Erics-Mac-Studio.local")
+        assert s.instance_name == "Macky-Mac"
+        assert s.hostname == "Erics-Mac-Studio.local"
+        result = s.handle_request({"jsonrpc": "2.0", "id": 1, "method": "initialize"})["result"]
+        assert result["serverInfo"]["name"] == "halbert-Macky-Mac"
+        assert result["serverInfo"]["hostname"] == "Erics-Mac-Studio.local"
+        assert result["instructions"].startswith("I am Macky-Mac, this machine")
+        tools = s.handle_request({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})["result"]["tools"]
+        assert all(t["description"].startswith("[Macky-Mac] ") for t in tools)
+        assert [t["name"] for t in tools] == [t["name"] for t in TOOL_SCHEMAS]
+
+    def test_default_instance_name_falls_back_to_the_short_hostname(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HALBERT_CONFIG_DIR", str(tmp_path))
+        monkeypatch.delenv("HALBERT_DISPLAY_NAME", raising=False)
+        s = MCPServer(hostname="Erics-Mac-Studio.local")
+        assert s.instance_name == "Erics-Mac-Studio"
+
     def test_ping(self, server):
         req = {"jsonrpc": "2.0", "id": 2, "method": "ping"}
         resp = server.handle_request(req)
