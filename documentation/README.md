@@ -4,7 +4,12 @@
 
 The key innovation: **the LLM identifies as the computer itself**, not as an external assistant. System state becomes its biography; configuration files become its physiology. When you ask "how are you doing?", it answers with its actual CPU temperature and memory pressure.
 
-## What's New (December 2024)
+## Status (2026-09-02)
+
+- The live plan is [`../ROADMAP.md`](../ROADMAP.md); decisions are in [`../DECISIONS.md`](../DECISIONS.md); the current concept model is [design/CORE-CONCEPTS-AND-ALIGNMENT-2026-09-02.md](design/CORE-CONCEPTS-AND-ALIGNMENT-2026-09-02.md).
+- The list below is the December 2024 announcement kept for history; several claims are stale (FEATURES.md is being rewritten from the ROADMAP definition-of-done table).
+
+## What's New (December 2024, historical)
 
 - **14,000+ RAG documents** — Comprehensive Linux documentation covering systemd, networking, filesystems, security, containers, and more
 - **Universal App Management** — Flatpak, Snap, and AppImage discovery and documentation
@@ -19,7 +24,8 @@ The key innovation: **the LLM identifies as the computer itself**, not as an ext
 | Document | Description |
 |----------|-------------|
 | [FEATURES.md](FEATURES.md) | **Complete feature list (start here!)** |
-| [../TODO.md](../TODO.md) | **Master engineering roadmap and active workstreams** |
+| [../ROADMAP.md](../ROADMAP.md) | **The living roadmap (now / next / deferred)** |
+| [../DECISIONS.md](../DECISIONS.md) | Decisions log (standing directives, decided, open) |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | High-level system design |
 | [design/macos-strategy.md](design/macos-strategy.md) | macOS tiers, config physiology & multi-session design |
 | [INSTALLATION.md](INSTALLATION.md) | Getting started guide |
@@ -41,7 +47,6 @@ The key innovation: **the LLM identifies as the computer itself**, not as an ext
 | [architecture/policy-engine.md](architecture/policy-engine.md) | Policy rules |
 | [architecture/scheduler.md](architecture/scheduler.md) | Autonomous tasks |
 | [architecture/approval-system.md](architecture/approval-system.md) | Human-in-the-loop |
-| [architecture/model-system.md](architecture/model-system.md) | LLM integration |
 | [architecture/guardrails.md](architecture/guardrails.md) | Safety controls |
 
 ---
@@ -51,8 +56,7 @@ The key innovation: **the LLM identifies as the computer itself**, not as an ext
 | Document | Description |
 |----------|-------------|
 | [guides/quickstart.md](guides/quickstart.md) | 5-minute setup |
-| [guides/custom-policies.md](guides/custom-policies.md) | Writing policy rules |
-| [guides/dashboard-usage.md](guides/dashboard-usage.md) | Web dashboard |
+| [guides/dashboard-pages.md](guides/dashboard-pages.md) | Dashboard pages |
 | [guides/model-selection.md](guides/model-selection.md) | Choosing LLMs |
 | [guides/troubleshooting.md](guides/troubleshooting.md) | Common issues |
 

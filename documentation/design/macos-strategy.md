@@ -1,5 +1,7 @@
 # Halbert macOS Strategy, Configuration Physiology & Multi-Session Architecture
 
+> **Alignment note (2026-09-02):** §2 (tiering) stands. §1.3 and §4 ("Universal Multi-Session Client" with tabs each adopting "I AM <hostname>") are superseded by the singular-entity design and shell review §9.5: bodies of one Halbert are switched from the Presence Pill (Singular Entity), separate entities only in Independent Node mode, and the Free companion is the same app with no local backend connected to one paired body. No tab client exists in code. See `CORE-CONCEPTS-AND-ALIGNMENT-2026-09-02.md` §2.2.
+
 **Date:** August 2026  
 **Status:** Approved Design & Architectural Plan  
 **Target Platforms:** macOS (Pro & Free), Linux (Flagship)

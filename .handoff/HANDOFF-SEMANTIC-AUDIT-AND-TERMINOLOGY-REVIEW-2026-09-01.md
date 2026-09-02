@@ -1,5 +1,7 @@
 # Handoff: Semantic Audit & Terminology Alignment (2026-09-01)
 
+> **SUPERSEDED 2026-09-01/02 by the shell review §9.2 lexicon and §9.1 rulings** (no backend renames; `identity.yml`, `mesh/`, `identity/` rejected; Tasks 3–4 closed). The remaining sweep work is tracked as ROADMAP row DOCS-1 and the lexicon extensions in `documentation/design/CORE-CONCEPTS-AND-ALIGNMENT-2026-09-02.md` §3.
+
 **To:** Successor Agent / Review AI  
 **From:** Initial Semantic Audit & Architecture Session  
 **Date:** 2026-09-01  

@@ -1,5 +1,7 @@
 # Master TODO & AI Review/Handoff Index
 
+> **2026-09-02:** this file is now the handoff INDEX only. Now/next/deferred live in `ROADMAP.md`; decisions in `DECISIONS.md`. §0 and §3 below are stale (U1–U6 are merged; the review remediation backlog is tracked per ROADMAP row) and will be reduced to pointers by the SONNET-05 doc pass.
+
 **Living task list & AI review directory.** Items move here from session handoffs so nothing gets
 lost between sessions. Strike through and date when done.
 

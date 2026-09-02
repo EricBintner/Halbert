@@ -510,6 +510,8 @@ already runs in Docker" claim struck as false. Full detail:
 
 ## 9. What Gets Built (Scoped Roadmap)
 
+> **Amended 2026-09-02:** items 1–3 (Rust crates, `halbertd`, MQTT bus) are **deferred by the 2026-09-01 direction** and are not scheduled; §4 Path 1's "already built, zero new work" diagram is wrong for the two-body deployment that shipped (home body on the always-on node, desk body on the workstation — see `documentation/design/CORE-CONCEPTS-AND-ALIGNMENT-2026-09-02.md` §2.8). The live schedule is `ROADMAP.md`; the items here with no Rust dependency (container image, sidecar compose, HA add-on wrapper, MCP registration) are its §4 "Next".
+
 ### Now (near-term)
 
 1. **Rust crates** — `halbert-telemetry`, `halbert-snapshots`, `halbert-sandbox`

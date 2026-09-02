@@ -1,5 +1,7 @@
 # Halbert Master Roadmap & Engineering TODO
 
+> **SUPERSEDED 2026-09-02 by `ROADMAP.md` and `DECISIONS.md`.** Kept as history. WS1.3 and WS1.5 landed; WS-2 (multi-session tabs) is replaced by the Presence Pill body switch (shell review §9.5); nothing here is scheduled.
+
 **Status:** Active  
 **Last Updated:** August 2026  
 **Architecture Reference:** [`documentation/design/macos-strategy.md`](documentation/design/macos-strategy.md) & [`GEMINI-Opinion.md`](GEMINI-Opinion.md)

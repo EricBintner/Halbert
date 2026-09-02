@@ -1,5 +1,7 @@
 # Halbert Experimental Documentation
 
+> **2026-09-02:** the "near-term actionable" list below predates the 2026-09-01 direction (Rust deferred, Linux OS far future). Treat everything in this folder as north-star research; `ROADMAP.md` is the only schedule.
+
 This folder houses forward-looking technical proposals, architectural thought-experiments, and long-term design blueprints for the Halbert ecosystem.
 
 ## Maturity & Status Tiers

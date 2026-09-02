@@ -1,5 +1,7 @@
 # Design Philosophy
 
+> **Alignment note (2026-09-02):** the ethos here stands and is the standing directive in `DECISIONS.md`. Two sections are out of date with the code: "The Autobiography Loop" (ChromaDB was retired from the chat path; the biography is the thread store plus the state ledger, still being wired) and "Implementation in Code" (`runtime/engine.py` is a placeholder, `memory/retrieval.py` was removed; the Guide is `agents/state_machine.py`, the Deep Thinker is `scheduler/` + `proactive/`, the Eyes are `discovery/`, `ingestion/`, `findings/detectors/`). Status and the reconciled concept model: `CORE-CONCEPTS-AND-ALIGNMENT-2026-09-02.md`. In the product the three roles map to the Guide model slot, the Specialist model slot, and the scanners (Health Checks).
+
 Halbert is built on a central insight: **an LLM that identifies as the computer itself is fundamentally more useful than an LLM that merely answers questions about computers.**
 
 This document captures the core design principles that shaped the system.

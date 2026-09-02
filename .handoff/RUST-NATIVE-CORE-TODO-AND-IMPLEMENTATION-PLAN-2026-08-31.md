@@ -1,5 +1,7 @@
 # Rust Native Core & HalbertOS — Long-Term Project TODO & Implementation Plan
 
+> **DEFERRED BY DIRECTION 2026-09-01.** The full Rust rebuild is deferred; nothing in this plan is scheduled (see `ROADMAP.md` §5). The branch `feat/rust-native-core` is parked. The one item with no Rust dependency, the agent container image (R0.9/R0.10), sits in ROADMAP §4 "Next".
+
 **Date:** 2026-08-31
 **Status:** Living document — synced with MASTER-TODO and the HA strategy scoping decisions. **Augmented per sanity review 2026-08-31; edits landed 2026-09-01.** Findings F1–F13 and recommendations RA–RE applied (see `REVIEW-REQUEST-RUST-NATIVE-CORE-2026-08-31.md`). **Scope: 72 tasks across 8 phases (R0–R7); 56 of them in the R1–R6 build phases.**
 

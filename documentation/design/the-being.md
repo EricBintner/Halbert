@@ -1,5 +1,7 @@
 # The Being — Halbert's Next Form
 
+> **Alignment note (2026-09-02):** §3's physical design shipped 2026-09-01 as the three-panel shell (`.handoff/REVIEW-REQUEST-SHELL-ARCHITECTURE-AND-ENTITY-NAV-2026-09-01.md` §9); ENGAGED/browsing are code modes, the UI says Conversation/Dashboard. §6 "One Halbert per host" is amended to "one mind per entity; an entity may have many bodies, each running its own tick against the one memory on the Canonical Host" (singular-entity design, 2026-08-31). §3/§9 say 17 pages; there are 14. §8's landed items (Presence Pill, panels, WhyChip, proactivity dial, voice setting) and the open ones (module summoning, tray indicator, the two proof slices end to end) are tracked as ROADMAP rows SHELL-1, ATTN-1, STATE-1. Concept status: `CORE-CONCEPTS-AND-ALIGNMENT-2026-09-02.md`.
+
 **Status:** Vision + plan set (brainstorm synthesis, 2026-08-23, recalibrated same day).
 Not yet an implementation plan.
 **Reads with:** [philosophy.md](philosophy.md) (the founding ethos),
