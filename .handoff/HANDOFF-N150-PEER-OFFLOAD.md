@@ -4,6 +4,15 @@
 **From:** Architecture / product planning  
 **Date:** 2026-08-30  
 **Status:** Integration wiring, built on existing `federation/` scaffold  
+**Correction (2026-09-02, SONNET-05):** every `home-light` reference below is
+stale — that variant was merged into `home` (U6 ratification, `U6-D2`); there
+is no separate `home-light` variant any more. Read every `home-light` mention
+below as `home`. Separately, per this session's OPUS-03/state-of-work
+findings, this compute-peer path is now real (the workstation endpoint is
+mounted and the broker no longer raises `NotImplementedError`) but pairing
+still cannot complete through the UI end to end (`SE-15`, open) — see
+`.handoff/RESULTS-OPUS-BATCH-2026-09-01.md` before treating this doc's
+integration steps as fully turnkey.  
 
 ---
 

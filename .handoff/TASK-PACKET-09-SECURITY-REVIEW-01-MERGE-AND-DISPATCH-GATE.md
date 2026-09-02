@@ -1,5 +1,17 @@
 # Task Packet 09: Security Review 01 Integration & Dispatch Egress Hardening
 
+> **Header status update (2026-09-02, SONNET-05): fully done, on a different
+> path than this doc describes.** The `297ceb67` merge this doc's "Status"
+> line refers to was on an old `main` and was itself superseded — the branch
+> was re-merged from scratch by `SONNET-01` on 2026-09-02 (`909b56c4`, one
+> test-file conflict resolved, 90/90 + 500/500 passing) after a long series
+> of intervening commits. The REV-01/REV-02 residuals from the same review
+> round, `R1-F4` (`set_autonomy_level` race) and `R2-P3` (id-less `tools/call`
+> executing), are also done now (`f41d7124`, `cfdfc727`). See
+> `RESULTS-SONNET-01-2026-09-02.md` for the authoritative current state;
+> treat this doc as historical record of the original 2026-08-30 work, not a
+> live status.
+
 **Target Model:** **GLM-5.3 high** (reassigned 2026-08-30; Batch U1 — runs with TASK-03 Task 3.2 and REV-01/REV-02 reviews)  
 **Domain:** Security Architecture, MCP Egress Interception, Transport Hardening, and Server-Side Phrase Verification  
 **Target Date:** 2026-08-30  

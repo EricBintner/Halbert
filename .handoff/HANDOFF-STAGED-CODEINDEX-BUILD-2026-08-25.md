@@ -1,7 +1,7 @@
 # Handoff: Staged External CodeIndex Build for Halbert Knowledge Corpus
 
 **Date:** 2026-08-25
-**Status:** Ready to execute. Fix landed, script written, smoke-tested (imports/embedder only — no build has run).
+**Status (updated 2026-09-02, RAG-10):** ~~Ready to execute. Fix landed, script written, smoke-tested (imports/embedder only — no build has run).~~ **EXECUTED AND DONE.** The build this doc plans finished 2026-08-26: 71,050 chunks, 245 files (`.handoff/HANDOFF-SCOPE-FILTER-REVIEW-2026-08-26.md`, reviewed live against the daemon). `.handoff/CODEINDEX-BUILD-LOCK.txt`, which claimed a build was still in progress under PID 66131, was stale (that process had long since exited) and has been deleted. The plan below is kept for its design rationale, not as an open TODO — the daemon's current live state is a separate question from what this doc describes (RAG-01 in the SONNET-05 results doc: the daemon's own scope-fix code is uncommitted in the CoDRAG checkout, a clean daemon restart reverts retrieval quality independent of whether this embedding build itself is intact).
 **For:** The AI session that executes and babysits the staged embedding build.
 **Supersedes/decides:** `.handoff/HANDOFF-RAG-ARCHITECTURE-REVIEW-2026-08-25.md` — review complete. Strategy confirmed: **Option A** (embed everything once, filter per-query by scope). Details below.
 

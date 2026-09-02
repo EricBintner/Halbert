@@ -24,6 +24,14 @@ This guide covers installing Halbert on Linux systems.
 | **Disk** | 10 GB free | 50+ GB (for models + data) |
 | **GPU** | Optional | NVIDIA (CUDA) or AMD (ROCm) |
 
+> **Note (2026-09-02):** `halbert_core/pyproject.toml`'s `requires-python`,
+> the packaged venv, and the PKGBUILD all currently declare `>=3.10` — one
+> full minor version below the `3.11+` this table states. Until the founder
+> settles `ENV-01` (`.handoff/DISPATCH-2026-09-01-FOUNDER-DECISIONS.md`), the
+> actually-tested and packaged floor is **3.10**, not 3.11. Installing on
+> 3.10 is expected to work; this table describes the intended target, not a
+> currently-enforced minimum.
+
 ### Dependencies
 
 - **Ollama** — Local LLM inference engine

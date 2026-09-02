@@ -1,3 +1,11 @@
+> **ARCHIVED 2026-09-02 (RAG-20, SONNET-05).** Audits the ChromaDB-based RAG
+> pipeline directly — the system it reviews has since been replaced by
+> SourcePrep/CodeIndex (hybrid BM25 + embedding retrieval against a staged
+> corpus, not the ChromaDB collection this report's findings are keyed to).
+> Its findings argue against an architecture that no longer ships. Kept for
+> history; current RAG state is `.handoff/HANDOFF-STATE-OF-WORK-2026-09-01.md`
+> §6.8 and the `RAG-*` items in `.handoff/DISPATCH-2026-09-01-SONNET-05-ci-tests-docs.md`.
+
 # RAG System Architecture Audit Report
 
 **Date**: December 17, 2024 (Updated: December 19, 2024)  

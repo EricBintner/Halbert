@@ -92,6 +92,14 @@ unchanged.
 
 ### 2. Plan B — terminal sessions, blocks, watched shell, pool, tasks column, light
 
+**Status update (2026-09-02, SONNET-05/DOC-01):** written
+(`.handoff/CONTINUOUS-CONVERSATION-PLAN-B-2026-08-27.md`) and executed —
+merged `0ba316b2`, B1–B22 — since this section was written. It landed as
+primitives, not wiring: see the status update on that plan doc, or
+`.handoff/HANDOFF-STATE-OF-WORK-2026-09-01.md` §6.4, for what actually
+reaches production. The rest of this section is kept as the original spec
+pointer, not a live TODO.
+
 Not yet written. Write it with the same method (contracts → four planners → verifier) from
 spec §9.1–9.3, 9.5–9.9 and §11's terminal/a11y items. Its contracts must define:
 `streaming/shell_integration.py` (bash `--rcfile` / zsh `ZDOTDIR` bootstrap emitting OSC 133

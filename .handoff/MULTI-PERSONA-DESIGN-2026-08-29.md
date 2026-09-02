@@ -3,7 +3,14 @@
 **Date:** 2026-08-29
 **From:** Technical planning session
 **To:** Design review
-**Status:** Awaiting design input before implementation
+**Status:** ~~Awaiting design input before implementation~~ **Corrected
+2026-09-02 (SONNET-05/DOC-01):** Phases 1–2 are merged (`9f4d4b16`) — store,
+routes, persona cards with add/delete, hot reload. Not fully resolved:
+`PersonaManager`'s enum was never unified with the new store, so `/switch`
+and `/activate` disagree about the active persona (`PERS-02`/REV-10 F7,
+open), and the fixed-name temp-symlink race (REV-10 F8) is unfixed. Also:
+`home-light` (referenced below) was merged into `home` and no longer exists
+as a separate variant.
 **Branch:** `feat/multi-persona` (worktree: `Halbert/multi-persona`)
 
 > **Revised 2026-08-30 per `HANDOFF-HOME-AUTOMATION-SIMPLIFICATION-2026-08-30.md`:** model-picker-related persona surfaces are **sysadmin-variant-only**. On `home`/`home-light` variants there is no model picker — the persona `model` override is inert and must not render; HA variants get the single Compute Peer setting instead, and the workstation's picker governs (Finding 3 / S3). Dated notes at §2 Q2, §2 Q5, and §4 Phase 3.

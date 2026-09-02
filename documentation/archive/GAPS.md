@@ -1,3 +1,12 @@
+> **ARCHIVED 2026-09-02 (RAG-19, SONNET-05).** Written December 2025 against
+> the ChromaDB-era RAG architecture, retired since (SourcePrep/CodeIndex
+> replaced it — see `documentation/design/11-response-modality-handoff.md`
+> and `.handoff/HANDOFF-RAG-IMPLEMENTATION-2026-08-23.md` onward). Most of
+> the specific gaps below no longer describe the current system either way
+> — some closed, some moot because the feature they describe was replaced
+> rather than finished. Kept for history, not as a current gap list; for
+> today's actual state see `.handoff/HANDOFF-STATE-OF-WORK-2026-09-01.md`.
+
 # Documentation vs Code Gap Analysis
 
 **Generated**: December 14, 2025  

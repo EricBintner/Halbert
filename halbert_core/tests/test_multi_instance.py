@@ -97,6 +97,17 @@ class TestInstanceInfoEndpoint:
         from halbert_core.dashboard.routes.instance import get_instance_info
         env = {
             "HALBERT_PERSONA_ID": "home",
+            # Role now derives from the variant, not persona_id (REV-03 F8,
+            # instance.py:31-38) — a being.yml-less test env falls through to
+            # HALBERT_VARIANT, which must be set explicitly here. HALBERT_CONFIG_DIR
+            # is pointed at an empty tmp dir so explicit_variant() (being.yml wins
+            # over env, cognition_wiring._get_variant) cannot pick up whatever real
+            # variant: the developer's own being.yml happens to have set — on a
+            # sysadmin dev box that would otherwise always win and make this test
+            # order/machine-dependent (test_capabilities.py's
+            # TestVariantResolutionFollowsEnv established this isolation pattern).
+            "HALBERT_CONFIG_DIR": str(tmp_path),
+            "HALBERT_VARIANT": "home",
             "HALBERT_SCENE_CONTEXT": "smart home automation",
             "HALBERT_PORT": "8001",
             "WYOMING_PORT": "10401",

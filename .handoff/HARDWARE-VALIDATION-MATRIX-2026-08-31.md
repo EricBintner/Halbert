@@ -74,9 +74,17 @@ Record results in the "Result" column and file issues for any failures.
 
 ## Notes
 
+**Updated 2026-09-02 (SONNET-05):** P2/O3/O5 are no longer unbuilt — all
+three landed on `main` in the Voice Mode Opus batch (`.handoff/HANDOFF-VOICE-MODE-OPUS-RESULTS-2026-09-01.md`)
+and the subsequent OPUS-02 packet this session made the voice chain actually
+reachable end to end (`U2-15` fix, `65ff3e83`). No test below is genuinely
+"blocked" on missing code any more — every row is blocked only on the
+hardware run itself, which is still at **0/22 completed**
+(`.handoff/RESULTS-OPUS-BATCH-2026-09-01.md` §4). Do not re-mark rows
+"blocked" for the reasons below; they no longer apply.
+
 - Tests 1.x require the audio-reactive mark engine (Phase 1, complete)
-- Tests 2.2, 5.2 require the display power daemon (P2, OPUS — not yet built)
-- Tests 4.3, 4.4 require the TTS egress WebSocket (O3, OPUS — not yet built)
-- Test 6.x requires the acoustic anomaly chain wiring (O5, OPUS — not yet built)
-- Tests requiring unbuilt OPUS tasks should be marked as "blocked" and
-  re-run after those tasks land
+- ~~Tests 2.2, 5.2 require the display power daemon (P2, OPUS — not yet built)~~ — P2 shipped: `system/display_power.py` (sysfs backlight + xset DPMS, wake-before-speak).
+- ~~Tests 4.3, 4.4 require the TTS egress WebSocket (O3, OPUS — not yet built)~~ — O3 shipped, and as of OPUS-02 (2026-09-02) is reachable from a real turn, not only under test mocks (see the O3 caveat in the Voice Mode Opus results handoff).
+- ~~Test 6.x requires the acoustic anomaly chain wiring (O5, OPUS — not yet built)~~ — O5 shipped: `proactive/acoustic_bridge.py` + `ProactiveGate` severity-2 handling.
+- No real audio has ever gone through this chain (no sherpa-onnx/openwakeword/Piper voices in `.venv`, `AudioConfig.enabled` defaults False) — the hardware run below is what would first exercise it for real, not a code gap.

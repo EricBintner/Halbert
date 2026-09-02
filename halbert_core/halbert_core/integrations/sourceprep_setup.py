@@ -324,7 +324,34 @@ class SourcePrepSetup:
         self, pid: str, wanted: List[Dict[str, Any]]
     ) -> Dict[str, str]:
         """Converge daemon scopes to the template. Keyed on display_name;
-        path mutation via add/remove (PUT does not accept paths)."""
+        path mutation via add/remove (PUT does not accept paths).
+
+        RAG-07 (known, undocumented daemon limitation, not fixed here): the
+        real ``GET /projects/{id}/scopes`` response's per-scope objects carry
+        ``path_count`` (an int), not a ``paths`` list — confirmed against the
+        response shape `sourceprep_client.py::list_scopes` documents and
+        every test double in this suite mocks (search this file's tests for
+        a scope fixture with a real ``paths`` key: there is none — the
+        client-side code has never been exercised against one). So
+        ``rec.get("paths")`` below is always ``None`` for a scope this
+        process did not just create in the same run, ``current_paths`` is
+        always the empty set on a re-run, ``to_add`` always recomputes the
+        FULL wanted list (harmless if the daemon's ``/add`` is idempotent on
+        an already-present path, unverified), and ``to_remove`` can never be
+        non-empty — a path dropped from a template's ``paths:`` list stays
+        indexed on the daemon forever with no signal that reconciliation
+        silently didn't do what it looks like it did. Not fixed here: there
+        is no documented per-scope detail endpoint in this client
+        (`sourceprep_client.py` has no ``GET /scopes/{id}``) that would
+        return real paths instead of a count, and confirming one exists needs
+        a live, healthy daemon to probe empirically — the daemon was reported
+        wedged this session (SONNET-01's results doc), so that verification
+        is deferred rather than guessed at. Either CoDRAG needs to add a
+        paths-bearing scope-detail response, or this method needs a
+        documented "assume full ownership, always re-add, never trust the
+        listing for removal" contract instead of the misleading diff it
+        computes today.
+        """
         existing = {
             s.get("display_name"): s
             for s in self._list_scopes(pid)
@@ -358,6 +385,12 @@ class SourcePrepSetup:
                 outcomes[name] = "created"
             else:
                 sid = rec["id"]
+                # See the RAG-07 note in this method's docstring: rec here
+                # comes straight off the daemon's real GET /scopes response
+                # for every scope but the one just created above in THIS run,
+                # and that response has no "paths" key — so current_paths is
+                # always empty on a genuine re-run, not just in the narrow
+                # case this comment used to imply.
                 current_paths = set(rec.get("paths") or [])
                 to_add = sorted(set(paths) - current_paths)
                 to_remove = sorted(current_paths - set(paths))

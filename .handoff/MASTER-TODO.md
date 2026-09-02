@@ -2,12 +2,14 @@
 
 > **2026-09-02:** this file is now the handoff INDEX only. Now/next/deferred live in `ROADMAP.md`; decisions in `DECISIONS.md`. §0 and §3 below are stale (U1–U6 are merged; the review remediation backlog is tracked per ROADMAP row) and will be reduced to pointers by the SONNET-05 doc pass.
 
+> **2026-09-02 (SONNET-05 doc pass, done).** §0 and §3 resynced against reality below — struck rows reflect what actually landed, sourced from `.handoff/RESULTS-OPUS-BATCH-2026-09-01.md` and `.handoff/RESULTS-SONNET-01/02/03/04-2026-09-02.md`, not from re-running the original audit. A new **§2a Review remediation backlog** gives the finding-id-level detail (`R04-F1`, `R06-F2`, …) the higher-level `ROADMAP.md` §3 rows don't carry — treat it as the historical evidence trail, `ROADMAP.md` as the current now/next/deferred source of truth per the 2026-09-02 planning-spine decision (`DECISIONS.md`). Founder-gated items are pointers to `.handoff/DISPATCH-2026-09-01-FOUNDER-DECISIONS.md` only, not duplicated here.
+
 **Living task list & AI review directory.** Items move here from session handoffs so nothing gets
 lost between sessions. Strike through and date when done.
 
-**Updated:** 2026-08-30 (model/effort reassessment + ultracode regrouping + home automation simplification — Batch U6)  
-**Master Review Portfolio:** 11 Comprehensive Review Packets (`.handoff/REVIEW-PACKET-*.md`)  
-**Active Incomplete Task Packets:** 10 Actionable Implementation Packets (`.handoff/TASK-PACKET-*.md`) + U6 simplification workstream
+**Updated:** 2026-09-02 (SONNET-05: §0/§3 resync against RESULTS-* docs, review remediation backlog, CI/branch-hygiene/voice-visual-UI/singular-entity rows, Rust HA-01 deferral note)
+**Master Review Portfolio:** 11 Comprehensive Review Packets (`.handoff/REVIEW-PACKET-*.md`) — remediation status: §2a below
+**Active Incomplete Task Packets:** 10 Actionable Implementation Packets (`.handoff/TASK-PACKET-*.md`) — superseded by the 2026-09-01 dispatch packets (OPUS-01..05, SONNET-01..05); kept as an index of the original handoff docs, not as open work
 
 > **2026-08-30 Reassessment (GLM-5.3).** All packets were previously tiered "Fable" (one "Opus").
 > After verifying actual code state, no remaining packet requires Fable. All implementation work is
@@ -15,36 +17,33 @@ lost between sessions. Strike through and date when done.
 > into **Ultracode Batch U1–U5** below so each batch runs as a single workflow. Fable/Opus are reserved
 > only as optional second-opinion passes on the two security reviews (REV-01/REV-02) and founder legal
 > sign-off (REV-07/TASK-06). Status column reflects what verification found — several packets were
-> already partially or fully executed.
+> already partially or fully executed. **Superseded 2026-09-02**: this reassessment predates the
+> 2026-09-01 audit and its OPUS-01..05/SONNET-01..05 dispatch, which is what actually executed the
+> remaining work — see §0 below for the batch-to-dispatch mapping.
 
 ---
 
-## 0. Ultracode Execution Batches (Regrouped 2026-08-30)
+## 0. Ultracode Execution Batches (Regrouped 2026-08-30) — ~~all six merged~~ (2026-09-02)
 
-Related work is grouped so each batch can be executed as one ultracode workflow run (fan-out agents per
-sub-task, verify pass per finding). Batches are independent and may run in any order; U5 is founder-gated.
+All U1–U6 batches below landed on `main` (verified against `.handoff/RESULTS-OPUS-BATCH-2026-09-01.md` and `RESULTS-SONNET-01/02/03/04-2026-09-02.md`, not by re-running the original packets — those RESULTS docs are the evidence). Residual, still-open items each batch left behind now live in **§2a Review remediation backlog** below (finding-id granularity) or as founder-gated rows in `DISPATCH-2026-09-01-FOUNDER-DECISIONS.md`, not in this table.
 
-| Batch | Scope (packets folded in) | Model / Effort | Remaining work after verification |
+| Batch | Scope (packets folded in) | Landed | What's still open |
 |---|---|---|---|
-| **U1 — Security & Trust Boundary** | TASK-09 (verify merged dispatch gate), TASK-03 Task 3.2 (unredacted rebuild script), REV-01 + REV-02 (security reviews with adversarial verify) | GLM-5.3 high (+ optional Fable second opinion on REV-01/02) | Both branch merges landed. Remaining: dispatch/egress/CORS/phrase verification, missing security tests (`test_tier2_guarantee.py`, `test_redactor.py`, `test_security_roles.py` do not exist), `scripts/rebuild_sourceprep_unredacted.py`. |
-| **U2 — Voice / Auditory Cortex** | TASK-07 (all four fixes), REV-09 + REV-03 reviews | GLM-5.3 medium | Unchanged: wyoming `speaker_role`+`session_id` fixes, `text_preprocessor.py`, BargeInHandler wiring, `<speech>` defanging all confirmed undone. |
-| **U3 — Frontend (Settings, Nav, Chat UI)** | TASK-02 (decomposition + nav + rename), TASK-08 (re-pointed at `useAgentStream.ts`/`AgentChat.tsx`; abort cleanup already present — a11y + token buffer remain), REV-08 + REV-11 reviews | GLM-5.3 medium (large fan-out; tab extraction parallelizes cleanly) | Settings.tsx is 3,283 lines (packet said 3,105/3,273 — stale). `ChatPanel.tsx` does not exist; packet references corrected. |
-| **U4 — Model Routing & Agent Tooling** | TASK-01 remainder (`HALBERT_MODEL` env override only), TASK-04 (GPU tool refactor), TASK-05 Task 5.2/5.3 (role harvester; Task 5.1 obsolete — see erratum), TASK-10 (merged — verification only), REV-05 + REV-06 reviews | GLM-5.3 medium | TASK-01 1.1 (secure_model)/1.2 (BeingConfig fields)/1.3 (home-light variant) already shipped; only the env-var override is left. Apple Intelligence merge landed (`11ded488`). |
-| **U5 — Founder Decisions (human-gated)** | TASK-06, REV-07 | GLM-5.3 high drafts all text; **decisions remain the founder's** — AI drafting cannot close FDR-DEC-01…04 | Not ultracode. Draft DCO/§7-exception/terms docs, correct `tauri.conf.json` path (see erratum), then present for founder approval. |
-| **U6 — Home Automation Simplification (S1-S7)** | [`HANDOFF-HOME-AUTOMATION-SIMPLIFICATION-2026-08-30.md`](file:///Volumes/4TB-BAD/Halbert/.handoff/HANDOFF-HOME-AUTOMATION-SIMPLIFICATION-2026-08-30.md) (its §12 work list W1-W25 is authoritative) | GLM-5.3 medium | Remove `secure_model`, SourcePrep, and the model picker from `home`/`home-light` variants; drop the 1B tier (SBC_LOW_POWER offload-only); Apple Intelligence local-only (peer compute routes to Ollama); HA memory embeddings via Ollama/ONNX (NOT `sentence-transformers` in halbert_core — see the handoff §4.7 correction). Must land **before** federated Phase 9. Details: §3 "Home Automation Simplification" subsection below. |
+| ~~**U1 — Security & Trust Boundary**~~ | TASK-09, TASK-03 Task 3.2, REV-01 + REV-02 | `feat/security-review-01` merged (`909b56c4`, SONNET-01); `R1-F4` autonomy-level race, `R2-P3` id-less `tools/call`, `R2-P4` unbounded stdio reads, `R2-P5` case-sensitive Bearer all fixed same session | `SEC-04` real unredacted rebuild deferred (daemon reported wedged, SONNET-01 §Task 4); `R2-P1/P2` (federation/peers_config.py, OPUS-03's file, not touched); `R2-F2b` no socket timeout, not attempted; `NEW-01` `_egress_ack` provenance, documented not fixed; `SEC-14` daemon `/projects` no bearer, CoDRAG's to fix |
+| ~~**U2 — Voice / Auditory Cortex**~~ | TASK-07, REV-09 + REV-03 | All four TASK-07 fixes + the P0/P1 auditory-cortex chain landed via OPUS-02 (`65ff3e83`, `409fc509`, `9ec19f8a`, `8e18a93c`) — Wyoming auth+loopback default, VAD frame size, voiceprint loading, `VM-STT` spoken input now becomes a turn, `<speech>` defanging | `R9-F06/F07/F08/F11/F13`, `U2-09` modality-context XML — below the P0/P1 line, chain works without them; **0/22 real-audio hardware runs**, unchanged (`VM-27`/`VM-15`/`HW-01`, founder queue) |
+| ~~**U3 — Frontend (Settings, Nav, Chat UI)**~~ | TASK-02, TASK-08, REV-08 + REV-11 | Settings decomposed to ~880 lines / 12 lazy-mounted tabs (SONNET-04); nav re-railed (System/Workloads, pre-dated this packet) + approvals badge added; `pages/Security.tsx`→`Findings.tsx` renamed; all of OPUS-05's chat-streaming fixes (`R11-01/02/03/04/05/06/09/10/12/13`) | `R11-07` focus bug (lives in OPUS-03's `DevicesTab.tsx`); `R11-08` HostShell landmark (moved under the shell redesign, nobody's touched it); `R11-10`'s abort half needs a one-line follow-up in `api.ts` (not this packet's file) |
+| ~~**U4 — Model Routing & Agent Tooling**~~ | TASK-01, TASK-04, TASK-05, TASK-10, REV-05 + REV-06 | `HALBERT_MODEL` override done (fails open on resolution error, SONNET-03 Task 8); circular secure-model gate fixed (`CAP_SECURE_MODEL_ALLOWED`, SONNET-03 Task 2); Apple Intelligence bridge-running gate (Task 4); API keys redacted from `/llm/config` (Task 6); `cascade_router.py` deleted, PICK-02/03 fixed (Task 7); all of OPUS-01's agent-core fixes (`R06-F1..F8`, `O1/O2`) | `R05-F4/F5/F6/F8` (`model/client.py` — images not translated per-provider, GPU lock, `stream=True` `.json()` bug, `is_model_loaded` prefix false positives — flagged, not this session's file); `U4-20` Swift bridge — hidden until built, per founder default |
+| ~~**U5 — Founder Decisions**~~ | TASK-06, REV-07 | Drafts exist (`APP-STORE-DISTRIBUTION-STRATEGY.md`, licence gate automated and green as of this packet) | Still human-gated — see `.handoff/DISPATCH-2026-09-01-FOUNDER-DECISIONS.md` §A for the ratification list; nothing here duplicates that sheet |
+| ~~**U6 — Home Automation Simplification (S1-S7)**~~ | `HANDOFF-HOME-AUTOMATION-SIMPLIFICATION-2026-08-30.md` §12 (W1-W25) | Fully merged (`4e4ff2f4`, `93c863c1`, D4 `8545af94`); `U6-BUG-01` (registry ignores `HALBERT_VARIANT`) and `U6-BUG-02` (circular secure-model gate) both fixed by SONNET-03; `U6-28` retired `home-light` string check fixed | D2/D4/Q3/Q4 still await ratification (implemented-per-default, see `DECISIONS.md`); Frigate queue cap (`U6-BUG-03`) and snapshot→vision routing (`U6-BUG-04`) not started |
 
-**Errata found during verification (fixed in packets/indexes):**
-1. **TASK-05 Task 5.1 is obsolete.** It instructs wiring `SendMessageRequest.context` into the agent — but the founder decision on 2026-08-30 was to *remove* the field (done, see §3). Packet updated; only the role harvester remains.
-2. **TASK-08 references a non-existent file.** `ChatPanel.tsx` does not exist. The chat streaming code lives in `src/hooks/useAgentStream.ts` + `src/components/agent/AgentChat.tsx`, and AbortController cleanup (Task 8.1) is already implemented there. Remaining: `useTokenBuffer` and ARIA live regions.
-3. **TASK-09 Task 9.1 (merge) and TASK-10 Task 10.1 (merge) are already done** — `feat/security-review-01` merged at `297ceb67`, `feat/apple-intelligence` merged at `11ded488`, both on `main`. Only verification steps remain.
-4. **TASK-03 Task 3.1 is already done** — `halbert_core/cli/` exists with `check_credential.py`/`check_breach.py` and `pyproject.toml` console scripts registered. Only Task 3.2 (rebuild script) remains.
-5. **TASK-06 references `src-tauri/tauri.conf.json` at repo root — wrong path.** Actual file: `halbert_core/halbert_core/dashboard/frontend/src-tauri/tauri.conf.json`.
-6. **TASK-01 Task 1.4 premise is false** — `deploy/halbert-home.service` contains no `HALBERT_MODEL`/`qwen2.5:3b` line to update. Tasks 1.1–1.3 already shipped in code.
-7. **Several verification-command test paths in packets do not exist yet** (e.g. `test_tier2_guarantee.py`, `test_redactor.py`, `test_security_roles.py`, `test_client.py`) — creating them is part of each batch.  
+**Errata from the original packets** — kept for history only, all superseded by what actually shipped (above):
+1. TASK-05 Task 5.1 (obsolete — field removed, done). 2. TASK-08's `ChatPanel.tsx` reference (file never existed; the real files are `useAgentStream.ts`/`AgentChat.tsx`, both since rewritten by OPUS-05). 3. TASK-09/TASK-10 merges (done, `297ceb67`/`11ded488` — both further superseded by the 2026-09-01 security-review-01 merge and this session's work). 4. TASK-03 Task 3.1 (done). 5. TASK-06's wrong `tauri.conf.json` path. 6. TASK-01 Task 1.4's false premise. 7. Missing verification test paths — all now exist.
 
 ---
 
 ## 1. Master Review Packets (Code Reviews — reassigned 2026-08-30)
+
+**Table below is an index of the original handoff docs, not open work — see §2a for what each review's findings actually resolved to (done/open, by finding id) as of 2026-09-02.**
 
 Each packet provides a complete audit of plans (past 2 weeks), git commits (past week), key files, security boundaries, and specific review directives.
 GLM-5.3 did not author this code, so it is a reasonably independent reviewer. Security-critical packets get an adversarial verify pass; founder legal items stay human-gated.
@@ -73,6 +72,8 @@ GLM-5.3 did not author this code, so it is a reasonably independent reviewer. Se
 
 ## 2. Incomplete Work Task Packets (Actionable Implementation Handoffs — reassigned 2026-08-30)
 
+**Superseded 2026-09-02**: every row below either landed via the 2026-08-30 Ultracode batches (§0, now struck) or via the 2026-09-01 dispatch packets (§2a). Kept as an index of the original handoff docs.
+
 Each task packet contains step-by-step instructions, file lists, line-number targets, design constraints, and automated verification commands.
 Status reflects code verification on 2026-08-30 — several packets were already partially executed.
 
@@ -91,83 +92,169 @@ Status reflects code verification on 2026-08-30 — several packets were already
 
 ---
 
+## 2a. Review remediation backlog (added 2026-09-02, SONNET-05)
+
+One row per finding from the seven REV-* review packets that had real, confirmed-reproducing findings as of the 2026-09-01 audit (`.handoff/HANDOFF-STATE-OF-WORK-2026-09-01.md` §6, `.handoff/audit-2026-09-01/AUDIT-FINDINGS-DETAIL.md`). REV-01/REV-02 (security) are U1, already struck above — not repeated here. Status is sourced from `.handoff/RESULTS-OPUS-BATCH-2026-09-01.md` and `RESULTS-SONNET-01/02/03/04-2026-09-02.md`; a finding not mentioned in any RESULTS doc is marked open on the assumption nothing touched it, not on a fresh re-check.
+
+**REV-04 — Sovereign Host / Terminals (owner: OPUS-04)**
+
+| Finding | Status |
+|---|---|
+| `R04-F1` reaper kills live user terminals | ~~Done~~ `426b3be2` |
+| `R04-F3` pool leaks busy slot on error | ~~Done~~ `0a35c1b2` |
+| `R04-F4` unbounded block output (~800 MB reproduced) | ~~Done~~ `0a35c1b2` |
+| `R04-F5` `kill()` blocks the event loop | ~~Done~~ `98662c4a` |
+| `R04-F6` unbounded fan-out | ~~Done~~ `98662c4a` |
+| `R04-F7` unbounded `/api/terminal/exec` timeout/output | ~~Done~~ `e8358ed5` |
+| `R04-F8` `speaker_role` kwarg missing from 3 test doubles | ~~Done~~ `902c485c` (OPUS-01) |
+| `R04-F10` stale-thread guard never implemented | ~~Done~~ `e8358ed5` |
+| `R04-F11` dead emitter | ~~Done~~ `e8358ed5` |
+| `R04-F12` post-SIGKILL zombie | ~~Done~~ `ec924bbc` |
+| `R04-F13` fd leak | ~~Done~~ `98662c4a` |
+| `R04-F2`/`TERM-08` watched-shell → thread pipeline, `TasksColumn`/`YourShellRegion` mount | Open — built, unwired; founder decision (`DISPATCH...FOUNDER-DECISIONS.md`); `TERM-08`'s StatusLight target needs a new home since `ModeSwitch.tsx` was deleted by the shell redesign |
+| `R04-F9` somatic block pipeline | Open — built, unwired; same founder decision |
+| `R04-POOL` agent PTY pool enable-by-default | Open — now *safe* to enable (F3/F4 were the blockers) but still test-only; founder decision, recommend (a) wire it |
+
+**REV-05 — Unified LLM Router, GPU, Apple Intelligence (owner: SONNET-03, `R05-F1` OPUS-03)**
+
+| Finding | Status |
+|---|---|
+| `R05-F1` no `peer://` branch in `_stream_turn` | ~~Done~~ `e7bcf029` (OPUS-03) |
+| `R05-F2` Apple Intelligence slot ignores `apple_intelligence_bridge_running` | ~~Done~~ `fc55d245` |
+| `R05-F3` `GET /api/llm/config` returns provider API keys in plaintext | ~~Done~~ `94dd4a0d` |
+| `R05-F7` `TierRouter.refresh()` misses mid-session file edits | ~~Done~~ `c56dcb4f` |
+| `R05-N1`/`U4-18`/`U6-BUG-02` circular secure-model provisioning gate | ~~Done~~ `fc55d245` (`CAP_SECURE_MODEL_ALLOWED`) |
+| `R05-P2` `HALBERT_MODEL` override fails closed on variant-resolution error | ~~Done~~ `c56dcb4f` |
+| `R05-F4` images not translated per-provider wire format | Open — `model/client.py`, not this session's file; flagged for a follow-up packet |
+| `R05-F5` GPU lock not taken on the streaming path | Open — same file, same flag |
+| `R05-F6` `stream=True` calling `.json()` on an SSE body | Open — same file, same flag |
+| `R05-F8` `is_model_loaded` prefix false positives | Open — same file, same flag |
+| `STUB-01` `tier_router.py` OpenAI `NotImplementedError` stub | ~~Done~~ `a4e4b5a3` (traced unreachable from the real chat path; now a generic `Unknown provider` like every other legacy-hierarchy gap) |
+
+**REV-06 — Agent Core, Intake Pipeline, Reactive Slices, SourcePrep RAG (owner: OPUS-01, RAG half SONNET-05)**
+
+| Finding | Status |
+|---|---|
+| `R06-F1` defanged query leaks into the next turn/session | ~~Done~~ `e0052bce` — moved onto `StateContext`, structurally can't reintroduce |
+| `R06-F2` `response_modality` UnboundLocalError | ~~Done~~ `58863b5e` — cleared 24-33 test failures alone |
+| `R06-F3` SEARCHING ignores `retrieval_scope`/skill scope | ~~Done~~ `90207b55` |
+| `R06-F4` failed chmod excluded from rollback | ~~Done~~ `5e090cf5` |
+| `R06-F5` `merge_thread` orphans `open_loops`/`terminal_blocks`/`compact_boundaries` rows | ~~Done~~ `2d99bc27` |
+| `R06-F6` Wyoming turn abandons `agent.process()` without `aclosing` | ~~Done~~ `8e18a93c` (OPUS-02) |
+| `R06-F8` bare `except TypeError` retries retrieval unscoped | ~~Done~~ `90207b55` |
+| `R06-O1` mispaired ReAct observations | ~~Done~~ `2857a641` |
+| `R06-O2` `recall_memory`/`search_discoveries` silently substituted | ~~Done~~ `2857a641` |
+| `R06-X1` CRAG `secure=` kwarg test drift | ~~Done~~ `902c485c` |
+| `RAG-06`/`U4-14` role scopes unreachable (no `assigned_to_role`) | ~~Done~~ SONNET-05, `sourceprep_template.yml` — 5 of 8 skill roles now mapped (network/service/storage/security/config-ops); 3 (discovery/frigate/home-ops) have no file-backed manifest to map to, by design; re-applying to the live daemon is `RAG-05`, founder queue |
+| `RAG-07` `_reconcile_scopes` can never remove paths | Open — documented, not fixed (daemon's `GET /scopes` returns `path_count` not `paths`; no per-scope detail endpoint exists client-side to fix it against; needs a live healthy daemon to verify, deferred) |
+| `RAG-12`/`LEG-GATE` licence manifest red | ~~Done~~ SONNET-05 — self-referential-extras parser bug fixed, 9 deps registered, gate green (51/51) |
+| `U4-08` CUDA doc unreachable (`data/knowledge/` dead directory) | ~~Done~~ SONNET-05 — moved to `data/linux/nvidia-docs/nvidia_cuda_compatibility.jsonl`, matrix updated to 580.x/CUDA 13, manifest counts updated, quality-gate test added; re-embed is founder-queued (`RAG-05`) |
+| `RAG-01` daemon-side scope fixes (LOD skip, `scope_mode=hard`) | Open — uncommitted in the CoDRAG checkout (`/Volumes/4TB-BAD/HumanAI/CoDRAG`); a clean daemon restart reverts to 1-chunk file-head responses; not this repo's to fix |
+| `RAG-10` stale `CODEINDEX-BUILD-LOCK.txt` + stale RAG handoff status headers | ~~Done~~ SONNET-05 — lockfile deleted (its PID confirmed not running), `HANDOFF-STAGED-CODEINDEX-BUILD-2026-08-25.md` status corrected |
+| `RAG-13` 13 corpus JSONL files (≈71 MB) gitignored | Open — founder decision; SONNET-05 corrected the doc claim from "all 53 committed" to the verified "45 tracked, 13 not" with the exact file list (`documentation/RAG-DATA-SOURCES-2026-08-24.md` §1.1) |
+| `RAG-14` no way for a new install to get the ~20-hour index | Open — founder decision (ship as asset vs. UI-driven build) |
+| `RAG-19`/`RAG-20`/`RAG-21` `GAPS.md`/`RAG_AUDIT_REPORT.md`/legacy ChromaDB doc indexing | `RAG-19`/`RAG-20` ~~Done~~ SONNET-05 (archived with banners); `RAG-21` (retire ChromaDB `routes/rag.py`/Settings docs UI/CLI `rag-add`) open, founder decision recommends retire |
+
+**REV-08 — UI/UX Redesign, Settings Decomposition (owner: SONNET-04)**
+
+| Finding | Status |
+|---|---|
+| `R08-01` Approvals + 6 routed pages have no nav entry | ~~Done~~ pre-dated packet (shell redesign) + `886e1b9d` (approvals badge) |
+| `R08-02` NavRail ARIA tabs half-implemented | ~~Done~~ `af16f2f8` — dropped tab roles for nav semantics, added `aria-current` |
+| `R08-04` literal-colour ratchet red | ~~Done~~ `c6989455` — 9 files swept to semantic tokens, re-baselined at 211 |
+| `R08-05` indexing poll leak | ~~Done~~ `6e4ef14b` |
+| `R08-07` Clear Cache placebo / Debug toggle / blocklist PUT-per-keystroke | ~~Done~~ `6e4ef14b` |
+| `DS-10` 56 hardcoded hex colours | Open — not this packet's files (`ConfidenceIndicator.tsx` is real, fixable; `xtermTheme.ts`'s 40 are legitimate/documented; rest are false positives) |
+
+**REV-09 — Auditory Cortex & Audio Pipeline (owner: OPUS-02)**
+
+| Finding | Status |
+|---|---|
+| `R9-F01` Wyoming unauthenticated on `0.0.0.0:10400` by default | ~~Done~~ `65ff3e83` — now `127.0.0.1` + disabled by default, breaking change, operator-visible |
+| `R9-F02` second event loop, per-loop turn lock | ~~Done~~ `8e18a93c` |
+| `R9-F03`/`U2-14` VAD fed 480-sample frames, Silero needs 512 | ~~Done~~ `409fc509` |
+| `R9-F04` enrolled voiceprints never loaded | ~~Done~~ `409fc509` |
+| `R9-F05`/`U2-15` production can never resolve VOICE modality | ~~Done~~ `65ff3e83` — the keystone fix (`has_speaker()` was permanently False) |
+| `R9-F10`/`R3-F04` audio-chunk framing | ~~Done~~ `65ff3e83` |
+| `R3-F10b` `Server.aclose()` doesn't exist on Python 3.10 | ~~Done~~ `65ff3e83` |
+| `U2-05` satellite replies send raw markdown to HA TTS | ~~Done~~ `65ff3e83` |
+| `U2-07` `<speech>` tag defanging | ~~Done~~ `8e18a93c` |
+| `VM-STT` spoken input never becomes a turn | ~~Done~~ `9ec19f8a` — no new endpoint needed, reused the existing bidirectional mic socket |
+| `R9-F06`/`F07`/`F08`/`F11`/`F13`, `U2-09` modality-context XML | Open — below the P0/P1 line, chain runs end to end without them |
+| `is_speech`'s per-frame `detector.flush()` | Open — packet asked to remove it; OPUS-02 deliberately did not (Silero is stateful, flushing discards context hysteresis depends on; untestable without sherpa-onnx, flagged rather than guessed) |
+| Hardware validation | **0/22**, unchanged — no sherpa-onnx/openwakeword/Piper in `.venv`, founder queue (`HW-01`/`VM-15`/`VM-27`) |
+
+**REV-10 — Federated Fleet & Multi-Persona (owner: OPUS-03)**
+
+| Finding | Status |
+|---|---|
+| `R10-N1`/`ROUTE-01` devices router mounted without `/api` prefix | ~~Done~~ `1f3b68fc` |
+| `R10-F1`/`SE-16` self-service pairing (no confirmation/expiry/rate limit) | ~~Done~~ `7dc93e68` |
+| `R10-F2`/`SE-09` workstation compute endpoint never mounted | ~~Done~~ `92cf9868` |
+| `R10-F3`/`SE-08` three components disagree on the health route | ~~Done~~ `92cf9868` |
+| `R10-F5` any peer can revoke any other | ~~Done~~ `1f3b68fc` + `7dc93e68` |
+| `R10-F10`/`R10-F11` 500s on unbuilt surfaces | ~~Done~~ `0175377d` |
+| `SE-15` UI pairing cannot succeed (mDNS list hardcoded, manual tab throws, token never reaches the other machine's `being.yml`) | Open — NOT in OPUS-03's fixed list (that table covers `ROUTE-01`/`SE-16`/`SE-09`/`SE-08`/`R05-F1`/`FED-01` only); `SE-16` fixed the backend pairing-security flaw, this is the separate frontend gap. This is P7's actual acceptance gap — see `IMPL-PLAN-SINGULAR-ENTITY-TASKS-2026-08-31.md`'s corrected Status block |
+| `SE-05` `ComputeRouter.route()` never instantiated | Open — founder decision, recommend wire for HOME variant only (endpoint it routes to now exists and works) |
+| `SE-10` `PeerToolProxy` never injected into the live tool-execution path | Open — not in OPUS-03's fixed list; P5a/P5d's own security tests exercise it directly, not through a real turn |
+| `SE-12` deferred queue unbounded, `replay_deferred` unimplemented | Open — gated on `SE-05` |
+| `SE-28` two-machine LAN test | Open — not written, needs the founder's real two-machine run behind it |
+| `R2-F6` outbound token custody (Fleet Cockpit blocker) | Open — `PeersConfig` stores only hashes by design (M14); needs its own credential store decision before the Fleet Cockpit can be built; routes deliberately answer 501 rather than inventing an unreviewed store |
+| `PERS-02`/`PERS-03`/`PERS-05` persona sources of truth | Open — not started; design recommendation A (pick `PersonaStore`) stands |
+
+**REV-11 — Chat UI Performance & Accessibility (owner: OPUS-05)**
+
+| Finding | Status |
+|---|---|
+| `R11-01` every completed turn cancels itself (double-cancel on explicit stop) | ~~Done~~ `c099be47` |
+| `R11-02` queued send drops pending approvals | ~~Done~~ `edb36d25` |
+| `R11-03` impure `setSession` updater | ~~Done~~ `9cfb10c2` |
+| `R11-04`/`05`/`06`/`09`/`10`(partial)/`12` re-parsing/overlapping-loads/etc. | ~~Done~~ `689f5f78` |
+| `R11-11` composer claims a popup that isn't rendered | ~~Done~~ `7dce8e58` |
+| `R11-13` callback churn | ~~Done~~ `9cfb10c2` |
+| `R11-10`'s abort half (shared `inFlight` flag in `api.ts`) | Open — one-line follow-up (`signal` param on `api.getTimeline`) for whoever owns `api.ts` next; `useTimeline`'s own half is fixed |
+| `R11-07` focus after "Forget this" | Open — lives in `DevicesTab.tsx` (OPUS-03's file, not OPUS-05's) |
+| `R11-08` HostShell landmark | Open — `components/shell/**` moved under the shell redesign; not addressed |
+| `CUA-04` adopt `react-markdown`+`remark-gfm` | Open — deliberately not done; would have added an unregistered dependency while the licence gate was red. **Gate is now green (this packet's Task 2)** — reconsider next time this area is touched |
+
+---
+
 ## 3. Specific Subsystem Status & Detailed Open Loops
 
-### Security & Trust Boundary Subsystem
-- [x] ~~**Step 1: Remove breach checks from describe_secret.**~~ Done (commit `50d17e45`).
-- [x] ~~**Step 2: Document standalone human-run tools.**~~ Done (commit `50d17e45`).
-- [x] ~~**Step 3: Enrich metadata-only describe_secret.**~~ Done (commit `9fa8068e`).
-- [x] ~~**Step 4: Architectural guarantee test.**~~ Done (333 tests pass).
-- [x] ~~**Follow-up: Move validation/compromise modules to CLI.**~~ Done 2026-08-30 (`halbert-check-credential`, `halbert-check-breach`).
-- [x] ~~**Settings UI security tab.**~~ Done (`SecurityComponents.tsx`).
-- [x] ~~**Context assembler integration.**~~ Done (`get_config_value` tier routed).
-- [x] ~~**Context-assembly backstop.**~~ Done (`assembler.py:334-351`).
-- [x] ~~**Merge `feat/security-review-01` (Egress Dispatch Interceptor & Transport Hardening)**~~ Branch merged into `main` at `297ceb67` on 2026-08-30. Verification of the dispatch egress gate, CORS default-deny, and server-side phrase enforcement still pending — see [`TASK-PACKET-09`](file:///Volumes/4TB-BAD/Halbert/.handoff/TASK-PACKET-09-SECURITY-REVIEW-01-MERGE-AND-DISPATCH-GATE.md) (Batch U1).
-- [ ] **Rebuild index unredacted (operational gate)** — Staging raw files via `register_host_project(redact=False)` while verifying egress boundaries. (See [`TASK-PACKET-03`](file:///Volumes/4TB-BAD/Halbert/.handoff/TASK-PACKET-03-SECURITY-CLI-AND-INDEX-REBUILD.md)).
+**Superseded 2026-09-02 — reduced to pointers (SONNET-05 doc pass).** Every checkbox below that this granularity used to track individually now has a more accurate, evidence-sourced status in **§2a** (finding-id level) or `ROADMAP.md` §3 (product-capability level, current now/next/deferred source of truth). Kept as a compressed summary per subsystem so the subsystem groupings themselves aren't lost, not as a place to check new boxes.
+
+### Security & Trust Boundary Subsystem — ~~all listed items done~~ (2026-09-02)
+All eight Step/Follow-up items were already done as of 2026-08-30. `feat/security-review-01` merged (superseded by the fuller 2026-09-02 merge, `909b56c4`, SONNET-01 — see §0 U1). The one open item, the unredacted index rebuild, is still open: `SEC-04` in §2a's U1 row (daemon reported wedged, deferred by SONNET-01, not this session's to force).
+
+### Sentient Home & Auditory Cortex Subsystems — ~~11 of 14 items done~~ (2026-09-02)
+The four TASK-07 fixes (speaker role, TTS markdown stripping, session ID collision, barge-in wiring), the modality-aware prompt builder, `StreamingTagDemuxer`, the SSE schema, `<modality_context>` XML, ThreadManager injection, and `HALBERT_MODEL` wiring are all done — see **REV-09** and **REV-06** in §2a for the finding ids and commits. `secure_model` and Phase 8 light variant were already done as of 2026-08-30 (further revised by U6, see below). Still open: Rust AEC (`audio_capture.rs` marked dormant by decision, not built — `VM-22`); the frontend voice UI components (`AcousticAuraIndicator.tsx` exists, the rest per `ROADMAP.md` VOICE-1); macOS NSPanel/CGEventTap HUD (`FDR-08`, founder-gated channel decision).
+
+### Home Automation Simplification (Batch U6) — ~~S1, S2, S6 done; D1 done~~ (2026-09-02)
+Struck in §0 above (Batch U6 fully merged `4e4ff2f4`/`93c863c1`/D4 `8545af94`). D1 (unify variant resolution) is done — `SONNET-03` routed `CapabilityRegistry` through `cognition_wiring._get_variant()` (`U6-BUG-01`). D2/D4/Q3/Q4 are implemented-per-default, awaiting founder ratification (`DECISIONS.md`). S3 (Compute Peer setting) and S4 (drop 1B tier, wizard compute-peer prompt) are **done** — verified 2026-09-02 against the actual code (`ComputePeerCard.tsx` + `Settings.tsx:806`'s `isHomeVariant` branch for S3; no 1B recommendation path left in `hardware_detector.py`, `config_wizard.py::_prompt_compute_peer`/`_test_compute_peer` wired for S4 — see the corrected checkboxes in `HANDOFF-LOW-POWER-HARDWARE-TIERS-AND-EDGE-CASES-2026-08-29.md`). S5 (HA memory embeddings), S7 (revise the low-power handoff) — not independently re-verified this pass; check against `ROADMAP.md`'s HOME-1 row. `U6-BUG-03` (Frigate queue cap) and `U6-BUG-04` (snapshot→vision routing) are U6 residue, not a REV finding — confirmed still open, not started (per `.handoff/RESULTS-OPUS-BATCH-2026-09-01.md` §3 "Deliberately not done").
+
+### Frontend, Chat UI & Settings Megafile Subsystems — ~~all five items done~~ (2026-09-02)
+Settings decomposed (SONNET-04, ~880 lines / 12 lazy tabs, not the originally-planned 8 — `VisionTab`/`DevicesTab`/`SecurityTab` added since); nav re-railed; `Security.tsx`→`Findings.tsx` renamed; Chat UI Sprint 1&2 fully done via OPUS-05 (§2a REV-11); GPU deep-scan refactor done (raw Ollama call removed, 4 registered specialist tools, `162f3965`/`fbfb5614` — though the CUDA knowledge doc it produced needed its own fix, `U4-08`, done this packet).
+
+### Core Agent & Configuration Engine Subsystems — ~~context field removal, AI bridge merge done~~ (2026-09-02)
+Role-scoped config harvesting: the harvester itself + `assigned_to_role` template wiring done this packet (§2a REV-06, `RAG-06`/`U4-14`); re-applying to the live daemon is founder-queued (`RAG-05`). Apple Intelligence local-only scoping (S6): done (§2a REV-06/U6 above).
+
+### Product Strategy & Founder Legal Decisions — moved to `DISPATCH-2026-09-01-FOUNDER-DECISIONS.md`
+`FDR-DEC-01..04` (DCO language, §7 exception text, bundle identifiers, perpetual pricing) map onto that sheet's §A `FDR-01/02/03/04` rows — same open items, not duplicated here. See that document for the current default-assumed answer to each.
 
 ---
 
-### Sentient Home & Auditory Cortex Subsystems
-- [ ] **Wyoming agent speaker role vulnerability** — Pass `speaker_role="unknown"` from `wyoming_agent.py` to `process()`. (See [`TASK-PACKET-07`](file:///Volumes/4TB-BAD/Halbert/.handoff/TASK-PACKET-07-AUDITORY-CORTEX-CRITICAL-FIXES.md)).
-- [ ] **Markdown-to-plaintext converter for TTS** — Implement `strip_markdown_for_speech()` so Piper doesn't read `## headers`. (See [`TASK-PACKET-07`](file:///Volumes/4TB-BAD/Halbert/.handoff/TASK-PACKET-07-AUDITORY-CORTEX-CRITICAL-FIXES.md)).
-- [ ] **Wyoming session ID collision** — Mint UUID per turn and thread `conversation_id`. (See [`TASK-PACKET-07`](file:///Volumes/4TB-BAD/Halbert/.handoff/TASK-PACKET-07-AUDITORY-CORTEX-CRITICAL-FIXES.md)).
-- [ ] **Barge-in handler wiring** — Connect `BargeInHandler` to `AudioPipelineCoordinator`. (See [`TASK-PACKET-07`](file:///Volumes/4TB-BAD/Halbert/.handoff/TASK-PACKET-07-AUDITORY-CORTEX-CRITICAL-FIXES.md)).
-- [ ] **Rust AEC implementation** — Build `audio_capture.rs` in `src-tauri` with webrtc-audio-processing.
-- [ ] **Modality-aware prompt builder** — Replace `build_response_prompt()` in `agent_prompts.py` with `build_modality_aware_response_prompt()` that accepts `modality_context` (is_voice, screen_present, speaker_name, speaker_role, area_id) and conditionally emits `<speech>` dual-stream contract + Sotto Voce directives. (See doc 14 section 3).
-- [ ] **`StreamingTagDemuxer` in state_machine.py** — Buffer tokens between `<speech>` and `</speech>`, emit new `StreamEvent.speech_chunk` events, strip `<speech>` tags from the visual stream so the GUI timeline receives pure Markdown, pipe speech chunks to active Piper TTS generator. (See doc 14 Gap 2).
-- [ ] **`StreamEvent.speech_chunk` + `DualStreamMessageEvent` SSE schema** — Add new StreamEvent factory method and frontend handler in `useAgentStream.ts` for the dual-stream payload (acoustic_stream + visual_stream). (See doc 14 roadmap Step 1).
-- [ ] **`<modality_context>` XML injection block** — Inject structured ingress metadata (channel, origin_area, speaker_verified, speaker_name, speaker_role, screen_present, quiet_hours_active, active_background_tasks) at the head of the task prompt for every turn. (See doc 14 section 2.2).
-- [ ] **ThreadManager injection into Wyoming agent** — Inject `ThreadManager` into `HalbertWyomingAgent`, query `get_or_open_thread_id()` on incoming voice turns. TASK-07 covers threading `conversation_id` as `thread_id` but not the ThreadManager injection itself. (See doc 14 Gap 3).
-- [ ] **Frontend voice UI components** — Build `AcousticAura.tsx` (header audio state visualizer), `VoiceCompanionPill.tsx` (floating HUD), `ModalityHandoffBadge.tsx` (where artifacts landed), `AcousticEventCard.tsx` (environmental anomaly chronicle card). Note: actual file is `AcousticAuraIndicator.tsx`, not `AcousticAura.tsx`. (See doc 14 Gap 5).
-- [ ] **macOS NSPanel + CGEventTap for floating HUD** — When `VoiceCompanionPill` is built, implement non-activating `NSPanel` with `CGEventTap` hotkey monitor for `Esc`/`Space` to avoid keyboard focus trap in background IDE. (See doc 12 Finding 4, doc 14 Gap 4).
-- [ ] **`HALBERT_MODEL` env var wiring** — Thread env override into `llm_config.resolve("chat_model")` (not `cognition_wiring.py`). Verified 2026-08-30: no `HALBERT_MODEL` handling exists anywhere in `halbert_core` Python. **Scope: main/sysadmin variants only** — home/home-light have no local model to override (chat/specialist resolve to the compute peer; see Batch U6). (See [`TASK-PACKET-01`](file:///Volumes/4TB-BAD/Halbert/.handoff/TASK-PACKET-01-SENTIENT-HOME-BUGFIX-AND-PHASE8.md), Batch U4).
-- [x] ~~**Add `secure_model` slot (`qwen3:4b`)**~~ Done — `llm_config.py:64` `SLOTS = ("chat_model", "specialist_model", "vision_model", "secure_model")` with local-only enforcement; `get_secure_model()` exported in `client.py:236`. **Revised 2026-08-30 (S1):** the slot is now **sysadmin-variant-only** — home/home-light must leave it unconfigured, gate its auto-provisioning, and hide its UI role row (Batch U6, W1-W6).
-- [x] ~~**Phase 8 Light Variant (`home-light`)**~~ Done in `app.py:423-432` (heavy services skipped on `home-light`) and `cognition_wiring.py:81-93` (`BeingConfig.variant` first, env fallback). **Revised 2026-08-30 (S1-S5):** what home-light *ships* is redefined — no `secure_model`, no SourcePrep, no model picker (Compute Peer setting instead); see Batch U6. App Store *packaging* itself remains part of TASK-06/U5.
+### Added 2026-09-02 (SONNET-05) — Voice Mode visual UI, singular entity, branch hygiene, CI status
 
-### Home Automation Simplification (Batch U6 — added 2026-08-30)
-
-Direction accepted per [`HANDOFF-HOME-AUTOMATION-SIMPLIFICATION-2026-08-30.md`](file:///Volumes/4TB-BAD/Halbert/.handoff/HANDOFF-HOME-AUTOMATION-SIMPLIFICATION-2026-08-30.md) — its Section 12 (work items W1-W25, decisions D1-D4) is the **code-verified, authoritative** work list and supersedes the handoff's earlier code-impact prose where they differ. Lands **before** federated Phase 9.
-
-- [ ] **D1 — Unify variant resolution (prerequisite for S1/S3/S4)** — `GET /api/instance/info` (`dashboard/routes/instance.py:33`) reads only the `HALBERT_VARIANT` env var while backend gating uses `cognition_wiring._get_variant()` (being.yml > env > sysadmin). Make them agree, or a being.yml-set home variant gates backend services while the UI still renders the sysadmin picker.
-- [ ] **S1 — Remove `secure_model` from home/home-light** — gate Apple Intelligence auto-provisioning (`auto_provision.py:66-71`, triggered from `routes/llm.py:~208-217`), the config wizard's secure_model writes (`config_wizard.py:101-107, 262-327`), and the secure turn gate (`agent.py:465-476`); hide the role row via `variants: ["sysadmin"]` in `halbertModelRoles.ts` + host-side filtering in `ModelSettings.tsx` (not inside the shared package). (W1-W6)
-- [ ] **S2 — Remove SourcePrep from home/home-light** — nothing currently skips it for any variant: variant-gate the `SourcePrepAdapter`/assembler factories (`agent.py:136-142`, `context/adapters.py:337-343,429,455`, `extra_adapters.py:559`), pass `skip_retrieval=True` in `cognition_wiring.py:141-149`, drop the config-watcher reindex callback for `home` (`app.py:616-622`), retire the HA-config bridge surface (`ha_config_bridge.py` + `/home/config-search` routes; `ha_config_tools.py` is dead code), fix `deploy/halbert-home.service` + `deploy/README.md`. (W7-W13)
-- [ ] **S3 — Compute Peer setting replaces the model picker on HA nodes** — **prerequisite:** register `PeerProvider` in the model stack (`peer` is missing from `CHAT_CAPABLE_PROVIDERS`, `tier_router.py`, `providers/__init__.py` — any peer slot is currently disabled as "not chat-capable"); then ComputePeerCard mounted instead of `<ModelSettings />` (`Settings.tsx:2241`) + persist a `peer://` endpoint into `chat_model`/`specialist_model`. (W14-W16)
-- [ ] **S4 — Drop the 1B tier; `SBC_LOW_POWER` offload-only** — clamp `recommend_budget()`/`get_installation_commands()` (`hardware_detector.py:429-525`; the "1B tier" is emergent arithmetic, not a named recommendation), add the wizard compute-peer prompt (new functionality — the wizard has no profile gating today), implement `ComputeRouter.route()` (the SBC local-model skip itself **already exists and is tested**). Needs D2 first. (W17-W19)
-- [ ] **S5 — HA memory embeddings via Ollama/ONNX** — do **NOT** add `sentence-transformers` to halbert_core extras (wrong package — the on-path persona embedder is haloysius's ONNX/Ollama `MemoryEmbedder`; halbert_core's own `sentence-transformers` consumer is eval-only). Confirm the operative memory path (D3) first; optionally add a `[home]` extra = `[light]` + `[cognition]`. (W20-W21)
-- [ ] **S6 — Apple Intelligence local-only** — strip `apple_foundation` from the mDNS `compute_backends` contract (`peer_discovery.py:35-47,272-293`, `peers_config.py:88`, `federation/README.md:35,105`, `peer.py:45`, `compute_endpoint.py:231-232,257`); **update `test_peer_discovery.py:36,43,119` which asserts the old advertisement**; fix the `PeerAuthMiddleware` ImportError (`federation/__init__.py:53,77-79` imports a class that doesn't exist). (W22-W24)
-- [ ] **S7 — Revise `HANDOFF-LOW-POWER-HARDWARE-TIERS-AND-EDGE-CASES-2026-08-29.md`** — drop the 1B-1.5B tier row from the §7.1 capability table, the Q2_K/IQ2_XXS extreme-quantization research, and the "2B Q4 vs 4B Q2" analysis; 2B-3B is the minimum for local inference (8GB+ hosts only). (W25)
-- [ ] **D2 — 4GB boundary decision** — code classifies `SBC_LOW_POWER` as strictly <4GB (4GB hosts are `ENTRY_8GB` with local-model support `True`), but the handoff's table says 4GB = offload-only. Either move the boundary (`hardware_detector.py:423`, `compute_router.py:263`, `test_hardware_profile_fallback.py`) or correct the docs to "<4GB".
-- [ ] **D3 — Confirm the HA persona memory path** — the dashboard agent path wires `memory_service=None` (receipts/FTS5, `agent.py:144-146`); if that is operative on home nodes, S5 needs no packaging change at all.
-- [ ] **D4 — home vs home-light merge decision** — the per-variant service-skip matrix is recorded in the handoff §12.1; if `home` retires into `home-light`, S2's watcher gating collapses into the merge.
-
----
-
-### Frontend, Chat UI & Settings Megafile Subsystems
-- [ ] **Settings.tsx Decomposition** — Decompose 3,283-line monolith into `src/components/settings/tabs/` (`SystemTab`, `KnowledgeTab`, `SafetyTab`, `VisionTab`, `AlertsTab`, `BeingTab`, `AboutTab`, `DebugTab`). (See [`TASK-PACKET-02`](file:///Volumes/4TB-BAD/Halbert/.handoff/TASK-PACKET-02-SETTINGS-DECOMPOSITION-AND-NAV.md), Batch U3).
-- [ ] **Sidebar Navigation Consolidation** — Streamline 14 sidebar items into 4 primary domains in `Layout.tsx`. (See [`TASK-PACKET-02`](file:///Volumes/4TB-BAD/Halbert/.handoff/TASK-PACKET-02-SETTINGS-DECOMPOSITION-AND-NAV.md)).
-- [ ] **Rename `pages/Security.tsx` → `pages/Findings.tsx`** — Resolve route overlap with `Settings > Security`. (See [`TASK-PACKET-02`](file:///Volumes/4TB-BAD/Halbert/.handoff/TASK-PACKET-02-SETTINGS-DECOMPOSITION-AND-NAV.md)).
-- [ ] **Chat UI Sprint 1 & 2 Execution** — Fix SSE reader leak, abort controller cleanup, rAF token buffer ($O(n^2) \to O(1)$), ARIA live regions. (See [`TASK-PACKET-08`](file:///Volumes/4TB-BAD/Halbert/.handoff/TASK-PACKET-08-CHAT-UI-SPRINT1-AND-2-STABILITY-PERF.md)).
-- [ ] **GPU Page Deep Scan Rebuild** — Execute 9-step plan in `.handoff/GPU-DEEP-SCAN-REBUILD-PLAN-2026-08-29.md` to roll raw Ollama scan into agent specialist tool. (See [`TASK-PACKET-04`](file:///Volumes/4TB-BAD/Halbert/.handoff/TASK-PACKET-04-GPU-ANALYZE-AGENT-TOOLING.md)).
-
----
-
-### Core Agent & Configuration Engine Subsystems
-- [x] ~~**Remove `context` field on `SendMessageRequest`**~~ — Done 2026-08-30.
-- [ ] **Role-Scoped Configuration Harvesting** — Implement `config/role_harvester.py` from `ROLE-SCOPED-CONFIG-HARVESTING-DESIGN-2026-08-26.md`. (See [`TASK-PACKET-05`](file:///Volumes/4TB-BAD/Halbert/.handoff/TASK-PACKET-05-ROLE-SCOPED-CONFIG-AND-AGENT-CLEANUP.md)).
-- [x] ~~**Apple Intelligence Platform Bridge — merge**~~ Merged at `11ded488` (2026-08-30 erratum 3); platform verification on macOS 15.1+ M-series Silicon remains open. (See [`TASK-PACKET-10`](file:///Volumes/4TB-BAD/Halbert/.handoff/TASK-PACKET-10-APPLE-INTELLIGENCE-ONBOARDING-AND-TUNING.md), Batch U4).
-- [ ] **Apple Intelligence local-only scoping (S6, Batch U6)** — ensure `apple-foundation` is never exposed to peers: peer compute on a Mac routes to Ollama; mDNS `compute_backends` = `ollama`/`vllm` only; `PeerProvider` receives the Ollama model list only. (W22-W24 in the simplification handoff §12.)
-
----
-
-### Product Strategy & Founder Legal Decisions (`FOUNDER-TODO.md`)
-- [ ] **`FDR-DEC-01`: DCO Language in `CONTRIBUTING.md`** — Developer Certificate of Origin commercial dual-distribution clause. (See [`TASK-PACKET-06`](file:///Volumes/4TB-BAD/Halbert/.handoff/TASK-PACKET-06-FOUNDER-DECISIONS-AND-APPSTORE-LEGAL.md)).
-- [ ] **`FDR-DEC-02`: GPLv3 §7 Exception Text** — Commit `LICENSE-EXCEPTION-APPSTORE` and update SPDX headers. (See [`TASK-PACKET-06`](file:///Volumes/4TB-BAD/Halbert/.handoff/TASK-PACKET-06-FOUNDER-DECISIONS-AND-APPSTORE-LEGAL.md)).
-- [ ] **`FDR-DEC-03`: Bundle Identifiers** — Confirm `ai.halbert.home` vs `ai.halbert.pro` in `tauri.conf.json`. (See [`TASK-PACKET-06`](file:///Volumes/4TB-BAD/Halbert/.handoff/TASK-PACKET-06-FOUNDER-DECISIONS-AND-APPSTORE-LEGAL.md)).
-- [ ] **`FDR-DEC-04`: Perpetual Pricing** — $29 one-time terms and offline Ed25519 license verification. (See [`TASK-PACKET-06`](file:///Volumes/4TB-BAD/Halbert/.handoff/TASK-PACKET-06-FOUNDER-DECISIONS-AND-APPSTORE-LEGAL.md)).
+- [x] ~~**Voice Mode visual UI (doc 16, F1-F5/O1-O9/P1-P4/G1-G4)**~~ Complete on `main` per `.handoff/RESULTS-OPUS-BATCH-2026-09-01.md` §5 — P4 got its two-stage review (`88413a42`); the stale "P4 unreviewed" caveat in `HANDOFF-VOICE-MODE-OPUS-RESULTS-2026-09-01.md` is corrected (this packet). What was missing — the loop connecting voice input/output to a real turn — is also now done: `VM-STT` (`9ec19f8a`) and `U2-15` (`65ff3e83`), both OPUS-02. Open: no real-audio hardware run has ever happened (0/22), and `is_speech`'s per-frame `detector.flush()` needs one to evaluate (§2a REV-09).
+- [x] ~~**Singular entity / compute peer (`feat/singular-entity-opus`)**~~ Branch retired — all 7 commits reached `main` via cherry-picks then were superseded (SONNET-02 §2.1). `IMPL-PLAN-SINGULAR-ENTITY-TASKS-2026-08-31.md`'s "Status: COMPLETE" corrected this packet to "code units complete; not usable end to end" — OPUS-03 fixed the devices API, the compute endpoint, and the pairing *security* flaw (`SE-16`, no confirmation/expiry/rate limit) and peer streaming (`R05-F1`, clean failure not silent breakage), but `SE-15` (UI-driven pairing still cannot complete end to end — mDNS hardcoded empty, manual entry throws, token doesn't reach the other machine), `SE-05` (wire `ComputeRouter.route()`), `SE-10` (`PeerToolProxy` never injected), `PERS-02/03/05` (persona sources of truth), and `SE-28` (two-machine test) remain open — see §2a REV-10.
+- [x] ~~**Branch and worktree hygiene**~~ Done by SONNET-02 (2026-09-02): 10 local branches + 2 remote-only + 2 stashes + 3 of 5 "unmerged" branches confirmed to contain nothing `main` lacks and retired; 12 worktrees removed (~11 GB reclaimed, largest single item `.claude/worktrees/central-todo-batches` at 7.0 GB); canonical `wt_pytest.py` committed at the repo root. Two residual items **blocked on the harness's auto-mode classifier, not on the work**: 5 remote branch deletions (`docs/chat-ui-audit`, `feat/halbert-mcp`, `feat/modality-voice-phase2`, `feat/federated-fleet`, `feat/plan-b-terminals` — all still on `origin`, confirmed ancestors of `main`, ready to delete) and a backup push of `feat/rust-native-core` to origin (local-only today). Full detail: `.handoff/RESULTS-SONNET-02-2026-09-02.md`.
+- [x] ~~**CI status**~~ SONNET-05 (this packet): `.github/workflows/ci.yml` now installs the `vision` extra (closes 13 of the then-remaining local failures), aligns Node 20→22 to match `.nvmrc`, adds a `rust-tauri` job (macOS runner, `cargo test`, 24 tests — verified locally before adding), and a `marketing-web-v7` build-smoke job. Dashboard `package.json` gained a `typecheck` script so the root `npm run typecheck` actually reaches it. `e2e/README.md` documents the two Playwright smoke scripts that stay out of CI (need a live backend). Not done: confirming the remote GitHub Actions run status — `gh` is still not installed on this machine, so this is unverified beyond local reproduction of every new job's command.
 
 ---
 
 ### Rust Native Core & HalbertOS (Long-Term Project — added 2026-08-31, augmented 2026-08-31, edits landed 2026-09-01)
+
+> **DEFERRED BY DIRECTION (2026-09-01, `HA-01`).** The founder's 2026-09-01 direction is explicit: "the full Rust rebuild is deferred, a Linux OS is far future; the priority is to get the current features completed and tested" (`.handoff/HANDOFF-STATE-OF-WORK-2026-09-01.md` header, `ROADMAP.md` §1, `DECISIONS.md` standing directives). `feat/rust-native-core` stays parked — SONNET-02 confirmed its merge-tree is clean against `main` and it is local-only (needs a backup push to origin, not yet done). The "Recommended start: R0... can begin now" line two paragraphs below predates this direction and should not be read as current guidance — nothing in this section is scheduled. Revive triggers are the plan's own L0–L3 gates (§16).
 
 Separate living TODO with **72 tasks across 8 phases (R0–R7)** — 56 in the R1–R6 build phases. Synced with the HA strategy scoping decisions (D1-D8), the experimental docs corrections, and the sanity review's findings F1-F13 + recommendations RA-RE (applied 2026-08-31). Full plan with model tier + effort level per task:
 [`RUST-NATIVE-CORE-TODO-AND-IMPLEMENTATION-PLAN-2026-08-31.md`](file:///Volumes/4TB-BAD/Halbert/.handoff/RUST-NATIVE-CORE-TODO-AND-IMPLEMENTATION-PLAN-2026-08-31.md)

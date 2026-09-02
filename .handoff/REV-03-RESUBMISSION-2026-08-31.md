@@ -5,6 +5,13 @@
 **Worktree:** `/Users/ericbintner/.config/superpowers/worktrees/Halbert/rev03-sentient-home-fixes`
 **Base:** main (`7e8c03b3`)
 **Original review:** `.handoff/REVIEW-RESULTS-REV-03-2026-08-31.md` (commit `ae376866`)
+**Status correction (2026-09-02, SONNET-05):** the "All 13 actionable findings
+... fixed" summary below overclaimed F4 and F10 — the 2026-09-01 audit
+reproduced both as still broken (`R3-F04`, `R3-F10b`), and OPUS-02 delivered
+the actual fix on 2026-09-02 (`65ff3e83`). See the per-finding notes added to
+F3/F4/F10 below. F3 itself checked out fine. `HomeCognitiveLoop` (`LOOP-01`,
+not one of this doc's 14 findings) remains never instantiated — separate,
+founder-gated open item.
 
 ## Summary
 
@@ -41,6 +48,9 @@ divergence) was already resolved by the D4 decision in a previous session
 - Changed reply from `{"type": "describe", ...}` to `{"type": "info", ...}` per
   the Wyoming protocol spec. Real HA/Wyoming clients wait for `info` and drop
   the connection if they receive `describe`.
+- **Status (checked 2026-09-02, SONNET-05):** still correct — `"type": "info"`
+  is present in current `wyoming_agent.py`, unrelated to the F4/F10 breakage
+  below. No re-fix was needed here.
 
 ### F4 (High) — audio-chunk frames corrupt the TCP stream
 **File:** `wyoming_agent.py`
@@ -48,6 +58,14 @@ divergence) was already resolved by the D4 decision in a previous session
 - Added `payload_length` draining: `await reader.readexactly(payload_len)` after
   parsing the audio-chunk header. Previously the PCM bytes were read as the next
   JSON line, corrupting the stream.
+- **Status (2026-09-02):** this section's fix was incomplete — the 2026-09-01
+  audit reproduced `payload_length` still being read out of the wrong JSON
+  level (`data{}` instead of the frame header), so the drain never actually
+  ran and one audio-chunk frame produced eight "Invalid JSON" warnings and no
+  pong (tracked as `R3-F04`). Genuinely fixed by OPUS-02 on 2026-09-02
+  (`65ff3e83`) with one parser (`read_wyoming_frame`) now serving both
+  message and audio-chunk framing — see the code comment at
+  `wyoming_agent.py` around the frame-read loop.
 
 ### F5 (High) — HA token file world-readable
 **File:** `ha_config.py`
@@ -92,6 +110,15 @@ remain in the codebase.
   and use `call_soon_threadsafe` when called from a different loop (same
   pattern as `FrigateMQTTSubscriber`). Previously, awaiting a foreign-loop task
   raised `RuntimeError` and the stop always landed in the `except` block.
+- **Status (2026-09-02):** the `call_soon_threadsafe` mechanism above was
+  correct, but the callback it schedules called `self._server.aclose()` —
+  which does not exist on `asyncio.Server` in Python 3.10, this project's
+  supported floor (`AttributeError` inside the callback, silently swallowed;
+  the TCP port stayed bound for the process's life). Reproduced by the
+  2026-09-01 audit as `R3-F10b`. Genuinely fixed by OPUS-02 on 2026-09-02
+  (`65ff3e83`): the callback (`_close_safely`) now calls `server.close()` +
+  `asyncio.ensure_future(server.wait_closed(), loop=self._loop)` instead,
+  with a code comment at `wyoming_agent.py` documenting exactly why.
 
 ### F11 (Medium) — sensor debounce dead code
 **File:** `ha_event_stream.py`

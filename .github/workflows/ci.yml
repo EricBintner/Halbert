@@ -150,7 +150,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
       - run: npm install
       - run: npm run typecheck
       - run: npm test
@@ -167,7 +167,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
       - run: npm install
       - run: npm run typecheck
       # The boundary check is what keeps the package extractable: it fails on
@@ -185,7 +185,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
       # The picker is consumed from source through a vite alias and a tsconfig
       # path, not an npm workspace, so tsc resolves react from the package's
       # own node_modules and reports it missing unless they are installed too.
@@ -210,8 +210,11 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           # [dev] carries pytest-asyncio, without which all 140 async tests
-          # in the suite error out rather than run.
-          pip install -e "halbert_core/[dashboard,dev]"
+          # in the suite error out rather than run. [vision] carries mss +
+          # opencv-python: without it, test_cv_extensions.py and
+          # test_vision_tools.py (13 tests) fail on ModuleNotFoundError,
+          # not on a real defect — the feature itself is shipped.
+          pip install -e "halbert_core/[dashboard,dev,vision]"
       # tests/rag/ stays out: it builds a live embedding index, which downloads
       # a model on first use.
       - name: Run root tests
@@ -221,3 +224,47 @@ jobs:
       - name: Run halbert_core tests
         working-directory: halbert_core
         run: pytest tests/ -q
+
+  rust-tauri:
+    name: Rust (Tauri shell unit tests)
+    # 28 #[test]s live in src-tauri/src (lib.rs, hud_hotkey.rs, audio_capture.rs,
+    # floating_panel.rs) and were never run in CI. macos-latest is required: the
+    # crate's objc2/AppKit bindings (hud_hotkey.rs, floating_panel.rs) only build
+    # on macOS.
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: halbert_core/halbert_core/dashboard/frontend/src-tauri
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo registry and target dir
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            halbert_core/halbert_core/dashboard/frontend/src-tauri/target
+          key: ${{ runner.os }}-cargo-tauri-${{ hashFiles('halbert_core/halbert_core/dashboard/frontend/src-tauri/Cargo.lock') }}
+      # Default features only (no voice-capture/aec): those pull in cpal and
+      # webrtc-audio-processing, which need clang/pkg-config/meson/ninja on the
+      # runner image and are opt-in, unbuilt-by-default audio-workstream code.
+      - run: cargo test --locked
+
+  marketing-web-v7:
+    name: Marketing web-v7 (build smoke)
+    # No test/typecheck scripts exist for this app (plain JS, no tsconfig), and
+    # it consumes @halbert/design-system straight from source via a vite alias
+    # — a build here is the cheapest gate against a design-system API change
+    # silently breaking the marketing site.
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: marketing/web-v7
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm install
+      - run: npm run build

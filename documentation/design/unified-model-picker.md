@@ -1,5 +1,13 @@
 # Unified Model Picker — Implementation Strategy & Design
 
+**Superseded 2026-08-26.** The "shared daemon, bundled by both products"
+architecture below was decided against — see
+`documentation/design/model-picker-independent-2026-08-26.md` (the ratified
+decision: no SourcePrep coupling; chat/specialist/vision slots, Halbert-only)
+and `documentation/design/UI-SPEC-REUSABLE-MODEL-PICKER-2026-08-26.md` (the
+spec that actually shipped as `@halbert/model-picker`). Kept for the design
+history and the seams it explored, not as a plan of record.
+
 **Status:** Plan set (2026-08-23). Awaiting execution.
 **Reads with:** [the-being.md](the-being.md) (the product vision this serves),
 [explorations.md](explorations.md) (the catalog of design seams this lands into).
