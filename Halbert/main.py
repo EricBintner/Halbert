@@ -335,6 +335,38 @@ def cmd_policy_eval(args):
     print(_json.dumps({"tool": args.tool, "allow": d.allow, "reason": d.reason}, indent=2, ensure_ascii=False))
 
 
+def cmd_audit_verify(args):
+    """Walk the audit log and report every integrity failure found.
+
+    Exits non-zero when anything is wrong, so this is usable as a check in
+    a cron job or a startup gate rather than only as something to read.
+    """
+    import sys as _sys
+    try:
+        from halbert_core.halbert_core.obs.audit import (
+            render_verify_report,
+            verify_audit,
+            verify_result_as_dict,
+        )
+    except Exception as e:
+        print(f'audit log not available: {e}')
+        _sys.exit(2)
+
+    try:
+        result = verify_audit(directory=args.dir)
+    except Exception as e:
+        # Exit 2, not 1: "I could not check" must not be reported with the
+        # same code as "I checked and found tampering".
+        print(f'cannot check the audit log: {e}')
+        _sys.exit(2)
+    if args.json:
+        import json as _json
+        print(_json.dumps(verify_result_as_dict(result), indent=2, ensure_ascii=False))
+    else:
+        print(render_verify_report(result, peer=args.peer))
+    _sys.exit(0 if result.ok else 1)
+
+
 def cmd_scheduler_add(args):
     if SchedulerEngine is None or Job is None:
         print('scheduler not available')
@@ -1812,6 +1844,14 @@ def main():
     p_pev.add_argument('--tool', required=True, help='Tool name (e.g., write_config, schedule_cron)')
     p_pev.add_argument('--inputs', required=True, help='Path to JSON file with tool inputs')
     p_pev.set_defaults(func=cmd_policy_eval)
+
+    p_audit_verify = sub.add_parser(
+        'audit-verify',
+        help='Check the audit log for tampering (edits, truncation, deleted shards)')
+    p_audit_verify.add_argument('--dir', help='Audit log directory (default: <log_dir>/audit)')
+    p_audit_verify.add_argument('--json', action='store_true', help='Emit machine-readable JSON')
+    p_audit_verify.add_argument('--peer', help='Name the peer this log was last synced with')
+    p_audit_verify.set_defaults(func=cmd_audit_verify)
 
     p_sched_add = sub.add_parser('scheduler-add', help='Add a job to the scheduler queue (Phase 2)')
     p_sched_add.add_argument('--id', required=True, help='Job ID')

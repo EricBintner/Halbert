@@ -97,6 +97,15 @@ python:
     spdx: LicenseRef-Halbert-FirstParty
     notes: "Sibling project by the same author; not third-party for licensing purposes."
 
+  # [integrity] — signing for the tamper-evident audit log
+  cryptography:
+    spdx: Apache-2.0
+    notes: >-
+      Dual-licensed Apache-2.0 OR BSD-3-Clause; Apache-2.0 taken. Bundles
+      statically-linked OpenSSL (Apache-2.0 since 3.0) in its wheels.
+      Optional: needed only to sign audit records, never to append or
+      verify them.
+
   # [dev] — build-time only, never shipped
   pytest: {spdx: MIT, build_only: true}
   pytest-asyncio: {spdx: Apache-2.0, build_only: true}
