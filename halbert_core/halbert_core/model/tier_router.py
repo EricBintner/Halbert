@@ -133,18 +133,24 @@ class TierRouterConfig:
         chat = _resolve_slot('chat_model')
         spec = _resolve_slot('specialist_model')
         vision = _resolve_slot('vision_model')
-        # secure_model is only resolved when the secure_model capability
-        # is available (a local-only secure endpoint is configured).
-        # The variant preset sets defaults (home = no secure_model), but
-        # being.yml can override — a Mac Studio with HA configured can
-        # still use a local secure model.
+        # U6-25: TierRouter never routes to a dedicated secure-model tier —
+        # secure turns are handled elsewhere (routes/agent.py's turn gate),
+        # not by this config. The capability-gated resolve below is kept
+        # anyway, purely for its read-gate side effect: it is the one
+        # place that guarantees secure_model is never even READ out of
+        # llm_config when the capability says no (home instances, by
+        # default), which test_tier_router_config.py pins directly
+        # (test_home_variant_does_not_read_the_secure_slot). The resolved
+        # value itself is intentionally discarded — there is no
+        # cfg.models['secure-model'] to populate it into.
         _has_secure_cap = False
         try:
             from ..capabilities import has_capability, CAP_SECURE_MODEL
             _has_secure_cap = has_capability(CAP_SECURE_MODEL)
         except Exception:
             pass
-        secure = _resolve_slot('secure_model') if _has_secure_cap else None
+        if _has_secure_cap:
+            _resolve_slot('secure_model')
 
         # Fall back to legacy keys when llm_config slots are empty
         if chat is None:
