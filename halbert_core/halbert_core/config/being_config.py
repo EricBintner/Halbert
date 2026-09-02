@@ -199,7 +199,12 @@ class BeingConfig:
     proactivity: str = "balanced"  # off | quiet | balanced | assertive
     purpose: str = ""  # free text v1
     quiet_hours: Optional[Dict[str, str]] = None  # {"start": "22:00", "end": "07:00"}
-    morning_report: Optional[Dict[str, Any]] = None  # {"enabled": True, "time": "08:00"}
+    # On by default at Balanced (the-being §4 "a scheduled morning report",
+    # C2-10). Settings > Being writes {"enabled": False} to turn it off; the
+    # dashboard schedules the job only when ``enabled`` is true.
+    morning_report: Optional[Dict[str, Any]] = field(
+        default_factory=lambda: {"enabled": True, "time": "08:00"}
+    )
     category_overrides: Dict[str, str] = field(default_factory=dict)
     timezone: str = "local"  # IANA tz name, or "local" for system timezone
 
@@ -383,6 +388,11 @@ class BeingConfig:
                 )
             else:
                 known["senses"] = SensesConfig()
+        # ``morning_report: null`` is "not configured", not "disabled" — take
+        # the default, the way ``security: null`` does below. An explicit
+        # ``{"enabled": false}`` is the off switch.
+        if "morning_report" in known and known["morning_report"] is None:
+            del known["morning_report"]
         # Handle nested security config — guard against null / missing
         if "security" in known:
             if isinstance(known["security"], dict):
