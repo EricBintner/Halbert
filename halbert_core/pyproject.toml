@@ -83,6 +83,21 @@ cognition = [
   "haloysius>=0.2.0",
 ]
 
+# Cryptographic identity and the tamper-evident audit log (integrity
+# handoff §3). Two separable things:
+#   - haloysius.integrity is standard-library only, and is what obs/audit.py
+#     is built on. Its import there is guarded: without it the core still
+#     imports, but write_audit refuses to write rather than fall back to a
+#     chain nobody can verify.
+#   - cryptography is needed only to *sign*. Without it the log still
+#     appends, still verifies, and honestly reports `signed: 0`.
+# haloysius is not on PyPI; install it from the sibling checkout, as for
+# `cognition` above.
+integrity = [
+  "haloysius>=0.2.0",
+  "cryptography>=42.0",
+]
+
 dev = [
   "pytest>=7.4",
   "pytest-asyncio>=0.23",
