@@ -7,7 +7,7 @@ import time
 
 import pytest
 
-from halbert_core.streaming.agent_pool import TerminalPool, _BoundedBlockOutput
+from halbert_core.streaming.agent_pool import TerminalPool
 from halbert_core.streaming.session_manager import TerminalSessionManager, AtCapacityError
 
 
@@ -308,43 +308,9 @@ class TestPoolDoesNotLeakBusySlots:
 
 
 class TestBlockOutputIsBounded:
-    """R04-F4. block_output accumulated every byte the command produced and
-    only cut it down to a 20-line head and a 4 KiB tail after completion, so
-    `cat` on a large file was held whole in memory (~800 MB reproduced by the
-    review). The bound has to apply as the bytes arrive, which is a property
-    of the accumulator, not of the returned result."""
-
-    def test_the_accumulator_keeps_both_ends_and_drops_the_middle(self):
-        acc = _BoundedBlockOutput(head_cap=10, tail_cap=10)
-        acc.extend(b"HEAD______")
-        acc.extend(b"x" * 1000)
-        acc.extend(b"______TAIL")
-
-        assert len(acc) == 20, "the accumulator grew past its caps"
-        assert acc.dropped == 1000
-        out = acc.bytes()
-        assert out.startswith(b"HEAD______")
-        assert out.endswith(b"______TAIL")
-        assert b"1000 bytes elided" in out
-
-    def test_output_under_the_cap_is_kept_whole_and_unmarked(self):
-        acc = _BoundedBlockOutput(head_cap=10, tail_cap=10)
-        acc.extend(b"short")
-        assert acc.dropped == 0
-        assert acc.bytes() == b"short"
-        assert len(acc) == 5
-
-    def test_a_chunk_straddling_the_head_cap_is_split_not_lost(self):
-        acc = _BoundedBlockOutput(head_cap=4, tail_cap=100)
-        acc.extend(b"abcdefgh")
-        assert acc.dropped == 0
-        assert acc.bytes() == b"abcdefgh"
-
-    def test_peak_retention_is_capped_no_matter_how_much_arrives(self):
-        acc = _BoundedBlockOutput(head_cap=1024, tail_cap=1024)
-        for _ in range(4096):
-            acc.extend(b"y" * 1024)  # 4 MiB through a 2 KiB accumulator
-        assert len(acc) <= 2048
+    """The pool's end of R04-F4: the accumulator itself is covered in
+    test_bounded_output.py; what matters here is that run_block still returns
+    a head and a tail taken from the right ends of a long command."""
 
     @pytest.mark.asyncio
     async def test_head_and_tail_still_come_from_the_right_ends(self):

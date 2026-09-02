@@ -27,7 +27,7 @@ from enum import Enum
 try:
     from fastapi import APIRouter, HTTPException
     from fastapi.responses import StreamingResponse
-    from pydantic import BaseModel
+    from pydantic import BaseModel, Field
     FASTAPI_AVAILABLE = True
 except ImportError:
     FASTAPI_AVAILABLE = False
@@ -37,6 +37,7 @@ except ImportError:
 from ...streaming.session_manager import (
     get_terminal_manager, AtCapacityError,
 )
+from ...streaming.bounded_output import BoundedOutput
 from ...streaming.sandbox import Sandbox
 from ...streaming.injection_check import (
     is_blocked, uses_elevation, check_injection, worst_severity,
@@ -59,7 +60,11 @@ class SafetyTier(str, Enum):
 class CommandRequest(BaseModel):
     command: str
     cwd: Optional[str] = None
-    timeout: int = 30
+    # Bounded: an unvalidated timeout let a caller pin a PTY session and an
+    # unbounded output buffer open for as long as it liked (R04-F7). Five
+    # minutes is well past anything /exec should be used for -- longer work
+    # belongs in a session tile.
+    timeout: int = Field(default=30, ge=1, le=300)
     force: bool = False  # Skip safety confirmation (for pre-approved commands)
 
 
@@ -273,7 +278,10 @@ if FASTAPI_AVAILABLE:
             raise HTTPException(503, "Terminal session manager at capacity")
 
         session = manager.get(session_id)
-        output = bytearray()
+        # Same bound as the agent pool's blocks, for the same reason: the
+        # response is a string a human reads, so holding the whole of a
+        # `cat /dev/urandom` in memory to build it is pure loss.
+        output = BoundedOutput()
 
         async def drain():
             async for chunk in session.read_chunk():
@@ -284,7 +292,7 @@ if FASTAPI_AVAILABLE:
         except asyncio.TimeoutError:
             manager.kill(session_id)
             return CommandResponse(
-                output=bytes(output).decode('utf-8', errors='replace'),
+                output=output.bytes().decode('utf-8', errors='replace'),
                 error=f"Command timed out after {request.timeout}s",
                 exit_code=-1,
                 command=command,
@@ -297,7 +305,7 @@ if FASTAPI_AVAILABLE:
 
         logger.info(f"Executed (PTY): {command[:50]}... (exit={exit_code})")
         return CommandResponse(
-            output=bytes(output).decode('utf-8', errors='replace'),
+            output=output.bytes().decode('utf-8', errors='replace'),
             error="",
             exit_code=exit_code,
             command=command,
@@ -490,24 +498,9 @@ if FASTAPI_AVAILABLE:
             suggestion=suggestion,
         )
 
-    @router.get("/history")
-    async def get_history(limit: int = 50):
-        """
-        Get command history from persistent storage.
-        """
-        from pathlib import Path
-
-        history_file = Path.home() / '.config' / 'halbert' / 'terminal_history.json'
-
-        if not history_file.exists():
-            return {"history": [], "total": 0}
-
-        try:
-            with open(history_file) as f:
-                all_history = json.load(f)
-            return {
-                "history": all_history[-limit:],
-                "total": len(all_history),
-            }
-        except Exception:
-            return {"history": [], "total": 0}
+    # GET /history is gone (Plan B B11, TERM-10). It read
+    # ~/.config/halbert/terminal_history.json, which nothing has ever
+    # written, so it could only ever answer {"history": [], "total": 0} —
+    # and no frontend called it. Command history lives in the
+    # terminal_blocks table, and the agent reads it there through the
+    # terminal-blocks tool (tools/executor.py).

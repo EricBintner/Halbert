@@ -536,6 +536,40 @@ class TestConcurrency:
             w.join(timeout=10)
         assert served == [True]
 
+    def test_tick_never_closes_a_thread_with_a_live_terminal(self, tm):
+        """R04-F10. tick()'s docstring has promised this guard since Plan B
+        (spec section 5 "Stale") and _close_due never implemented it — a
+        thread whose command was still running got summarised and put away
+        under it once the grace window elapsed."""
+        t1 = _turn(tm, "add a samba share for the media folder")
+        tm.new_thread("Scanner share", "x", from_thread_id=t1.thread_id)
+        tm.clock.advance(GRACE_MINUTES * 60)
+
+        tm.store.insert_terminal_block({
+            "block_id": "blk-live", "session_id": "s1",
+            "thread_id": t1.thread_id, "turn_id": "t1",
+            "command": "rsync -a /media /backup", "cwd": "/",
+            "owner": "agent", "started_at": 1.0, "ended_at": None,
+        })
+
+        assert tm.tick() == [], "closed a thread with a command still running"
+
+        # Once the block ends, the thread is stale like any other.
+        tm.store.update_terminal_block("blk-live", ended_at=2.0, exit_code=0)
+        assert tm.tick() == [t1.thread_id]
+
+    def test_the_guard_failing_does_not_stop_the_sweep(self, tm, monkeypatch):
+        """Fail-soft: a store that cannot answer must not wedge close forever."""
+        t1 = _turn(tm, "add a samba share for the media folder")
+        tm.new_thread("Scanner share", "x", from_thread_id=t1.thread_id)
+        tm.clock.advance(GRACE_MINUTES * 60)
+
+        def boom():
+            raise RuntimeError("database locked")
+
+        monkeypatch.setattr(tm.store, "threads_with_open_blocks", boom)
+        assert tm.tick() == [t1.thread_id]
+
     def test_tick_re_reads_a_row_before_closing_it(self, tm, monkeypatch):
         # The sweep lists paused threads outside the lock, so every row it
         # carries is a snapshot. Trusted, a thread resumed since the listing

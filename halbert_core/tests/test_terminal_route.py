@@ -154,6 +154,17 @@ async def test_spawn_list_kill_session(fresh_manager):
     assert ok["ok"] is True
 
 
+def test_exec_timeout_is_clamped_to_a_ceiling():
+    """R04-F7. An unvalidated timeout let a caller pin a PTY session and its
+    output buffer open for as long as it liked."""
+    from pydantic import ValidationError
+
+    assert term.CommandRequest(command="ls", timeout=300).timeout == 300
+    for bad in (0, -1, 301, 86400):
+        with pytest.raises(ValidationError):
+            term.CommandRequest(command="ls", timeout=bad)
+
+
 @pytest.mark.asyncio
 async def test_spawned_tiles_are_user_shells_not_oneshots(fresh_manager):
     """R04-F1. The manager reaps by kind: oneshot at 60s idle, user at 1800s

@@ -554,11 +554,16 @@ class ThreadManager:
         sweep: ``_close_thread`` re-reads and re-checks it before it writes.
 
         Plan B adds the live-terminal guard: never close while a terminal
-        session of this thread is open (spec §5 "Stale").
+        session of this thread is open (spec §5 "Stale"). The open-block set
+        is read once for the whole sweep rather than per candidate, for the
+        same cost reason as above.
         """
         now = self._now()
+        busy = self._threads_with_open_blocks()
         closed: List[Dict[str, Any]] = []
         for t in self.store.list_threads(status="paused", limit=200):
+            if t.get("thread_id") in busy:
+                continue
             if not self._close_due(t, now):
                 continue
             row = self._close_thread(t["thread_id"], now)
@@ -802,6 +807,24 @@ class ThreadManager:
             return False
         successor = self.store.get_thread(successor_id) or {}
         return int(successor.get("turns_since_pause") or 0) >= GRACE_TURNS
+
+    def _threads_with_open_blocks(self) -> set:
+        """Threads with a terminal block still running (spec §5 "Stale").
+
+        A thread whose command is still producing output is not stale, whatever
+        the clock says; closing it would summarise and put away a subject the
+        machine is in the middle of. Fail-soft: a store that cannot answer must
+        not stop the sweep, so an error here means "nothing is busy" and the
+        grace window alone decides, as it did before this guard existed.
+        """
+        getter = getattr(self.store, "threads_with_open_blocks", None)
+        if getter is None:
+            return set()
+        try:
+            return set(getter())
+        except Exception as e:
+            logger.warning(f"open-block guard unavailable (non-fatal): {e}")
+            return set()
 
     def _fire_thread_closed(self, closed: Dict[str, Any]) -> None:
         """Run the close hooks, with the manager lock released (see ``tick``)."""

@@ -2041,6 +2041,26 @@ class SqliteConversationStore:
             logger.warning(f"get_terminal_block failed: {e}")
             return None
 
+    def threads_with_open_blocks(self) -> set:
+        """Thread ids that still have a terminal block running.
+
+        A block is open until ``ended_at`` is written. Returned as one set
+        rather than answered per thread so the close sweep, which walks up to
+        200 rows, costs one query instead of two hundred.
+        """
+        if self._conn is None:
+            return set()
+        try:
+            with self._lock:
+                rows = self._conn.execute(
+                    "SELECT DISTINCT thread_id FROM terminal_blocks "
+                    "WHERE ended_at IS NULL AND thread_id IS NOT NULL"
+                ).fetchall()
+            return {r[0] for r in rows}
+        except Exception as e:
+            logger.warning(f"threads_with_open_blocks failed: {e}")
+            return set()
+
     def list_terminal_blocks(
         self,
         *,

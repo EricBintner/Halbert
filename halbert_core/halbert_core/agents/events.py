@@ -719,8 +719,8 @@ class StreamEvent:
     def heartbeat(cls, session_id: str = "system") -> 'StreamEvent':
         """Emit periodic heartbeat to keep connection alive.
 
-        ``session_id`` defaults to ``"system"`` so background heartbeat loops
-        (e.g. ``EventEmitter._heartbeat_loop``) can call this with no args.
+        ``session_id`` defaults to ``"system"`` so a background heartbeat loop
+        can call this with no args.
         """
         return cls(
             type="heartbeat",
