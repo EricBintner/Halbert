@@ -83,13 +83,31 @@ export interface PairRequest {
 
 /** Pairing response — desktop → satellite (PIN pending). */
 export interface PairResponse {
-  pin: string
+  /** Identifies this attempt. The PIN is deliberately NOT here — it is
+   * shown on the machine being paired WITH, and reaches this one through
+   * the person doing the pairing. Returning it to the requester made the
+   * handshake self-service (SE-16 / R10-F1). */
+  request_id: string
   status: 'pending'
+  expires_in: number
   message: string
+}
+
+/** A pairing waiting for approval on THIS machine. Local-admin only — the
+ * PIN is the whole secret. */
+export interface PendingPairing {
+  request_id: string
+  node_id: string
+  node_name: string
+  role: string
+  pin: string
+  approved: boolean
+  expires_in: number
 }
 
 /** Verify request — satellite → desktop (confirm with PIN). */
 export interface VerifyRequest {
+  request_id: string
   pin: string
   node_id: string
 }
@@ -155,6 +173,32 @@ export async function requestPairing(req: PairRequest): Promise<PairResponse> {
   })
   if (!res.ok) throw new Error(`Pairing failed: ${res.status} ${await res.text()}`)
   return res.json()
+}
+
+/** Pairings waiting for approval on this machine, with their PINs. */
+export async function listPendingPairings(): Promise<PendingPairing[]> {
+  const res = await fetch(`${API_BASE}/api/peers/pending`)
+  if (!res.ok) throw new Error(`Pending pairings failed: ${res.status}`)
+  return res.json()
+}
+
+/** Approve a pairing waiting on this machine. Nothing issues a token
+ * without this — it is the difference between a handshake and self-service. */
+export async function approvePairing(requestId: string): Promise<void> {
+  const res = await fetch(
+    `${API_BASE}/api/peers/pending/${encodeURIComponent(requestId)}/approve`,
+    { method: 'POST' },
+  )
+  if (!res.ok) throw new Error(`Approve failed: ${res.status} ${await res.text()}`)
+}
+
+/** Refuse a pairing outright rather than letting it lapse. */
+export async function rejectPairing(requestId: string): Promise<void> {
+  const res = await fetch(
+    `${API_BASE}/api/peers/pending/${encodeURIComponent(requestId)}`,
+    { method: 'DELETE' },
+  )
+  if (!res.ok) throw new Error(`Reject failed: ${res.status} ${await res.text()}`)
 }
 
 /** Verify pairing with PIN (satellite-side call). */

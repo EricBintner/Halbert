@@ -11,7 +11,13 @@
  * - Node name and endpoint (font-mono)
  * - Compute backends as badges (ollama, vllm — apple_foundation is never advertised)
  * - Capabilities as badges
- * - Pair button (triggers the pairing handshake)
+ * - Pair button (starts the handshake), then a PIN field
+ *
+ * The handshake is deliberately two steps with a person in between: the
+ * other machine shows a PIN once someone there approves the request, and
+ * that PIN is typed in here. This card used to auto-verify with a PIN the
+ * server handed back in the pairing response ("development mode"), which
+ * made pairing self-service — see SE-16 / R10-F1.
  *
  * Design notes:
  * - No emojis (per global rules) — uses lucide-react icons
@@ -40,12 +46,12 @@ export function DiscoveredPeerCard({ peer, onPaired, onClose }: DiscoveredPeerCa
   const [pairing, setPairing] = useState(false)
   const [pairResponse, setPairResponse] = useState<PairResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [pin, setPin] = useState('')
 
   const handlePair = async () => {
     setPairing(true)
     setError(null)
     try {
-      // Step 1: Request pairing → get PIN
       const resp = await requestPairing({
         node_id: peer.node_id,
         node_name: peer.node_name,
@@ -54,12 +60,21 @@ export function DiscoveredPeerCard({ peer, onPaired, onClose }: DiscoveredPeerCa
         endpoint: peer.endpoint,
       })
       setPairResponse(resp)
-      // TODO(federation-9.1): The PIN needs to be confirmed by the user
-      // on the Desktop UI. For now, auto-verify (development mode).
-      // In production, the Desktop shows a confirmation dialog and the
-      // user enters the PIN on the satellite (or vice versa).
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Pairing failed')
+    } finally {
+      setPairing(false)
+    }
+  }
+
+  const handleConfirm = async () => {
+    if (!pairResponse) return
+    setPairing(true)
+    setError(null)
+    try {
       const verified = await verifyPairing({
-        pin: resp.pin,
+        request_id: pairResponse.request_id,
+        pin: pin.trim(),
         node_id: peer.node_id,
       })
       setPeerToken(verified.token)
@@ -90,23 +105,46 @@ export function DiscoveredPeerCard({ peer, onPaired, onClose }: DiscoveredPeerCa
           </div>
         )}
       </div>
-      <Button
-        size="sm"
-        className="h-7 text-[10px] shrink-0"
-        onClick={handlePair}
-        disabled={pairing}
-      >
-        {pairing ? (
-          <Loader2 className="h-3 w-3 animate-spin" />
-        ) : pairResponse ? (
-          <>
-            <Check className="h-3 w-3 mr-1" />
-            PIN: {pairResponse.pin}
-          </>
-        ) : (
-          'Pair'
-        )}
-      </Button>
+      {pairResponse ? (
+        <div className="flex items-center gap-1 shrink-0">
+          <label className="sr-only" htmlFor={`pin-${peer.node_id}`}>
+            PIN shown on {peer.node_name}
+          </label>
+          <input
+            id={`pin-${peer.node_id}`}
+            value={pin}
+            onChange={(e) => setPin(e.target.value)}
+            inputMode="numeric"
+            maxLength={4}
+            placeholder="PIN"
+            className="h-7 w-14 rounded border border-border bg-background px-1 text-center text-[11px] font-mono"
+          />
+          <Button
+            size="sm"
+            className="h-7 text-[10px]"
+            onClick={handleConfirm}
+            disabled={pairing || pin.trim().length !== 4}
+          >
+            {pairing ? (
+              <Loader2 className="h-3 w-3 animate-spin" />
+            ) : (
+              <>
+                <Check className="h-3 w-3 mr-1" />
+                Confirm
+              </>
+            )}
+          </Button>
+        </div>
+      ) : (
+        <Button
+          size="sm"
+          className="h-7 text-[10px] shrink-0"
+          onClick={handlePair}
+          disabled={pairing}
+        >
+          {pairing ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Pair'}
+        </Button>
+      )}
       {error && (
         <span className="text-[9px] text-destructive">{error}</span>
       )}

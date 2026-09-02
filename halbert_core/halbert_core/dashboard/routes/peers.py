@@ -51,15 +51,22 @@ This is the Tailscale path (finding H9 — mDNS doesn't cross Tailscale).
 """
 from __future__ import annotations
 
+import hmac
 import logging
 import secrets
+import time
+import uuid
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
 from ...federation.peers_config import PeersConfig, PeerCredential
-from ...federation.peer_middleware import require_peer_auth, PeerContext, get_peers_config
+from ...federation.peer_middleware import (
+    require_peer_auth, require_local_admin, optional_peer_auth,
+    PeerContext, get_peers_config,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -70,10 +77,42 @@ router = APIRouter()
 # Pending pairing requests (in-memory, cleared on restart)
 # ---------------------------------------------------------------------------
 
-# TODO(federation-9.1): Move to a more durable store if the Desktop
-# restarts mid-pairing.  For MVP, in-memory is fine — the user just
-# re-initiates pairing.
-_pending_pairings: Dict[str, Dict[str, Any]] = {}  # pin -> {node_id, node_name, role, created_at}
+# In-memory, cleared on restart: a pairing the operator did not finish is a
+# pairing they can start again.
+#
+# Keyed by request id, NOT by PIN. The PIN is a secret the requester must
+# prove it learned out of band; making it the lookup key turns every /verify
+# into an oracle over a 10,000-value space.
+_pending_pairings: Dict[str, "_PendingPairing"] = {}
+
+# A PIN is read off one screen and typed into another. A minute is enough for
+# that and short enough that a guessing run has no room.
+PAIRING_TTL_S = 60.0
+# 4 digits is 10,000 values; three tries against a 60s window is not a search.
+PAIRING_MAX_ATTEMPTS = 3
+# A refused request is a nuisance, not a memory leak.
+PAIRING_MAX_PENDING = 16
+
+
+@dataclass
+class _PendingPairing:
+    """A pairing waiting for the operator to approve it."""
+    request_id: str
+    pin: str
+    fields: Dict[str, Any]
+    created_at: float
+    approved: bool = False
+    attempts: int = 0
+
+    def is_expired(self, now: float) -> bool:
+        return (now - self.created_at) > PAIRING_TTL_S
+
+
+def _sweep_pending(now: Optional[float] = None) -> None:
+    """Drop expired requests. Called on every entry to the pairing routes."""
+    now = now if now is not None else time.time()
+    for rid in [r for r, p in _pending_pairings.items() if p.is_expired(now)]:
+        _pending_pairings.pop(rid, None)
 
 
 # ---------------------------------------------------------------------------
@@ -94,15 +133,39 @@ class PairRequest(BaseModel):
 
 
 class PairResponse(BaseModel):
-    """Desktop → Satellite: pairing initiated, awaiting PIN confirmation."""
-    pin: str = Field(..., description="4-digit PIN to confirm pairing")
+    """Desktop → Satellite: pairing initiated, awaiting PIN confirmation.
+
+    Deliberately carries no PIN. It used to: the requester was handed the
+    secret it was then asked to prove, so anyone who could reach the port
+    could pair itself and walk away with a bearer token — the PIN was
+    theatre (SE-16 / R10-F1). The PIN is shown on THIS machine and travels
+    to the other one the way a pairing code always has: through the person
+    doing the pairing.
+    """
+    request_id: str = Field(..., description="Identifies this pairing attempt")
     status: str = "pending"
-    message: str = "Confirm this PIN on the Desktop UI to complete pairing"
+    expires_in: float = Field(PAIRING_TTL_S, description="Seconds until this attempt lapses")
+    message: str = (
+        "Approve this pairing on the other machine, then enter the PIN it shows."
+    )
+
+
+class PendingPairingInfo(BaseModel):
+    """Local-admin view of a pairing waiting for approval — PIN included,
+    because this is the screen the operator reads it off."""
+    request_id: str
+    node_id: str
+    node_name: str
+    role: str
+    pin: str
+    approved: bool
+    expires_in: float
 
 
 class VerifyRequest(BaseModel):
     """Satellite → Desktop: confirm pairing with PIN."""
-    pin: str = Field(..., description="The PIN from the pairing response")
+    request_id: str = Field(..., description="The request_id from the pairing response")
+    pin: str = Field(..., description="The PIN displayed on the other machine")
     node_id: str = Field(..., description="The node_id from the pairing request")
 
 
@@ -175,26 +238,98 @@ async def request_pairing(req: PairRequest) -> PairResponse:
             detail=f"Peer {req.node_id} is already paired. Revoke first to re-pair.",
         )
 
-    # Generate 4-digit PIN
-    pin = f"{secrets.randbelow(10000):04d}"
+    _sweep_pending()
+    if len(_pending_pairings) >= PAIRING_MAX_PENDING:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many pairing attempts are already waiting. Try again shortly.",
+        )
 
-    _pending_pairings[pin] = {
-        "node_id": req.node_id,
-        "node_name": req.node_name,
-        "role": req.role,
-        "capabilities": req.capabilities,
-        "endpoint": req.endpoint,
-        "compute_direction": req.compute_direction,
-        "wol_enabled": req.wol_enabled,
-        "wol_mac": req.wol_mac,
-        "wol_broadcast": req.wol_broadcast,
-    }
+    pending = _PendingPairing(
+        request_id=uuid.uuid4().hex,
+        pin=f"{secrets.randbelow(10000):04d}",
+        created_at=time.time(),
+        fields={
+            "node_id": req.node_id,
+            "node_name": req.node_name,
+            "role": req.role,
+            "capabilities": req.capabilities,
+            "endpoint": req.endpoint,
+            "compute_direction": req.compute_direction,
+            "wol_enabled": req.wol_enabled,
+            "wol_mac": req.wol_mac,
+            "wol_broadcast": req.wol_broadcast,
+        },
+    )
+    _pending_pairings[pending.request_id] = pending
 
-    logger.info("Pairing requested by %s (%s) — PIN generated", req.node_id, req.node_name)
+    logger.info(
+        "Pairing requested by %s (%s) — awaiting approval on this machine "
+        "(request %s)", req.node_id, req.node_name, pending.request_id,
+    )
+    return PairResponse(request_id=pending.request_id)
 
-    # TODO(federation-9.1): Emit a WebSocket event so the Desktop UI
-    # shows a pairing confirmation dialog with the PIN.
-    return PairResponse(pin=pin)
+
+@router.get(
+    "/api/peers/pending",
+    response_model=List[PendingPairingInfo],
+    dependencies=[Depends(require_local_admin)],
+)
+async def list_pending_pairings() -> List[PendingPairingInfo]:
+    """Pairings waiting on this machine, with their PINs.
+
+    This is the screen the operator reads the PIN off. Local-admin only: the
+    PIN is the whole secret, so serving it to anyone who asks would put the
+    hole straight back.
+    """
+    _sweep_pending()
+    now = time.time()
+    return [
+        PendingPairingInfo(
+            request_id=p.request_id,
+            node_id=p.fields["node_id"],
+            node_name=p.fields["node_name"],
+            role=p.fields["role"],
+            pin=p.pin,
+            approved=p.approved,
+            expires_in=max(0.0, PAIRING_TTL_S - (now - p.created_at)),
+        )
+        for p in _pending_pairings.values()
+    ]
+
+
+@router.post(
+    "/api/peers/pending/{request_id}/approve",
+    dependencies=[Depends(require_local_admin)],
+)
+async def approve_pairing(request_id: str) -> Dict[str, Any]:
+    """The confirmation step: a person at this machine says yes.
+
+    Nothing issues a token without this. It is the whole difference between
+    a handshake and self-service — /verify used to mint a bearer on a PIN
+    match alone, and the PIN was in the pairing response.
+    """
+    _sweep_pending()
+    pending = _pending_pairings.get(request_id)
+    if pending is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                            detail="No such pairing request, or it has expired")
+    pending.approved = True
+    logger.info("Pairing %s approved for %s", request_id, pending.fields["node_id"])
+    return {"status": "approved", "request_id": request_id}
+
+
+@router.delete(
+    "/api/peers/pending/{request_id}",
+    dependencies=[Depends(require_local_admin)],
+)
+async def reject_pairing(request_id: str) -> Dict[str, Any]:
+    """Refuse a pairing outright rather than letting it lapse."""
+    _sweep_pending()
+    if _pending_pairings.pop(request_id, None) is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
+                            detail="No such pairing request, or it has expired")
+    return {"status": "rejected", "request_id": request_id}
 
 
 @router.post("/api/peers/verify", response_model=VerifyResponse)
@@ -208,18 +343,49 @@ async def verify_pairing(req: VerifyRequest) -> VerifyResponse:
     The satellite stores this token in its own peers.json and uses it
     for all future compute and MCP requests.
     """
-    pending = _pending_pairings.pop(req.pin, None)
+    _sweep_pending()
+    pending = _pending_pairings.get(req.request_id)
     if pending is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid or expired PIN",
+            detail="Invalid or expired pairing request",
         )
 
-    if pending["node_id"] != req.node_id:
+    if pending.fields["node_id"] != req.node_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="PIN does not match this node_id",
+            detail="This pairing request belongs to a different node",
         )
+
+    if not pending.approved:
+        # The load-bearing line. A PIN match alone used to be enough, and the
+        # PIN was handed to the requester — so this endpoint issued bearer
+        # tokens to anyone who asked twice.
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This pairing has not been approved on the other machine yet",
+        )
+
+    pending.attempts += 1
+    if not hmac.compare_digest(str(req.pin), pending.pin):
+        if pending.attempts >= PAIRING_MAX_ATTEMPTS:
+            _pending_pairings.pop(req.request_id, None)
+            logger.warning(
+                "Pairing %s abandoned after %d wrong PINs",
+                req.request_id, pending.attempts,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Too many incorrect PINs; start pairing again",
+            )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Incorrect PIN",
+        )
+
+    # Only now is the request consumed.
+    _pending_pairings.pop(req.request_id, None)
+    fields = pending.fields
 
     # Generate token and store credential
     config = get_peers_config()
@@ -227,16 +393,16 @@ async def verify_pairing(req: VerifyRequest) -> VerifyResponse:
 
     try:
         config.add_peer(
-            node_id=pending["node_id"],
-            node_name=pending["node_name"],
-            role=pending["role"],
+            node_id=fields["node_id"],
+            node_name=fields["node_name"],
+            role=fields["role"],
             raw_token=raw_token,
-            endpoint=pending.get("endpoint"),
-            capabilities=pending.get("capabilities", []),
-            compute_direction=pending.get("compute_direction", "outbound"),
-            wol_enabled=pending.get("wol_enabled", False),
-            wol_mac=pending.get("wol_mac"),
-            wol_broadcast=pending.get("wol_broadcast"),
+            endpoint=fields.get("endpoint"),
+            capabilities=fields.get("capabilities", []),
+            compute_direction=fields.get("compute_direction", "outbound"),
+            wol_enabled=fields.get("wol_enabled", False),
+            wol_mac=fields.get("wol_mac"),
+            wol_broadcast=fields.get("wol_broadcast"),
         )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
@@ -246,7 +412,7 @@ async def verify_pairing(req: VerifyRequest) -> VerifyResponse:
     import socket
     desktop_node_id = os.environ.get("HALBERT_PERSONA_ID", "halbert") + "-" + socket.gethostname()
 
-    logger.info("Pairing confirmed: %s (%s)", pending["node_id"], pending["node_name"])
+    logger.info("Pairing confirmed: %s (%s)", fields["node_id"], fields["node_name"])
 
     return VerifyResponse(token=raw_token, desktop_node_id=desktop_node_id)
 
@@ -283,20 +449,30 @@ async def list_peers(
 
 @router.delete("/api/peers/{node_id}")
 async def revoke_peer(
+    request: Request,
     node_id: str,
-    peer: PeerContext = Depends(require_peer_auth),
+    peer: Optional[PeerContext] = Depends(optional_peer_auth),
 ) -> Dict[str, Any]:
     """Revoke a peer's token (M14 — surgical revocation).
 
-    The revoked peer's token is immediately invalid.  All future
-    requests from this peer will get 401.
+    The revoked peer's token is immediately invalid. All future requests
+    from this peer will get 401.
 
-    TODO(federation-9.1): Should this require local admin auth rather
-    than peer auth?  A peer revoking another peer is a privilege
-    escalation risk.  For now, any authenticated peer can revoke —
-    but this should be restricted to local admin or the peer revoking
-    itself.
+    Two callers are allowed, and only two: the operator at this machine, and
+    a peer revoking itself (leaving the fleet). Any authenticated peer could
+    revoke any other — the file's own TODO called it a privilege-escalation
+    risk, and it was: one compromised satellite could cut every other node
+    off from the host (R10-F5).
     """
+    from ...federation.peer_middleware import _is_local_client
+
+    if not _is_local_client(request) and (peer is None or peer.node_id != node_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="A peer may revoke only itself; revoking another peer is "
+                   "done from the machine they are paired with.",
+        )
+
     config = get_peers_config()
     if not config.revoke_peer(node_id):
         raise HTTPException(
