@@ -330,8 +330,16 @@ class AudioPipelineCoordinator:
         if not self._vad:
             return
 
+        from .speech.vad import SILERO_WINDOW_SAMPLES
+
         frame_buffer = bytearray()
-        frame_target = 960  # 30ms at 16kHz, 16-bit = 960 bytes
+        # Silero's window is 512 samples, and VoiceActivityDetector.is_speech
+        # returns False outright for anything shorter (vad.py). This was 960
+        # bytes = 480 samples, so is_speech could never once return True and
+        # the entire speech path — wake word, ASR turns, speaker ID, VAD
+        # barge-in — was dead. Live since the coordinator started booting in
+        # app.py (R9-F03 / U2-14).
+        frame_target = SILERO_WINDOW_SAMPLES * 2  # 512 samples, 16-bit = 1024 bytes
 
         while self._running:
             try:

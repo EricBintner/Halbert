@@ -232,6 +232,15 @@ if FASTAPI_AVAILABLE:
                 threshold=req.threshold,
             )
 
+            # Put the new voiceprint in front of the RUNNING matcher too.
+            # Persisting alone left the enrolled speaker unrecognised until
+            # the next restart — and, before load_enrolled_profiles existed,
+            # forever (R9-F04).
+            running = get_audio_pipeline()
+            live_identifier = getattr(running, "_speaker_id", None) if running else None
+            if live_identifier is not None:
+                live_identifier.register_profile(speaker_id, embedding)
+
             return {
                 "speaker_id": profile.speaker_id,
                 "name": profile.name,
@@ -278,6 +287,16 @@ if FASTAPI_AVAILABLE:
             from ...audio.storage.speaker_store import SpeakerProfileStore
             store = SpeakerProfileStore()
             if store.delete(speaker_id):
+                # Forget them in the running matcher as well, or a deleted
+                # speaker keeps being recognised until the next restart —
+                # the mirror of R9-F04, and the direction that matters more.
+                running = get_audio_pipeline()
+                live_identifier = getattr(running, "_speaker_id", None) if running else None
+                if live_identifier is not None:
+                    try:
+                        live_identifier.remove(speaker_id)
+                    except Exception as e:
+                        logger.warning(f"Speaker {speaker_id} deleted but still in the live matcher: {e}")
                 return {"status": "ok", "deleted": speaker_id}
             raise HTTPException(404, "Speaker not found")
         except HTTPException:

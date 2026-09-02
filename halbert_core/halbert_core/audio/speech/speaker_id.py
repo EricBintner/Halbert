@@ -98,6 +98,52 @@ class SpeakerIdentifier:
         self._sherpa = sherpa_onnx
         self._initialized = True
         logger.info(f"Speaker ID initialized: {self._model_path} ({self._extractor.dim}-dim CAM++)")
+        self.load_enrolled_profiles()
+
+    def load_enrolled_profiles(self, store: Optional[object] = None) -> int:
+        """Load persisted voiceprints into the in-memory matcher.
+
+        The manager starts empty and the enrollment route only ever wrote to
+        SpeakerProfileStore, so nothing ever put an enrolled voiceprint in
+        front of the matcher: identify() searched an empty index and every
+        household member came back unrecognised, however many times they had
+        enrolled (R9-F04). Returns the number of profiles loaded.
+        """
+        if self._manager is None:
+            return 0
+        try:
+            if store is None:
+                from ..storage.speaker_store import SpeakerProfileStore
+                store = SpeakerProfileStore()
+            profiles = store.list_all()
+        except Exception as e:
+            logger.warning(f"Could not read enrolled speakers (non-fatal): {e}")
+            return 0
+
+        loaded = 0
+        for profile in profiles:
+            try:
+                self._manager.add(profile.speaker_id, [profile.embedding_as_list()])
+                loaded += 1
+            except Exception as e:
+                logger.warning(f"Could not load voiceprint {profile.speaker_id}: {e}")
+        if loaded:
+            logger.info(f"Loaded {loaded} enrolled voiceprint(s) into the matcher")
+        return loaded
+
+    def register_profile(self, speaker_id: str, embedding: List[float]) -> bool:
+        """Add one already-extracted voiceprint to the live matcher.
+
+        So a speaker enrolled through the API is recognisable on the next
+        turn rather than only after a restart.
+        """
+        try:
+            self._ensure_initialized()
+            self._manager.add(speaker_id, [list(embedding)])
+            return True
+        except Exception as e:
+            logger.warning(f"Could not register voiceprint {speaker_id}: {e}")
+            return False
 
     def extract_embedding(self, pcm_bytes: bytes) -> Optional[list]:
         """Extract a 256-dim speaker embedding from PCM audio.
