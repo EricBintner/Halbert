@@ -145,10 +145,34 @@ def _providers() -> List[str]:
     return sorted(CHAT_CAPABLE_PROVIDERS)
 
 
+def _redact_api_keys(llm_cfg: Dict[str, Any]) -> Dict[str, Any]:
+    """A shallow copy of an llm_config dict with every endpoint's api_key redacted.
+
+    R05-F3: GET (and the PUT response, which re-serves the same payload)
+    must never carry a saved secret back to the browser. The real value
+    is replaced with "" and ``key_set`` tells the UI whether one is
+    configured, so a saved key can still be shown as present without
+    ever leaving the server. This is safe for the write side too:
+    ``_carry_forward_api_keys`` (llm_config.py) re-attaches the stored
+    key to any endpoint a client PUTs back without an ``api_key`` field,
+    so the client never needs to see — or echo — the real value to keep
+    it. An explicit ``api_key: ""`` in a PUT still clears it, unchanged.
+    """
+    out = dict(llm_cfg)
+    endpoints = out.get("saved_endpoints")
+    if isinstance(endpoints, list):
+        out["saved_endpoints"] = [
+            {**ep, "api_key": "", "key_set": bool(ep.get("api_key"))}
+            if isinstance(ep, dict) else ep
+            for ep in endpoints
+        ]
+    return out
+
+
 def _effective_block(layered: llm_store.LayeredConfig) -> Dict[str, Any]:
     """The read-only half: what is in force, and which layer put it there."""
     return {
-        "llm_config": layered.effective,
+        "llm_config": _redact_api_keys(layered.effective),
         "slot_layers": layered.slot_layers,
         "layers": layered.layers,
         "overridden_slots": {
@@ -168,7 +192,7 @@ def _editor_payload(session_id: Optional[str] = None) -> Dict[str, Any]:
     """
     layered = llm_store.load_layered(session_id)
     return {
-        "llm_config": layered.global_config,
+        "llm_config": _redact_api_keys(layered.global_config),
         "chat_capable_providers": _providers(),
         "effective": _effective_block(layered),
     }
