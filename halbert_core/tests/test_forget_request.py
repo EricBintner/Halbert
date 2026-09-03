@@ -192,3 +192,48 @@ class TestTheAuditHelperAlone:
 
     def test_an_empty_request_id_is_zero(self):
         assert erase_audit_by_request("") == 0
+
+
+class TestTheSupersededCopy:
+    """The end-to-end suite never seeded a superseded row, so the leak the
+    implementation itself calls out was covered only by a unit test in
+    another file — and the integration assertion queried by_request(), which
+    by design cannot see the row that holds the copy."""
+
+    def test_forgetting_reaches_the_copy_on_the_row_it_closed(self):
+        record_file_change(path="/etc/private.conf", reason="an early reason",
+                           actor=ACTOR_USER, request_id="req-old", tool="editor",
+                           after_text="1\n")
+        record_file_change(path="/etc/private.conf", reason=SECRET,
+                           actor=ACTOR_USER, request_id="req-9", tool="editor",
+                           before_text="1\n", after_text="2\n")
+
+        store = _ledger()
+        closed = store.state_history("file:/etc/private.conf", "content_sha256")[0]
+        assert SECRET in (closed.closed_reason or ""), "fixture did not reproduce it"
+        assert closed.request_id == "req-old", "the copy is under another request"
+        store.close()
+
+        forget_request("req-9")
+
+        store = _ledger()
+        closed = store.state_history("file:/etc/private.conf", "content_sha256")[0]
+        assert SECRET not in (closed.closed_reason or "")
+        # and nowhere else in the ledger either
+        every = "".join(str(t.to_dict()) for t in
+                        store.state_history("file:/etc/private.conf", "content_sha256"))
+        assert SECRET not in every
+        store.close()
+
+    def test_the_vault_note_loses_it_too(self):
+        record_file_change(path="/etc/private.conf", reason="an early reason",
+                           actor=ACTOR_USER, request_id="req-old", tool="editor",
+                           after_text="1\n")
+        record_file_change(path="/etc/private.conf", reason=SECRET,
+                           actor=ACTOR_USER, request_id="req-9", tool="editor",
+                           before_text="1\n", after_text="2\n")
+        VaultProjector().rebuild()
+        assert any(SECRET in p.read_text() for p in vault_root().rglob("*.md"))
+
+        forget_request("req-9")
+        assert not any(SECRET in p.read_text() for p in vault_root().rglob("*.md"))

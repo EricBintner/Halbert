@@ -64,6 +64,19 @@ __all__ = ["VaultProjector", "ProjectionResult", "vault_root", "PROJECTABLE"]
 PROJECTABLE: Dict[Tuple[str, str], str] = {
     ("file", FILE_CONTENT_PREDICATE): "provenance",
     ("file", FILE_MODE_PREDICATE): "permission",
+}
+
+#: Admitted in principle, withheld until its writer is fixed.
+#:
+#: ``("domain", "preferred_entity")`` belongs in the vault -- a durable
+#: preference is exactly the non-re-observable kind of fact §4d wants kept.
+#: But ``Consolidator._consolidate_domain`` writes every entity in a loop
+#: against ONE ``(subject, predicate)`` pair, so each iteration supersedes the
+#: last and the key holds whichever entity happened to come last. Projecting
+#: it would put a confident note on disk asserting a preference the ledger
+#: never really recorded -- the "beautiful empty vault" failure wearing
+#: content. Restore this once the writer indexes the key.
+_WITHHELD: Dict[Tuple[str, str], str] = {
     ("domain", "preferred_entity"): "preference",
 }
 
@@ -255,7 +268,9 @@ class VaultProjector:
         """``({relpath: text}, rejected_count)`` — the whole vault, in memory."""
         store = self._open()
         try:
-            triples = store.current_state()
+            # strict: an empty plan from a FAILED read would make
+            # rebuild() unlink every note and report success.
+            triples = store.current_state(strict=True)
             index = self._audited_requests()
             out: Dict[str, str] = {}
             rejected = 0
@@ -264,7 +279,8 @@ class VaultProjector:
                 if category is None:
                     rejected += 1
                     continue
-                version = len(store.state_history(triple.subject, triple.predicate))
+                version = len(store.state_history(
+                    triple.subject, triple.predicate, strict=True))
                 note_id = _note_id(self.persona_id, triple.subject,
                                    triple.predicate, category)
                 validated = bool(triple.request_id and triple.request_id in index)
@@ -286,6 +302,10 @@ class VaultProjector:
         **unlinks what the ledger no longer produces**. The unlink pass is
         what makes forgetting real on a live tree; a delete-then-rebuild test
         cannot exercise it.
+
+        Raises rather than reconciling if the ledger cannot be read: an empty
+        plan from a failed read is indistinguishable from an empty ledger, and
+        acting on it would delete every note and call that a success.
         """
         planned, rejected = self.plan()
         root = self.root

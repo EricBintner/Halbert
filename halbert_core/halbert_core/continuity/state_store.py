@@ -106,6 +106,25 @@ CREATE INDEX IF NOT EXISTS idx_state_request
     ON state_triples(request_id);
 """
 
+#: Exactly one open row per key, enforced by the storage layer.
+#:
+#: ``record_state`` is SELECT-then-UPDATE-then-INSERT and nothing held the
+#: three together across callers: ``self._lock`` is per instance, and every
+#: production call site builds its own ``StateStore`` over the same file. Two
+#: concurrent writers could therefore both see no open row and both INSERT
+#: one, leaving two permanently-current values for one key -- and the next
+#: write would close only one of them, silently discarding a person's stated
+#: reason for the other. The vault then maps both rows to one note path and
+#: one overwrites the other.
+#:
+#: A partial unique index makes that unrepresentable. The loser of a race gets
+#: an IntegrityError, which ``record_state`` already fails soft on: one writer
+#: wins, and no reason is silently lost.
+_OPEN_ROW_INDEX = (
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_state_one_open "
+    "ON state_triples(subject, predicate) WHERE valid_to IS NULL"
+)
+
 #: Columns added when provenance landed. A database written before that has a
 #: ``state_triples`` without them.
 _PROVENANCE_COLUMNS = ("reason", "actor", "request_id", "closed_reason", "closed_by")
@@ -261,12 +280,26 @@ class StateStore:
             conn = sqlite3.connect(path, check_same_thread=False)
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("PRAGMA busy_timeout=5000")
+            # Overwritten cells are zeroed rather than left in free pages, so
+            # a redacted reason does not survive in the file's slack space.
+            # Costs a little write throughput; a ledger that leaks the words
+            # it was asked to forget is not worth the speed.
+            conn.execute("PRAGMA secure_delete=ON")
         conn.row_factory = sqlite3.Row
         self._conn = conn
+        # BEGIN IMMEDIATE, so two processes opening the same new-schema file
+        # cannot both decide to migrate. Python's sqlite3 opens no implicit
+        # transaction for DDL, so `with self._conn:` alone would let the
+        # rename and the create interleave.
+        try:
+            self._conn.execute("BEGIN IMMEDIATE")
+        except Exception:  # pragma: no cover - already in a transaction
+            pass
         with self._conn:
             self._set_legacy_table_aside()
             self._conn.executescript(_SCHEMA)
             self._add_missing_columns()
+            self._enforce_one_open_row()
 
     def _set_legacy_table_aside(self) -> None:
         """Move a pre-provenance ``state_triples`` out of the way.
@@ -285,15 +318,47 @@ class StateStore:
             return
         if not cols or all(c in cols for c in _PROVENANCE_COLUMNS):
             return
+        target = _LEGACY_TABLE
         try:
-            self._conn.execute(f"DROP TABLE IF EXISTS {_LEGACY_TABLE}")
-            self._conn.execute(f"ALTER TABLE state_triples RENAME TO {_LEGACY_TABLE}")
+            # Never DROP. A previous set-aside is real history too, and the
+            # whole point of this branch is that pre-provenance rows are kept.
+            # Pick a free name instead.
+            existing = {
+                r["name"]
+                for r in self._conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                ).fetchall()
+            }
+            suffix = 2
+            while target in existing:
+                target = f"{_LEGACY_TABLE}_{suffix}"
+                suffix += 1
+            self._conn.execute(f"ALTER TABLE state_triples RENAME TO {target}")
             logger.info(
                 "state ledger predates provenance; old rows set aside in %s "
-                "(unread, never backfilled)", _LEGACY_TABLE,
+                "(unread, never backfilled)", target,
             )
-        except Exception as e:  # pragma: no cover - defensive
-            logger.warning(f"Could not set the pre-provenance table aside: {e}")
+        except Exception as e:
+            # Losing a race with another process that migrated first is the
+            # expected case here, and is fine: it already did the work.
+            logger.info(f"pre-provenance table not set aside ({e})")
+
+    def _enforce_one_open_row(self) -> None:
+        """Create the one-open-row index, or say loudly why it could not be.
+
+        An existing database that already holds duplicate open rows cannot
+        take the index. That is a real finding about that database, not a
+        reason to fail to open it -- so log it and carry on unindexed rather
+        than making the ledger unreadable.
+        """
+        try:
+            self._conn.execute(_OPEN_ROW_INDEX)
+        except Exception as e:
+            logger.warning(
+                "state ledger: could not enforce one-open-row-per-key (%s). "
+                "The table already holds duplicates; `why()` will resolve one "
+                "of them arbitrarily until they are closed.", e,
+            )
 
     def _add_missing_columns(self) -> None:
         """Add later columns to a table that already exists.
@@ -454,6 +519,7 @@ class StateStore:
         second call returns 0: already forgotten is not a failure.
         """
         actor = _require(actor, "actor")
+        request_id = _require(request_id, "request_id")
         try:
             with self._lock, self._conn:
                 own = self._conn.execute(
@@ -461,13 +527,22 @@ class StateStore:
                     "WHERE request_id = ? AND reason != ?",
                     (UNRECORDED, request_id, UNRECORDED),
                 ).rowcount or 0
+                # closed_by is NOT touched: who closed a row is a fact, like
+                # the timestamp beside it, and forgetting is about the words.
                 closed = self._conn.execute(
-                    "UPDATE state_triples "
-                    "SET closed_reason = ?, closed_by = ? "
+                    "UPDATE state_triples SET closed_reason = ? "
                     "WHERE closed_by_request = ? AND closed_reason != ?",
-                    (UNRECORDED, actor, request_id, UNRECORDED),
+                    (UNRECORDED, request_id, UNRECORDED),
                 ).rowcount or 0
-                return own + closed
+                changed = own + closed
+            if changed:
+                # secure_delete zeroes the page, but the pre-redaction image
+                # can still sit in the WAL until it is folded back in.
+                try:
+                    self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                except Exception as e:  # pragma: no cover - not fatal
+                    logger.info(f"wal checkpoint after redaction: {e}")
+            return changed
         except Exception as e:
             logger.warning(f"Failed to redact request {request_id}: {e}")
             return 0

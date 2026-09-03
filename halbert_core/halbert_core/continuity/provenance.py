@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
-from typing import Any, Optional
+from typing import Any, Dict, Optional
 
 logger = logging.getLogger("halbert.continuity.provenance")
 
@@ -233,10 +233,12 @@ def record_file_mode_change(
 #: INTEG-05's rule against a badge that claims more than it can show.
 ERASURE_LIMITS = (
     "This removes the recorded reason from the change ledger and the content "
-    "of the matching audit records. It does not reach copies held elsewhere: "
-    "conversation messages (redacted separately), Haloysius memory_v2's "
-    "plaintext store, or blocks of a rewritten log shard that the filesystem "
-    "has not yet reused."
+    "of the matching audit records, and rewrites the ledger's own pages so the "
+    "old text is not left in the file (secure_delete, then a WAL checkpoint). "
+    "It does not reach copies held elsewhere: conversation messages (redacted "
+    "separately), Haloysius memory_v2's plaintext store, blocks of a rewritten "
+    "log shard that the filesystem has not yet reused, or any backup, snapshot "
+    "or replica taken before now."
 )
 
 

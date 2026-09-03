@@ -13,7 +13,7 @@ import shutil
 
 import pytest
 
-from halbert_core.continuity.provenance import record_file_change
+from halbert_core.continuity.provenance import content_digest, record_file_change
 from halbert_core.continuity.state_store import (
     ACTOR_AGENT,
     ACTOR_SYSTEM,
@@ -51,6 +51,8 @@ def _seed(n=3):
     s = _store()
     s.record_state("file:/etc/keys/id_rsa", "mode_octal", "600", "chmod",
                    reason="permissions hygiene", actor=ACTOR_USER, request_id="req-m")
+    # withheld: its writer supersedes itself, so the key holds whichever
+    # entity came last (see _WITHHELD in vault.py)
     s.record_state("domain:samba", "preferred_entity", "smb.conf", "consolidation",
                    reason="consolidation: seen in 4 of 6 samba threads",
                    actor=ACTOR_SYSTEM, request_id="req-c")
@@ -73,14 +75,24 @@ class TestRebuildIsByteIdentical:
     def test_delete_the_directory_and_rebuild(self):
         _seed()
         first = VaultProjector().rebuild()
-        assert first.written >= 5, "nothing was projected; the test proves nothing"
+        assert first.written == 4, "expected 3 file notes + 1 mode note"
         before = _snapshot(vault_root())
         assert any("app0" in k for k in before), "expected a named note"
+
+        # Byte-identity alone would pass on notes stripped of every fact, so
+        # pin the content too: a rebuild that lost the reason or the digest
+        # would still compare equal to itself.
+        blob = "".join(p.read_text() for p in vault_root().rglob("*.md"))
+        assert "the admin asked for change 0" in blob
+        assert "permissions hygiene" in blob
+        assert content_digest("setting = 0\n") in blob
 
         shutil.rmtree(vault_root())
         VaultProjector().rebuild()
 
-        assert _snapshot(vault_root()) == before
+        after = _snapshot(vault_root())
+        assert after == before
+        assert "".join(p.read_text() for p in vault_root().rglob("*.md")) == blob
 
     def test_a_second_rebuild_in_place_rewrites_nothing(self):
         _seed()
@@ -90,22 +102,50 @@ class TestRebuildIsByteIdentical:
 
         second = VaultProjector().rebuild()
 
-        assert second.written == 0 and second.unchanged >= 5
+        assert second.written == 0 and second.unchanged == 4
         assert {p: p.stat().st_mtime_ns for p in vault_root().rglob("*.md")} == mtimes
 
-    def test_no_wall_clock_value_reaches_a_note(self):
-        """A composite score's freshness term reads time.time() and drifts
-        every few minutes, so it would break byte-identity."""
-        _seed()
+    def test_nothing_is_recomputed_at_render_time(self):
+        """The property byte-identity actually protects.
+
+        A note may contain a timestamp -- valid_from is the fact's own, and is
+        fixed once recorded. What must never appear is a value derived from
+        WHEN THE PROJECTION RAN, such as an epistemic composite whose
+        freshness term reads time.time() and re-rounds every few minutes.
+        So: rebuild, move the clock a long way, rebuild again, compare.
+        """
+        import time as _time
+
+        _seed(1)
         VaultProjector().rebuild()
+        before = _snapshot(vault_root())
+        assert before, "nothing projected; the test proves nothing"
+
+        real = _time.time
+        try:
+            _time.time = lambda: real() + 90 * 86400   # ninety days later
+            VaultProjector().rebuild()
+        finally:
+            _time.time = real
+
+        assert _snapshot(vault_root()) == before
         for note in vault_root().rglob("*.md"):
             assert "composite" not in note.read_text(encoding="utf-8")
 
     def test_timestamps_are_utc_at_fixed_precision(self):
-        _seed(1)
+        """Fixed width, so a valid_from whose microseconds are exactly zero
+        does not render in a second format."""
+        import re
+
+        s = _store()
+        s.record_state("file:/etc/exact.conf", "content_sha256", "abc", "editor",
+                       reason="r", actor=ACTOR_USER, now=1_756_000_000.0)
+        s.close()
         VaultProjector().rebuild()
-        text = next(vault_root().joinpath("notes").glob("*.md")).read_text()
-        assert "valid_from: '20" in text and "Z'" in text
+        text = next(vault_root().joinpath("notes").glob("*exact*")).read_text()
+        assert re.search(
+            r"valid_from: '\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z'", text
+        ), text
 
 
 class TestReconcileNotJustWrite:
@@ -115,7 +155,7 @@ class TestReconcileNotJustWrite:
         _seed()
         VaultProjector().rebuild()
         notes = sorted(p.name for p in (vault_root() / "notes").glob("*.md"))
-        assert len(notes) >= 5
+        assert len(notes) == 4
 
         s = _store()
         s._conn.execute("DELETE FROM state_triples WHERE subject = 'file:/etc/app0.conf'")
@@ -202,8 +242,7 @@ class TestTheAdmissionGate:
         planned, _ = VaultProjector().plan()
         s = _store()
         admitted = [t for t in s.current_state()
-                    if t.predicate in ("content_sha256", "mode_octal",
-                                       "preferred_entity")]
+                    if t.predicate in ("content_sha256", "mode_octal")]
         s.close()
         assert len(planned) == len(admitted)
 
@@ -278,3 +317,80 @@ class TestDegradation:
         assert result.written >= 1
         text = next((vault_root() / "notes").glob("*.md")).read_text()
         assert "ledger_only" in text
+
+
+class TestItRefusesToReconcileAgainstAFailedRead:
+    def test_a_read_failure_does_not_empty_the_vault(self, monkeypatch):
+        """plan() read non-strict, so a transient failure produced an empty
+        plan, rebuild() treated that as authoritative, and every note was
+        unlinked — reported as a success."""
+        import halbert_core.continuity.state_store as ss
+
+        _seed()
+        VaultProjector().rebuild()
+        before = sorted(p.name for p in (vault_root() / "notes").glob("*.md"))
+        assert before
+
+        real = ss.StateStore.current_state
+        monkeypatch.setattr(
+            ss.StateStore, "current_state",
+            lambda self, *a, **kw: (_ for _ in ()).throw(OSError("db locked")))
+        with pytest.raises(Exception):
+            VaultProjector().rebuild()
+
+        monkeypatch.setattr(ss.StateStore, "current_state", real)
+        after = sorted(p.name for p in (vault_root() / "notes").glob("*.md"))
+        assert after == before, "a failed read deleted the vault"
+
+    def test_forget_reports_the_vault_plane_as_failed(self, monkeypatch):
+        import halbert_core.continuity.state_store as ss
+        from halbert_core.continuity.provenance import forget_request
+
+        _seed(1)
+        VaultProjector().rebuild()
+        monkeypatch.setattr(
+            ss.StateStore, "current_state",
+            lambda self, *a, **kw: (_ for _ in ()).throw(OSError("db locked")))
+
+        report = forget_request("req-0")
+        assert report["vault_rebuilt"] is False
+        assert report["complete"] is False
+        assert any("vault" in e for e in report["errors"])
+
+
+class TestTheAuditJoinIsRealNotAssumed:
+    def test_a_note_says_corroborated_when_the_audit_record_exists(self):
+        """38 tests passed with this join permanently returning {}."""
+        record_file_change(path="/etc/joined.conf", reason="a reason",
+                           actor=ACTOR_USER, request_id="req-join",
+                           tool="editor", after_text="x\n")
+        VaultProjector().rebuild()
+        text = next((vault_root() / "notes").glob("*joined*")).read_text()
+        assert "validation_status: corroborated_by_audit" in text
+
+    def test_a_note_says_ledger_only_without_one(self):
+        s = _store()
+        s.record_state("file:/etc/lonely.conf", "content_sha256", "abc", "t",
+                       reason="written straight to the ledger", actor=ACTOR_USER,
+                       request_id="never-audited")
+        s.close()
+        VaultProjector().rebuild()
+        text = next((vault_root() / "notes").glob("*lonely*")).read_text()
+        assert "validation_status: ledger_only" in text
+
+
+class TestWithheldCategories:
+    def test_preferred_entity_is_not_projected_while_its_writer_is_broken(self):
+        """Its writer loops every entity against one key, so the key holds
+        whichever came last. A confident note asserting that would be the
+        empty-vault failure wearing content."""
+        from halbert_core.continuity.vault import PROJECTABLE, _WITHHELD
+
+        assert ("domain", "preferred_entity") in _WITHHELD
+        assert ("domain", "preferred_entity") not in PROJECTABLE
+
+        s = _store()
+        s.record_state("domain:samba", "preferred_entity", "smb.conf",
+                       "consolidation", reason="r", actor=ACTOR_SYSTEM)
+        s.close()
+        assert VaultProjector().rebuild().written == 0

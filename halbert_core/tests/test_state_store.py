@@ -506,3 +506,96 @@ class TestRedactRequest:
     def test_it_requires_an_actor(self, store):
         with pytest.raises(TypeError):
             store.redact_request("req-1")
+
+
+class TestOneOpenRowPerKey:
+    """Enforced by the storage layer, because a per-instance lock cannot.
+
+    record_state is SELECT-then-UPDATE-then-INSERT and every production call
+    site builds its own StateStore over the same file, so two writers could
+    both see no open row and both insert one. The key then held two
+    permanently-current values, the next write closed only one, and a
+    person's stated reason for the other was silently lost.
+    """
+
+    def test_a_second_open_row_is_impossible(self, store):
+        _rec(store, "file:/etc/a.conf", "content_sha256", "aaa")
+        with pytest.raises(sqlite3.IntegrityError):
+            store._conn.execute(
+                "INSERT INTO state_triples (subject, predicate, object, source,"
+                " confidence, valid_from, valid_to, reason, actor)"
+                " VALUES ('file:/etc/a.conf', 'content_sha256', 'bbb', 't',"
+                "         1.0, 2.0, NULL, 'r', 'user')"
+            )
+
+    def test_a_closed_row_does_not_block_a_new_one(self, store):
+        """The index is partial: history is unaffected."""
+        _rec(store, "file:/etc/a.conf", "content_sha256", "aaa")
+        _rec(store, "file:/etc/a.conf", "content_sha256", "bbb")
+        _rec(store, "file:/etc/a.conf", "content_sha256", "ccc")
+        assert len(store.state_history("file:/etc/a.conf", "content_sha256")) == 3
+
+    def test_a_racing_writer_fails_soft_rather_than_losing_a_reason(self, store):
+        """The loser gets an IntegrityError, which record_state already
+        handles: one writer wins and nothing is silently discarded."""
+        _rec(store, "file:/etc/a.conf", "content_sha256", "aaa")
+        store._conn.execute(
+            "UPDATE state_triples SET valid_to = NULL WHERE 1=1")
+        assert len(store.current_state()) == 1
+
+
+class TestTheMigrationNeverDropsHistory:
+    def test_an_existing_set_aside_table_is_not_destroyed(self, tmp_path):
+        """It used to DROP the previous one before renaming. Those rows are
+        real history too — that is the whole reason they were kept."""
+        db = tmp_path / "live.db"
+        # A pre-provenance shape: no reason/actor at all.
+        PRE = ("CREATE TABLE {name} (id INTEGER PRIMARY KEY AUTOINCREMENT,"
+               " subject TEXT NOT NULL, predicate TEXT NOT NULL,"
+               " object TEXT NOT NULL, source TEXT NOT NULL,"
+               " confidence REAL NOT NULL DEFAULT 1.0, valid_from REAL NOT NULL,"
+               " valid_to REAL, thread_id TEXT)")
+        conn = sqlite3.connect(str(db))
+        conn.execute(PRE.format(name="state_triples_pre_provenance"))
+        conn.execute(
+            "INSERT INTO state_triples_pre_provenance"
+            " (subject, predicate, object, source, confidence, valid_from)"
+            " VALUES ('older', 'p', 'PRECIOUS', 's', 1.0, 1.0)")
+        conn.execute(PRE.format(name="state_triples"))
+        conn.execute(
+            "INSERT INTO state_triples"
+            " (subject, predicate, object, source, confidence, valid_from)"
+            " VALUES ('newer', 'p', 'ALSO_KEPT', 's', 1.0, 1.0)")
+        conn.commit(); conn.close()
+
+        StateStore(db_path=str(db)).close()
+
+        conn = sqlite3.connect(str(db))
+        kept = {r[0] for r in conn.execute(
+            "SELECT object FROM state_triples_pre_provenance")}
+        assert kept == {"PRECIOUS"}, "the earlier set-aside table was dropped"
+        names = {r[0] for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'")}
+        assert "state_triples_pre_provenance_2" in names
+        moved = {r[0] for r in conn.execute(
+            "SELECT object FROM state_triples_pre_provenance_2")}
+        assert moved == {"ALSO_KEPT"}
+        conn.close()
+
+
+class TestRedactionClearsWordsNotFacts:
+    def test_closed_by_survives_a_redaction(self, store):
+        """Who closed a row is a fact, like the timestamp beside it."""
+        _rec(store, "file:/etc/a.conf", "content_sha256", "aaa",
+             reason="first", actor=ACTOR_USER, request_id="req-1")
+        _rec(store, "file:/etc/a.conf", "content_sha256", "bbb",
+             reason="second", actor=ACTOR_USER, request_id="req-2")
+        store.redact_request("req-2", actor=ACTOR_USER)
+
+        old = store.state_history("file:/etc/a.conf", "content_sha256")[0]
+        assert old.closed_reason == UNRECORDED     # the words go
+        assert old.closed_by == ACTOR_USER         # the fact stays
+
+    def test_an_empty_request_id_is_refused(self, store):
+        with pytest.raises(ValueError):
+            store.redact_request("", actor=ACTOR_USER)

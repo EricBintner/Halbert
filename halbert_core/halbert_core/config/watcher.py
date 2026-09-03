@@ -106,7 +106,8 @@ class ConfigWatcher:
                         "kind", "error" if row.get("error") else "unknown"
                     )
                     self._changes.append({"ts": ts, "path": path, "kind": kind})
-                    self._record_on_ledger(path, kind)
+                    self._record_on_ledger(
+                        path, "created" if prev is None else "modified")
             if self._baseline_taken:
                 for removed in set(self._last_state) - set(seen):
                     self._changes.append(
@@ -129,6 +130,12 @@ class ConfigWatcher:
         The reason is a deterministic rule naming itself, which MEM-06
         permits; the actor is the system, because nobody asked for this --
         the file changed underneath us.
+
+        ``kind`` is a CHANGE kind (created / modified), computed by the
+        caller. The snapshot row's own ``kind`` is the parser's file format
+        ("yaml", "plist", "text"), which would have recorded "config changed
+        on disk (yaml)" -- a provenance line that describes the file type and
+        not the event.
         """
         import uuid
 

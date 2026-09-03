@@ -159,8 +159,13 @@ def _render(result: Dict[str, Any]) -> str:
         lines += _render_row(predicate, superseded, "before that")
 
     history = result.get("history") or []
-    extra = [h for h in history
-             if not current or h.get("id") != current.get("id")]
+    # Identify a row by fields to_dict actually emits. Comparing on "id"
+    # silently matched None to None for every row, so history rendered
+    # nothing at all while the parameter looked supported.
+    def _key(row):
+        return (row.get("valid_from"), row.get("object"), row.get("request_id"))
+
+    extra = [h for h in history if not current or _key(h) != _key(current)]
     if extra:
         lines.append("")
         lines.append("earlier values, newest first:")

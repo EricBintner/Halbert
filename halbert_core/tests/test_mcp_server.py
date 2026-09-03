@@ -635,7 +635,7 @@ class TestHighRiskProposalPhrase:
             def __init__(self, **kwargs):
                 pass
 
-            def execute_proposal(self, proposal_id, reason=""):
+            def execute_proposal(self, proposal_id, reason="", actor="user"):
                 return {"proposal_id": proposal_id, "status": "applied"}
 
         monkeypatch.setattr(proposals_mod, "ProposalStore", lambda: ps)

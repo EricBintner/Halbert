@@ -101,6 +101,15 @@ class TestAnsweringFromTheLedger:
         out = _call(path="/etc/busy.conf", history=True)
         assert len(out) < 2000, "would be truncated mid-record"
         assert "change 29" in out, "the current value must survive"
+        # The current value renders whether or not history does, so assert an
+        # EARLIER one too. Without this the test passed while the history
+        # filter compared a key to_dict never emitted and rendered nothing.
+        assert "earlier values" in out
+        assert "change 28" in out, "history rendered nothing"
+        # _MAX_HISTORY is 8 and the window is the newest, so 29 (current)
+        # plus 28..22 render and nothing older does.
+        assert "change 22" in out, "history is shorter than _MAX_HISTORY"
+        assert "change 21" not in out, "history is not bounded"
 
 
 class TestAbstaining:

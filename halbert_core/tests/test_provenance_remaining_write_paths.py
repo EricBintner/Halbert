@@ -25,6 +25,7 @@ from halbert_core.continuity.provenance import (
     record_file_mode_change,
 )
 from halbert_core.continuity.state_store import (
+    ACTOR_AGENT,
     ACTOR_SYSTEM,
     ACTOR_USER,
     UNRECORDED,
@@ -335,3 +336,88 @@ class TestWatcherProvenance:
         store = _ledger()
         assert store.current_state(subject="file:/nope/missing.conf") == []
         store.close()
+
+
+class TestRollbackDoesNotLeaveTheLedgerLying:
+    def test_a_rolled_back_chmod_records_the_restore(self, tmp_path):
+        """The ledger recorded the new mode the instant the chmod landed. On
+        rollback it kept asserting a mode that no longer existed, attributed
+        to the approver's reason — the ledger lying about the machine."""
+        from halbert_core.findings.proposal_generator import ProposalGenerator
+        from halbert_core.findings.proposals import ProposalStore
+        from halbert_core.findings.store import FindingStore
+
+        target = tmp_path / "id_rsa"
+        target.write_text("key", encoding="utf-8")
+        os.chmod(target, 0o644)
+
+        db = os.path.join(str(tmp_path), "findings.db")
+        gen = ProposalGenerator(
+            finding_store=FindingStore(db_path=db),
+            proposal_store=ProposalStore(db_path=db),
+            approval_engine=mock.MagicMock(),
+            write_config=mock.MagicMock(),
+            blast_radius=mock.MagicMock(),
+        )
+        applied = []
+        gen._apply_chmod({"action": "chmod", "path": str(target), "mode": "600"},
+                         applied, reason="hygiene", request_id="proposal-1")
+        store = _ledger()
+        assert store.why(f"file:{target}", FILE_MODE_PREDICATE).current.object == "600"
+        store.close()
+
+        gen._rollback_change(applied[0], "proposal-1")
+
+        store = _ledger()
+        current = store.why(f"file:{target}", FILE_MODE_PREDICATE).current
+        assert current.object == "0o644", "the ledger still asserts the undone mode"
+        assert current.reason.startswith("rollback:")
+        assert current.actor == ACTOR_SYSTEM
+        assert current.request_id == "proposal-1", "the restore left the approval"
+        store.close()
+
+
+class TestApprovalActorIsNotAssumed:
+    def test_an_mcp_approval_is_not_recorded_as_a_person(self, tmp_path):
+        """Its reason is a machine string. Stamping ACTOR_USER on it puts that
+        in the ledger as a human utterance, which the vault renders as a
+        quotation from someone."""
+        from halbert_core.findings.proposal_generator import ProposalGenerator
+        from halbert_core.findings.proposals import ProposalStore
+        from halbert_core.findings.store import FindingStore
+
+        db = os.path.join(str(tmp_path), "findings.db")
+        wc = mock.MagicMock()
+        wc.execute.return_value = mock.MagicMock(ok=True, outputs={})
+        gen = ProposalGenerator(
+            finding_store=FindingStore(db_path=db),
+            proposal_store=ProposalStore(db_path=db),
+            approval_engine=mock.MagicMock(),
+            write_config=wc,
+            blast_radius=mock.MagicMock(),
+        )
+        gen._apply_change({"action": "edit", "path": "/etc/a.conf",
+                           "config_changes": {}}, [],
+                          reason="mcp: approved by client, no reason given",
+                          request_id="proposal-1", actor=ACTOR_AGENT)
+
+        assert wc.execute.call_args[0][0].inputs["actor"] == ACTOR_AGENT
+
+    def test_the_dashboard_path_still_records_a_person(self, tmp_path):
+        from halbert_core.findings.proposal_generator import ProposalGenerator
+        from halbert_core.findings.proposals import ProposalStore
+        from halbert_core.findings.store import FindingStore
+
+        db = os.path.join(str(tmp_path), "findings.db")
+        wc = mock.MagicMock()
+        wc.execute.return_value = mock.MagicMock(ok=True, outputs={})
+        gen = ProposalGenerator(
+            finding_store=FindingStore(db_path=db),
+            proposal_store=ProposalStore(db_path=db),
+            approval_engine=mock.MagicMock(),
+            write_config=wc, blast_radius=mock.MagicMock(),
+        )
+        gen._apply_change({"action": "edit", "path": "/etc/a.conf",
+                           "config_changes": {}}, [],
+                          reason="I approved it", request_id="proposal-2")
+        assert wc.execute.call_args[0][0].inputs["actor"] == ACTOR_USER
