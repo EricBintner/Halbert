@@ -1,7 +1,31 @@
 # Fable packet — Memory ecosystem, steps 5b to 11
 
+> **STATUS 2026-09-02, end of day: MOSTLY EXECUTED. Read this before planning from it.**
+>
+> Steps **6, 7a, 5b, 8 and 7b are built and committed** on `feat/ledger-provenance`
+> (13 commits; suite 5,345 passed / 0 failed across both roots, Haloysius integrity 119).
+> The step-by-step sections below are kept as the record of *what was asked for*, not as
+> a description of outstanding work.
+>
+> **Still open:** step 5c (config-diff reads the ledger — frontend only; its backend is
+> done), and step 10 (Doubt Queue).
+>
+> **Cut or deferred on evidence, not on schedule** — steps 9, 11a and 11b. Do not
+> re-plan them from this document: see
+> [`NOTE-MEMORY-STEPS-CUT-AND-DEFERRED-2026-09-02.md`](NOTE-MEMORY-STEPS-CUT-AND-DEFERRED-2026-09-02.md),
+> which records why 11a would have produced a silent green and why two of 11b's
+> proposed thresholds could not have come from the scorer they name.
+>
+> **The ten invariants below still bind**, and are the most durable part of this
+> document. One of them was violated by the first implementation and caught in review:
+> a failed ledger read rendered as "nothing was recorded". Fixed in `eb68d968`.
+>
+> **This work has had almost no external review.** A Fable review was commissioned and
+> 14 of its 15 agents failed on usage credits; only `recall-abstention` completed, and
+> its verifiers did not run.
+
 **Date:** 2026-09-02
-**Branch to start from:** `feat/ledger-provenance` (5 commits, suite green)
+**Branch:** `feat/ledger-provenance`
 **Design doc:** `Haloysius/docs/HANDOFF-SELF-HEALING-MEMORY-ECOSYSTEM.md` (rev. 3)
 **Build order:** `.handoff/HANDOFF-MEMORY-ECOSYSTEM-BUILD-ORDER-2026-09-02.md`
 **ROADMAP row:** `LEDGER-1`. **Decisions:** `MEM-01`..`MEM-06` in `DECISIONS.md`.
@@ -17,6 +41,12 @@
 | 3. Provenance as first-class audited fields | **Done** | `4ae71934` |
 | 4. Both live write paths on both planes | **Done** | `b343171d` |
 | 5a. `GET /api/state/{why,history,by-request}` | **Done** | `e3bc1848` |
+| 6. `EventLog` append/verify/**erase** serialised | **Done** (upstream) | `7b1ddc0`, `b3cce58` |
+| 7a. Provenance on every remaining write path | **Done** | `0476629b` |
+| 5b. `recall_memory` over the ledger | **Done** | `a6022520` |
+| 8. Markdown vault projector | **Done** | `0d88da8c` |
+| 7b. "forget that" across both planes | **Done** | `ba9a3e3a` |
+| — a failed read must not read as "nothing recorded" | **Fixed after review** | `eb68d968` |
 
 Suite at handoff: **5242 passed, 14 skipped, 0 failed** across both test roots
 (`arch -arm64 ./wt_pytest.py halbert_core/tests tests -q`).
