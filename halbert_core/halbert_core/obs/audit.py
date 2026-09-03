@@ -220,6 +220,7 @@ def write_audit(
     actor: Optional[str] = None,
     before_sha256: Optional[str] = None,
     after_sha256: Optional[str] = None,
+    strict: bool = False,
     **extra: Any,
 ) -> str:
     """Append one tool execution to the audit log; return the shard path.
@@ -286,6 +287,15 @@ def write_audit(
         return str(events._shard_path(event.seq, event.ts_ms))
     except Exception as exc:
         log.error("audit record for %s/%s could not be written: %s", tool, mode, exc)
+        if strict:
+            # The default swallow is right for an ordinary tool call: an audit
+            # record is a side effect, and a full disk should not turn a
+            # successful write_config into a failed one. It is wrong for an
+            # approved privileged change, whose caller must roll back when the
+            # change cannot be accounted for (R06-F4) -- and that caller's
+            # `strict` was dead until this parameter existed, because nothing
+            # here ever raised.
+            raise
         return ""
 
 
@@ -319,7 +329,16 @@ def erase_audit_by_request(request_id: str) -> int:
         )
         if not seqs:
             return 0
-        return int(events.erase_many(seqs))
+        erased = int(events.erase_many(seqs))
+        if erased < len(seqs):
+            # A per-shard skip upstream would otherwise yield a short count
+            # and a clean report: records the caller was told were forgotten
+            # are still on disk.
+            raise RuntimeError(
+                f"erased {erased} of {len(seqs)} audit records for "
+                f"{request_id}; the rest are still readable"
+            )
+        return erased
 
 
 def verify_audit(directory: Optional[Any] = None) -> "VerifyResult":

@@ -339,7 +339,7 @@ class TestWatcherProvenance:
 
         store = _ledger()
         rows = store.current_state(subject="file:/nope/missing.conf")
-        assert len(rows) == 1 and rows[0].object == DIGEST_UNREADABLE
+        assert len(rows) == 1 and rows[0].object.startswith(DIGEST_UNREADABLE)
         store.close()
 
 

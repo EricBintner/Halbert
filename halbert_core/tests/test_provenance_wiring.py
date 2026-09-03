@@ -257,13 +257,31 @@ class TestAnUnreadableDigestIsRecordedNotSkipped:
         store = _ledger()
         rows = store.by_request("req-priv")
         assert len(rows) == 1, "the ledger row was skipped"
-        assert rows[0].object == DIGEST_UNREADABLE
+        assert rows[0].object.startswith(DIGEST_UNREADABLE)
         store.close()
 
     def test_the_unknown_cannot_be_mistaken_for_a_digest(self):
-        from halbert_core.continuity.provenance import DIGEST_UNREADABLE
+        from halbert_core.continuity.provenance import unreadable_digest
 
-        assert len(DIGEST_UNREADABLE) != 64
+        assert len(unreadable_digest("req-1")) != 64
+
+    def test_two_unreadable_writes_do_not_collapse_into_one(self):
+        """A bare constant collided with itself: the second write took
+        record_state's unchanged-value branch and its reason was discarded on
+        the rule that nothing had changed — when in truth we failed to look
+        twice."""
+        record_file_change(path="/etc/root-only.conf", reason="first attempt",
+                           actor=ACTOR_USER, request_id="req-a", tool="editor",
+                           after_text=None)
+        record_file_change(path="/etc/root-only.conf", reason="second attempt",
+                           actor=ACTOR_USER, request_id="req-b", tool="editor",
+                           after_text=None)
+
+        store = _ledger()
+        hist = store.state_history("file:/etc/root-only.conf",
+                                   FILE_CONTENT_PREDICATE)
+        assert [h.reason for h in hist] == ["first attempt", "second attempt"]
+        store.close()
 
     def test_it_says_so_out_loud(self, caplog):
         import logging

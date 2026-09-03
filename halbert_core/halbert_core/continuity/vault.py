@@ -364,10 +364,11 @@ class VaultProjector:
         store = self._open()
         try:
             store.redact_request(request_id, actor="forget")
-        except Exception as e:
-            logger.warning(f"vault forget({request_id}): ledger redaction failed: {e}")
         finally:
             self._close()
+        # Not caught. redact_request raises only when the words are still
+        # there, and reprojecting after that would rewrite notes that still
+        # carry them while returning an ordinary success.
         return self.rebuild()
 
 

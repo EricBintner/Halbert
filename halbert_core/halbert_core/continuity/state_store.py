@@ -117,9 +117,13 @@ CREATE INDEX IF NOT EXISTS idx_state_request
 #: reason for the other. The vault then maps both rows to one note path and
 #: one overwrites the other.
 #:
-#: A partial unique index makes that unrepresentable. The loser of a race gets
-#: an IntegrityError, which ``record_state`` already fails soft on: one writer
-#: wins, and no reason is silently lost.
+#: A partial unique index makes that unrepresentable. On its own, though, it
+#: would make things WORSE: the loser of the race got an IntegrityError, was
+#: failed soft, and its reason was dropped entirely -- trading a visible
+#: duplicate for a silent loss, which is the opposite of the point. So the
+#: index is paired with an immediate transaction around the whole
+#: read-modify-write in ``record_state``, and one retry: the loser waits for
+#: the winner, then supersedes it normally, and both reasons survive.
 _OPEN_ROW_INDEX = (
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_state_one_open "
     "ON state_triples(subject, predicate) WHERE valid_to IS NULL"
@@ -437,41 +441,92 @@ class StateStore:
         actor = _require(actor, "actor")
         ts = time.time() if now is None else now
         try:
-            with self._lock, self._conn:
-                cur = self._conn.execute(
-                    "SELECT id, object FROM state_triples "
-                    "WHERE subject = ? AND predicate = ? AND valid_to IS NULL",
-                    (subject, predicate),
-                ).fetchone()
-                if cur is not None:
-                    if cur["object"] == obj:
-                        return None            # unchanged; leave the history alone
-                    # The predecessor closed *because of this write*, so its
-                    # close is explained by this write's provenance.
-                    # The predecessor closed *because of this write*, so it
-                    # records this write's request id too. Without that, the
-                    # predecessor carries a copy of this reason under a
-                    # *different* request_id, and a request-keyed redaction
-                    # leaves the words standing on a row it cannot find.
-                    self._conn.execute(
-                        "UPDATE state_triples "
-                        "SET valid_to = ?, closed_reason = ?, closed_by = ?, "
-                        "    closed_by_request = ? "
-                        "WHERE id = ?",
-                        (ts, f"superseded: {reason}", actor, request_id, cur["id"]),
+            with self._lock:
+                try:
+                    return self._record_locked(
+                        subject, predicate, obj, source, reason, actor,
+                        request_id, confidence, thread_id, ts,
                     )
-                c = self._conn.execute(
-                    "INSERT INTO state_triples "
-                    "(subject, predicate, object, source, confidence, valid_from, "
-                    " valid_to, thread_id, reason, actor, request_id) "
-                    "VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)",
-                    (subject, predicate, obj, source, confidence, ts, thread_id,
-                     reason, actor, request_id),
-                )
-                return c.lastrowid
+                except sqlite3.IntegrityError:
+                    # Lost the one-open-row race. The winner has now closed
+                    # its own row, so a second attempt supersedes it normally
+                    # and this reason survives. Retried once, not looped: a
+                    # second failure is a real problem, not contention.
+                    logger.info(
+                        "state ledger: retrying %s/%s after a concurrent write",
+                        subject, predicate,
+                    )
+                    return self._record_locked(
+                        subject, predicate, obj, source, reason, actor,
+                        request_id, confidence, thread_id, ts,
+                    )
         except Exception as e:
             logger.warning(f"Failed to record {subject}/{predicate}: {e}")
             return None
+
+    def _record_locked(self, subject, predicate, obj, source, reason, actor,
+                       request_id, confidence, thread_id, ts):
+        """The read-modify-write, under one immediate transaction.
+
+        BEGIN IMMEDIATE takes the write lock before the SELECT. Without it
+        sqlite3 defers the transaction to the first DML, so the read sat
+        outside the lock and two writers could both see no open row.
+        """
+        began = False
+        try:
+            self._conn.execute("BEGIN IMMEDIATE")
+            began = True
+        except sqlite3.OperationalError:
+            # Already inside a transaction -- a caller-owned connection
+            # mid-work. Degrade to the previous behaviour rather than
+            # hijacking their transaction.
+            pass
+        try:
+            result = self._record_body(
+                subject, predicate, obj, source, reason, actor,
+                request_id, confidence, thread_id, ts,
+            )
+            if began:
+                self._conn.commit()
+            return result
+        except Exception:
+            if began:
+                self._conn.rollback()
+            raise
+
+    def _record_body(self, subject, predicate, obj, source, reason, actor,
+                     request_id, confidence, thread_id, ts):
+        """Close whatever this supersedes, then insert. Assumes the caller
+        holds the write transaction."""
+        cur = self._conn.execute(
+            "SELECT id, object FROM state_triples "
+            "WHERE subject = ? AND predicate = ? AND valid_to IS NULL",
+            (subject, predicate),
+        ).fetchone()
+        if cur is not None:
+            if cur["object"] == obj:
+                return None            # unchanged; leave the history alone
+            # The predecessor closed *because of this write*, so it records
+            # this write's request id too. Without that, the predecessor
+            # carries a copy of this reason under a *different* request_id,
+            # and a request-keyed redaction leaves the words standing on a
+            # row it cannot find.
+            self._conn.execute(
+                "UPDATE state_triples "
+                "SET valid_to = ?, closed_reason = ?, closed_by = ?, "
+                "    closed_by_request = ? "
+                "WHERE id = ?",
+                (ts, f"superseded: {reason}", actor, request_id, cur["id"]),
+            )
+        c = self._conn.execute(
+            "INSERT INTO state_triples "
+            "(subject, predicate, object, source, confidence, valid_from, "
+            " valid_to, thread_id, reason, actor, request_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)",
+            (subject, predicate, obj, source, confidence, ts, thread_id,
+             reason, actor, request_id),
+        )
+        return c.lastrowid
 
     def invalidate_state(
         self,
@@ -554,10 +609,13 @@ class StateStore:
             if changed:
                 # secure_delete zeroes the page, but the pre-redaction image
                 # can still sit in the WAL until it is folded back in.
-                try:
-                    self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-                except Exception as e:  # pragma: no cover - not fatal
-                    logger.info(f"wal checkpoint after redaction: {e}")
+                #
+                # PRAGMA wal_checkpoint does NOT raise when it cannot run: it
+                # returns (busy, log, checkpointed) with busy=1, so ignoring
+                # the row let a refused checkpoint pass for a completed one
+                # and forget_request reported success while the words were
+                # still readable in the file.
+                self._checkpoint_or_raise()
             return changed
         except Exception as e:
             logger.warning(f"Failed to redact request {request_id}: {e}")
@@ -565,6 +623,19 @@ class StateStore:
             # failed redaction from "nothing matched" if both return the same
             # value, and would say the words were removed when they were not.
             raise
+
+    def _checkpoint_or_raise(self, attempts: int = 3) -> None:
+        """Fold the WAL back into the database, or say it could not be done."""
+        for attempt in range(attempts):
+            row = self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+            if row is None or not row[0]:
+                return
+            time.sleep(0.05 * (attempt + 1))
+        raise RuntimeError(
+            "the redaction was written but the write-ahead log could not be "
+            "checkpointed, so a copy of the old text may remain readable in "
+            "the database file. A reader is holding it open."
+        )
 
     # ------------------------------------------------------------------
     # Read

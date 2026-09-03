@@ -39,6 +39,7 @@ __all__ = [
     "FILE_MODE_PREDICATE",
     "DIGEST_UNREADABLE",
     "DIGEST_ABSENT",
+    "unreadable_digest",
     "forget_request",
     "ERASURE_LIMITS",
 ]
@@ -50,7 +51,18 @@ FILE_CONTENT_PREDICATE = "content_sha256"
 #: not be read back -- a privileged file written through pkexec and read by an
 #: unprivileged process. Distinct from any real digest (a sha256 is 64 hex
 #: characters) so it can never be mistaken for one.
+#:
+#: Always qualified per write by :func:`unreadable_digest`. A bare constant
+#: collided with itself: two consecutive unreadable writes produced the same
+#: object, ``record_state`` took its unchanged-value no-op branch, and the
+#: second write's reason was discarded on the rule that nothing had changed --
+#: when in truth we had simply failed to look twice.
 DIGEST_UNREADABLE = "unreadable"
+
+
+def unreadable_digest(request_id: str) -> str:
+    """A distinct unreadable marker per write, so two never collide."""
+    return f"{DIGEST_UNREADABLE}:{request_id}" if request_id else DIGEST_UNREADABLE
 
 #: Recorded as a file's digest when the file is gone. Without it the ledger
 #: keeps asserting the last content as *current* for a path that no longer
@@ -159,7 +171,7 @@ def record_file_change(
             "its digest as unknown rather than leaving a stale one current",
             path,
         )
-        after_sha = DIGEST_UNREADABLE
+        after_sha = unreadable_digest(request_id)
     owned = None
     try:
         target = store
@@ -230,6 +242,7 @@ def record_file_mode_change(
             path=path,
             mode_octal=mode_octal,
             before_mode=before_mode,
+            strict=strict,
         )
     except Exception as e:
         if strict:
