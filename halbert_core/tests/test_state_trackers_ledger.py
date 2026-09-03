@@ -117,7 +117,11 @@ class TestAdminPresenceTracker:
 
 
 class TestRegistration:
-    def test_default_ledger_path_is_halbert_owned(self):
+    def test_default_ledger_path_is_halbert_owned(self, monkeypatch):
+        """Clears the suite-wide data-dir isolation on purpose: this test is
+        about what the DEFAULT path is, so it has to see the default."""
+        monkeypatch.delenv("HALBERT_DATA_DIR", raising=False)
+        monkeypatch.delenv("Halbert_DATA_DIR", raising=False)
         from halbert_core.integrations.state_trackers import default_ledger_path
 
         p = str(default_ledger_path())
