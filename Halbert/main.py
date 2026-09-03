@@ -2540,7 +2540,14 @@ def main():
     p_rag_sitemap.set_defaults(func=_cmd_rag_sitemap)
 
     args = parser.parse_args()
-    args.func(args)
+    # Propagate an integer return as the exit code. Handlers that use
+    # sys.exit directly are unaffected, and handlers returning None keep
+    # exiting 0 -- but a command that computes a status and returns it no
+    # longer has that status silently dropped, which is what made
+    # `vault-rebuild` always exit 0 even when the vault was unavailable.
+    rc = args.func(args)
+    if isinstance(rc, int):
+        raise SystemExit(rc)
 
 
 if __name__ == '__main__':

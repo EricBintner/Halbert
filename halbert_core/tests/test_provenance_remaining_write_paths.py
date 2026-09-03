@@ -328,13 +328,18 @@ class TestWatcherProvenance:
         assert store.current_state(subject=f"file:{target}") == []
         store.close()
 
-    def test_an_unreadable_file_is_skipped_not_fatal(self, tmp_path):
+    def test_an_unreadable_file_records_an_explicit_unknown(self, tmp_path):
+        """It used to record nothing, which left any earlier digest standing
+        as current. An admitted gap beats a stale assertion."""
+        from halbert_core.continuity.provenance import DIGEST_UNREADABLE
+
         w = self._watcher(tmp_path)
         w._record_changes([{"path": "/nope/missing.conf", "hash": "h1", "kind": "modified"}])
         w._record_changes([{"path": "/nope/missing.conf", "hash": "h2", "kind": "modified"}])
-        # no exception, and nothing recorded
+
         store = _ledger()
-        assert store.current_state(subject="file:/nope/missing.conf") == []
+        rows = store.current_state(subject="file:/nope/missing.conf")
+        assert len(rows) == 1 and rows[0].object.startswith(DIGEST_UNREADABLE)
         store.close()
 
 
@@ -421,3 +426,57 @@ class TestApprovalActorIsNotAssumed:
                            "config_changes": {}}, [],
                           reason="I approved it", request_id="proposal-2")
         assert wc.execute.call_args[0][0].inputs["actor"] == ACTOR_USER
+
+
+class TestADeletedConfigStopsAssertingContent:
+    """Returning early on a deletion left the ledger asserting the last
+    content as current for a path nobody can open — and recall would answer
+    "why is this configured this way" about a file that is gone."""
+
+    def _watcher(self):
+        import collections
+        import threading
+
+        from halbert_core.config.watcher import ConfigWatcher
+
+        w = ConfigWatcher.__new__(ConfigWatcher)
+        w._change_lock = threading.Lock()
+        w._changes = collections.deque(maxlen=100)
+        w._last_state = {}
+        w._baseline_taken = False
+        return w
+
+    def test_a_deletion_is_recorded_as_absent(self, tmp_path):
+        from halbert_core.continuity.provenance import DIGEST_ABSENT
+
+        target = tmp_path / "gone.conf"
+        target.write_text("a\n", encoding="utf-8")
+        w = self._watcher()
+        w._record_changes([{"path": str(target), "hash": "h1", "kind": "text"}])
+        target.write_text("b\n", encoding="utf-8")
+        w._record_changes([{"path": str(target), "hash": "h2", "kind": "text"}])
+
+        target.unlink()
+        w._record_changes([])          # the path drops out of the manifest
+
+        store = _ledger()
+        current = store.why(f"file:{target}", FILE_CONTENT_PREDICATE).current
+        assert current.object == DIGEST_ABSENT, "the ledger still asserts content"
+        assert "no longer on disk" in current.reason
+        store.close()
+
+    def test_the_earlier_content_stays_in_the_history(self, tmp_path):
+        """The file is gone; what it held is still true of the past."""
+        target = tmp_path / "gone.conf"
+        target.write_text("a\n", encoding="utf-8")
+        w = self._watcher()
+        w._record_changes([{"path": str(target), "hash": "h1", "kind": "text"}])
+        target.write_text("b\n", encoding="utf-8")
+        w._record_changes([{"path": str(target), "hash": "h2", "kind": "text"}])
+        target.unlink()
+        w._record_changes([])
+
+        store = _ledger()
+        hist = store.state_history(f"file:{target}", FILE_CONTENT_PREDICATE)
+        assert content_digest("b\n") in [h.object for h in hist]
+        store.close()

@@ -237,3 +237,82 @@ class TestTheSupersededCopy:
 
         forget_request("req-9")
         assert not any(SECRET in p.read_text() for p in vault_root().rglob("*.md"))
+
+
+class TestAFailedPlaneIsNeverReportedAsSuccess:
+    """Both planes used to swallow their failures and return 0, which is the
+    same value they return for "nothing matched". So a forget that did not
+    happen reported complete:true, and told someone their words were gone
+    while they were still on disk."""
+
+    def test_a_ledger_write_failure_is_reported(self, monkeypatch):
+        import halbert_core.continuity.state_store as ss
+
+        _seed()
+        real = ss.StateStore.redact_request
+        monkeypatch.setattr(
+            ss.StateStore, "redact_request",
+            lambda self, rid, **kw: (_ for _ in ()).throw(OSError("db is locked")))
+
+        report = forget_request("req-9")
+        assert report["complete"] is False
+        assert any("ledger" in e for e in report["errors"])
+        monkeypatch.setattr(ss.StateStore, "redact_request", real)
+
+    def test_an_audit_erase_failure_is_reported(self, monkeypatch):
+        import halbert_core.obs.audit as audit_mod
+
+        _seed()
+        monkeypatch.setattr(
+            audit_mod, "audit_log",
+            lambda: (_ for _ in ()).throw(OSError("log unreadable")))
+
+        report = forget_request("req-9")
+        assert report["complete"] is False
+        assert any("audit" in e for e in report["errors"])
+
+    def test_redact_request_raises_rather_than_returning_zero(self, monkeypatch):
+        store = _ledger()
+        store.close()
+        with pytest.raises(Exception):
+            store.redact_request("req-9", actor=ACTOR_USER)
+
+    def test_nothing_matched_is_still_a_quiet_zero(self):
+        report = forget_request("never-existed")
+        assert report["complete"] is True and report["ledger_rows"] == 0
+
+
+class TestForgettingDoesNotPublish:
+    def test_it_does_not_materialise_a_vault_that_did_not_exist(self):
+        """Rebuilding one into being during a forget writes fresh plaintext
+        copies of every OTHER reason to disk -- publishing on the way to
+        erasing."""
+        record_file_change(path="/etc/other.conf", reason="someone else's words",
+                           actor=ACTOR_USER, request_id="req-other",
+                           tool="editor", after_text="x\n")
+        _seed()
+        assert not (vault_root() / "notes").exists()
+
+        report = forget_request("req-9")
+
+        assert report["vault_rebuilt"] is False
+        assert not any(vault_root().rglob("*.md")), "a vault was created by a forget"
+
+    def test_an_existing_vault_is_still_reprojected(self):
+        _seed()
+        VaultProjector().rebuild()
+        assert any(vault_root().rglob("*.md"))
+
+        assert forget_request("req-9")["vault_rebuilt"] is True
+        assert not any(SECRET in p.read_text() for p in vault_root().rglob("*.md"))
+
+
+class TestTheLimitsNameTheStoresItCannotReach:
+    def test_the_approval_copy_is_named(self):
+        """proposal_generator persists the approver's words into findings.db,
+        and forget_request does not reach them."""
+        assert "findings.db" in ERASURE_LIMITS
+        assert "execution_result" in ERASURE_LIMITS
+
+    def test_the_docstring_does_not_claim_every_plane(self):
+        assert "every plane" not in (forget_request.__doc__ or "")

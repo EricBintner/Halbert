@@ -220,6 +220,7 @@ def write_audit(
     actor: Optional[str] = None,
     before_sha256: Optional[str] = None,
     after_sha256: Optional[str] = None,
+    strict: bool = False,
     **extra: Any,
 ) -> str:
     """Append one tool execution to the audit log; return the shard path.
@@ -286,6 +287,15 @@ def write_audit(
         return str(events._shard_path(event.seq, event.ts_ms))
     except Exception as exc:
         log.error("audit record for %s/%s could not be written: %s", tool, mode, exc)
+        if strict:
+            # The default swallow is right for an ordinary tool call: an audit
+            # record is a side effect, and a full disk should not turn a
+            # successful write_config into a failed one. It is wrong for an
+            # approved privileged change, whose caller must roll back when the
+            # change cannot be accounted for (R06-F4) -- and that caller's
+            # `strict` was dead until this parameter existed, because nothing
+            # here ever raised.
+            raise
         return ""
 
 
@@ -297,31 +307,38 @@ def erase_audit_by_request(request_id: str) -> int:
     hash and signature still verifies. The chain is not broken by this - that
     is the whole point of the salted-commitment design.
 
-    Returns 0 rather than raising when nothing matches. An already-erased
-    record has no payload and so cannot be found a second time: that is the
-    idempotent path, not a failure.
+    Returns 0 when nothing matches. An already-erased record has no payload
+    and so cannot be found a second time: that is the idempotent path, not a
+    failure.
 
-    Never raises. Forgetting must not fail loudly at the one moment a person
-    is asking for privacy; the count says what happened.
+    Raises on an actual failure. Returning 0 for both "nothing matched" and
+    "the erase did not happen" would let a caller tell someone their words
+    were removed when they are still on disk -- and this is the one place
+    where saying so wrongly matters most.
+
+    Raises:
+        AuditUnavailable: the audit log cannot be reached at all.
+        Exception: whatever the erase failed with.
     """
     if not request_id:
         return 0
-    try:
-        events = audit_log()
-    except Exception as exc:
-        log.warning("audit erase for %s unavailable: %s", request_id, exc)
-        return 0
-    try:
-        with _append_lock(events.directory):
-            seqs = events.seqs_where(
-                lambda payload: payload.get("request_id") == request_id
+    events = audit_log()
+    with _append_lock(events.directory):
+        seqs = events.seqs_where(
+            lambda payload: payload.get("request_id") == request_id
+        )
+        if not seqs:
+            return 0
+        erased = int(events.erase_many(seqs))
+        if erased < len(seqs):
+            # A per-shard skip upstream would otherwise yield a short count
+            # and a clean report: records the caller was told were forgotten
+            # are still on disk.
+            raise RuntimeError(
+                f"erased {erased} of {len(seqs)} audit records for "
+                f"{request_id}; the rest are still readable"
             )
-            if not seqs:
-                return 0
-            return int(events.erase_many(seqs))
-    except Exception as exc:
-        log.error("audit erase for %s failed: %s", request_id, exc)
-        return 0
+        return erased
 
 
 def verify_audit(directory: Optional[Any] = None) -> "VerifyResult":

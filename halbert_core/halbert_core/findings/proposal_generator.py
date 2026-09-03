@@ -717,7 +717,7 @@ class ProposalGenerator:
                 write_audit(
                     tool="chmod",
                     mode="apply",
-                    request_id=str(uuid.uuid4()),
+                    request_id=request_id or str(uuid.uuid4()),
                     ok=True,
                     summary=f"rollback chmod on {rollback['path']} "
                     f"(restored {oct(rollback['old_mode'])})",
@@ -729,15 +729,20 @@ class ProposalGenerator:
                     f"be audited: {audit_err}"
                 )
         else:
-            # Config-file change: restore from WriteConfig's backup
+            # Config-file change: restore from WriteConfig's backup.
+            # The undo names itself and reuses the proposal's request id, so
+            # the ledger shows a restore joined to the approval rather than an
+            # unattributed change under an orphan id.
             req = ToolRequest(
                 tool="write_config",
                 dry_run=False,
                 confirm=True,
-                request_id=str(uuid.uuid4()),
+                request_id=request_id or str(uuid.uuid4()),
                 inputs={
                     "path": rollback["path"],
                     "rollback": True,
+                    "reason": "rollback: a later change in this proposal failed",
+                    "actor": ACTOR_SYSTEM,
                 },
             )
             resp = self.write_config.execute(req)

@@ -70,7 +70,7 @@ export function Approvals() {
     setDecisionLoading(true)
     try {
       if (decisionType === 'approve') {
-        await approveRequest(selectedRequestId, saveToMemory)
+        await approveRequest(selectedRequestId, saveToMemory, decisionReason.trim() || undefined)
       } else {
         await rejectRequest(selectedRequestId, decisionReason, saveToMemory)
       }
@@ -297,20 +297,28 @@ export function Approvals() {
                 </p>
               </div>
 
-              {/* Reason input - only for rejection */}
-              {decisionType === 'reject' && (
-                <div className="space-y-2">
-                  <label className="text-sm font-medium">Why are you rejecting this?</label>
+              {/* Why. Required to reject; optional to approve, and recorded
+                  against every change the approval executes so "why is this
+                  configured this way" can answer with it later. Left blank on
+                  an approval it records as unknown, which is honest — what it
+                  must never become is a reason invented after the fact. */}
+              <div className="space-y-2">
+                  <label className="text-sm font-medium">
+                    {decisionType === 'reject'
+                      ? 'Why are you rejecting this?'
+                      : 'Why are you approving this? (optional)'}
+                  </label>
                   <textarea
-                    placeholder="e.g., Conflicts with my setup, Not needed, Wrong approach..."
+                    placeholder={decisionType === 'reject'
+                      ? 'e.g., Conflicts with my setup, Not needed, Wrong approach...'
+                      : 'e.g., Matches the hardening baseline we agreed'}
                     value={decisionReason}
                     onChange={(e) => setDecisionReason(e.target.value)}
                     className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 resize-none min-h-[80px]"
                     rows={3}
                     autoFocus
                   />
-                </div>
-              )}
+              </div>
 
               {/* Memory checkbox */}
               <div className="flex items-start gap-3 rounded-md bg-error/10 border border-error/20 p-3">

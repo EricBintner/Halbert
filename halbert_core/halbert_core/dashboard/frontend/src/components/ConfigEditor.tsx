@@ -70,6 +70,11 @@ export function ConfigEditor({ filePath, onClose }: ConfigEditorProps) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  // Why this edit is being made, in the editor's own words. Sent with the
+  // save and recorded in the change ledger. Left empty it records as
+  // "unrecorded", which renders as unknown and is never filled in later —
+  // a blank we admit to, rather than a reason invented afterwards.
+  const [saveReason, setSaveReason] = useState<string>('');
   
   // Backups
   const [backups, setBackups] = useState<Backup[]>([]);
@@ -313,6 +318,7 @@ export function ConfigEditor({ filePath, onClose }: ConfigEditorProps) {
           content: content,
           create_backup: true,
           backup_label: 'Before save',
+          reason: saveReason.trim() || null,
         }),
       });
       
@@ -322,6 +328,9 @@ export function ConfigEditor({ filePath, onClose }: ConfigEditorProps) {
       }
       
       setOriginalContent(content);
+      // Cleared on success so the next edit cannot silently inherit this
+      // reason — a reason belongs to the write that caused it.
+      setSaveReason('');
       setSuccessMessage('File saved successfully');
       loadBackups(); // Refresh backup list
       
@@ -460,6 +469,18 @@ export function ConfigEditor({ filePath, onClose }: ConfigEditorProps) {
             </DropdownMenuContent>
           </DropdownMenu>
           
+          {/* Why — recorded against this change, answerable later by
+              "why is this configured this way". Optional: a blank records as
+              unknown rather than as something nobody said. */}
+          <input
+            type="text"
+            value={saveReason}
+            onChange={(e) => setSaveReason(e.target.value)}
+            placeholder="Why this change? (optional)"
+            aria-label="Reason for this change, recorded in the change ledger"
+            className="h-8 w-56 rounded-md border border-input bg-background px-2 text-sm"
+          />
+
           {/* Save button */}
           <Button
             onClick={handleSave}

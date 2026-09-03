@@ -37,12 +37,38 @@ __all__ = [
     "record_file_mode_change",
     "FILE_CONTENT_PREDICATE",
     "FILE_MODE_PREDICATE",
+    "DIGEST_UNREADABLE",
+    "DIGEST_ABSENT",
+    "unreadable_digest",
     "forget_request",
     "ERASURE_LIMITS",
 ]
 
 #: Predicate under which a file's current content digest is held.
 FILE_CONTENT_PREDICATE = "content_sha256"
+
+#: Recorded as a file's digest when the write succeeded but the content could
+#: not be read back -- a privileged file written through pkexec and read by an
+#: unprivileged process. Distinct from any real digest (a sha256 is 64 hex
+#: characters) so it can never be mistaken for one.
+#:
+#: Always qualified per write by :func:`unreadable_digest`. A bare constant
+#: collided with itself: two consecutive unreadable writes produced the same
+#: object, ``record_state`` took its unchanged-value no-op branch, and the
+#: second write's reason was discarded on the rule that nothing had changed --
+#: when in truth we had simply failed to look twice.
+DIGEST_UNREADABLE = "unreadable"
+
+
+def unreadable_digest(request_id: str) -> str:
+    """A distinct unreadable marker per write, so two never collide."""
+    return f"{DIGEST_UNREADABLE}:{request_id}" if request_id else DIGEST_UNREADABLE
+
+#: Recorded as a file's digest when the file is gone. Without it the ledger
+#: keeps asserting the last content as *current* for a path that no longer
+#: exists, and answers "why is this configured this way" about a file nobody
+#: can open.
+DIGEST_ABSENT = "absent"
 
 #: Predicate for a file's permission bits, as an octal string ("0644").
 #:
@@ -131,8 +157,21 @@ def record_file_change(
     # --- ledger plane ------------------------------------------------
     # Only a real apply changes what is true. A dry run is a thing the tool
     # did (audited), not a thing that became true (not recorded).
-    if mode != "apply" or not ok or after_sha is None:
+    if mode != "apply" or not ok:
         return
+    if after_sha is None:
+        # The write succeeded but we could not read back what landed -- a
+        # root-owned config saved through pkexec, say. Recording nothing
+        # would leave the ledger asserting the OLD digest as current, which
+        # is worse than admitting the gap: a later drift check would then
+        # report a change nobody made. Record the fact with an explicit
+        # unknown, and say so out loud rather than returning in silence.
+        logger.warning(
+            "content of %s could not be read back after the write; recording "
+            "its digest as unknown rather than leaving a stale one current",
+            path,
+        )
+        after_sha = unreadable_digest(request_id)
     owned = None
     try:
         target = store
@@ -203,6 +242,7 @@ def record_file_mode_change(
             path=path,
             mode_octal=mode_octal,
             before_mode=before_mode,
+            strict=strict,
         )
     except Exception as e:
         if strict:
@@ -235,16 +275,21 @@ ERASURE_LIMITS = (
     "This removes the recorded reason from the change ledger and the content "
     "of the matching audit records, and rewrites the ledger's own pages so the "
     "old text is not left in the file (secure_delete, then a WAL checkpoint). "
-    "It does not reach copies held elsewhere: conversation messages (redacted "
-    "separately), Haloysius memory_v2's plaintext store, blocks of a rewritten "
-    "log shard that the filesystem has not yet reused, or any backup, snapshot "
-    "or replica taken before now."
+    "It does NOT reach: an approval's own copy of the reason, kept in "
+    "findings.db under proposals.execution_result; conversation messages, "
+    "which are redacted separately; Haloysius memory_v2's plaintext store; "
+    "blocks of a rewritten log shard the filesystem has not yet reused; or any "
+    "backup, snapshot or replica taken before now."
 )
 
 
 def forget_request(request_id: str, *, actor: str = "forget",
                    reproject: bool = True) -> Dict[str, Any]:
-    """Remove one request's recorded words from every plane that holds them.
+    """Remove one request's recorded words from the ledger and the audit log.
+
+    Not from *every* plane that holds them -- see :data:`ERASURE_LIMITS` for
+    the ones it cannot reach. Saying "everywhere" when it is two of several
+    is the overclaim this project keeps having to correct.
 
     Keyed on ``request_id`` because that is the join between the planes, and
     never on an event sequence number, which is not unique under a concurrent
@@ -276,6 +321,9 @@ def forget_request(request_id: str, *, actor: str = "forget",
         report["complete"] = False
         return report
 
+    # Both planes raise on a real failure now, so an error here is a genuine
+    # "the words are still there" and lands in report["errors"], which is what
+    # `complete` is computed from.
     store = None
     try:
         store = StateStore(db_path=str(default_state_db_path()))
@@ -297,10 +345,18 @@ def forget_request(request_id: str, *, actor: str = "forget",
 
     if reproject:
         try:
-            from .vault import VaultProjector
+            from .vault import VaultProjector, vault_root
 
-            VaultProjector().rebuild()
-            report["vault_rebuilt"] = True
+            # Only reproject a vault that already exists. Rebuilding one into
+            # being during a forget would write fresh plaintext copies of
+            # every OTHER reason to disk -- publishing on the way to erasing,
+            # which is the opposite of what was asked for.
+            notes = vault_root() / "notes"
+            if notes.exists() and any(notes.glob("*.md")):
+                VaultProjector().rebuild()
+                report["vault_rebuilt"] = True
+            else:
+                report["vault_rebuilt"] = False
         except Exception as e:
             logger.warning(f"forget_request({request_id}): vault: {e}")
             report["errors"].append(f"vault: {e}")
