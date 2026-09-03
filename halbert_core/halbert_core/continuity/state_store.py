@@ -517,6 +517,12 @@ class StateStore:
 
         Returns the number of rows changed. Calling it twice is safe and the
         second call returns 0: already forgotten is not a failure.
+
+        Raises on a write failure rather than returning 0. This is the one
+        method here that does: everywhere else an empty result is a fine
+        approximation of a failure, but a caller that reports "the words are
+        gone" must not be able to say so because the UPDATE quietly did not
+        happen.
         """
         actor = _require(actor, "actor")
         request_id = _require(request_id, "request_id")
@@ -545,7 +551,10 @@ class StateStore:
             return changed
         except Exception as e:
             logger.warning(f"Failed to redact request {request_id}: {e}")
-            return 0
+            # NOT a swallowed 0. A caller reporting on a forget cannot tell a
+            # failed redaction from "nothing matched" if both return the same
+            # value, and would say the words were removed when they were not.
+            raise
 
     # ------------------------------------------------------------------
     # Read

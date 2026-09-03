@@ -133,10 +133,19 @@ export function getPendingApprovals(): Promise<PendingApprovalsResponse> {
   return request('/api/settings/approvals/pending')
 }
 
-export function approveRequest(requestId: string, saveToMemory = false) {
+/**
+ * Approve a pending request.
+ *
+ * `reason` is the approver's own words and is recorded against every change
+ * the approval executes, so "why is this configured this way" can answer with
+ * it later. Omitted, it records as unknown rather than as something invented
+ * afterwards — which is why this passes through rather than defaulting to a
+ * plausible string.
+ */
+export function approveRequest(requestId: string, saveToMemory = false, reason?: string) {
   return request(`/api/approvals/${encodeURIComponent(requestId)}/approve`, {
     method: 'POST',
-    body: JSON.stringify({ approved: true, reason: null, save_to_memory: saveToMemory }),
+    body: JSON.stringify({ approved: true, reason: reason ?? null, save_to_memory: saveToMemory }),
   })
 }
 

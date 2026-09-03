@@ -239,3 +239,52 @@ class TestEditorProvenance:
         assert w.superseded.reason == "first"
         assert w.superseded.closed_reason == "superseded: second"
         store.close()
+
+
+class TestAnUnreadableDigestIsRecordedNotSkipped:
+    """A privileged file written through pkexec cannot always be read back by
+    an unprivileged process. Returning silently left the ledger asserting the
+    OLD digest as current, so a later drift check would report a change
+    nobody made."""
+
+    def test_it_records_an_explicit_unknown(self, caplog):
+        from halbert_core.continuity.provenance import DIGEST_UNREADABLE
+
+        record_file_change(path="/etc/root-only.conf", reason="hardening",
+                           actor=ACTOR_USER, request_id="req-priv",
+                           tool="editor", before_text="old\n", after_text=None)
+
+        store = _ledger()
+        rows = store.by_request("req-priv")
+        assert len(rows) == 1, "the ledger row was skipped"
+        assert rows[0].object == DIGEST_UNREADABLE
+        store.close()
+
+    def test_the_unknown_cannot_be_mistaken_for_a_digest(self):
+        from halbert_core.continuity.provenance import DIGEST_UNREADABLE
+
+        assert len(DIGEST_UNREADABLE) != 64
+
+    def test_it_says_so_out_loud(self, caplog):
+        import logging
+
+        with caplog.at_level(logging.WARNING):
+            record_file_change(path="/etc/root-only.conf", reason="r",
+                               actor=ACTOR_USER, request_id="req-priv2",
+                               tool="editor", after_text=None)
+        assert any("could not be read back" in r.message for r in caplog.records)
+
+    def test_a_stale_digest_is_not_left_current(self):
+        """The failure this prevents: the old value staying open."""
+        record_file_change(path="/etc/root-only.conf", reason="first",
+                           actor=ACTOR_USER, request_id="r1", tool="editor",
+                           after_text="old\n")
+        record_file_change(path="/etc/root-only.conf", reason="second",
+                           actor=ACTOR_USER, request_id="r2", tool="editor",
+                           before_text="old\n", after_text=None)
+
+        store = _ledger()
+        current = store.why("file:/etc/root-only.conf",
+                            FILE_CONTENT_PREDICATE).current
+        assert current.object != content_digest("old\n")
+        store.close()

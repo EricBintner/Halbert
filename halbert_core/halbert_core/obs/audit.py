@@ -297,31 +297,29 @@ def erase_audit_by_request(request_id: str) -> int:
     hash and signature still verifies. The chain is not broken by this - that
     is the whole point of the salted-commitment design.
 
-    Returns 0 rather than raising when nothing matches. An already-erased
-    record has no payload and so cannot be found a second time: that is the
-    idempotent path, not a failure.
+    Returns 0 when nothing matches. An already-erased record has no payload
+    and so cannot be found a second time: that is the idempotent path, not a
+    failure.
 
-    Never raises. Forgetting must not fail loudly at the one moment a person
-    is asking for privacy; the count says what happened.
+    Raises on an actual failure. Returning 0 for both "nothing matched" and
+    "the erase did not happen" would let a caller tell someone their words
+    were removed when they are still on disk -- and this is the one place
+    where saying so wrongly matters most.
+
+    Raises:
+        AuditUnavailable: the audit log cannot be reached at all.
+        Exception: whatever the erase failed with.
     """
     if not request_id:
         return 0
-    try:
-        events = audit_log()
-    except Exception as exc:
-        log.warning("audit erase for %s unavailable: %s", request_id, exc)
-        return 0
-    try:
-        with _append_lock(events.directory):
-            seqs = events.seqs_where(
-                lambda payload: payload.get("request_id") == request_id
-            )
-            if not seqs:
-                return 0
-            return int(events.erase_many(seqs))
-    except Exception as exc:
-        log.error("audit erase for %s failed: %s", request_id, exc)
-        return 0
+    events = audit_log()
+    with _append_lock(events.directory):
+        seqs = events.seqs_where(
+            lambda payload: payload.get("request_id") == request_id
+        )
+        if not seqs:
+            return 0
+        return int(events.erase_many(seqs))
 
 
 def verify_audit(directory: Optional[Any] = None) -> "VerifyResult":
