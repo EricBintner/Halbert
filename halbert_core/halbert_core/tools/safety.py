@@ -398,12 +398,24 @@ class ToolSafetyFramework:
                 requires_confirmation=False,
                 reason="Read-only operation"
             )
-        elif tool_name in ("search", "search_discoveries", "recall_memory"):
+        elif tool_name in ("search", "search_discoveries"):
             return SafetyCheckResult(
                 risk_level=RiskLevel.SAFE,
                 allowed=True,
                 requires_confirmation=False,
                 reason="Search operation"
+            )
+        elif tool_name == "recall_memory":
+            # Its own branch, and it must stay SAFE. Falling through to the
+            # unknown-tool default would make it MEDIUM, and RoleGate caps a
+            # restricted speaker at low — which would block a read-only
+            # ledger query for exactly the speakers least able to work
+            # around it, silently, in any test using the default role.
+            return SafetyCheckResult(
+                risk_level=RiskLevel.SAFE,
+                allowed=True,
+                requires_confirmation=False,
+                reason="Read-only recall from the change ledger"
             )
         elif tool_name == "web_search":
             # Egress, not a local read: the query text leaves the machine.

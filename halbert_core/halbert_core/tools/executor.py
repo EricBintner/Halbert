@@ -246,6 +246,14 @@ class ToolExecutor:
             },
         )
 
+        # LEDGER-1: "why is X configured this way", answered from the change
+        # ledger. Registered here rather than on a route so every executor
+        # offers it, and unconditionally: a read-only ledger query has no
+        # capability to gate on.
+        from .recall_memory import RECALL_MEMORY_SCHEMA, recall_memory
+
+        self.register("recall_memory", recall_memory, RECALL_MEMORY_SCHEMA)
+
         # Thread meta-tools (Plan A, spec §7). The schemas are what the model
         # sees; PLANNING handles the calls inline and never dispatches them
         # here, so the handler is a stub (see execute()). Descriptions stay

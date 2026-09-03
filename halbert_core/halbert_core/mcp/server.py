@@ -540,7 +540,15 @@ def _tool_approve_proposal(params: Dict[str, Any]) -> Dict[str, Any]:
             blast_radius=BlastRadiusCalculator(),
         )
         store.approve(proposal_id, approval_request_id=proposal.approval_request_id or "")
-        result = generator.execute_proposal(proposal_id, reason=params.get("reason", "approved via MCP"))
+        # ACTOR_AGENT, not ACTOR_USER: the only witness to this approval is
+        # an MCP call. Its reason names itself as such rather than posing as
+        # something a person said, which the vault would render as a quote.
+        from halbert_core.continuity.state_store import ACTOR_AGENT
+
+        mcp_reason = params.get("reason") or "mcp: approved by client, no reason given"
+        result = generator.execute_proposal(
+            proposal_id, reason=mcp_reason, actor=ACTOR_AGENT
+        )
         return mcp_response(result)
     except Exception as e:
         return mcp_response({"proposal_id": proposal_id, "error": str(e)})

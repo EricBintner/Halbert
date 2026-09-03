@@ -27,6 +27,8 @@ import uuid
 from typing import Any, Dict, List, Optional
 
 from ..approval.engine import ApprovalEngine, ApprovalRequest
+from ..continuity.provenance import record_file_mode_change
+from ..continuity.state_store import ACTOR_SYSTEM, ACTOR_USER, UNRECORDED
 from ..tools.base import ToolRequest
 from ..tools.write_config import WriteConfig
 from .blast_radius import BlastRadiusCalculator
@@ -287,9 +289,15 @@ class ProposalGenerator:
         return proposal_id
 
     def execute_proposal(
-        self, proposal_id: str, reason: str = ""
+        self, proposal_id: str, reason: str = "", actor: str = ACTOR_USER
     ) -> Dict[str, Any]:
         """Execute ALL changes of an approved proposal.
+
+        ``actor`` is who approved it. It is a parameter rather than a constant
+        because not every approval comes from a person at the dashboard: an
+        MCP client can approve one too, and stamping ACTOR_USER on that would
+        put its machine-generated string in the ledger as a human utterance,
+        which the vault then renders as a quotation from someone.
 
         Config-file changes go through WriteConfig (backup=True,
         dry_run=False, confirm=True). chmod changes are applied directly
@@ -338,11 +346,17 @@ class ProposalGenerator:
             return self._record_result(proposal_id, result)
 
         applied: List[Dict[str, Any]] = []  # rollback info per applied change
+        # One request id for the whole proposal, so every plane's rows join
+        # back to this approval. A fresh uuid per change severed that link.
+        exec_request_id = f"proposal-{proposal_id}"
 
         try:
             for change in proposal.changes:
                 try:
-                    outcome = self._apply_change(change, applied)
+                    outcome = self._apply_change(
+                        change, applied, reason=reason or UNRECORDED,
+                        request_id=exec_request_id, actor=actor,
+                    )
                 except Exception:
                     # The failing config-file change may be partially
                     # applied — add its path to the rollback set too.
@@ -380,7 +394,7 @@ class ProposalGenerator:
             )
             for rb in reversed(applied):
                 try:
-                    self._rollback_change(rb)
+                    self._rollback_change(rb, exec_request_id)
                     result["rolled_back"].append(rb)
                 except Exception as rb_err:
                     logger.error(f"Rollback failed for {rb}: {rb_err}")
@@ -501,7 +515,10 @@ class ProposalGenerator:
     # Execution
 
     def _apply_change(self, change: Dict[str, Any],
-                      applied: List[Dict[str, Any]]) -> Dict[str, Any]:
+                      applied: List[Dict[str, Any]], *,
+                      reason: str = UNRECORDED,
+                      request_id: str = "",
+                      actor: str = ACTOR_USER) -> Dict[str, Any]:
         """Apply a single change. Returns an outcome dict; raises on failure.
 
         ``applied`` is the caller's undo log. An applier whose side effect
@@ -525,22 +542,37 @@ class ProposalGenerator:
             }
 
         if action == "chmod":
-            return self._apply_chmod(change, applied)
+            return self._apply_chmod(
+                change, applied, reason=reason, request_id=request_id, actor=actor
+            )
 
-        return self._apply_config_change(change)
+        return self._apply_config_change(
+            change, reason=reason, request_id=request_id, actor=actor
+        )
 
-    def _apply_config_change(self, change: Dict[str, Any]) -> Dict[str, Any]:
-        """Apply a config-file change through WriteConfig."""
+    def _apply_config_change(self, change: Dict[str, Any], *,
+                             reason: str = UNRECORDED,
+                             request_id: str = "",
+                             actor: str = ACTOR_USER) -> Dict[str, Any]:
+        """Apply a config-file change through WriteConfig.
+
+        ``reason`` is the approver's own words and ``request_id`` is the
+        proposal's, so the ledger row WriteConfig writes carries real
+        provenance and joins back to this approval. Without both, the row
+        landed as UNRECORDED under an unrelated uuid.
+        """
         path = change["path"]
         req = ToolRequest(
             tool="write_config",
             dry_run=False,
             confirm=True,
-            request_id=str(uuid.uuid4()),
+            request_id=request_id or str(uuid.uuid4()),
             inputs={
                 "path": path,
                 "changes": change.get("config_changes", {}),
                 "backup": True,
+                "reason": reason,
+                "actor": actor,
             },
         )
         resp = self.write_config.execute(req)
@@ -554,7 +586,10 @@ class ProposalGenerator:
         }
 
     def _apply_chmod(self, change: Dict[str, Any],
-                     applied: List[Dict[str, Any]]) -> Dict[str, Any]:
+                     applied: List[Dict[str, Any]], *,
+                     reason: str = UNRECORDED,
+                     request_id: str = "",
+                     actor: str = ACTOR_USER) -> Dict[str, Any]:
         """Apply a chmod change with drift detection, old-mode recording,
         and audit logging."""
         from ..obs.audit import write_audit
@@ -562,7 +597,7 @@ class ProposalGenerator:
         path = change["path"]
         mode_str = change.get("mode", "600")
         mode_int = int(mode_str, 8)
-        request_id = str(uuid.uuid4())
+        request_id = request_id or str(uuid.uuid4())
 
         if not os.path.exists(path):
             write_audit(
@@ -570,6 +605,8 @@ class ProposalGenerator:
                 mode="apply",
                 request_id=request_id,
                 ok=False,
+                reason=reason,
+                actor=actor,
                 summary=f"file not found: {path}",
                 path=path,
             )
@@ -590,6 +627,8 @@ class ProposalGenerator:
                 mode="apply",
                 request_id=request_id,
                 ok=True,
+                reason=reason,
+                actor=actor,
                 summary=msg,
                 path=path,
             )
@@ -611,17 +650,28 @@ class ProposalGenerator:
             # promised cannot happen (R06-F4).
             applied.append({"kind": "chmod", "path": path, "old_mode": old_mode})
 
-        write_audit(
-            tool="chmod",
-            mode="apply",
+        # Both planes, and on the mode's own predicate. Routing a chmod
+        # through record_file_change would compare an unchanged content
+        # digest, take record_state's no-op branch, and silently drop the
+        # ledger row and its reason while the audit half still landed.
+        record_file_mode_change(
+            path=path,
+            mode_octal=mode_str,
+            reason=reason,
+            actor=actor,
             request_id=request_id,
-            ok=True,
+            tool="chmod",
+            before_mode=oct(old_mode),
+            # An approved privileged change that cannot be written to the
+            # audit log must not stand: the caller rolls the mode back
+            # (R06-F4). Only the audit half is strict; a lost ledger row
+            # must not undo a mode the caller was told held.
+            strict=True,
             summary=(
                 f"chmod {mode_str} {path} (was {oct(old_mode)})"
                 if not already_ok
                 else f"no-op (already {mode_str}) for {path}"
             ),
-            path=path,
         )
         # No "rollback" key: the undo was logged above, at the side effect.
         return {
@@ -632,10 +682,28 @@ class ProposalGenerator:
             "old_mode": oct(old_mode),
         }
 
-    def _rollback_change(self, rollback: Dict[str, Any]) -> None:
+    def _rollback_change(self, rollback: Dict[str, Any],
+                         request_id: str = "") -> None:
         """Undo a previously applied change."""
         if rollback["kind"] == "chmod":
             os.chmod(rollback["path"], rollback["old_mode"])
+            # The ledger recorded the new mode the instant the chmod landed.
+            # Without this it keeps asserting a mode that no longer exists,
+            # attributed to the approver's reason -- the ledger lying about
+            # the machine, which is the one thing it must never do.
+            try:
+                record_file_mode_change(
+                    path=rollback["path"],
+                    mode_octal=oct(rollback["old_mode"]),
+                    reason="rollback: a later change in this proposal failed",
+                    actor=ACTOR_SYSTEM,
+                    request_id=request_id or f"rollback-{uuid.uuid4().hex[:12]}",
+                    tool="chmod",
+                    summary=f"restored {rollback['path']} to "
+                            f"{oct(rollback['old_mode'])} after rollback",
+                )
+            except Exception as e:
+                logger.warning(f"could not record chmod rollback: {e}")
             from ..obs.audit import write_audit
 
             # The restore has already happened. On the way IN an audit

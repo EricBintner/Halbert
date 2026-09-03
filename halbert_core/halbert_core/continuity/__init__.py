@@ -12,8 +12,10 @@ See ``.handoff/HANDOFF-CONTINUITY-AFTER-PLAN-A-2026-08-26.md``.
 
 from .consolidation import Consolidator
 from .freshness import AnswerSource, Decision, decide, is_re_observable
+from .recall import LedgerUnavailable, recall_state, subject_for_path
 from .recall_gate import GateResult, MatchStrength, classify
 from .state_store import StateStore, StateTriple
+from .vault import ProjectionResult, VaultProjector, vault_root
 
 __all__ = [
     # machine-state ledger
@@ -24,4 +26,8 @@ __all__ = [
     "AnswerSource", "Decision", "decide", "is_re_observable",
     # cross-thread consolidation at idle (R8)
     "Consolidator",
+    # one read of the ledger, shared by the route and the agent tool
+    "recall_state", "subject_for_path", "LedgerUnavailable",
+    # the human-readable projection (no authority; MEM-03)
+    "VaultProjector", "ProjectionResult", "vault_root",
 ]

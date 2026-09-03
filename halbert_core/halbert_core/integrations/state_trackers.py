@@ -15,18 +15,27 @@ from __future__ import annotations
 import logging
 from typing import List, Optional
 
+from ..continuity.state_store import ACTOR_SYSTEM
+
 logger = logging.getLogger("halbert.integrations.state_trackers")
 
 DEFAULT_PERSONA_ID = "halbert"
 
 
 def _record(ledger, subject: str, predicate: str, obj: str, source: str,
-            thread_id=None) -> None:
+            *, reason: str, actor: str = ACTOR_SYSTEM,
+            request_id=None, thread_id=None) -> None:
     """Write one state triple, never raising.
 
     ``StateStore.record_state`` closes the previous triple for the same
     (subject, predicate) automatically, so callers get supersession and a
     valid-time history for free.
+
+    ``reason`` is mandatory here too, not just one level down. This funnel
+    covers most tracker writes and will cover most future ones, so letting it
+    default would quietly re-open the hole ``record_state`` was changed to
+    close. A tracker is a deterministic rule, so its reason names itself
+    ("tracker: disk health sweep") and its actor is the system.
 
     StateStore already fails soft; the guard here is defence in depth, because
     trackers sit on the hot path and ``ledger`` may be any duck-typed object.
@@ -34,7 +43,11 @@ def _record(ledger, subject: str, predicate: str, obj: str, source: str,
     if ledger is None:
         return
     try:
-        ledger.record_state(subject, predicate, obj, source, thread_id=thread_id)
+        ledger.record_state(
+            subject, predicate, obj, source,
+            reason=reason, actor=actor,
+            request_id=request_id, thread_id=thread_id,
+        )
     except Exception as e:
         logger.warning(f"Failed to record {subject}/{predicate}: {e}")
 
@@ -98,7 +111,8 @@ class DiskHealthTracker:
     def sync_to_ledger(self) -> None:
         for device, status in self._disk_states.items():
             _record(self._ledger, f"disk:{device}", "disk_health", status,
-                    "state_tracker:disk_health")
+                    "state_tracker:disk_health",
+                    reason="tracker: disk health sweep")
 
 
 class ServiceStatusTracker:
@@ -128,7 +142,8 @@ class ServiceStatusTracker:
     def sync_to_ledger(self) -> None:
         for service, status in self._service_states.items():
             _record(self._ledger, f"service:{service}", "service_status", status,
-                    "state_tracker:service_status")
+                    "state_tracker:service_status",
+                    reason="tracker: service status sweep")
 
 
 class SystemResourceTracker:
@@ -161,9 +176,13 @@ class SystemResourceTracker:
 
     def sync_to_ledger(self) -> None:
         src = "state_tracker:system_resources"
-        _record(self._ledger, "system", "cpu_load", f"{self._cpu_percent:.0f}%", src)
-        _record(self._ledger, "system", "memory_usage", f"{self._mem_percent:.0f}%", src)
-        _record(self._ledger, "system", "load_average", f"{self._load_avg:.2f}", src)
+        why = "tracker: system resource sample"
+        _record(self._ledger, "system", "cpu_load",
+                f"{self._cpu_percent:.0f}%", src, reason=why)
+        _record(self._ledger, "system", "memory_usage",
+                f"{self._mem_percent:.0f}%", src, reason=why)
+        _record(self._ledger, "system", "load_average",
+                f"{self._load_avg:.2f}", src, reason=why)
 
 
 class AdminPresenceTracker:
@@ -202,7 +221,8 @@ class AdminPresenceTracker:
     def sync_to_ledger(self) -> None:
         _record(self._ledger, "user", "admin_presence",
                 "present" if self._admin_present else "absent",
-                "state_tracker:admin_presence")
+                "state_tracker:admin_presence",
+                reason="tracker: admin presence check")
 
 
 def register_halbert_predicates() -> None:

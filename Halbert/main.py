@@ -335,6 +335,32 @@ def cmd_policy_eval(args):
     print(_json.dumps({"tool": args.tool, "allow": d.allow, "reason": d.reason}, indent=2, ensure_ascii=False))
 
 
+def cmd_vault_rebuild(args):
+    """Reproject the change ledger into the Markdown vault.
+
+    The vault is generated: this overwrites hand edits, and removes notes
+    for facts the ledger no longer holds. Nothing reads it back as truth.
+    """
+    import sys as _sys
+    try:
+        from halbert_core.halbert_core.continuity.vault import VaultProjector
+    except Exception as e:
+        print(f'vault not available: {e}')
+        return 2
+    result = VaultProjector().rebuild()
+    if getattr(args, 'json', False):
+        import json as _json
+        print(_json.dumps(result.to_dict(), indent=2))
+        return 0
+    print(f'vault: {result.root}')
+    print(f'  {result.written} written, {result.unchanged} unchanged, '
+          f'{result.unlinked} removed')
+    if result.rejected:
+        print(f'  {result.rejected} ledger rows not projected (re-derivable '
+              f'or not in the admitted set)')
+    return 0
+
+
 def cmd_audit_verify(args):
     """Walk the audit log and report every integrity failure found.
 
@@ -1852,6 +1878,12 @@ def main():
     p_audit_verify.add_argument('--json', action='store_true', help='Emit machine-readable JSON')
     p_audit_verify.add_argument('--peer', help='Name the peer this log was last synced with')
     p_audit_verify.set_defaults(func=cmd_audit_verify)
+
+    p_vault = sub.add_parser(
+        'vault-rebuild',
+        help='Reproject the change ledger into the Markdown vault (generated; overwrites edits)')
+    p_vault.add_argument('--json', action='store_true', help='Emit machine-readable JSON')
+    p_vault.set_defaults(func=cmd_vault_rebuild)
 
     p_sched_add = sub.add_parser('scheduler-add', help='Add a job to the scheduler queue (Phase 2)')
     p_sched_add.add_argument('--id', required=True, help='Job ID')

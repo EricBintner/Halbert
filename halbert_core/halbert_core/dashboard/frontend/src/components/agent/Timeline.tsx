@@ -298,6 +298,12 @@ const TurnArticle = memo(function TurnArticle({
   // Forgetting cannot be undone — content, blocks, diffs, the FTS row, the
   // thread's entity sets and (for a founding row) the thread title all go —
   // so the control asks first and stays busy until the server has answered.
+  //
+  // What it does NOT reach: the change ledger's recorded reasons and the
+  // audit payloads (those are forgotten per request, not per turn), and
+  // Haloysius memory_v2's plaintext store. The copy below says "from this
+  // conversation" rather than "everywhere" for that reason — INTEG-05's
+  // rule, that a surface must not claim more than it can show.
   const [confirming, setConfirming] = useState(false);
   const [pending, setPending] = useState(false);
   // The last refusal, kept on screen beside the control until the admin asks
@@ -446,7 +452,7 @@ const TurnArticle = memo(function TurnArticle({
             <button
               type="button"
               aria-label="Forget this turn"
-              title="Replace this turn's words and tool output with a redaction marker, everywhere it is stored"
+              title="Replace this turn's words and tool output with a redaction marker throughout this conversation"
               onClick={() => {
                 // The old verdict does not describe the attempt about to be
                 // made, so it goes as soon as the question is asked again.
@@ -469,8 +475,9 @@ const TurnArticle = memo(function TurnArticle({
           }}
         >
           <span id={`forget-warning-${turn.turnId}`}>
-            Forget this turn? Its words and tool output are replaced wherever they are stored, and cannot be
-            brought back.
+            Forget this turn? Its words and tool output are replaced everywhere this conversation
+            stores them, and cannot be brought back. Records kept elsewhere — the change
+            ledger's reasons and the audit log — are forgotten separately, per change.
           </span>
           <button
             ref={confirmRef}

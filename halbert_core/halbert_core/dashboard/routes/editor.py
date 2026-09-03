@@ -10,12 +10,15 @@ import json
 import hashlib
 import subprocess
 import shutil
+import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 import logging
+
+from halbert_core.continuity.state_store import UNRECORDED
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/editor", tags=["editor"])
@@ -37,6 +40,9 @@ class FileWriteRequest(BaseModel):
     content: str
     create_backup: bool = True
     backup_label: str = "Manual save"
+    #: Why this save is happening, from the person making it. Absent means
+    #: UNRECORDED -- rendered as unknown, and never filled in afterwards.
+    reason: Optional[str] = None
 
 
 class FileWriteResponse(BaseModel):
@@ -264,6 +270,48 @@ def _write_with_sudo(file_path: str, content: str) -> bool:
 
 # --- Routes ---
 
+def _current_text(path: str) -> Optional[str]:
+    """File text before a write, for the content digest. None if unreadable.
+
+    Best-effort on purpose: not being able to read the old bytes (a
+    root-owned file, say) must not stop the save, it just means the record
+    states no before-digest.
+    """
+    try:
+        if not os.path.exists(path):
+            return None
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            return f.read()
+    except Exception:
+        return None
+
+
+def _record_editor_change(
+    *, path: str, reason: str, request_id: str,
+    before_text: Optional[str], after_text: Optional[str],
+    summary: str, ok: bool = True,
+) -> None:
+    """Record an editor save on the audit log and the state ledger.
+
+    The actor is always the user: the editor is a person's hands on a file,
+    which is exactly the distinction ``actor`` exists to draw against the
+    agent writing the same file through ``write_config``.
+    """
+    try:
+        from halbert_core.continuity.provenance import record_file_change
+        from halbert_core.continuity.state_store import ACTOR_USER
+
+        record_file_change(
+            path=path, reason=reason, actor=ACTOR_USER,
+            request_id=request_id, tool="editor",
+            before_text=before_text, after_text=after_text,
+            mode="apply", ok=ok, summary=summary,
+        )
+    except Exception as e:
+        # Recording must never break the save it describes.
+        logger.warning(f"could not record editor change for {path}: {e}")
+
+
 @router.get("/file")
 async def read_file(path: str) -> FileReadResponse:
     """Read a config file."""
@@ -316,9 +364,28 @@ async def write_file(request: FileWriteRequest) -> FileWriteResponse:
         except Exception as e:
             logger.warning(f"Failed to create backup: {e}")
     
+    before_text = _current_text(path)
+    request_id = f"editor-{uuid.uuid4().hex[:12]}"
+
     try:
         success = write_file_content(path, request.content)
         if success:
+            # A person edited a config file, possibly with pkexec or sudo
+            # behind it. Until now that left no trace on either plane.
+            # Re-read rather than recording request.content. The write may
+            # have gone through open() with the locale encoding, or piped
+            # through pkexec or `sudo tee`, so the string we were handed is
+            # what was *intended* -- a digest of it is not necessarily
+            # re-derivable from what landed on disk, which makes every
+            # downstream drift check permanently wrong.
+            _record_editor_change(
+                path=path,
+                reason=request.reason or UNRECORDED,
+                request_id=request_id,
+                before_text=before_text,
+                after_text=_current_text(path),
+                summary=f"editor save of {path}",
+            )
             return FileWriteResponse(
                 success=True,
                 message="File saved successfully",
@@ -327,9 +394,19 @@ async def write_file(request: FileWriteRequest) -> FileWriteResponse:
         else:
             raise HTTPException(500, "Failed to write file")
     except PermissionError as e:
+        _record_editor_change(
+            path=path, reason=request.reason or UNRECORDED,
+            request_id=request_id, before_text=before_text, after_text=None,
+            summary=f"editor save of {path} refused: {e}", ok=False,
+        )
         raise HTTPException(403, str(e))
     except Exception as e:
         logger.error(f"Error writing file {path}: {e}")
+        _record_editor_change(
+            path=path, reason=request.reason or UNRECORDED,
+            request_id=request_id, before_text=before_text, after_text=None,
+            summary=f"editor save of {path} failed: {e}", ok=False,
+        )
         raise HTTPException(500, str(e))
 
 
@@ -436,8 +513,17 @@ async def restore_backup(request: BackupRestoreRequest, path: str) -> FileWriteR
                 label="Before restore"
             ))
         
+        before_text = _current_text(path)
         success = write_file_content(path, content)
         if success:
+            _record_editor_change(
+                path=path,
+                reason=f"restore: backup {request.backup_id}",
+                request_id=f"editor-{uuid.uuid4().hex[:12]}",
+                before_text=before_text,
+                after_text=content,
+                summary=f"restored {path} from backup {request.backup_id}",
+            )
             return FileWriteResponse(
                 success=True,
                 message=f"Restored from backup {request.backup_id}"

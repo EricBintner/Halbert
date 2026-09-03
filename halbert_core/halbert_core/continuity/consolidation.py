@@ -26,6 +26,8 @@ import logging
 import time
 from typing import Any, Dict, List, Optional
 
+from .state_store import ACTOR_SYSTEM
+
 logger = logging.getLogger("halbert.continuity.consolidation")
 
 #: Minimum threads in a domain batch before consolidation runs.
@@ -101,6 +103,11 @@ class Consolidator:
                         f"domain:{domain}", "preferred_entity", entity,
                         "consolidation", confidence=count / len(threads),
                         now=now,
+                        reason=(
+                            f"consolidation: appeared in {count} of "
+                            f"{len(threads)} {domain} threads"
+                        ),
+                        actor=ACTOR_SYSTEM,
                     )
                     if rid is not None:
                         facts += 1
@@ -112,6 +119,8 @@ class Consolidator:
             rid = self._state.record_state(
                 f"domain:{domain}", "thread_count", str(len(threads)),
                 "consolidation", now=now,
+                reason="consolidation: closed-thread count for this domain",
+                actor=ACTOR_SYSTEM,
             )
             if rid is not None:
                 facts += 1

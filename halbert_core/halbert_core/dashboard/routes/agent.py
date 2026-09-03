@@ -1868,8 +1868,24 @@ if FASTAPI_AVAILABLE:
             raise HTTPException(400, "Diff has no file path or content to apply; use the editor flow")
         return file_path, new_content
 
-    def _write_file(file_path: str, new_content: str, diff_id: str) -> None:
+    def _read_current(file_path: str):
+        """Text on disk before the write, for the before-digest. None if absent."""
         import os
+        try:
+            if not os.path.exists(file_path):
+                return None
+            with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+                return f.read()
+        except Exception:
+            return None
+
+    def _write_file(file_path: str, new_content: str, diff_id: str,
+                    reason: str = "", actor: str = "") -> None:
+        import os
+        from halbert_core.continuity.provenance import record_file_change
+        from halbert_core.continuity.state_store import ACTOR_USER, UNRECORDED
+
+        before_text = _read_current(file_path)
         try:
             os.makedirs(os.path.dirname(file_path) or ".", exist_ok=True)
             with open(file_path, "w") as f:
@@ -1878,6 +1894,24 @@ if FASTAPI_AVAILABLE:
             logger.error(f"Failed to apply diff {diff_id} (it stays settled as applied): {e}")
             raise HTTPException(500, f"Failed to apply diff: {e}")
         logger.info(f"Applied diff {diff_id} to {file_path}")
+        try:
+            # request_id is derived from the diff, not a fresh uuid, so a
+            # re-apply joins to the same audit rows instead of minting an
+            # unrelated one. Re-read rather than trusting new_content: the
+            # digest must describe what landed.
+            record_file_change(
+                path=file_path,
+                reason=reason or UNRECORDED,
+                actor=actor or ACTOR_USER,
+                request_id=f"diff-{diff_id}",
+                tool="diff_apply",
+                before_text=before_text,
+                after_text=_read_current(file_path),
+                summary=f"applied diff {diff_id} to {file_path}",
+            )
+        except Exception as e:
+            # Recording must never undo a write that already succeeded.
+            logger.warning(f"could not record diff apply {diff_id}: {e}")
 
     @router.post("/diff/{session_id}/{diff_id}/apply")
     async def apply_diff(session_id: str, diff_id: str):
@@ -1893,7 +1927,8 @@ if FASTAPI_AVAILABLE:
         # while the proposal stayed pending is replayable over their next
         # edit, and takes that edit with it.
         persisted = _settle_diff(copies, stored, "applied")
-        _write_file(file_path, new_content, diff_id)
+        _write_file(file_path, new_content, diff_id,
+                    reason=(copies[0].get("reason") or ""))
         result: Dict[str, Any] = {"applied": True, "diff_id": diff_id, "file_path": file_path}
         if not persisted:
             # The store still says "pending": tell the caller rather than

@@ -158,13 +158,16 @@ def _format_tool_observation(name: str, args: Any, result: Any) -> str:
 
 
 # Tool names PLANNING routes to SEARCHING.
-_SEARCH_ROUTED_TOOLS = ("search", "search_discoveries", "recall_memory", "web_search")
+_SEARCH_ROUTED_TOOLS = ("search", "search_discoveries", "web_search")
 
 # Of those, the ones with no implementation behind them: SEARCHING serves a
 # general RAG/memory query instead. The turn is told this explicitly rather
 # than being handed a plain success, so the model does not report the generic
 # result as if the tool it asked for had run (R06-O2).
-_SUBSTITUTED_BY_SEARCH = ("search_discoveries", "recall_memory")
+#: The trailing comma is load-bearing: without it this is a *string*,
+#: and the ``in`` test below becomes substring containment, so a plain
+#: ``search`` would be reported to the model as not implemented.
+_SUBSTITUTED_BY_SEARCH = ("search_discoveries",)
 
 
 class AgentStateMachine:
@@ -2308,11 +2311,13 @@ class AgentStateMachine:
 
         count = len(self.ctx.retrieved_context)
         if tool_call and tool_call.name in _SUBSTITUTED_BY_SEARCH:
-            # Say so. A model told that recall_memory succeeded and returned
-            # nothing concludes that nothing is remembered, and tells the user
-            # so — which is a claim this turn has no basis for. Naming the
-            # substitution lets it answer from what the search did find, and
-            # say plainly that it could not check memory (R06-O2).
+            # Say so. A model told that search_discoveries succeeded and
+            # returned nothing concludes that nothing was discovered, and
+            # tells the user so — which is a claim this turn has no basis
+            # for. Naming the substitution lets it answer from what the
+            # search did find, and say plainly that it could not check
+            # (R06-O2). ``recall_memory`` is no longer in this set: it is a
+            # real tool over the change ledger and abstains in its own words.
             self.ctx.add_observation(
                 f"{tool_call.name} is not implemented; a general search was "
                 f"run in its place and returned {count} context items. "

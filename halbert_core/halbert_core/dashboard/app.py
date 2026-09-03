@@ -545,13 +545,14 @@ def create_app(enable_cors: bool = True) -> FastAPI:
     
     # Register routes
     from ..federation import compute_endpoint
-    from .routes import approvals, jobs, memory, settings, system, websocket, persona, discovery, terminal, alerts, rag, services, web_search, gpu, containers, development, editor, storage, downloads, agent, compression, being, modules, llm, legal, compute, vision, home, frigate, instance, peers, fleet, audio, conversations, devices, findings
+    from .routes import approvals, jobs, memory, settings, system, websocket, persona, discovery, terminal, alerts, rag, services, web_search, gpu, containers, development, editor, storage, downloads, agent, compression, being, modules, llm, legal, compute, vision, home, frigate, instance, peers, fleet, audio, conversations, devices, findings, state
     
     app.include_router(system.router, prefix="/api", tags=["system"])
     app.include_router(agent.router, tags=["agent"])  # Phase 36: Agent state machine
     app.include_router(approvals.router, prefix="/api/approvals", tags=["approvals"])
     app.include_router(jobs.router, prefix="/api/jobs", tags=["jobs"])
     app.include_router(memory.router, prefix="/api/memory", tags=["memory"])
+    app.include_router(state.router, prefix="/api/state", tags=["state"])  # LEDGER-1: "why is X configured this way"
     app.include_router(settings.router, prefix="/api/settings", tags=["settings"])
     app.include_router(discovery.router, prefix="/api/discoveries", tags=["discoveries"])  # Phase 11
     app.include_router(terminal.router, prefix="/api/terminal", tags=["terminal"])  # Phase 11

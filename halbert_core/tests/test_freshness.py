@@ -11,6 +11,7 @@ import time
 import pytest
 
 from halbert_core.continuity import StateStore
+from halbert_core.continuity.state_store import ACTOR_SYSTEM
 from halbert_core.continuity.freshness import (
     DEFAULT_FRESH_SECONDS,
     DURABLE_RECEIPT_FIELDS,
@@ -73,7 +74,8 @@ class TestStateClaims:
         assert "never observed" in d.reason
 
     def test_a_fresh_reading_counts_as_looking(self, store):
-        store.record_state("service:nginx", "service_status", "running", "tracker")
+        store.record_state("service:nginx", "service_status", "running", "tracker",
+                           reason="test: fixture write", actor=ACTOR_SYSTEM)
         d = decide("service:nginx", "service_status", store)
         assert d.source is AnswerSource.LEDGER
         assert d.value == "running"
@@ -81,7 +83,8 @@ class TestStateClaims:
         assert not d.must_look
 
     def test_a_stale_reading_is_a_memory_and_must_be_probed(self, store):
-        store.record_state("service:nginx", "service_status", "running", "tracker")
+        store.record_state("service:nginx", "service_status", "running", "tracker",
+                           reason="test: fixture write", actor=ACTOR_SYSTEM)
         d = decide("service:nginx", "service_status", store,
                    now=time.time() + SIX_WEEKS)
         assert d.source is AnswerSource.PROBE
@@ -89,7 +92,8 @@ class TestStateClaims:
         assert "memory, not an observation" in d.reason
 
     def test_the_freshness_dial_moves_the_line(self, store):
-        store.record_state("system", "cpu_load", "42%", "tracker")
+        store.record_state("system", "cpu_load", "42%", "tracker",
+                           reason="test: fixture write", actor=ACTOR_SYSTEM)
         later = time.time() + 120
         assert decide("system", "cpu_load", store, now=later).source is AnswerSource.PROBE
         assert decide("system", "cpu_load", store, fresh_seconds=600,
@@ -97,7 +101,8 @@ class TestStateClaims:
 
     def test_boundary_is_inclusive(self, store):
         t0 = time.time()
-        store.record_state("system", "cpu_load", "42%", "t", now=t0)
+        store.record_state("system", "cpu_load", "42%", "t", now=t0,
+                           reason="test: fixture write", actor=ACTOR_SYSTEM)
         at_edge = t0 + DEFAULT_FRESH_SECONDS
         assert decide("system", "cpu_load", store, now=at_edge).source is AnswerSource.LEDGER
         assert decide("system", "cpu_load", store,
@@ -109,12 +114,15 @@ class TestStateClaims:
 
     def test_supersession_is_respected(self, store):
         """The stale value must never win: current_state returns only the open one."""
-        store.record_state("service:nginx", "service_status", "running", "t")
-        store.record_state("service:nginx", "service_status", "stopped", "t")
+        store.record_state("service:nginx", "service_status", "running", "t",
+                           reason="test: fixture write", actor=ACTOR_SYSTEM)
+        store.record_state("service:nginx", "service_status", "stopped", "t",
+                           reason="test: fixture write", actor=ACTOR_SYSTEM)
         assert decide("service:nginx", "service_status", store).value == "stopped"
 
     def test_subjects_do_not_bleed(self, store):
-        store.record_state("service:nginx", "service_status", "running", "t")
+        store.record_state("service:nginx", "service_status", "running", "t",
+                           reason="test: fixture write", actor=ACTOR_SYSTEM)
         d = decide("service:smbd", "service_status", store)
         assert d.source is AnswerSource.PROBE
 
@@ -122,13 +130,15 @@ class TestStateClaims:
 class TestPreamble:
     def test_probe_of_a_known_fact_says_when_it_was_last_seen(self, store):
         t0 = time.time()
-        store.record_state("service:nginx", "service_status", "running", "t", now=t0)
+        store.record_state("service:nginx", "service_status", "running", "t", now=t0,
+                           reason="test: fixture write", actor=ACTOR_SYSTEM)
         d = decide("service:nginx", "service_status", store, now=t0 + SIX_WEEKS)
         assert d.preamble().startswith("We last saw that on ")
         assert "checking now" in d.preamble()
 
     def test_a_fresh_answer_needs_no_preamble(self, store):
-        store.record_state("service:nginx", "service_status", "running", "t")
+        store.record_state("service:nginx", "service_status", "running", "t",
+                           reason="test: fixture write", actor=ACTOR_SYSTEM)
         assert decide("service:nginx", "service_status", store).preamble() == ""
 
     def test_an_unseen_fact_has_nothing_to_date(self, store):
@@ -144,14 +154,16 @@ class TestTheJulyShareScenario:
     def test_the_old_note_does_not_get_to_answer(self, store):
         t0 = time.time() - SIX_WEEKS
         store.record_state("share:/srv/media", "mounted", "yes", "thread-jul",
-                           thread_id="t-jul", now=t0)
+                           thread_id="t-jul", now=t0,
+                           reason="test: fixture write", actor=ACTOR_SYSTEM)
 
         d = decide("share:/srv/media", "mounted", store)
         assert d.must_look, "a six-week-old reading must not be quoted as current"
         assert d.preamble()
 
         # after looking, the finding is written back and the next ask is free
-        store.record_state("share:/srv/media", "mounted", "no", "probe")
+        store.record_state("share:/srv/media", "mounted", "no", "probe",
+                           reason="test: fixture write", actor=ACTOR_SYSTEM)
         after = decide("share:/srv/media", "mounted", store)
         assert after.source is AnswerSource.LEDGER
         assert after.value == "no"
