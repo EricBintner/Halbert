@@ -48,8 +48,11 @@
 | 7b. "forget that" across both planes | **Done** | `ba9a3e3a` |
 | — a failed read must not read as "nothing recorded" | **Fixed after review** | `eb68d968` |
 
-Suite at handoff: **5242 passed, 14 skipped, 0 failed** across both test roots
-(`arch -arm64 ./wt_pytest.py halbert_core/tests tests -q`).
+Suite now: **5,345 passed, 14 skipped, 0 failed** across both test roots. Run it as
+`arch -arm64 /Volumes/4TB-BAD/Halbert/.venv/bin/python ./wt_pytest.py halbert_core/tests tests -q`
+from the worktree root — naming the interpreter explicitly rather than relying on an
+activated venv, because the shebang otherwise resolves to a system python with no
+haloysius and no pytest-asyncio, which turns seven async tests into silent skips.
 
 New API you will build on:
 
@@ -82,7 +85,8 @@ New API you will build on:
    time; never read back as truth. Two acceptance tests, both required: delete the whole
    vault directory, rebuild, byte-compare; and `erase(seq)` deletes the projected note and
    any referencing `_doubt_queue/` item in the same operation, with a rebuild afterwards
-   never resurrecting the fact. This is `MEM-03`.
+   never resurrecting the fact. This is `MEM-03`. (As built: the doubt-queue half is
+   deferred with step 10, so the second test is stated against `VaultProjector.forget`.)
 5. **The vault is keyed on `persona_id`, not `body_name`.** `body_name` is a location
    label and keys nothing anywhere — zero hits in Haloysius. The design doc had this
    backwards before rev. 3; do not reintroduce it.
