@@ -113,6 +113,7 @@ class ConfigWatcher:
                     self._changes.append(
                         {"ts": ts, "path": removed, "kind": "deleted"}
                     )
+                    self._record_on_ledger(removed, "deleted")
             self._last_state = seen
             self._baseline_taken = True
 
@@ -143,14 +144,22 @@ class ConfigWatcher:
         from ..continuity.state_store import ACTOR_SYSTEM
 
         try:
+            from ..continuity.provenance import DIGEST_ABSENT
+
             text = None
             if kind != "deleted":
                 try:
                     with open(path, "r", encoding="utf-8", errors="replace") as fh:
                         text = fh.read()
                 except OSError:
-                    return  # unreadable (root-owned, gone again): nothing to state
-            if text is None:
+                    # Unreadable, not absent: record_file_change stores its
+                    # own unknown sentinel rather than a stale digest.
+                    text = None
+            if kind == "deleted":
+                # Record the disappearance. Returning early left the ledger
+                # asserting the last content as current for a path nobody can
+                # open, and recall would answer about a file that is gone.
+                _record_absent(path)
                 return
             record_file_change(
                 path=path,
@@ -321,3 +330,38 @@ def create_detector_trigger_callback(
             timer.start()
 
     return callback
+
+
+def _record_absent(path: str) -> None:
+    """Record that a config file is gone, rather than leaving a stale digest.
+
+    Written through the state store directly: ``record_file_change`` computes
+    a digest from content, and there is no content to hash.
+    """
+    import uuid
+
+    from ..continuity.provenance import (
+        DIGEST_ABSENT,
+        FILE_CONTENT_PREDICATE,
+    )
+    from ..continuity.state_store import (
+        ACTOR_SYSTEM,
+        StateStore,
+        default_state_db_path,
+    )
+
+    store = None
+    try:
+        store = StateStore(db_path=str(default_state_db_path()))
+        store.record_state(
+            f"file:{path}", FILE_CONTENT_PREDICATE, DIGEST_ABSENT,
+            "config_watcher",
+            reason="watcher: config file no longer on disk",
+            actor=ACTOR_SYSTEM,
+            request_id=f"watch-{uuid.uuid4().hex[:12]}",
+        )
+    except Exception as exc:
+        logger.warning("could not record deletion of %s: %s", path, exc)
+    finally:
+        if store is not None:
+            store.close()

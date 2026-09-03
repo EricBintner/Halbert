@@ -38,6 +38,7 @@ __all__ = [
     "FILE_CONTENT_PREDICATE",
     "FILE_MODE_PREDICATE",
     "DIGEST_UNREADABLE",
+    "DIGEST_ABSENT",
     "forget_request",
     "ERASURE_LIMITS",
 ]
@@ -50,6 +51,12 @@ FILE_CONTENT_PREDICATE = "content_sha256"
 #: unprivileged process. Distinct from any real digest (a sha256 is 64 hex
 #: characters) so it can never be mistaken for one.
 DIGEST_UNREADABLE = "unreadable"
+
+#: Recorded as a file's digest when the file is gone. Without it the ledger
+#: keeps asserting the last content as *current* for a path that no longer
+#: exists, and answers "why is this configured this way" about a file nobody
+#: can open.
+DIGEST_ABSENT = "absent"
 
 #: Predicate for a file's permission bits, as an octal string ("0644").
 #:

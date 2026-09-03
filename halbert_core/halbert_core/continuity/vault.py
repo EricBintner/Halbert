@@ -95,8 +95,13 @@ def _iso(ts: Optional[float]) -> Optional[str]:
     )
 
 
-def vault_root() -> Path:
+def vault_root(persona_id: Optional[str] = None) -> Path:
     """``<data dir>/vault/<persona_id>``, resolved at call time.
+
+    Pass ``persona_id`` to reuse one already resolved. A projector that let
+    this resolve independently would read being.yml a second time, and a
+    change between the two reads would split one rebuild across two
+    directories -- writing notes into one and unlinking orphans from the other.
 
     Through ``data_subdir`` rather than ``state_subdir``: the latter reads only
     ``XDG_STATE_HOME`` and would make two instances share one vault — the same
@@ -107,7 +112,7 @@ def vault_root() -> Path:
     from ..identity import resolve_persona_id
     from ..utils.paths import data_subdir
 
-    return Path(data_subdir("vault", resolve_persona_id()))
+    return Path(data_subdir("vault", persona_id or resolve_persona_id()))
 
 
 @dataclass
@@ -179,7 +184,9 @@ class VaultProjector:
     @property
     def root(self) -> Path:
         if self._root is None:
-            self._root = vault_root()
+            # Reuse the persona this projector already resolved, so one
+            # rebuild cannot straddle two vault directories.
+            self._root = vault_root(self.persona_id)
         return self._root
 
     def _audited_requests(self) -> Dict[str, int]:

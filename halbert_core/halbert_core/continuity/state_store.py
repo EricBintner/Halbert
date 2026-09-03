@@ -278,8 +278,11 @@ class StateStore:
         if conn is None:
             path = db_path or str(default_state_db_path())
             conn = sqlite3.connect(path, check_same_thread=False)
-            conn.execute("PRAGMA journal_mode=WAL")
+            # busy_timeout FIRST: switching journal_mode takes a lock, and a
+            # concurrent first open would otherwise fail instantly instead of
+            # waiting for the other process to finish.
             conn.execute("PRAGMA busy_timeout=5000")
+            conn.execute("PRAGMA journal_mode=WAL")
             # Overwritten cells are zeroed rather than left in free pages, so
             # a redacted reason does not survive in the file's slack space.
             # Costs a little write throughput; a ledger that leaks the words
@@ -477,12 +480,18 @@ class StateStore:
         *,
         reason: str,
         actor: str,
+        request_id: Optional[str] = None,
         now: Optional[float] = None,
     ) -> int:
         """Close the open triple for this key. Returns rows closed (0 or 1).
 
         Closing is a change, so it carries provenance for the same reason a
         write does: nothing later can recover why a fact stopped being true.
+
+        ``request_id`` matters more than it looks: without it these words are
+        unreachable by ``redact_request``, which finds closed rows through
+        ``closed_by_request``. A reason that cannot be forgotten is a reason
+        that should not have been recorded.
         """
         reason = _require(reason, "reason")
         actor = _require(actor, "actor")
@@ -491,9 +500,10 @@ class StateStore:
             with self._lock, self._conn:
                 c = self._conn.execute(
                     "UPDATE state_triples "
-                    "SET valid_to = ?, closed_reason = ?, closed_by = ? "
+                    "SET valid_to = ?, closed_reason = ?, closed_by = ?, "
+                    "    closed_by_request = ? "
                     "WHERE subject = ? AND predicate = ? AND valid_to IS NULL",
-                    (ts, reason, actor, subject, predicate),
+                    (ts, reason, actor, request_id, subject, predicate),
                 )
                 return c.rowcount or 0
         except Exception as e:
