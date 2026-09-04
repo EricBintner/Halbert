@@ -33,6 +33,9 @@ import { useInstanceVariant } from '../../hooks/useInstanceVariant';
 import { StateBadge } from './StateBadge';
 import { PlanChecklist } from './PlanChecklist';
 import { ToolExecutionCard } from './ToolExecutionCard';
+import { InspectionGroup } from './InspectionGroup';
+import { groupInspections, INSPECTION_TOOLS } from './groupInspections';
+import { StatusStrip } from './StatusStrip';
 import { ConfirmationDialog } from './ConfirmationDialog';
 import { ThinkingPanel } from './ThinkingPanel';
 import { WhyChip, type ProvenanceRef } from '../WhyChip';
@@ -1128,9 +1131,26 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
                     />
                   )}
 
-                  {session.toolExecutions.map((exec) => (
-                    <ToolExecutionCard key={exec.executionId} execution={exec} />
-                  ))}
+                  {/* The same folding the timeline does, so the turn does not
+                      change shape when the page is reloaded. A call still
+                      running is never folded, so the step in flight stays
+                      visible while the ones before it settle into a line. */}
+                  {groupInspections(
+                    // A read still in flight is reported by the status strip
+                    // below, so putting a card for it here too would show the
+                    // same step twice and leave the box behind when it ends.
+                    // A command keeps its card: it may become a live tile.
+                    session.toolExecutions.filter(
+                      (e) =>
+                        !(e.status === 'running' && INSPECTION_TOOLS.has(e.tool)),
+                    ),
+                  ).map((row, i) =>
+                    row.kind === 'group' ? (
+                      <InspectionGroup key={`insp-${i}`} items={row.items} />
+                    ) : (
+                      <ToolExecutionCard key={row.item.executionId} execution={row.item} />
+                    ),
+                  )}
 
                   {/* Terminals Halbert opened for this turn, flowing in the
                       conversation; they dock to the right column on scroll. */}
@@ -1321,6 +1341,13 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
           ))}
         </div>
       )}
+
+      {/* The ephemeral layer. What is happening right now lives here and is
+          replaced continuously; what is worth a record lives in the feed
+          above. Separating the two is what makes a quiet fast command honest
+          rather than hidden: nothing is concealed while it runs, it just does
+          not leave a bordered box behind afterwards. */}
+      <StatusStrip executions={session?.toolExecutions ?? []} />
 
       <div
         className={cn(

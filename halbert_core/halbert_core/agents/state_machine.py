@@ -651,6 +651,7 @@ class AgentStateMachine:
                 assistant_text="".join(old_ctx.response_chunks or []),
                 blocks=blocks,
                 terminal_block_ids=list(old_ctx.terminal_block_ids or []),
+                block_executions=dict(getattr(old_ctx, 'block_executions', {}) or {}),
                 diff_proposals=[
                     {"diff_id": diff_id,
                      **(diff if isinstance(diff, dict) else {"value": diff})}
@@ -982,12 +983,20 @@ class AgentStateMachine:
                 assistant_text="".join(ctx.response_chunks),
                 blocks=blocks,
                 terminal_block_ids=list(ctx.terminal_block_ids),
+                block_executions=dict(ctx.block_executions),
                 diff_proposals=diffs,
                 status=status,
                 thread_id_override=ctx.thread_id if ctx.thread_switched else None,
             )
         except Exception as e:
-            logger.warning(f"end_turn failed (non-fatal): {e}")
+            # Non-fatal to the stream, but the turn is GONE: the words the
+            # user said and the answer they got are not written anywhere.
+            # Say which turn, so this is diagnosable rather than a shrug.
+            logger.warning(
+                "end_turn failed for turn %s in thread %s - this turn is not "
+                "persisted and will not appear in the timeline: %s",
+                getattr(turn, "turn_id", "?"), getattr(turn, "thread_id", "?"), e,
+            )
 
     async def _drive(self) -> AsyncIterator[StreamEvent]:
         """Run the state machine from ``self.current_state`` until it settles.
@@ -2386,8 +2395,17 @@ class AgentStateMachine:
     # -------------------------------------------------------------------------
 
     @staticmethod
-    def _terminal_event(session_id: str, payload: Dict[str, Any]) -> Optional[StreamEvent]:
-        """Convert a terminal-bridge payload into its SSE event."""
+    def _terminal_event(
+        session_id: str,
+        payload: Dict[str, Any],
+        execution_id: Optional[str] = None,
+    ) -> Optional[StreamEvent]:
+        """Convert a terminal-bridge payload into its SSE event.
+
+        ``execution_id`` is the tool call the payload was drained under. Only
+        block events carry it: it is what lets the conversation's tool card
+        find its terminal tile without matching on a command string.
+        """
         kind = payload.get("kind")
         terminal_id = str(payload.get("terminal_session_id", ""))
         if kind == "spawn":
@@ -2408,15 +2426,46 @@ class AgentStateMachine:
             )
         if kind == "complete":
             exit_code = payload.get("exit_code")
+            duration = payload.get("duration")
             return StreamEvent.terminal_complete(
                 session_id,
                 terminal_id,
                 int(exit_code) if exit_code is not None else -1,
+                block_id=payload.get("block_id"),
+                duration=float(duration) if duration is not None else None,
+                output_head=payload.get("output_head"),
+                output_tail=payload.get("output_tail"),
+            )
+        if kind in ("block", "block_promote"):
+            block_id = str(payload.get("block_id", ""))
+            if not block_id:
+                # A block record with no id is unaddressable: nothing could
+                # promote it, complete it, or jump to the turn that ran it.
+                # Dropping it beats putting a ghost in the store.
+                return None
+            return StreamEvent.terminal_block(
+                session_id,
+                block_id=block_id,
+                terminal_session_id=terminal_id,
+                command=str(payload.get("command", "")),
+                owner=str(payload.get("owner", "agent")),
+                interactive=bool(payload.get("interactive")),
+                promote=(kind == "block_promote"),
+                execution_id=execution_id,
             )
         return None
 
-    def _note_terminal_payload(self, payload: Dict[str, Any]) -> None:
-        """Remember every terminal this turn spawned (persisted at end_turn)."""
+    def _note_terminal_payload(
+        self, payload: Dict[str, Any], execution_id: Optional[str] = None
+    ) -> None:
+        """Remember every terminal this turn spawned (persisted at end_turn).
+
+        Also remembers which tool call ran which block. That pairing exists
+        only here -- the drain runs under one tool call and sees that call's
+        payloads -- and ``end_turn`` needs it to stamp ``execution_id`` on the
+        stored row, which is what lets the timeline render a stored command
+        the same way the live stream did.
+        """
         if payload.get("kind") != "spawn":
             return
         terminal_id = str(payload.get("terminal_session_id", ""))
@@ -2425,6 +2474,11 @@ class AgentStateMachine:
         track_id = block_id or terminal_id
         if track_id and track_id not in self.ctx.terminal_block_ids:
             self.ctx.terminal_block_ids.append(track_id)
+        # Only a real block id is paired. The session-id fallback names no
+        # row, so stamping a tool call onto it would point the timeline at
+        # something that can never be hydrated.
+        if block_id and execution_id:
+            self.ctx.block_executions[block_id] = execution_id
 
     async def _run_tool_streaming(
         self,
@@ -2432,6 +2486,7 @@ class AgentStateMachine:
         tool_args: Dict[str, Any],
         confirmed: bool,
         sink: List[Any],
+        execution_id: Optional[str] = None,
     ) -> AsyncIterator[StreamEvent]:
         """Execute a tool, yielding terminal events while it runs.
 
@@ -2440,6 +2495,12 @@ class AgentStateMachine:
         session. Draining that bus concurrently with the tool task is what
         makes a running command visible in the conversation *as it runs*;
         awaiting the tool first would only ever produce a finished transcript.
+
+        Every payload drained here belongs to *this* tool call — the bus is
+        subscribed for its duration and nothing else is running under it — so
+        ``execution_id`` can be stamped onto the block events on the way out.
+        That is the join the frontend needs, and the reason it never has to
+        match a result back to a card by tool name.
 
         The ExecutionResult is appended to ``sink`` — an async generator
         cannot return a value.
@@ -2461,8 +2522,10 @@ class AgentStateMachine:
                 )
                 if getter in done:
                     payload = getter.result()
-                    self._note_terminal_payload(payload)
-                    event = self._terminal_event(self.ctx.session_id, payload)
+                    self._note_terminal_payload(payload, execution_id)
+                    event = self._terminal_event(
+                        self.ctx.session_id, payload, execution_id
+                    )
                     if event is not None:
                         yield event
                     continue
@@ -2473,8 +2536,10 @@ class AgentStateMachine:
             # Flush whatever the tool published on its way out.
             while not queue.empty():
                 payload = queue.get_nowait()
-                self._note_terminal_payload(payload)
-                event = self._terminal_event(self.ctx.session_id, payload)
+                self._note_terminal_payload(payload, execution_id)
+                event = self._terminal_event(
+                    self.ctx.session_id, payload, execution_id
+                )
                 if event is not None:
                     yield event
 
@@ -2525,7 +2590,7 @@ class AgentStateMachine:
             # once the command has already finished.
             sink: List[Any] = []
             async for terminal_event in self._run_tool_streaming(
-                tool_name, tool_args, confirmed, sink
+                tool_name, tool_args, confirmed, sink, execution_id=exec_id
             ):
                 yield terminal_event
             result = sink[0]

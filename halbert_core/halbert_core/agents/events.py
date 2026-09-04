@@ -547,14 +547,30 @@ class StreamEvent:
         exit_code: int,
         *,
         block_id: Optional[str] = None,
+        duration: Optional[float] = None,
+        output_head: Optional[str] = None,
+        output_tail: Optional[str] = None,
     ) -> 'StreamEvent':
-        """The terminal's child process exited (E1f)."""
+        """The terminal's child process exited (E1f).
+
+        For a pool block this also carries what the conversation needs to
+        render the finished command: how long it took and the block's own
+        output (already redacted). Each field is omitted when absent rather
+        than sent as a null -- the subprocess path has no block and no
+        head/tail, and a null duration would render as "0.0s".
+        """
         data: dict = {
             "terminal_session_id": terminal_session_id,
             "exit_code": exit_code,
         }
         if block_id is not None:
             data["block_id"] = block_id
+        if duration is not None:
+            data["duration"] = duration
+        if output_head is not None:
+            data["output_head"] = output_head
+        if output_tail is not None:
+            data["output_tail"] = output_tail
         return cls(
             type="terminal_complete",
             session_id=session_id,
@@ -576,23 +592,33 @@ class StreamEvent:
         owner: str,
         interactive: bool = False,
         promote: bool = False,
+        execution_id: Optional[str] = None,
     ) -> 'StreamEvent':
         """A new terminal block opened, or a block was promoted to long-running.
 
         type="terminal_block" when a new block opens.
         type="terminal_block_promote" when promote=True (block is >2s old
         and still open — the tile appears in the Tasks column).
+
+        ``execution_id`` is the tool call that ran this block, and it is the
+        join between the conversation's card and the terminal's tile. It is
+        omitted rather than emptied when there is none — a watched user shell
+        block has no tool call, and an empty string would join to nothing
+        while still looking like an id.
         """
+        data = {
+            "block_id": block_id,
+            "terminal_session_id": terminal_session_id,
+            "command": command,
+            "owner": owner,
+            "interactive": interactive,
+        }
+        if execution_id:
+            data["execution_id"] = execution_id
         return cls(
             type="terminal_block_promote" if promote else "terminal_block",
             session_id=session_id,
-            data={
-                "block_id": block_id,
-                "terminal_session_id": terminal_session_id,
-                "command": command,
-                "owner": owner,
-                "interactive": interactive,
-            },
+            data=data,
         )
 
     @classmethod

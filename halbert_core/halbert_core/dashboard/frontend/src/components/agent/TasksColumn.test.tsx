@@ -136,12 +136,24 @@ describe('TaskCard', () => {
     expect(screen.queryByLabelText('Stop task')).toBeNull();
   });
 
-  it('shows jump arrow when onJumpToTurn provided', () => {
+  it('jumps by block id, not by thread id', () => {
     const onJump = vi.fn();
     render(<TaskCard {...runningTask} onJumpToTurn={onJump} />);
-    const jumpBtn = screen.getByLabelText('Jump to turn');
-    fireEvent.click(jumpBtn);
-    expect(onJump).toHaveBeenCalledWith('thread-1');
+    fireEvent.click(screen.getByLabelText('Jump to turn'));
+    // A thread is a conversation, not a place on screen, and the handler
+    // scrolls to an element. Every surface that renders a block stamps
+    // `data-terminal-block` -- the live tool card, the live tile, and the
+    // same card after a reload -- so the block id resolves in all of them
+    // and the thread id resolved in none.
+    expect(onJump).toHaveBeenCalledWith(runningTask.blockId);
+  });
+
+  it('falls back to the thread id when a card has no block', () => {
+    const onJump = vi.fn();
+    const { blockId: _drop, ...noBlock } = runningTask;
+    render(<TaskCard {...noBlock} onJumpToTurn={onJump} />);
+    fireEvent.click(screen.getByLabelText('Jump to turn'));
+    expect(onJump).toHaveBeenCalledWith(noBlock.threadId);
   });
 
   it('does not show jump arrow when no callback', () => {

@@ -209,8 +209,26 @@ async def test_real_spawn_and_kill():
 # never reaped and live sessions survived app shutdown).
 # ---------------------------------------------------------------------------
 
+@pytest.fixture
+def _restore_terminal_pool():
+    """Undo the pool flag this test's real startup handlers set.
+
+    ``start_terminal_subsystem`` writes a module global, and this test runs
+    the genuine startup handlers rather than a stub. Without this the flag
+    stays on for every test that follows in the session, silently switching
+    ``_run_command`` from the subprocess path to the pool path.
+    """
+    from halbert_core.streaming import terminal_bridge
+
+    before = terminal_bridge._pool_enabled
+    yield
+    terminal_bridge._pool_enabled = before
+
+
 @pytest.mark.asyncio
-async def test_dashboard_app_startup_starts_reaper_and_shutdown_stops_it():
+async def test_dashboard_app_startup_starts_reaper_and_shutdown_stops_it(
+    _restore_terminal_pool,
+):
     from unittest.mock import AsyncMock, MagicMock, patch
 
     from halbert_core.dashboard import app as dashboard_app
@@ -242,6 +260,12 @@ async def test_dashboard_app_startup_starts_reaper_and_shutdown_stops_it():
         for handler in app.router.on_startup:
             await handler()
         manager.start_reaper.assert_called_once_with()
+        # ...and the block-producing pool, whose only caller in the whole
+        # repository used to be a test file. With it off, every command
+        # takes the subprocess fallback and no terminal_block is ever
+        # produced -- which looks like a frontend bug, not a missing call.
+        from halbert_core.streaming import terminal_bridge
+        assert terminal_bridge._pool_enabled is True
 
         for handler in app.router.on_shutdown:
             await handler()

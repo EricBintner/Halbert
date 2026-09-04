@@ -53,6 +53,13 @@ _THREAD_COLUMNS: List[Tuple[str, str]] = [
     ("turns_since_pause", "INTEGER NOT NULL DEFAULT 0"),
     ("title_source", "TEXT NOT NULL DEFAULT 'provisional'"),
 ]
+#: Added to ``terminal_blocks`` after the table shipped. ``execution_id`` is
+#: the tool call that ran the block: the join the timeline needs to render a
+#: stored command the same way the live stream did.
+_TERMINAL_BLOCK_ADDITIVE: List[Tuple[str, str]] = [
+    ("execution_id", "TEXT"),
+]
+
 _MESSAGE_COLUMNS: List[Tuple[str, str]] = [
     ("turn_id", "TEXT"),
     ("session_id", "TEXT"),
@@ -404,7 +411,8 @@ class SqliteConversationStore:
                         ended_at    REAL,
                         exit_code   INTEGER,
                         output_head TEXT NOT NULL DEFAULT '',
-                        output_tail TEXT NOT NULL DEFAULT ''
+                        output_tail TEXT NOT NULL DEFAULT '',
+                        execution_id TEXT
                     )"""
                 )
                 cur.execute(
@@ -432,6 +440,9 @@ class SqliteConversationStore:
                 )
                 self._add_missing_columns(cur, "conversations", _THREAD_COLUMNS)
                 self._add_missing_columns(cur, "messages", _MESSAGE_COLUMNS)
+                self._add_missing_columns(
+                    cur, "terminal_blocks", _TERMINAL_BLOCK_ADDITIVE
+                )
                 # v4: open_loops table (continuity R2-N2).
                 cur.execute(
                     """CREATE TABLE IF NOT EXISTS open_loops (
@@ -1959,6 +1970,7 @@ class SqliteConversationStore:
         "block_id", "session_id", "thread_id", "turn_id", "command",
         "cwd", "owner", "interactive", "remote", "redacted",
         "started_at", "ended_at", "exit_code", "output_head", "output_tail",
+        "execution_id",
     )
 
     def insert_terminal_block(self, block: Dict[str, Any]) -> bool:
@@ -1980,9 +1992,13 @@ class SqliteConversationStore:
             logger.warning(f"insert_terminal_block failed: {e}")
             return False
 
+    #: ``thread_id``/``turn_id`` are updatable because a block cannot be born
+    #: with them: the turn id is assigned when the turn is persisted, which is
+    #: after every command in it has already run. ``end_turn`` stamps them on.
     _TERMINAL_BLOCK_UPDATABLE = frozenset(
         {"ended_at", "exit_code", "output_head", "output_tail",
-         "interactive", "remote", "redacted"}
+         "interactive", "remote", "redacted", "thread_id", "turn_id",
+         "execution_id"}
     )
 
     def update_terminal_block(self, block_id: str, **fields: Any) -> bool:

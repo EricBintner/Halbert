@@ -20,7 +20,6 @@ export { DiffBlock, DiffSummary } from './DiffBlock';
 export { AgentChat } from './AgentChat';
 
 export { TerminalTile } from './TerminalTile'
-export { TerminalAccordionDock } from './TerminalAccordionDock'
 
 export { Timeline } from './Timeline'
 export { CurrentTopicLabel } from './CurrentTopicLabel'

@@ -16,6 +16,7 @@ import pytest
 
 from halbert_core.agents.conversation_sqlite import SqliteConversationStore
 from halbert_core.agents.events import StreamEvent
+from halbert_core.agents.state_machine import AgentStateMachine
 from halbert_core.agents.llm_client import LLMResponse, ToolCall, FunctionCall
 from halbert_core.agents.state_machine import AgentStateMachine
 from halbert_core.streaming.terminal_bridge import (
@@ -60,12 +61,14 @@ class _FakeThreadManager:
                      list(self.history), self.hint, list(self.recalled))
 
     def end_turn(self, turn, *, assistant_text, blocks, terminal_block_ids,
-                 diff_proposals, status="complete", thread_id_override=None):
+                 diff_proposals, status="complete", thread_id_override=None,
+                 block_executions=None):
         self.ended.append(dict(
             turn=turn, assistant_text=assistant_text, blocks=blocks,
             terminal_block_ids=terminal_block_ids,
             diff_proposals=diff_proposals, status=status,
             thread_id_override=thread_id_override,
+            block_executions=block_executions,
         ))
 
     def new_thread(self, title, reason, *, from_thread_id):
@@ -173,7 +176,16 @@ async def test_e2e_agent_block_persisted_and_replayed():
     # Block id tracked and persisted
     end = tm.ended[0]
     assert len(end["terminal_block_ids"]) == 1
-    assert end["terminal_block_ids"][0].startswith("blk-")
+    block_id = end["terminal_block_ids"][0]
+    assert block_id.startswith("blk-")
+
+    # ...and so is which tool call ran it. Without this pairing the stored
+    # row has no execution_id, and a reloaded turn cannot be matched back to
+    # the command that produced it -- the timeline then renders it as a
+    # generic card while the live stream rendered a one-line result.
+    pairing = end["block_executions"]
+    assert list(pairing) == [block_id]
+    assert pairing[block_id], "the block was paired with an empty execution id"
 
     # Turn 2: history includes the block id from turn 1
     tm2 = _FakeThreadManager(
@@ -237,10 +249,15 @@ def test_e2e_watched_shell_in_hint(store):
 
 # ── Test 3: long-running promotion ───────────────────────────────
 
-def test_e2e_long_running_promotion():
-    """Long-running command (> 2s) -> terminal_block_promote event emitted.
+def test_the_promote_factory_names_the_event_the_frontend_switches_on():
+    """The event factory produces type='terminal_block_promote'.
 
-    The event factory produces type='terminal_block_promote' when promote=True.
+    This is a factory test and is named as one. It used to be called
+    ``test_e2e_long_running_promotion`` and asserted nothing beyond the
+    factory, so it passed for the entire period during which the factory had
+    no caller and no command was ever promoted. A test named for a behaviour
+    it does not exercise is worse than no test: it reports coverage of the
+    one thing that was missing. The behaviour is now covered below.
     """
     ev = StreamEvent.terminal_block(
         "sess-1",
@@ -254,6 +271,65 @@ def test_e2e_long_running_promotion():
     assert ev.data["block_id"] == "blk-long-1"
     assert ev.data["command"] == "npm run build"
     assert ev.data["owner"] == "agent"
+
+
+@pytest.mark.asyncio
+async def test_e2e_a_slow_command_promotes_and_a_fast_one_does_not():
+    """The real chain: a command through the pool, over the bridge, onto the
+    agent's SSE stream, with nothing faked between the PTY and the event.
+
+    Two commands in one assertion because the distinction IS the feature:
+    the slow one earns a task card, the fast one stays a passing detail.
+    """
+    from halbert_core.streaming import agent_pool as pool_mod
+    from halbert_core.streaming.session_manager import TerminalSessionManager
+
+    manager = TerminalSessionManager(
+        max_sessions=8, kind_caps={"user": 3, "agent-pool": 3, "oneshot": 2}
+    )
+    pool = pool_mod.TerminalPool(manager, cap=3)
+
+    # One list, sliced at the boundary. Rebinding `published` between the two
+    # runs would not work: `published.append` is bound to the original list
+    # object, so the second run would keep filling the first run's slice.
+    published: list = []
+    original_publish = pool_mod.publish_terminal_event
+    original_after = pool_mod.PROMOTE_AFTER_SECONDS
+    pool_mod.publish_terminal_event = published.append
+    pool_mod.PROMOTE_AFTER_SECONDS = 0.2
+    try:
+        slow = await pool.run_block("sleep 0.8", timeout=10.0)
+        boundary = len(published)
+        fast = await pool.run_block("printf hi", timeout=10.0)
+        slow_payloads = published[:boundary]
+        fast_payloads = published[boundary:]
+    finally:
+        pool_mod.publish_terminal_event = original_publish
+        pool_mod.PROMOTE_AFTER_SECONDS = original_after
+        await pool.shutdown()
+
+    assert slow is not None and fast is not None
+
+    # The slow one earned a promotion...
+    slow_promotes = [p for p in slow_payloads if p["kind"] == "block_promote"]
+    assert len(slow_promotes) == 1
+    assert slow_promotes[0]["block_id"] == slow["block_id"]
+
+    # ...and the fast one did not.
+    assert [p for p in fast_payloads if p["kind"] == "block_promote"] == []
+
+    # Translate the promotion exactly as the state machine does, so a break
+    # anywhere from the pool's payload to the SSE type shows up here.
+    promoted = AgentStateMachine._terminal_event("s1", slow_promotes[0])
+    assert promoted.type == "terminal_block_promote"
+    assert promoted.data["block_id"] == slow["block_id"]
+
+    # And the fast one's completion carries what the card needs to render it
+    # as a line rather than a card.
+    done = next(p for p in fast_payloads if p["kind"] == "complete")
+    assert done["duration"] < 0.2
+    assert "hi" in done["output_head"]
+    assert done["exit_code"] == 0
 
 
 # ── Test 4: pool fallback at cap ─────────────────────────────────

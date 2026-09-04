@@ -1957,6 +1957,61 @@ if FASTAPI_AVAILABLE:
 
     _EMPTY_TIMELINE: Dict[str, Any] = {"turns": [], "has_more": False, "current_thread": None}
 
+    def _hydrate_terminal_blocks(tm, turns: List[Dict[str, Any]]) -> None:
+        """Fill each run_command block in with what its terminal block holds.
+
+        Live, the conversation joins a tool card to its terminal block through
+        the ``execution_id`` on the block event, so a finished command settles
+        into one line with its exit code and duration. After a reload there is
+        no stream, and the stored tool block (tool, args, result, exit,
+        execution_id) had nothing in common with the stored terminal block
+        (exit code, both halves of the output, timestamps). The same turn came
+        back as a generic card with the raw result underneath -- two
+        renderings of one turn, decided by whether the page had been
+        refreshed.
+
+        Joined on ``execution_id``, which ``end_turn`` now stamps on the row.
+        Never on the command string: a turn that runs the same command twice
+        is ordinary, not an edge case.
+
+        Mutates in place, one query per turn that has terminal ids. Failure is
+        swallowed on purpose: the turns are the page, this is an improvement
+        on top of them, and an improvement that fails must not take the
+        conversation with it.
+        """
+        for turn in turns:
+            blocks = turn.get("blocks") or []
+            if not turn.get("terminal_block_ids") or not blocks:
+                continue
+            wanted = {
+                b.get("execution_id"): b for b in blocks
+                if b.get("tool") == "run_command" and b.get("execution_id")
+            }
+            if not wanted:
+                continue
+            try:
+                rows = tm.store.list_terminal_blocks(turn_id=turn.get("turn_id"))
+            except Exception as e:
+                logger.warning(f"Terminal blocks unavailable for turn (non-fatal): {e}")
+                continue
+            for row in rows or []:
+                block = wanted.get(row.get("execution_id"))
+                if block is None:
+                    continue
+                block["block_id"] = row.get("block_id")
+                block["output_head"] = row.get("output_head")
+                block["output_tail"] = row.get("output_tail")
+                if row.get("exit_code") is not None:
+                    block["exit"] = row.get("exit_code")
+                started, ended = row.get("started_at"), row.get("ended_at")
+                # An unfinished block has no duration. Sending 0.0 would read
+                # as "it finished instantly", which is the opposite of true.
+                block["duration"] = (
+                    round(ended - started, 3)
+                    if started is not None and ended is not None
+                    else None
+                )
+
     @router.get("/timeline")
     async def get_timeline(before: Optional[str] = None, around: Optional[str] = None, limit: int = 50):
         """One page of the timeline, newest-last, grouped by turn.
@@ -1987,6 +2042,7 @@ if FASTAPI_AVAILABLE:
                 has_more = len(turns) > page
                 if has_more:
                     turns = turns[-page:]
+            _hydrate_terminal_blocks(tm, turns)
             return {"turns": turns, "has_more": has_more, "current_thread": _thread_summary(tm.current())}
         except Exception as e:
             logger.warning(f"Timeline unavailable (non-fatal): {e}")

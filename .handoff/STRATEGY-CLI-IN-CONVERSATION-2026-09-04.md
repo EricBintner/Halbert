@@ -541,3 +541,233 @@ Items 3–8 are the answer to this request. Items 1–2 are shared prerequisites
    hover.
 4. **Is `TerminalAccordionDock` deleted or kept?** T6 replaces it in `ContextStage`.
    If nothing else mounts it, it and its tests become dead code.
+
+---
+
+## 15. Audit of the build (2026-09-04, after commits afba3c22..8cb65c85)
+
+Re-checked every claim against the tree rather than against the commit
+messages. Four things were wrong or incomplete and are now fixed; three
+remain open and are stated here rather than implied.
+
+### Fixed by the audit
+
+**A1 — `9a8bf231` overclaimed.** It wired `blockId` and stopped, so
+`isCommandBlock` became true and nothing else did. Every branch that renders
+something needs more than the id:
+
+| branch | also needs | was |
+|---|---|---|
+| `isShortBlock` (the one-liner) | `blockDuration` + `blockOutput` | unreachable |
+| `suppressResult` | `blockOutput` | unreachable |
+| frozen `<pre>` | `blockOutput` | unreachable |
+| exit/duration label | `blockExitCode` | unreachable |
+
+The completion payload carried only an exit code. `run_block` now publishes
+`complete` **after** head/tail are computed and carries `duration`,
+`output_head`, `output_tail`. Output must come from the payload and never
+from the hosting session's scrollback: a pool session is reused across
+blocks, so its buffer holds every command it has ever run. Fixed in
+`7c3c3931`.
+
+**A2 — the promotion timer could fire after its block closed.** Cancelling
+in the `finally` is not enough: between the D marker and that cancel the pool
+decodes, splits and redacts the output, and a timer expiring inside that
+window is already scheduled. It now also checks `block_closed` on waking, and
+lives in `_promote_after` so the decision is testable without racing a real
+PTY — and so a fire-and-forget task nobody awaits cannot raise into asyncio's
+"exception was never retrieved" at shutdown. Fixed in `f8281774`.
+
+**A3 — `test_e2e_long_running_promotion` never ran a command.** It built a
+`StreamEvent` with `promote=True` and asserted its type, so it passed for the
+entire period in which the factory had no caller — while carrying the name of
+the one behaviour that was missing. Replaced with a test that runs two
+commands through the pool and asserts the slow one publishes exactly one
+promotion and the fast one publishes none; verified it fails when the
+promotion is disarmed. Fixed in `ec2870de`.
+
+*(The first draft of that replacement was itself a false pass: it rebound
+`published = []` between runs while `published.append` stayed bound to the
+original list. It "passed" for the wrong reason until the disarm check
+contradicted it. Prove-it-can-fail is the only step that catches this.)*
+
+**A4 — a short block printed its output twice.** The host sends
+`head` = first 20 lines and `tail` = the whole text when it fits in 4 KiB, so
+for any short command the two are the same string; the card joined them
+unconditionally and rendered `two shares are up\n…\ntwo shares are up`. The
+bug is as old as the component and had never been seen, because nothing
+supplied the output it renders. Wiring dead code is what makes its latent
+bugs stop being latent. Fixed in `8cb65c85`.
+
+### Still open, verified by grep against the tree
+
+| Gap | Check | Result |
+|---|---|---|
+| **Historical timeline renders no blocks** | `TimelineToolBlock` fields in `types/timeline.ts` | no `block_id`, no duration, no output — only `terminalBlockIds` at the turn level |
+| **Promotion is invisible** | files rendering `isTaskCard` | 0 |
+| **Tasks column unmounted** | non-test imports of `TasksColumn` | 0 |
+| **No status strip** | references to a status strip | 0 |
+| **No inspection grouping** | references to `InspectionGroup` | 0 |
+
+**The historical gap is the one that matters most**, because it makes the
+same turn render two different ways. Live, a fast command shows
+`$ smbstatus · exit 1 · 0.3s`; after a reload the stored turn has only the
+tool-call block (`tool`, `args`, `result`, `exit`, `executionId`) and its
+terminal ids render as "terminal · ended" chips. The data exists — the
+`terminal_blocks` row holds `exit_code`, `output_head`, `output_tail`,
+`started_at`, `ended_at`, and now `turn_id` — but the timeline route never
+hydrates it.
+
+Closing it needs a durable join from a stored tool-call block to its terminal
+block. The event now carries `execution_id`; the row does not. The same
+argument that put `turn_id` on the row applies: `end_turn` is the one moment
+both are known, so `ctx` should record `{block_id: execution_id}` pairs and
+`_anchor_blocks` should stamp both.
+
+**Promotion having no consumer** means T2 currently has zero user-visible
+effect: `terminal_block_promote` sets a flag on a block that nothing reads.
+That is D4, and it is the next thing worth building — a promoted command
+needs somewhere to be.
+
+---
+
+## 16. Second pass: the two structural gaps closed (3e9a438a, 4a862fee)
+
+### The historical timeline now renders blocks
+
+`terminal_blocks` gained an `execution_id` column, stamped at `end_turn` from
+a pairing the drain records (the one place a block id and a tool call id are
+both in scope). The timeline route joins on it and fills each `run_command`
+block in with the stored exit code, duration and output. A reloaded turn now
+renders the way the live one did.
+
+Three rules that fell out and are worth keeping:
+
+- **Join on the id, never the command.** A turn that runs the same command
+  twice is ordinary, not an edge case.
+- **An unfinished block reports no duration**, not `0.0` — which would read
+  as "it finished instantly".
+- **Hydration failure is swallowed.** The turns are the page; this is an
+  improvement on top of them, and an improvement that fails must not take the
+  conversation with it.
+
+Adding the `block_executions` kwarg broke twelve tests through their fake
+ThreadManagers, and *how* it broke them was the finding: `_end_turn` swallowed
+the `TypeError` as "end_turn failed (non-fatal)", so twelve turns silently
+went unpersisted and the only symptom was an empty list. Non-fatal to the
+stream, but the turn is gone — the words the user said and the answer they got
+written nowhere. That log now names the turn and the thread and says what was
+lost.
+
+### Promotion is now visible
+
+`useTasks` derives task cards from the terminal store's promoted blocks;
+`ContextStage` mounts `TasksColumn` in place of the accordion.
+
+Two properties had to survive the swap, and one of them was nearly lost:
+
+- The **empty state**. The accordion refused to disappear when empty because
+  "Nothing running" and an absent column say different things. Preserved.
+- The **shell launcher**. The accordion carried the *only* one on the page.
+  `YourShellRegion` renders "No shell session" with no way to start one, so
+  wiring that instead would have removed the admin's ability to open a
+  terminal at all — silently, as a side effect of a layout change. A
+  `ShellLauncher` now fills the column's `yourShell` slot.
+
+Also fixed on the way: `TaskCard`'s jump passed `threadId` to a handler that
+scrolls to an element, so it resolved nothing. It carries the block id now,
+and `findJumpTarget` tries the inline origin first and `data-terminal-block`
+second, so both kinds of id land.
+
+`TerminalAccordionDock` is deleted rather than left orphaned.
+
+### What is left
+
+| Item | State |
+|---|---|
+| Status strip (the ephemeral layer, §3) | not built |
+| Inspection grouping (§6.2, review F13) | not built |
+| Output truncation marker (T7) | partial — the elision is honest now, but unlabelled |
+| `YourShellRegion` proper (watched toggle, stage-into-shell, a real xterm) | written, still unmounted; its terminal mount point is a div the parent never fills |
+
+The first two are the remaining half of the original request: *quiet when
+fast* now has a record-level answer (a finished command collapses to one
+line) but not a present-tense one (nothing shows what is happening while a
+fast command runs, and nothing groups a run of inspection calls).
+
+---
+
+## 17. Final state (055aef68, 22241c8c)
+
+Both halves of the original request now have an answer.
+
+### Quiet when fast — the record
+
+A run of read-only calls folds into one line (`Looked at 3 files · 1 memory`,
+expandable). Applied at **both** render sites, so a turn does not change shape
+when the page is reloaded.
+
+Four things may never be folded, each with its own test: anything that
+**failed** (a 40 ms read that failed is more interesting than a 4 s one that
+did not), anything **promoted** (a command that earned a task card does not
+then vanish into a summary of things that did not matter), anything that
+**wrote**, and anything **redacted** — the last needing care, because a
+redaction marker carries neither exit code nor status and would have passed a
+success check straight into "3 files", turning a forgetting into an
+increment.
+
+A run of one stays a single card. One row is not a wall.
+
+### Present when working — the layer
+
+`StatusStrip` sits above the composer and holds what is happening *now*. A
+read still in flight is reported there and not in the feed; a command keeps
+its card, because it may become a live tile. Nothing is hidden while it
+happens — it simply does not earn a permanent row afterwards, which is the
+distinction the whole request turned on.
+
+It renders nothing when nothing is running: a persistent empty bar is
+furniture, and furniture is what this removes.
+
+### One thing found and deliberately not fixed
+
+The principled source for "is this an inspection" ought to be the safety
+framework's `RiskLevel`, and it cannot be used as one:
+
+```
+read_file           safe        list_directory      medium
+recall_memory       safe        read_log_tail       medium
+run_command (ls)    safe        get_service_status  medium
+                                check_disk_space    medium
+```
+
+The noisiest read-only tools default to `medium` — rated above reading
+`/etc/fstab`. That is a defaulting gap in `tools/safety.py` deserving its own
+change; grouping on it today would have folded almost nothing. The tier list
+is instead an explicit set, checked against the real registry by a test that
+fails on any name Halbert does not have.
+
+### Ledger of the branch
+
+| | |
+|---|---|
+| D1 the card cannot find its block | closed (`9a8bf231`, `7c3c3931`) |
+| D2 the pool is off in production | closed (`afba3c22`) |
+| D3 no promotion timer | closed (`d2f21e5e`, `f8281774`) |
+| D4 promotion has no consumer | closed (`4a862fee`) |
+| D5 tests cannot catch D1 | closed (`ec2870de`, and every new test drives a real path) |
+| historical timeline renders no blocks | closed (`3e9a438a`) |
+| inspection grouping | closed (`055aef68`) |
+| status strip | closed (`22241c8c`) |
+
+### Still open, and why
+
+- **`YourShellRegion`** (watched toggle, stage-into-shell, a real xterm) is
+  written and still unmounted; its terminal mount point is a div the parent
+  never fills. A `ShellLauncher` covers the affordance the accordion carried,
+  which is what could not be allowed to disappear. The region proper is its
+  own piece of work.
+- **`tools/safety.py` read-only defaults**, above.
+- **The review's F5** — read-before-write as a digest compare-and-swap —
+  remains the highest-value item in either document and is untouched by this
+  branch.

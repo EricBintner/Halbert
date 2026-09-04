@@ -45,6 +45,8 @@ import { announce } from '../../lib/announce';
 import { ToolExecutionCard } from './ToolExecutionCard';
 import { DiffBlock } from './DiffBlock';
 import { InlineTerminals } from './InlineTerminals';
+import { InspectionGroup } from './InspectionGroup';
+import { groupInspections } from './groupInspections';
 import { MessageContent, type RunCommand } from './MessageContent';
 
 interface TimelineProps {
@@ -124,6 +126,13 @@ export function executionFromBlock(block: TimelineToolBlock, fallbackId: string)
     status,
     result: block.result,
     error: block.error,
+    // Plan B: what the server joined on from the terminal block, so a stored
+    // command renders the way the live one did rather than as a generic card.
+    blockId: block.blockId,
+    blockExitCode: typeof block.exit === 'number' ? block.exit : undefined,
+    blockDuration: block.duration,
+    blockOutputHead: block.outputHead,
+    blockOutputTail: block.outputTail,
   };
 }
 
@@ -325,6 +334,13 @@ const TurnArticle = memo(function TurnArticle({
       : []
     : turn.blocks;
   const diffs = assistantForgotten ? [] : turn.diffProposals;
+  // Which of the executions above stand for a scrubbed row. Held as ids
+  // because grouping hands back executions, not the blocks they came from.
+  const redactedIds = new Set(
+    blocks
+      .map((block, i) => (isRedactedBlock(block) ? (block.executionId ?? `${turn.turnId}-block-${i}`) : null))
+      .filter((id): id is string => id !== null),
+  );
   const hasAssistantSide =
     turn.assistant !== null ||
     blocks.length > 0 ||
@@ -398,14 +414,25 @@ const TurnArticle = memo(function TurnArticle({
       {hasAssistantSide && (
         <div className="flex justify-start">
           <div className="max-w-[85%] bg-muted/50 border border-border/50 rounded-lg p-4 space-y-3">
-            {blocks.map((block, i) =>
-              isRedactedBlock(block) ? (
-                <RedactedToolCard key={block.executionId ?? `${turn.turnId}-block-${i}`} />
+            {/* Redaction is answered first, before anything folds. A marker
+                carries neither exit code nor status, so it would pass
+                `isQuietInspection`'s success check and disappear into "3
+                files" -- the forgetting becoming an increment, which is the
+                same mistake the ordering above this file exists to prevent,
+                one layer up. */}
+            {groupInspections(
+              blocks.map((block, i) =>
+                isRedactedBlock(block)
+                  ? { ...executionFromBlock(block, `${turn.turnId}-block-${i}`), status: 'error' as const }
+                  : executionFromBlock(block, `${turn.turnId}-block-${i}`),
+              ),
+            ).map((row, i) =>
+              row.kind === 'group' ? (
+                <InspectionGroup key={`${turn.turnId}-group-${i}`} items={row.items} />
+              ) : redactedIds.has(row.item.executionId) ? (
+                <RedactedToolCard key={row.item.executionId} />
               ) : (
-                <ToolExecutionCard
-                  key={block.executionId ?? `${turn.turnId}-block-${i}`}
-                  execution={executionFromBlock(block, `${turn.turnId}-block-${i}`)}
-                />
+                <ToolExecutionCard key={row.item.executionId} execution={row.item} />
               ),
             )}
 

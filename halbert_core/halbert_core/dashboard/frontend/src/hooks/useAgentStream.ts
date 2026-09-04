@@ -45,6 +45,29 @@ export interface ToolExecution {
   status: 'running' | 'success' | 'error';
   result?: unknown;
   error?: string;
+  /**
+   * Plan B: the terminal block this call opened, when it opened one. Set from
+   * the `terminal_block` event's own `execution_id`, which is the only join
+   * between a tool card and a terminal tile -- matching on the command string
+   * or the tool name breaks the moment a turn runs two commands.
+   *
+   * Undefined for every tool that is not a shell command, and for blocks that
+   * belong to no tool call at all (a watched user shell).
+   */
+  blockId?: string;
+  /** The PTY session hosting `blockId`. */
+  terminalSessionId?: string;
+  /** Exit code of `blockId`, once it closed. */
+  blockExitCode?: number;
+  /** Seconds `blockId` ran, measured on the host. */
+  blockDuration?: number;
+  /**
+   * The block's OWN output, head and tail. Not the hosting session's
+   * scrollback: a pool session is reused across blocks, so its buffer holds
+   * every command it has ever run.
+   */
+  blockOutputHead?: string;
+  blockOutputTail?: string;
 }
 
 export interface ConfirmationRequest {
@@ -751,14 +774,59 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
         }
 
         case 'terminal_output':
-        case 'terminal_complete':
-          // Output and exit live in the terminal store, not in session state.
+          // Raw output lives in the terminal store, not in session state.
           return prev;
 
-        // Plan B: somatic blocks live in the terminal store (applyTerminalEvent
-        // above). The session only needs to know about promoted task cards so
-        // the conversation can render them inline.
-        case 'terminal_block':
+        case 'terminal_complete': {
+          // A block's result belongs to the tool call that ran it. Matched on
+          // block id, which the execution already carries -- never on
+          // position: a short command started second can finish first, and
+          // that is the ordinary case, not the edge one.
+          const blockId = event.block_id as string | undefined;
+          if (!blockId) return prev;
+          const owner = prev.toolExecutions.some((e) => e.blockId === blockId);
+          if (!owner) return prev;
+          return {
+            ...prev,
+            toolExecutions: prev.toolExecutions.map((exec) =>
+              exec.blockId === blockId
+                ? {
+                    ...exec,
+                    blockExitCode:
+                      typeof event.exit_code === 'number' ? event.exit_code : exec.blockExitCode,
+                    blockDuration:
+                      typeof event.duration === 'number' ? event.duration : exec.blockDuration,
+                    blockOutputHead: (event.output_head as string | undefined) ?? exec.blockOutputHead,
+                    blockOutputTail: (event.output_tail as string | undefined) ?? exec.blockOutputTail,
+                  }
+                : exec,
+            ),
+          };
+        }
+
+        // Plan B: the block's output and status live in the terminal store
+        // (applyTerminalEvent above). What the session needs is the join:
+        // which tool call opened this block, so ToolExecutionCard can render
+        // it instead of a generic card. Without this the card's every block
+        // branch is unreachable -- which is exactly how it shipped.
+        case 'terminal_block': {
+          const execId = event.execution_id as string | undefined;
+          const blockId = event.block_id as string | undefined;
+          if (!execId || !blockId) return prev;
+          return {
+            ...prev,
+            toolExecutions: prev.toolExecutions.map((exec) =>
+              exec.executionId === execId
+                ? {
+                    ...exec,
+                    blockId,
+                    terminalSessionId: event.terminal_session_id as string | undefined,
+                  }
+                : exec,
+            ),
+          };
+        }
+
         case 'terminal_block_promote':
         case 'terminal_needs_input':
           return prev;

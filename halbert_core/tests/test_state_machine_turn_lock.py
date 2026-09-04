@@ -80,11 +80,12 @@ class _RecordingThreadManager:
         self.ended = []
 
     def end_turn(self, turn, *, assistant_text, blocks, terminal_block_ids, diff_proposals,
-                 status="complete", thread_id_override=None):
+                 status="complete", thread_id_override=None, block_executions=None):
         self.ended.append(dict(
             turn=turn, assistant_text=assistant_text, blocks=blocks,
             terminal_block_ids=terminal_block_ids, diff_proposals=diff_proposals,
             status=status, thread_id_override=thread_id_override,
+            block_executions=block_executions,
         ))
 
 
