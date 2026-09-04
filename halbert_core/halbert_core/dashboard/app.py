@@ -52,14 +52,10 @@ def _parse_hhmm(value) -> tuple:
 
 
 def _find_config_registry():
-    """Locate config/config-registry.yml. Returns a Path or None."""
-    candidates = [Path.cwd() / "config" / "config-registry.yml"]
-    for parent in Path(__file__).resolve().parents:
-        candidates.append(parent / "config" / "config-registry.yml")
-    for candidate in candidates:
-        if candidate.is_file():
-            return candidate
-    return None
+    """The config registry for this body. See config.manifest.find_registry."""
+    from ..config.manifest import find_registry
+
+    return find_registry()
 
 
 #: Client-side routes served with index.html (W3-S09). Explicit rather than
@@ -855,10 +851,13 @@ def create_app(enable_cors: bool = True) -> FastAPI:
             def start_config_watcher():
                 global _config_watcher
                 try:
-                    from ..utils.platform import is_linux
-                    if not is_linux():
-                        logger.info("Config watcher not started (Linux hosts only)")
-                        return
+                    # No platform gate. What to watch is a fact about the
+                    # platform and lives in the registry, which is chosen by
+                    # platform; the parser handles plists natively and the
+                    # watcher uses watchdog, which is cross-platform. The old
+                    # `if not is_linux(): return` kept the whole subsystem off
+                    # on the machine capabilities.py names in its own
+                    # docstring as the case it exists for.
                     manifest = _find_config_registry()
                     if manifest is None:
                         logger.info("No config-registry.yml found; config watcher not started")

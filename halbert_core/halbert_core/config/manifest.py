@@ -3,6 +3,7 @@
 from __future__ import annotations
 import fnmatch
 import os
+from pathlib import Path
 import yaml
 from typing import Dict, List
 
@@ -70,3 +71,42 @@ class Manifest:
                             continue
                         results.append(full)
         return sorted(set(results))
+
+
+def find_registry():
+    """The config registry for THIS body, or None.
+
+    One function, used by both the loader that opens the file and the
+    capability probe that asks whether there is one. They used to be two
+    functions searching different places, so on a repo checkout the probe
+    said "nothing to watch" while the manifest sat where the loader would
+    have opened it -- and the watcher stayed off with everything in place.
+
+    Searched in order:
+
+    1. the config directory -- an operator's own list beats the packaged one;
+    2. ``/etc/halbert`` -- a system install;
+    3. this package's own ``config/`` -- the shipped default.
+
+    **Never the current working directory.** A registry is a list of files to
+    read on a schedule; picking one up because a process happened to start
+    next to it is not a decision anybody made.
+
+    A platform-specific name wins where one exists: the generic registry globs
+    ``/etc/systemd/*.service``, which on a Mac watches nothing at all.
+    """
+    from ..utils.platform import get_config_dir, is_macos
+
+    names = ["config-registry.macos.yml"] if is_macos() else []
+    names.append("config-registry.yml")
+
+    roots = [Path(get_config_dir()), Path("/etc/halbert")]
+    for parent in Path(__file__).resolve().parents:
+        roots.append(parent / "config")
+
+    for name in names:
+        for root in roots:
+            candidate = root / name
+            if candidate.is_file():
+                return candidate
+    return None

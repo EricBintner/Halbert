@@ -1,0 +1,54 @@
+# Config registry — macOS body.
+#
+# What the config watcher looks at on a Mac. The generic config-registry.yml
+# beside this file describes a Linux body and globs /etc/systemd, which does
+# not exist here.
+#
+# The rule for what belongs in this list: a file whose change an administrator
+# would want explained later. Not everything that changes, and nothing that is
+# a secret or somebody's personal choice.
+include:
+  # /etc is real on macOS (a symlink to /private/etc) and holds the same kinds
+  # of thing it does anywhere: ssh, hosts, automount, mail aliases, pam.
+  - /etc/*.conf
+  - /etc/hosts
+  - /etc/aliases
+  - /etc/auto_master
+  - /etc/auto_home
+  - /etc/ssh/*
+  - /etc/pam.d/*
+  - /etc/apache2/*.conf
+  - /etc/newsyslog.d/*.conf
+  # Launch daemons and agents are macOS's services. A new plist here is the
+  # local equivalent of a new systemd unit, and is worth knowing about.
+  - /Library/LaunchDaemons/*.plist
+  - /Library/LaunchAgents/*.plist
+  # Homebrew's config tree, where most third-party service config lives.
+  - /opt/homebrew/etc/**/*.conf
+  - /opt/homebrew/etc/*.cfg
+  - /opt/homebrew/etc/gitconfig
+
+exclude:
+  # Secrets and key material. The ledger records a digest rather than content,
+  # but a digest of a private key is still a fact about a private key, and the
+  # parser would read the file to produce it.
+  - /etc/ssl/**
+  - /etc/master.passwd
+  - /etc/sudoers
+  - /etc/sudoers.d/**
+  - /etc/ssh/*_key
+  - /etc/krb5.keytab
+  # The OS leaves its own backups all over /etc after an upgrade. Each is a
+  # "change" nobody made.
+  - "**/*~orig"
+  - "**/*~previous"
+  - "**/*.db"
+  # Written constantly by the system; not administration.
+  - /etc/localtime
+  - /private/etc/racoon/**
+
+parsers:
+  ini: ["*.ini", "*.conf", "*.cfg"]
+  yaml: ["*.yml", "*.yaml"]
+  json: ["*.json"]
+  plist: ["*.plist"]

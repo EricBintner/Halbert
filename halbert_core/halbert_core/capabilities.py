@@ -161,14 +161,15 @@ def _probe_config_watcher() -> bool:
     exists for) gets the capability from the file, not the label.
     """
     try:
-        from pathlib import Path
+        # Ask the loader rather than guessing alongside it. This probe used to
+        # look in two places while _find_config_registry looked in those two
+        # AND upwards from the module, so on a repo checkout the capability
+        # said "nothing to watch" with the manifest sitting where the loader
+        # would have opened it. Two answers to one question is how the watcher
+        # stayed off.
+        from .config.manifest import find_registry
 
-        from .utils.platform import get_config_dir
-        candidates = [
-            get_config_dir() / "config-registry.yml",
-            Path("/etc/halbert/config-registry.yml"),
-        ]
-        return any(p.exists() for p in candidates)
+        return find_registry() is not None
     except Exception:
         return False
 

@@ -411,30 +411,45 @@ class TestProbePresenceSemantics:
         (tmp_path / "config-registry.yml").write_text("configs: []\n")
         assert _probe_config_watcher() is True
 
-    def test_config_watcher_probe_false_without_file(self, monkeypatch, tmp_path):
+    def test_config_watcher_probe_false_with_nothing_to_watch(self, monkeypatch, tmp_path):
+        """No registry in the config dir, on the system, or shipped.
+
+        This used to assert that an empty config dir was enough to make the
+        probe false. It is not, and it should not be: Halbert ships a default
+        registry, and a body running that default does have something to
+        watch. What the probe answers is "is there a list", not "did somebody
+        type one".
+        """
         from halbert_core.capabilities import _probe_config_watcher
+        from halbert_core.config import manifest
+
         monkeypatch.setattr(
             "halbert_core.utils.platform.get_config_dir", lambda: tmp_path)
-        # /etc/halbert must not exist on a dev machine for this to hold;
-        # the config-dir candidate is the one under test.
-        assert _probe_config_watcher() is False or (
-            tmp_path / "config-registry.yml").exists()
+        monkeypatch.setattr(manifest, "find_registry", lambda: None)
+        assert _probe_config_watcher() is False
 
-    def test_config_watcher_probe_is_not_cwd_relative(self, monkeypatch, tmp_path):
-        """A config-registry.yml sitting in the process CWD (e.g. the repo
-        root during tests) must not flip the capability when the config
-        dir has none — the probe reads the config dir, not the CWD."""
+    def test_the_registry_is_never_picked_up_from_the_cwd(self, monkeypatch, tmp_path):
+        """A config-registry.yml sitting in the process CWD must not become
+        the list of files Halbert reads on a schedule.
+
+        The concern is unchanged; only the assertion moved. It used to be
+        expressed as "the probe returns False", which stopped being true once
+        the probe could see the SHIPPED default. What it always meant is this:
+        starting next to a file is not a decision anybody made.
+        """
         import os
 
-        from halbert_core.capabilities import _probe_config_watcher
+        from halbert_core.config.manifest import find_registry
+
         monkeypatch.setattr(
             "halbert_core.utils.platform.get_config_dir", lambda: tmp_path / "cfg")
         (tmp_path / "cfg").mkdir()
-        cwd_file = tmp_path / "config-registry.yml"
-        cwd_file.write_text("configs: []\n")
+        (tmp_path / "config-registry.yml").write_text("include: [/tmp/**]\n")
         monkeypatch.chdir(tmp_path)
         assert os.path.exists("config-registry.yml")
-        assert _probe_config_watcher() is False
+
+        found = find_registry()
+        assert found is None or found.parent != tmp_path
 
     def test_sourceprep_probe_true_with_url_configured(self, monkeypatch):
         """CAP-01: the daemon is a separate HTTP service, not an
