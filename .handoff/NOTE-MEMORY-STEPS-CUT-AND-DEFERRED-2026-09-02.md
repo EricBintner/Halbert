@@ -104,3 +104,54 @@ Frontend work. The backend it needs is done: `GET /api/state/why?path=…` retur
 | No turn→request join exists | `grep -n request_id` over `agents/threads.py`, `conversation_sqlite.py` and `receipt.py` returns nothing, and no production caller of `record_file_change` passes `thread_id`. So `state_triples.thread_id` is always NULL, and a user saying "forget that" in conversation has no `request_id` to act on. `POST /api/state/forget` is therefore reachable from the why/config-diff panel but **not** from the timeline. |
 | `invalidate_state` has no production callers | Harmless today, but the vault enumerates via `current_state()`, which returns only open triples. The first production caller silently makes those facts unprojectable. Named in `vault.py`'s docstring. |
 | The agent's own file write records nothing | `ToolExecutor._write_file` (`executor.py:767-786`) opens, writes and returns a string — no audit, no ledger. `WriteConfig` is never registered on the `ToolExecutor` at all. So "ask the agent to change a config, then ask why" correctly answers *no record*, which will look like a broken tool. The acceptance path runs through the dashboard editor. |
+
+
+---
+
+## Addendum, 2026-09-03: what the reverse-engineering pass changed
+
+Two review rounds after the merge found 42 confirmed defects between them. The ones
+that changed the shape of this note:
+
+- **The promise was hollow.** No production surface supplied a reason, so every real
+  row recorded `unrecorded`. The editor and the approve dialog now collect one. The
+  commit that fixed the editor half *repeated the bug for the approve half* — it added
+  a parameter no caller passed and asserted in its own message that the dialog sent it.
+- **Two fixes were regressions.** The one-open-row index destroyed 30 of 60 reasons
+  under two concurrent writers (measured, then re-measured at 0 after the fix); the
+  unreadable-digest sentinel collided with itself and discarded the second write's
+  reason.
+- **The thread-receipt defect named above is fixed**: the item is part of the key, so a
+  collection no longer supersedes itself. That was 442 of the live ledger's 522 rows.
+- **Coverage is narrower than the promise sounds**, and the `LEDGER-1` row now says so:
+  the ledger sees Halbert's own write paths; the watcher is Linux-only and inert on
+  macOS; `run_command` and `ToolExecutor._write_file` are outside it entirely.
+
+### The live ledger was cleaned on 2026-09-03
+
+The suite had been writing the real ledger and audit chain until the isolation fixture
+landed (`20af0165`). What it left behind was removed with founder approval:
+
+- **80 rows deleted** from `~/.local/share/halbert/state_ledger.db` — 79 pytest tmp
+  paths plus one fabricated row a review agent wrote (`request_id='req-x'`,
+  `file:/etc/b`, reason "the user asked again", actor `user`). A fabricated human
+  utterance in a provenance ledger is the one thing `MEM-06` exists to prevent.
+  442 rows remain, all thread receipts. `VACUUM` run so the paths are not left in slack.
+- **112 audit records erased** through `erase_many`, which drops payload and salt and
+  leaves the hash chain intact — `audit-verify` still reports no tampering across all
+  279 records.
+- Backup before the cleanup: `~/.local/share/halbert/backups-pre-cleanup-20260903-203852/`.
+
+Note what this leaves: **zero open `file:` rows**. Every file-provenance row in the live
+ledger was test junk, so the ledger holds no real config history yet. It starts
+accumulating from the next real edit.
+
+### Still open
+
+- Nothing prunes rows for files that no longer exist, and `invalidate_state` still has
+  no production caller. The watcher's `DIGEST_ABSENT` handling covers watched paths
+  going forward only, and the watcher does not run on macOS.
+- `forget_request` does not reach the approver's copy in `findings.db`
+  `proposals.execution_result`; `ERASURE_LIMITS` says so.
+- The Fable review is still owed on seven dimensions; its workflow can resume from
+  cache.
