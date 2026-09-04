@@ -2,6 +2,7 @@
 # Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 from __future__ import annotations
 import configparser
+import logging
 import difflib
 import json
 import os
@@ -14,6 +15,8 @@ from ..continuity.state_store import ACTOR_AGENT, UNRECORDED
 from ..obs.audit import write_audit
 import yaml  # type: ignore
 from ..obs.tracing import trace_call
+
+logger = logging.getLogger(__name__)
 
 class WriteConfig(BaseTool):
     name = "write_config"
@@ -93,6 +96,42 @@ class WriteConfig(BaseTool):
                 return ToolResponse(request_id=req.request_id, ok=True, outputs=outputs)
 
             before_txt = self._read(path)
+
+            # Look before writing. Only on an apply: a dry run changes
+            # nothing, so there is nothing to protect, and refusing it would
+            # deny the reader the very diff that explains the drift.
+            if is_apply:
+                from ..continuity.write_guard import check_before_write
+
+                guard_store = None
+                try:
+                    from ..continuity.state_store import StateStore, default_state_db_path
+
+                    guard_store = StateStore(db_path=str(default_state_db_path()))
+                except Exception as e:
+                    logger.warning(f"write guard has no ledger to check against: {e}")
+                try:
+                    guard = check_before_write(
+                        path, current_text=before_txt, store=guard_store
+                    )
+                finally:
+                    if guard_store is not None:
+                        try:
+                            guard_store.close()
+                        except Exception:
+                            pass
+                if not guard.ok:
+                    write_audit(
+                        tool=self.name, mode="apply", request_id=req.request_id,
+                        ok=False, summary=f"refused write to {path}: {guard.detail}",
+                        path=path, reason=reason, actor=actor,
+                    )
+                    return ToolResponse(
+                        request_id=req.request_id, ok=False,
+                        error=f"Refused to write {path}: {guard.detail}",
+                        outputs={"diff": "", "applied": False},
+                    )
+
             lower = str(path).lower()
             if lower.endswith((".yaml", ".yml")):
                 preview, applied = self._apply_yaml(path, changes, backup, apply=not (req.dry_run or not req.confirm))

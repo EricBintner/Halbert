@@ -56,6 +56,8 @@ interface ConfigEditorProps {
 export function ConfigEditor({ filePath, onClose }: ConfigEditorProps) {
   // Editor state
   const [content, setContent] = useState<string>('');
+  /** Digest of what the server handed this editor, or null when unknown. */
+  const [loadedSha, setLoadedSha] = useState<string | null>(null);
   const [originalContent, setOriginalContent] = useState<string>('');
   const [language, setLanguage] = useState<string>('plaintext');
   const [isDirty, setIsDirty] = useState(false);
@@ -229,6 +231,22 @@ export function ConfigEditor({ filePath, onClose }: ConfigEditorProps) {
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, [isDirty]);
   
+  /** SHA-256 of a string, hex — the same digest the server computes. */
+  const sha256Hex = async (text: string): Promise<string | null> => {
+    try {
+      const bytes = new TextEncoder().encode(text);
+      const digest = await crypto.subtle.digest('SHA-256', bytes);
+      return Array.from(new Uint8Array(digest))
+        .map((b) => b.toString(16).padStart(2, '0'))
+        .join('');
+    } catch {
+      // No SubtleCrypto (an insecure origin, say). Null means "no
+      // expectation", which falls back to the server's ledger check rather
+      // than asserting something wrong.
+      return null;
+    }
+  };
+
   const loadFile = async () => {
     setLoading(true);
     setError(null);
@@ -245,6 +263,10 @@ export function ConfigEditor({ filePath, onClose }: ConfigEditorProps) {
       setOriginalContent(data.content);
       setLanguage(data.language);
       setNeedsSudo(data.needs_sudo);
+      // What this editor believes it is editing. Sent back on save so a file
+      // that changed underneath an open tab is answered rather than
+      // overwritten -- a save is not a merge.
+      setLoadedSha(data.sha256 ?? null);
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -319,6 +341,7 @@ export function ConfigEditor({ filePath, onClose }: ConfigEditorProps) {
           create_backup: true,
           backup_label: 'Before save',
           reason: saveReason.trim() || null,
+          expected_sha256: loadedSha,
         }),
       });
       
@@ -328,6 +351,10 @@ export function ConfigEditor({ filePath, onClose }: ConfigEditorProps) {
       }
       
       setOriginalContent(content);
+      // The file is now what we just wrote, so that is what the next save
+      // expects. Leaving the old digest here would make every save after the
+      // first one look like a conflict.
+      setLoadedSha(await sha256Hex(content));
       // Cleared on success so the next edit cannot silently inherit this
       // reason — a reason belongs to the write that caused it.
       setSaveReason('');

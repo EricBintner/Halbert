@@ -33,6 +33,11 @@ class FileReadResponse(BaseModel):
     modified: float
     language: str
     needs_sudo: bool
+    #: Digest of the content being handed over, so the client can say what it
+    #: believes it is editing when it saves. Without it a stale tab has no way
+    #: to be recognised as one, and the conversation about a conflicting save
+    #: cannot happen at all.
+    sha256: Optional[str] = None
 
 
 class FileWriteRequest(BaseModel):
@@ -40,6 +45,10 @@ class FileWriteRequest(BaseModel):
     content: str
     create_backup: bool = True
     backup_label: str = "Manual save"
+    #: What the client believes it is editing. A person who had this file
+    #: open in Monaco while something else changed it must be told before
+    #: their copy lands on top -- a save is not a merge.
+    expected_sha256: Optional[str] = None
     #: Why this save is happening, from the person making it. Absent means
     #: UNRECORDED -- rendered as unknown, and never filled in afterwards.
     reason: Optional[str] = None
@@ -328,13 +337,20 @@ async def read_file(path: str) -> FileReadResponse:
         content = read_file_content(path)
         stat = os.stat(path)
         
+        from ...continuity.provenance import content_digest
+
         return FileReadResponse(
             content=content,
             path=path,
             size=stat.st_size,
             modified=stat.st_mtime,
             language=detect_language(path),
-            needs_sudo=file_needs_sudo(path)
+            needs_sudo=file_needs_sudo(path),
+            # Of the content actually handed over, not of the bytes on disk:
+            # they are the same thing here, and if a future read ever
+            # transforms the content, the client's expectation must describe
+            # what the client got.
+            sha256=content_digest(content),
         )
     except PermissionError as e:
         raise HTTPException(403, str(e))
@@ -350,7 +366,47 @@ async def write_file(request: FileWriteRequest) -> FileWriteResponse:
     
     if not path or not path.startswith('/'):
         raise HTTPException(400, "Invalid path - must be absolute")
-    
+
+    on_disk = _current_text(path)
+
+    # Two questions, in order of who is asking. The client's own expectation
+    # first: it knows what its editor loaded, and a stale tab is the common
+    # case. Then the ledger, which knows what Halbert last recorded and
+    # catches the case where nobody had it open at all.
+    if request.expected_sha256 is not None:
+        from ...continuity.provenance import content_digest
+
+        actual = content_digest(on_disk)
+        if actual != request.expected_sha256:
+            # 409, not 500: nothing failed. The file simply is not what the
+            # caller thought, and saving over it is the caller's decision to
+            # make again with the current content in front of them.
+            raise HTTPException(
+                409,
+                "This file changed since it was opened. Reload it before "
+                "saving, or the other change will be overwritten unseen.",
+            )
+    else:
+        from ...continuity.write_guard import check_before_write
+
+        guard_store = None
+        try:
+            from ...continuity.state_store import StateStore, default_state_db_path
+
+            guard_store = StateStore(db_path=str(default_state_db_path()))
+        except Exception as e:
+            logger.warning(f"write guard has no ledger to check against: {e}")
+        try:
+            guard = check_before_write(path, current_text=on_disk, store=guard_store)
+        finally:
+            if guard_store is not None:
+                try:
+                    guard_store.close()
+                except Exception:
+                    pass
+        if not guard.ok:
+            raise HTTPException(409, f"This file {guard.detail}")
+
     backup_id = None
     
     # Create backup first if requested and file exists
@@ -364,7 +420,7 @@ async def write_file(request: FileWriteRequest) -> FileWriteResponse:
         except Exception as e:
             logger.warning(f"Failed to create backup: {e}")
     
-    before_text = _current_text(path)
+    before_text = on_disk
     request_id = f"editor-{uuid.uuid4().hex[:12]}"
 
     try:
