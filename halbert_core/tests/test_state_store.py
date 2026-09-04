@@ -9,6 +9,7 @@ and the provenance columns that make "I remember why" answerable.
 """
 
 import sqlite3
+import threading
 
 import pytest
 
@@ -535,13 +536,56 @@ class TestOneOpenRowPerKey:
         _rec(store, "file:/etc/a.conf", "content_sha256", "ccc")
         assert len(store.state_history("file:/etc/a.conf", "content_sha256")) == 3
 
-    def test_a_racing_writer_fails_soft_rather_than_losing_a_reason(self, store):
-        """The loser gets an IntegrityError, which record_state already
-        handles: one writer wins and nothing is silently discarded."""
-        _rec(store, "file:/etc/a.conf", "content_sha256", "aaa")
-        store._conn.execute(
-            "UPDATE state_triples SET valid_to = NULL WHERE 1=1")
-        assert len(store.current_state()) == 1
+    @pytest.mark.parametrize("writers", [2, 4])
+    def test_concurrent_writers_lose_no_reason(self, tmp_path, writers):
+        """The measurement that caught the regression, kept as the guard.
+
+        The index alone made things worse: the loser of the race got an
+        IntegrityError, was failed soft, and its reason vanished — measured
+        at 30 of 60 lost with two writers and 60 of 80 with four. The SELECT
+        sat outside the write transaction, because sqlite3 defers BEGIN to
+        the first DML. What makes this pass is BEGIN IMMEDIATE around the
+        whole read-modify-write plus one retry.
+
+        Deliberately NOT a single-threaded test. Every cheaper version of
+        this passes with the fix removed.
+        """
+        db = str(tmp_path / "contended.db")
+        StateStore(db_path=db).close()
+        returned = []
+        errors = []
+
+        def hammer(writer):
+            s = StateStore(db_path=db)
+            try:
+                for i in range(15):
+                    returned.append(s.record_state(
+                        "file:/etc/contended.conf", "content_sha256",
+                        f"v{writer}-{i}", "editor",
+                        reason=f"writer {writer} change {i}",
+                        actor=ACTOR_USER, request_id=f"w{writer}-{i}"))
+            except Exception as exc:            # pragma: no cover
+                errors.append(exc)
+            finally:
+                s.close()
+
+        threads = [threading.Thread(target=hammer, args=(w,)) for w in range(writers)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=60)
+        assert not any(t.is_alive() for t in threads), "a writer hung"
+        assert errors == []
+
+        store = StateStore(db_path=db)
+        rows = store.state_history("file:/etc/contended.conf", "content_sha256")
+        store.close()
+
+        attempted = writers * 15
+        assert returned.count(None) == 0, (
+            f"{returned.count(None)} of {attempted} writes were dropped")
+        assert len({r.reason for r in rows}) == attempted, "a reason was lost"
+        assert len([r for r in rows if r.valid_to is None]) == 1, "two open rows"
 
 
 class TestTheMigrationNeverDropsHistory:
