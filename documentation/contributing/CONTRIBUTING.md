@@ -313,11 +313,22 @@ By submitting a Pull Request with a `Signed-off-by:` commit trailer, you grant t
 
 ### 3. Apple Mac App Store GPLv3 Section 7 Exception Clause
 
-Distributions of Halbert conveyed through the Apple Mac App Store carry the following additional permission pursuant to Section 7 of the GNU General Public License Version 3:
+Distributions of Halbert conveyed through the Apple Mac App Store carry an
+additional permission under Section 7 of the GNU General Public License version 3.
 
-> **Additional Permission under GNU GPLv3 Section 7 (Apple Mac App Store Exception):**
-> 
-> *"As a special exception, the copyright holders of Halbert grant permission to convey the object code of this work through the Apple Mac App Store or other digital distribution platforms that impose usage rules, DRM, or application sandboxing, notwithstanding Sections 6 and 10 of the GNU GPLv3, provided that the complete corresponding source code for the GPLv3-covered components remains freely available under the terms of the GNU General Public License v3.0 (or later)."*
+**The exception text lives in exactly one place: [`LICENSE-EXCEPTION-APPSTORE`](../../LICENSE-EXCEPTION-APPSTORE)
+at the repository root.** That file is the operative grant. Do not paraphrase it
+here or anywhere else — a second wording is a second, different additional
+permission, and once a build has been conveyed under a text that text cannot be
+quietly retracted for versions already shipped.
+
+By signing off a contribution you grant that same exception on your contribution,
+so that the maintainer may convey the combined work through the Mac App Store.
+
+The scope limitation is deliberate: the exception covers conveyance through the
+Apple Mac App Store and nothing else. Rationale and the GPLv3 §6/§10 analysis
+behind it are in
+[`documentation/legal/APP-STORE-DISTRIBUTION-STRATEGY.md`](../legal/APP-STORE-DISTRIBUTION-STRATEGY.md).
 
 ---
 

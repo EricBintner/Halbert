@@ -272,7 +272,11 @@ We welcome contributions from the community! See [CONTRIBUTING.md](documentation
 
 Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors.
 
-Halbert is free software licensed under the **GNU General Public License v3.0 or later** (`GPL-3.0-or-later`). See [LICENSE](LICENSE) for the full text, and [documentation/legal/](documentation/legal/README.md) for licensing summaries, [third-party notices](documentation/legal/THIRD-PARTY-LICENSES.md), [privacy policy](documentation/legal/PRIVACY.md), [trademarks](documentation/legal/TRADEMARKS.md), and the [autonomous-action disclaimer](documentation/legal/DISCLAIMER.md).
+Halbert is free software licensed under the **GNU General Public License v3.0 or later** (`GPL-3.0-or-later`). See [LICENSE](LICENSE) for the full text.
+
+Builds conveyed through the Apple Mac App Store carry one additional permission under GPLv3 §7 — [LICENSE-EXCEPTION-APPSTORE](LICENSE-EXCEPTION-APPSTORE). It applies to that channel and no other, and it does not extend to third-party code. Every other build, including the direct download and every Linux package, is plain `GPL-3.0-or-later`.
+
+See [documentation/legal/](documentation/legal/README.md) for licensing summaries, [third-party notices](documentation/legal/THIRD-PARTY-LICENSES.md), [privacy policy](documentation/legal/PRIVACY.md), [trademarks](documentation/legal/TRADEMARKS.md), and the [autonomous-action disclaimer](documentation/legal/DISCLAIMER.md).
 
 
 

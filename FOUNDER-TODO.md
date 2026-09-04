@@ -1,30 +1,49 @@
 # Founder Action Items & Decision Matrix
 
 **Maintainer:** Eric Bintner  
-**Updated:** 2026-08-29  
+**Updated:** 2026-09-04  
 **Status:** Living Executive Action Checklist  
-**Governing Strategy:** [`documentation/legal/OPEN-CORE-AND-DISTRIBUTION-STRATEGY.md`](documentation/legal/OPEN-CORE-AND-DISTRIBUTION-STRATEGY.md)
+**Channels & boundary:** [`documentation/legal/OPEN-CORE-AND-DISTRIBUTION-STRATEGY.md`](documentation/legal/OPEN-CORE-AND-DISTRIBUTION-STRATEGY.md)  
+**Canonical for the legal analysis:** [`documentation/legal/APP-STORE-DISTRIBUTION-STRATEGY.md`](documentation/legal/APP-STORE-DISTRIBUTION-STRATEGY.md)  
+**Decisions of record:** [`DECISIONS.md`](DECISIONS.md) — this file is a checklist, not an authority
 
 ---
 
 ## 1. Executive Decisions Required
 
-- [ ] **`FDR-DEC-01` Formalize DCO Relicensing & Commercial Rights (`LEG-CRIT-02`)**
-  - **Decision**: Update `documentation/contributing/CONTRIBUTING.md` with explicit Developer Certificate of Origin (DCO) language that grants the project maintainer the right to distribute binaries via proprietary channels (Apple Mac App Store, Microsoft Store, Lemon Squeezy) and apply GPLv3 §7 exceptions.
-  - **Why Critical**: Must be committed *before* accepting external pull requests to prevent copyright fragmentation.
+- [x] **`FDR-DEC-01` DCO relicensing & commercial rights (`LEG-CRIT-02`)** — **decided 2026-09-04.**
+  DCO 1.1 with an explicit commercial and App Store grant to the maintainer, not a full CLA.
+  The text was already committed in `documentation/contributing/CONTRIBUTING.md` and already
+  enforced by `.github/workflows/dco.yml`; this was a ratification, not a drafting task.
 
-- [ ] **`FDR-DEC-02` Approve GPLv3 §7 Mac App Store Exception Text (`LEG-CRIT-03`)**
-  - **Decision**: Approve the exception text in [`documentation/legal/APP-STORE-DISTRIBUTION-STRATEGY.md`](documentation/legal/APP-STORE-DISTRIBUTION-STRATEGY.md) §2.1.
-  - **Action**: Commit `LICENSE-EXCEPTION-APPSTORE` and update SPDX headers on covered files.
+- [x] **`FDR-DEC-02` GPLv3 §7 Mac App Store exception text (`LEG-CRIT-03`)** — **decided 2026-09-04.**
+  `LICENSE-EXCEPTION-APPSTORE` committed at the repo root, verbatim from
+  [`APP-STORE-DISTRIBUTION-STRATEGY.md`](documentation/legal/APP-STORE-DISTRIBUTION-STRATEGY.md) §2.1.
+  The two other wordings that existed in the tree are now pointers to it.
+  - **Still open, deliberately:** the SPDX `WITH LicenseRef-Halbert-AppStore-Exception` header
+    rewrite across ~1,036 files. Deferred as a large mechanical commit, not part of the decision.
 
-- [ ] **`FDR-DEC-03` Confirm Bundle Identifiers & Packaging Namespaces**
-  - **Decision**: Align Tauri configuration and build scripts:
-    - **Free App Store Companion**: `ai.halbert.home` (Display name: *Halbert Home*)
-    - **Paid Direct Pro Edition**: `ai.halbert.pro` (Display name: *Halbert Pro*)
-    - **Linux / Internal Daemon**: `ai.halbert.dashboard`
+- [x] **`FDR-DEC-03` Bundle identifiers & packaging namespaces** — **decided 2026-09-04.**
+  `ai.halbert.home` (App Store) / `ai.halbert.pro` (direct DMG) / `ai.halbert.dashboard`
+  (dev, internal **and Linux**). Linux takes `dashboard` to match the already-published
+  `packaging/flatpak/ai.halbert.dashboard.yml` app-id rather than renaming it — a fourth
+  conflict the earlier drafts missed.
+  - **Still open:** applying it. `config/platforms.yml` still says `ai.halbert.macos.*`, and
+    `scripts/build-macos.sh` has no per-channel injection at all. Tracked as `DIST-1` in `ROADMAP.md`.
 
-- [ ] **`FDR-DEC-04` Lock Pricing & Perpetual Terms for Halbert Pro**
-  - **Decision**: Set Halbert Pro launch price at **$29 one-time perpetual** ($24 early-bird promotion), including 12 months of application updates. No recurring SaaS subscription.
+- [ ] **`FDR-DEC-04` Lock pricing & perpetual terms for Halbert Pro** — **still yours to set.**
+  Three different numbers are written down and none is a decision: this file previously said
+  $29 with a $24 early-bird, the 2026-08-29 draft said "$24–$29", and
+  [`TERMS.md`](documentation/legal/TERMS.md) adds a 3-device limit the drafts omit.
+  Needed: price, update window, renewal, refund policy, device count — then
+  `documentation/legal/HALBERT-PRO-COMMERCIAL-TERMS.md` (draft in
+  `.handoff/FOUNDER-DECISION-DRAFTS-2026-08-31.md`, three placeholders).
+  - **Blocks** Ed25519 licence verification, Sparkle and the Lemon Squeezy product — but **not**
+    the build channels, which are `DIST-1` and proceed without it.
+  - **Constraint on the mechanism, decided 2026-09-04:** `GPL-3.0-or-later` means a recipient
+    receives the source and may remove a licence check, so per-feature gating of core code is not
+    durably enforceable. The enforceable paid artifact is the signed, notarized, auto-updating
+    binary and its update stream. Where the free/paid line falls is still deferred.
 
 ---
 

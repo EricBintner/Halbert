@@ -11,6 +11,22 @@ Halbert is distributed in the hope that it will be useful, but **WITHOUT ANY
 WARRANTY**; without even the implied warranty of MERCHANTABILITY or FITNESS FOR
 A PARTICULAR PURPOSE. See the GNU General Public License for more details.
 
+## Mac App Store additional permission
+
+Builds conveyed through the Apple Mac App Store carry one additional permission
+under GPLv3 §7. The operative text is
+[`LICENSE-EXCEPTION-APPSTORE`](../../LICENSE-EXCEPTION-APPSTORE) at the repository
+root — that file, and only that file, is the grant.
+
+It is scope-limited to conveyance through the Mac App Store, does not extend to
+third-party code whose holders have not granted an equivalent permission, and a
+downstream fork may drop it. Every other build — the direct macOS download and
+every Linux package — is plain `GPL-3.0-or-later` with no exception.
+
+Why the exception is needed at all (the GPLv3 §6 and §10 conflict with Apple's
+terms, and the VLC/GNU Go precedent) is set out in
+[`APP-STORE-DISTRIBUTION-STRATEGY.md`](APP-STORE-DISTRIBUTION-STRATEGY.md).
+
 ## Summary
 
 **You are free to:**

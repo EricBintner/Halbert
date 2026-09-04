@@ -57,24 +57,25 @@ Every task is labeled with the appropriate agent or human execution tier:
     - `scripts/upload_hf_dataset.py` refuses to publish quarantined paths or records.
     - Architecture: `documentation/legal/CORPUS-LICENSING-ARCHITECTURE.md`. Tests: `halbert_core/tests/test_corpus_license_gate.py` (51 tests).
 
-- [ ] **`LEG-CRIT-02`** `[founder]` **Contributor License Agreement (CLA) & Dual-Licensing Rights**
-  - **Problem**: `CONTRIBUTING.md` currently enforces inbound=outbound GPL-3.0 without a relicensing grant. If external developers contribute without an agreement, the copyright is fragmented, legally blocking the founder from ever releasing commercial builds (Halbert Pro) or adding Mac App Store exceptions without 100% contributor approval.
-  - **Action**:
-    1. Decide between a lightweight **Developer Certificate of Origin (DCO)** with commercial relicensing grant vs. a full **Contributor License Agreement (CLA)**.
-    2. Formalize that Halbert Core remains GPL-3.0, but the project maintainer retains rights to distribute binaries across proprietary marketplaces (App Store, LemonSqueezy) with appropriate exceptions.
-    3. Update `documentation/contributing/CONTRIBUTING.md` and repository PR templates.
+- [x] **`LEG-CRIT-02`** `[founder]` **Contributor licensing & dual-licensing rights** — **decided 2026-09-04: DCO, not CLA.**
+  - **Problem**: without an inbound agreement, external contributions fragment the copyright and block commercial builds and App Store exceptions without 100% contributor approval.
+  - **Decided**: DCO 1.1 plus the explicit commercial and App Store grant in `documentation/contributing/CONTRIBUTING.md` §2, enforced by `.github/workflows/dco.yml` and `scripts/check-dco.sh`. Lighter contributor friction; sufficient for a single-maintainer project. Recorded as `FDR-01` in `DECISIONS.md`.
+  - **⚠ Known limitation of this choice, carried forward from §5.2 — read before the first external PR.** DCO 1.1 certifies provenance; it contains no words of grant. Whether the §2 grant attached to the `Signed-off-by` trailer binds a third-party contributor is not settled, so in the conservative reading the GPLv3 §7 App Store exception is grantable only over Eric Bintner's own copyright. **Today that costs nothing: every commit in this repository is the founder's.** It begins to bite the moment external code is merged into the App Store target. Two ways to close it then, neither urgent now:
+    - (a) add a real CLA with an assent step (CLA Assistant / EasyCLA) alongside the DCO; or
+    - (b) stay DCO-only and take per-contributor permission for any third-party code that reaches the App Store target.
+    Revisit when the first external pull request arrives — not before, and not after it merges.
 
-- [ ] **`LEG-CRIT-03`** `[founder]` + `[opus]` **GPL-3.0 vs. Mac App Store Conflict Strategy** — *opus half done; blocked on founder decision*
+- [x] **`LEG-CRIT-03`** `[founder]` + `[opus]` **GPL-3.0 vs. Mac App Store conflict strategy** — **decided 2026-09-04** (`FDR-02`, `FDR-03`, `FDR-07`, `FDR-08`)
   - **Problem**: Apple Mac App Store DRM and Sandbox terms conflict with GPL-3.0 Section 6 (Installation Information) and Section 10 (prohibition against further restrictions).
   - **Action**:
-    1. Adopt the dual-licensing / GPLv3 exception model (under GPLv3 Section 7) for the App Store companion client:
-       > *"As a special exception, the copyright holders of Halbert grant permission to convey the object code of this work through the Apple Mac App Store notwithstanding Sections 6 and 10 of GPLv3."*
+    1. Adopt the GPLv3 §7 additional-permission model for the App Store companion client. **The operative text is `LICENSE-EXCEPTION-APPSTORE` at the repository root — do not paraphrase it here or anywhere else.** An earlier draft of this line carried a fourth, shorter wording; it was removed on 2026-09-04, because a second wording is a second, different additional permission.
     2. Ensure no third-party GPLv3/copyleft libraries (which lack this exception) are statically linked into the Mac App Store binary target.
   - **Delivered (2026-08-25, `[opus]` half)**:
     - `documentation/legal/APP-STORE-DISTRIBUTION-STRATEGY.md` — the §6/§10 conflict stated precisely, proposed §7 exception text, where it goes (including the SPDX `WITH` form), the open-core boundary, and the required entitlements.
     - Action 2 automated: `scripts/check_appstore_deps.py` + `config/dependency-licenses.yml` fail the App Store build on any strong/weak copyleft or unclassified dependency across Python, Rust and npm. Wired into `scripts/build-macos.sh --channel macos-app-store`. **Currently passing (verified 2026-09-02)** — this line was inaccurate between roughly 2026-08-29 and 2026-09-02: the checker itself mis-parsed the self-referential `halbert-core[dashboard]`/`halbert-core[…]` extras as third-party dependencies, and 9 real dependencies added since (`mss`, `opencv-python`, `sherpa-onnx`, `openwakeword`, `pyacoustid`, `cpal`, `webrtc-audio-processing`, `@halbert/design-system`, `@halbert/model-picker`) had no register entry — both fixed in the SONNET-05 packet (`test_corpus_license_gate.py` now 51/51). Sourcing for each, and the one item still needing a founder legal call (opencv-python's wheel bundling LGPL FFmpeg), are in `config/dependency-licenses.yml`'s own notes and `DISPATCH-2026-09-01-FOUNDER-DECISIONS.md`.
     - The one copyleft dependency, `systemd-python` (LGPL-2.1-or-later), is verified excluded from macOS by its `platform_system == 'Linux'` marker plus `--exclude-module systemd`; a test fails if that marker is ever removed.
-  - **Still blocked on the founder** (see §7 of the strategy doc): approve the exception text; settle `LEG-CRIT-02` first, because the exception is only durable if future contributors are bound by it; confirm the App Store client stays a sandboxed remote companion; reconcile the bundle identifiers (`config/platforms.yml` says `ai.halbert.macos.free`, `tauri.conf.json` hard-codes `ai.halbert.dashboard` for every target).
+  - **Founder decisions taken 2026-09-04** (§7 of the strategy doc, now rewritten): exception text approved and committed to `LICENSE-EXCEPTION-APPSTORE`, guarded by `tests/test_appstore_exception_single_source.py`; `LEG-CRIT-02` settled as DCO; the App Store client confirmed as a sandboxed remote companion (`FDR-07`); bundle identifiers agreed as `ai.halbert.home` / `ai.halbert.pro` / `ai.halbert.dashboard` (`FDR-03`).
+  - **Remaining, and it is packaging code rather than legal**: apply those identifiers (`config/platforms.yml` still says `ai.halbert.macos.*`; `tauri.conf.json` hard-codes `ai.halbert.dashboard` for every target), create the per-channel entitlements plists, and add identifier + entitlements injection to `scripts/build-macos.sh`, which has none. Tracked as `DIST-1` in `ROADMAP.md`.
 
 - [x] **`LEG-CRIT-04`** `[sonnet]` **Autonomous Action Administrative Liability Waiver**
   - **Problem**: Halbert executes destructive system actions (editing `/etc/fstab`, stopping services, updating network configurations, modifying launchd daemons). While GPLv3 has general Section 15/16 disclaimers, a specialized operational disclaimer is required to protect maintainers against claims of production outages or data loss.
@@ -215,14 +216,14 @@ Every task is labeled with the appropriate agent or human execution tier:
 ## 4. Work Breakdown by Execution Tier
 
 ### 🧑‍💼 Founder Tasks (`[founder]`)
-1. `LEG-CRIT-02`: Decide Contributor License Agreement / DCO strategy for dual-licensing.
-2. `LEG-CRIT-03`: Approve Mac App Store GPLv3 Section 7 exception clause.
-3. `LEG-MAJ-04`: Establish LemonSqueezy commercial pricing, refund terms, and EULA for Halbert Pro.
+1. ✅ `LEG-CRIT-02`: Contributor licensing strategy. *(decided 2026-09-04 — DCO with commercial grant; see the limitation noted on the item above)*
+2. ✅ `LEG-CRIT-03`: Mac App Store GPLv3 §7 exception clause. *(approved and committed 2026-09-04)*
+3. `LEG-MAJ-04`: Establish Lemon Squeezy commercial pricing, refund terms, and EULA for Halbert Pro. **Still open (`FDR-04`)** — blocks the Pro product, not the build channels.
 
 ### 🧠 Opus Tasks (`[opus]`)
 1. ✅ `LEG-CRIT-01`: Architect SS64 non-commercial quarantine and build-time exclusion pipeline. *(done 2026-08-25)*
 2. ✅ `LEG-MAJ-05`: Implement and verify Arch Wiki (GNU FDL) build gate for macOS bundles. *(done 2026-08-25)*
-3. ✅ `LEG-CRIT-03` (opus half): App Store distribution architecture + automated dependency copyleft gate. *(done 2026-08-25 — founder decision still outstanding)*
+3. ✅ `LEG-CRIT-03` (opus half): App Store distribution architecture + automated dependency copyleft gate. *(done 2026-08-25; founder half decided 2026-09-04)*
 
 **Opus deliverables**
 
@@ -289,7 +290,7 @@ on a local Ollama instance.
 
 ### 5.2 Facts that change the plan — founder attention
 
-1. **LEG-CRIT-02 — a DCO sign-off is not a licence grant.** DCO 1.1 only
+1. **LEG-CRIT-02 — a DCO sign-off is not a licence grant.** *(Decided 2026-09-04: option (b), DCO-only. This analysis is unchanged and still governs — it is now a known, accepted limitation rather than an open question. See the `LEG-CRIT-02` item above for when it starts to matter.)* DCO 1.1 only
    certifies provenance ("I have the right to submit it under the open source
    license indicated in the file"); it contains no words of grant. The
    "Dual-Licensing & Commercial Permission Grant" that CONTRIBUTING.md §2

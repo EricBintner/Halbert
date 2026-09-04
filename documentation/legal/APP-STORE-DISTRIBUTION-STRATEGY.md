@@ -1,7 +1,8 @@
 # Mac App Store Distribution Strategy (GPLv3 §7 Exception)
 
 **Date:** 2026-08-25
-**Status:** Architecture complete — **blocked on a founder decision** (see §7)
+**Status:** Architecture complete; **§7 decisions taken 2026-09-04** — the channel is no longer a
+licensing blocker. Remaining work is packaging code, tracked as `DIST-1` in `ROADMAP.md`.
 **Covers:** `LEG-CRIT-03` — GPL-3.0 vs. Mac App Store conflict strategy
 **Depends on:** `LEG-CRIT-02` (CLA / DCO relicensing rights)
 **Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors**
@@ -238,33 +239,53 @@ of them is blocked on the founder decision.
 
 ## 7. Decisions required from the founder
 
-These are legal and commercial choices, deliberately not made here.
+**All four were taken on 2026-09-04.** Recorded in `DECISIONS.md` as `FDR-01`, `FDR-02`,
+`FDR-03` and `FDR-07`; the reasoning is kept below because the constraints still bind.
 
-1. **Approve or amend the §7 exception text in §2.1.** Recommend having counsel
-   review the wording before it is committed; once published under it, builds are
-   distributed under that text and it cannot be quietly retracted for versions
-   already conveyed.
+1. **§7 exception text — approved as written in §2.1**, and committed verbatim to
+   `LICENSE-EXCEPTION-APPSTORE` at the repository root. That file is now the sole
+   operative grant; `CONTRIBUTING.md` and the distribution-channels doc point at it
+   instead of paraphrasing, and `tests/test_appstore_exception_single_source.py`
+   fails the build if a second wording reappears. The warning that motivated the
+   single-sourcing stands: once builds are conveyed under a text, that text cannot
+   be quietly retracted for versions already shipped. Counsel review before first
+   submission remains advisable.
 
-2. **Decide `LEG-CRIT-02` (CLA vs DCO-with-relicensing-grant) first.** The
-   exception is durable only if every future contributor is bound by it. A DCO
-   with an explicit relicensing grant is the lighter-weight option and is usually
-   sufficient for a single-maintainer project; a full CLA gives more latitude at
-   the cost of contributor friction.
+2. **`LEG-CRIT-02` — DCO with an explicit relicensing grant**, not a full CLA. The
+   text was already in `CONTRIBUTING.md` and already enforced by
+   `.github/workflows/dco.yml`; 2026-09-04 ratified it. Lighter contributor friction,
+   sufficient for a single-maintainer project.
 
-3. **Confirm the App Store client stays a sandboxed remote companion.** The whole
+3. **The App Store client stays a sandboxed remote companion** (`FDR-07`). The whole
    open-core boundary rests on this. If the App Store build ever grows local
-   administration features, the licensing analysis, the entitlements and the
-   product differentiation all have to be redone.
+   administration features, the licensing analysis, the entitlements and the product
+   differentiation all have to be redone.
 
-4. **Confirm the bundle identifiers.** `config/platforms.yml` specifies
-   `ai.halbert.macos.pro` and `ai.halbert.macos.free`, while
-   `src-tauri/tauri.conf.json` currently hard-codes `ai.halbert.dashboard` for
-   every target. These must be reconciled, and per-channel entitlements files
-   added, before submission.
+4. **Bundle identifiers reconciled** (`FDR-03`): `ai.halbert.home` (App Store),
+   `ai.halbert.pro` (direct DMG), `ai.halbert.dashboard` (dev, internal and Linux —
+   matching the already-published flatpak app-id rather than renaming it).
+   **Not yet applied:** `config/platforms.yml` still says `ai.halbert.macos.*`, and
+   `scripts/build-macos.sh` still has no per-channel identifier or entitlements
+   injection. Per-channel entitlements files (§4.3) do not exist yet. That is the
+   `DIST-1` work.
 
-Until (1) and (2) are settled, the App Store channel is a **release blocker**,
-not a to-do item. The gates will happily build a clean bundle; distributing it
-would still infringe.
+### Still open
+
+* **`FDR-04`** — Halbert Pro's price, update window, renewal, refund policy and device
+  count, and then `HALBERT-PRO-COMMERCIAL-TERMS.md`. This blocks the Pro *product*
+  (licence keys, Sparkle, Lemon Squeezy). It does **not** block either build channel.
+* **`FDR-05` / `FDR-06`** — copyright first year, and confirming `-or-later` over
+  `-only`. Each is a one-word answer that becomes expensive after external
+  contributions land.
+* **The SPDX `WITH LicenseRef-Halbert-AppStore-Exception` header rewrite** across
+  ~1,036 files — deliberately deferred as a large mechanical commit.
+
+A note on mechanism, decided alongside the above: because the core is
+`GPL-3.0-or-later`, a recipient receives the source and may remove a licence check,
+so per-feature gating of core code is not durably enforceable. The enforceable paid
+artifact is the signed, notarized, auto-updating binary and its update stream.
+
+---
 
 ---
 
