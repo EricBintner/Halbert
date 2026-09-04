@@ -394,6 +394,7 @@ class ThreadManager:
         diff_proposals: list,
         status: str = "complete",
         thread_id_override: Optional[str] = None,
+        block_executions: Optional[Dict[str, str]] = None,
     ) -> None:
         """Finalise the turn: user row status, assistant row, thread sets, receipt."""
         now = self._now()
@@ -412,7 +413,9 @@ class ThreadManager:
                 diff_proposals=list(diff_proposals or []),
                 timestamp=now,
             )
-        self._anchor_blocks(terminal_block_ids, thread_id, turn.turn_id)
+        self._anchor_blocks(
+            terminal_block_ids, thread_id, turn.turn_id, block_executions or {}
+        )
         thread = self.store.get_thread(thread_id)
         if thread is None:
             return
@@ -426,7 +429,11 @@ class ThreadManager:
         self._refresh_receipt(thread_id)
 
     def _anchor_blocks(
-        self, block_ids: List[str], thread_id: str, turn_id: str
+        self,
+        block_ids: List[str],
+        thread_id: str,
+        turn_id: str,
+        block_executions: Optional[Dict[str, str]] = None,
     ) -> None:
         """Stamp this turn onto every terminal block it ran.
 
@@ -449,8 +456,14 @@ class ThreadManager:
         for block_id in block_ids or []:
             if not block_id:
                 continue
+            fields: Dict[str, Any] = {"thread_id": thread_id, "turn_id": turn_id}
+            # A block with no recorded tool call is not an error: a watched
+            # user shell block belongs to a turn but to nothing that ran it.
+            execution_id = (block_executions or {}).get(block_id)
+            if execution_id:
+                fields["execution_id"] = execution_id
             try:
-                update(block_id, thread_id=thread_id, turn_id=turn_id)
+                update(block_id, **fields)
             except Exception as e:
                 logger.warning(f"could not anchor block {block_id} to {turn_id}: {e}")
 

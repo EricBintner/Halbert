@@ -651,6 +651,7 @@ class AgentStateMachine:
                 assistant_text="".join(old_ctx.response_chunks or []),
                 blocks=blocks,
                 terminal_block_ids=list(old_ctx.terminal_block_ids or []),
+                block_executions=dict(getattr(old_ctx, 'block_executions', {}) or {}),
                 diff_proposals=[
                     {"diff_id": diff_id,
                      **(diff if isinstance(diff, dict) else {"value": diff})}
@@ -982,12 +983,20 @@ class AgentStateMachine:
                 assistant_text="".join(ctx.response_chunks),
                 blocks=blocks,
                 terminal_block_ids=list(ctx.terminal_block_ids),
+                block_executions=dict(ctx.block_executions),
                 diff_proposals=diffs,
                 status=status,
                 thread_id_override=ctx.thread_id if ctx.thread_switched else None,
             )
         except Exception as e:
-            logger.warning(f"end_turn failed (non-fatal): {e}")
+            # Non-fatal to the stream, but the turn is GONE: the words the
+            # user said and the answer they got are not written anywhere.
+            # Say which turn, so this is diagnosable rather than a shrug.
+            logger.warning(
+                "end_turn failed for turn %s in thread %s - this turn is not "
+                "persisted and will not appear in the timeline: %s",
+                getattr(turn, "turn_id", "?"), getattr(turn, "thread_id", "?"), e,
+            )
 
     async def _drive(self) -> AsyncIterator[StreamEvent]:
         """Run the state machine from ``self.current_state`` until it settles.
@@ -2446,8 +2455,17 @@ class AgentStateMachine:
             )
         return None
 
-    def _note_terminal_payload(self, payload: Dict[str, Any]) -> None:
-        """Remember every terminal this turn spawned (persisted at end_turn)."""
+    def _note_terminal_payload(
+        self, payload: Dict[str, Any], execution_id: Optional[str] = None
+    ) -> None:
+        """Remember every terminal this turn spawned (persisted at end_turn).
+
+        Also remembers which tool call ran which block. That pairing exists
+        only here -- the drain runs under one tool call and sees that call's
+        payloads -- and ``end_turn`` needs it to stamp ``execution_id`` on the
+        stored row, which is what lets the timeline render a stored command
+        the same way the live stream did.
+        """
         if payload.get("kind") != "spawn":
             return
         terminal_id = str(payload.get("terminal_session_id", ""))
@@ -2456,6 +2474,11 @@ class AgentStateMachine:
         track_id = block_id or terminal_id
         if track_id and track_id not in self.ctx.terminal_block_ids:
             self.ctx.terminal_block_ids.append(track_id)
+        # Only a real block id is paired. The session-id fallback names no
+        # row, so stamping a tool call onto it would point the timeline at
+        # something that can never be hydrated.
+        if block_id and execution_id:
+            self.ctx.block_executions[block_id] = execution_id
 
     async def _run_tool_streaming(
         self,
@@ -2499,7 +2522,7 @@ class AgentStateMachine:
                 )
                 if getter in done:
                     payload = getter.result()
-                    self._note_terminal_payload(payload)
+                    self._note_terminal_payload(payload, execution_id)
                     event = self._terminal_event(
                         self.ctx.session_id, payload, execution_id
                     )
@@ -2513,7 +2536,7 @@ class AgentStateMachine:
             # Flush whatever the tool published on its way out.
             while not queue.empty():
                 payload = queue.get_nowait()
-                self._note_terminal_payload(payload)
+                self._note_terminal_payload(payload, execution_id)
                 event = self._terminal_event(
                     self.ctx.session_id, payload, execution_id
                 )

@@ -442,3 +442,69 @@ class TestPromotionLooksBeforeItSpeaks:
             await pool._promote_after(0, lambda: True, {"kind": "block_promote"})
         finally:
             pool_mod.publish_terminal_event = original
+
+
+class TestTheTurnRemembersWhichCallRanWhichBlock:
+    """The pairing has to be carried, not re-derived.
+
+    ``_anchor_blocks`` can only stamp an execution id it is given, and the
+    one place both ids are in scope is the drain: it runs under a single tool
+    call and sees that call's block payloads. So the pairing is recorded as
+    the payloads arrive and handed to end_turn with the ids.
+    """
+
+    def test_a_spawn_under_a_tool_call_records_the_pair(self):
+        from halbert_core.agents.states import StateContext
+
+        machine = AgentStateMachine(llm_client=None, tool_executor=None)
+        machine.ctx = StateContext(
+            session_id="sess-1", request_id="req-1", user_query="ls"
+        )
+
+        machine._note_terminal_payload({
+            "kind": "spawn",
+            "terminal_session_id": "term-1",
+            "block_id": "blk-1",
+            "command": "ls",
+        }, execution_id="exec-1")
+
+        assert machine.ctx.terminal_block_ids == ["blk-1"]
+        assert machine.ctx.block_executions == {"blk-1": "exec-1"}
+
+    def test_a_spawn_outside_a_tool_call_records_the_id_and_no_pair(self):
+        from halbert_core.agents.states import StateContext
+
+        machine = AgentStateMachine(llm_client=None, tool_executor=None)
+        machine.ctx = StateContext(
+            session_id="sess-1", request_id="req-1", user_query="ls"
+        )
+
+        machine._note_terminal_payload({
+            "kind": "spawn",
+            "terminal_session_id": "term-9",
+            "block_id": "blk-9",
+            "command": "vim",
+        })
+
+        assert machine.ctx.terminal_block_ids == ["blk-9"]
+        assert machine.ctx.block_executions == {}
+
+    def test_a_session_id_fallback_is_not_recorded_as_a_block(self):
+        """When a spawn carries no block id the tracked id is the SESSION id,
+        which is not a block and has no row to stamp. Pairing it with a tool
+        call would point the timeline at something that cannot be hydrated."""
+        from halbert_core.agents.states import StateContext
+
+        machine = AgentStateMachine(llm_client=None, tool_executor=None)
+        machine.ctx = StateContext(
+            session_id="sess-1", request_id="req-1", user_query="ls"
+        )
+
+        machine._note_terminal_payload({
+            "kind": "spawn",
+            "terminal_session_id": "term-1",
+            "command": "ls",
+        }, execution_id="exec-1")
+
+        assert machine.ctx.terminal_block_ids == ["term-1"]
+        assert machine.ctx.block_executions == {}

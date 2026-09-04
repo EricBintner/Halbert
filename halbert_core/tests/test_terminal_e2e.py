@@ -61,12 +61,14 @@ class _FakeThreadManager:
                      list(self.history), self.hint, list(self.recalled))
 
     def end_turn(self, turn, *, assistant_text, blocks, terminal_block_ids,
-                 diff_proposals, status="complete", thread_id_override=None):
+                 diff_proposals, status="complete", thread_id_override=None,
+                 block_executions=None):
         self.ended.append(dict(
             turn=turn, assistant_text=assistant_text, blocks=blocks,
             terminal_block_ids=terminal_block_ids,
             diff_proposals=diff_proposals, status=status,
             thread_id_override=thread_id_override,
+            block_executions=block_executions,
         ))
 
     def new_thread(self, title, reason, *, from_thread_id):
@@ -174,7 +176,16 @@ async def test_e2e_agent_block_persisted_and_replayed():
     # Block id tracked and persisted
     end = tm.ended[0]
     assert len(end["terminal_block_ids"]) == 1
-    assert end["terminal_block_ids"][0].startswith("blk-")
+    block_id = end["terminal_block_ids"][0]
+    assert block_id.startswith("blk-")
+
+    # ...and so is which tool call ran it. Without this pairing the stored
+    # row has no execution_id, and a reloaded turn cannot be matched back to
+    # the command that produced it -- the timeline then renders it as a
+    # generic card while the live stream rendered a one-line result.
+    pairing = end["block_executions"]
+    assert list(pairing) == [block_id]
+    assert pairing[block_id], "the block was paired with an empty execution id"
 
     # Turn 2: history includes the block id from turn 1
     tm2 = _FakeThreadManager(

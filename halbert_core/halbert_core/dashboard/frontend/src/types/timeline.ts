@@ -29,6 +29,17 @@ export interface TimelineToolBlock {
   /** Set alongside status === "error"; the failure message. */
   error?: string;
   /**
+   * Plan B: the terminal block this command ran in, joined server-side by
+   * execution id. Present only for a `run_command` whose block was stored,
+   * and absent for every other tool. Without it a reloaded turn rendered as
+   * a generic card while the live one rendered as a one-line result.
+   */
+  blockId?: string;
+  /** Seconds the block ran, or undefined while it is still running. */
+  duration?: number;
+  outputHead?: string;
+  outputTail?: string;
+  /**
    * True for the marker block `redact_message` leaves behind for a forgotten
    * row (conversation_sqlite.py: `{tool: "[redacted by admin]", args: {},
    * result: "[redacted by admin]", exit: null, redacted: true}`). It carries
@@ -125,6 +136,13 @@ export function blockFromServer(raw: unknown): TimelineToolBlock {
     // Only ever `true` or absent: an ordinary block keeps the exact shape
     // the rest of this file's consumers (and their `toEqual`s) expect.
     redacted: r.redacted === true ? true : undefined,
+    blockId: typeof r.block_id === 'string' ? r.block_id
+      : typeof r.blockId === 'string' ? r.blockId : undefined,
+    // Absent, never 0: a running block has no duration, and 0.0s reads as
+    // "it finished instantly".
+    duration: typeof r.duration === 'number' ? r.duration : undefined,
+    outputHead: typeof r.output_head === 'string' ? r.output_head : undefined,
+    outputTail: typeof r.output_tail === 'string' ? r.output_tail : undefined,
   };
 }
 

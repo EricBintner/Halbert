@@ -219,6 +219,12 @@ class StateContext:
     # session_ids, but the field name on the store column remains
     # terminal_block_ids.
     terminal_block_ids: List[str] = field(default_factory=list)
+    #: block id -> the tool call that ran it. Recorded as the spawn payloads
+    #: arrive, because the drain is the one place both ids are in scope, and
+    #: handed to end_turn so the stored row can carry the join the timeline
+    #: needs after a reload. Only real block ids appear here: a spawn with no
+    #: block id falls back to a SESSION id above, which has no row to stamp.
+    block_executions: Dict[str, str] = field(default_factory=dict)
     # The ThreadManager.TurnContext for this turn (None when no manager is
     # wired); end_turn needs it back.
     turn_context: Optional[Any] = None

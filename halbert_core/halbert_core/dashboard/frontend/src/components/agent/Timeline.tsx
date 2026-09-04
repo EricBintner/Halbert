@@ -124,6 +124,13 @@ export function executionFromBlock(block: TimelineToolBlock, fallbackId: string)
     status,
     result: block.result,
     error: block.error,
+    // Plan B: what the server joined on from the terminal block, so a stored
+    // command renders the way the live one did rather than as a generic card.
+    blockId: block.blockId,
+    blockExitCode: typeof block.exit === 'number' ? block.exit : undefined,
+    blockDuration: block.duration,
+    blockOutputHead: block.outputHead,
+    blockOutputTail: block.outputTail,
   };
 }
 

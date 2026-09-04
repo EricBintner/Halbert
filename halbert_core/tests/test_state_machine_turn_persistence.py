@@ -40,9 +40,11 @@ class _FakeThreadManager:
         self.begun.append((query, signals, session_id))
         return _Turn("t-open", f"turn-{len(self.begun)}", 1, list(self.history), self.hint, list(self.recalled))
 
-    def end_turn(self, turn, *, assistant_text, blocks, terminal_block_ids, diff_proposals, status="complete", thread_id_override=None):
+    def end_turn(self, turn, *, assistant_text, blocks, terminal_block_ids, diff_proposals,
+                 status="complete", thread_id_override=None, block_executions=None):
         self.ended.append(dict(turn=turn, assistant_text=assistant_text, blocks=blocks, terminal_block_ids=terminal_block_ids,
-                               diff_proposals=diff_proposals, status=status, thread_id_override=thread_id_override))
+                               diff_proposals=diff_proposals, status=status, thread_id_override=thread_id_override,
+                               block_executions=block_executions))
 
     def new_thread(self, title, reason, *, from_thread_id):
         return "t-new"
