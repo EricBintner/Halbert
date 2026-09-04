@@ -155,3 +155,76 @@ accumulating from the next real edit.
   `proposals.execution_result`; `ERASURE_LIMITS` says so.
 - The Fable review is still owed on seven dimensions; its workflow can resume from
   cache.
+
+
+---
+
+## Addendum 2, 2026-09-03: the backlog worked through
+
+Each remaining finding was re-checked against HEAD before being acted on. Three were
+already fixed by later commits. Two are correctly left alone. The rest are done.
+
+### Left alone, on purpose
+
+**The watcher's Linux gate.** Enabling it on macOS is a *feature*, not a fix, and the
+cheap version would be a lie: deleting the `is_linux()` gate produces zero new ledger
+rows, because a capability probe short-circuits before it and the manifest holds no
+macOS paths. It is already stated as a limit in the `LEDGER-1` row. Doing it properly
+means pointing the watcher at the per-platform role scopes — and that turns on digesting
+SSH config, `.env` and cloud-CLI credentials, which the role-scoped design doc gates
+behind its own prerequisites.
+
+*But* triaging it found a real bug, now fixed: `os.path.dirname("/etc/**/*.conf")` is
+the literal `/etc/**`, so the broadest include in the shipped **Linux** manifest matched
+nothing.
+
+**`plan()` re-fetching history.** Real inefficiency, correct cheap fix, nothing paying
+for it: the loop executes zero times on the live ledger.
+
+### Step 9, the dream cycle — CUT, not deferred
+
+Deferring implies the same feature is waiting for content. It is not. Of the two checks
+the first deferral kept:
+
+- **duplicate open triples** is now *structurally impossible* — the partial unique index
+  added in `0ea21032` enforces one open row per key at the storage layer. A scheduled job
+  to detect what the schema forbids is a job with no work.
+- **file-digest drift** needs open `file:` rows to check, and after the cleanup there are
+  zero. It also duplicates what `freshness`/`PROBE` is *for*.
+
+The staleness class was already dropped. Nothing survives. Halbert's existing R8
+`continuity/consolidation.py` already does the cross-thread abstraction the dream-cycle
+metaphor was reaching for, under a plainer name. `MEM-04` still stands as the ruling on
+*where* such a job would register if one is ever wanted.
+
+### Step 10, the Doubt Queue — still deferred, and the case is stronger
+
+It curates contradictions produced by step 9, which is now cut. Building a curation UI
+against content nothing produces is the "beautiful empty vault" failure with a nicer
+frontend.
+
+### `continuity/freshness.py` — deferred, and the obvious repair is wrong
+
+It has no production callers, and it classifies `content_sha256` as *not* re-observable,
+which is conceptually wrong: a command re-derives a digest instantly.
+
+But wiring `decide()` into `recall_memory` would make the tool **less** honest, not more.
+`recall_memory` answers *what was recorded and why* — a historical question. `decide()`
+answers *should I trust this as current* — a different one. A recall that silently
+probed the filesystem would stop being a ledger read and start being a state check
+wearing a ledger's answer. The right home is a caller that is about to *act* on a
+current-state claim, and no such caller exists yet.
+
+### Step 5c, config-diff — built, reduced
+
+`ConfigDiffModule` now shows the recorded reason, actor and timestamp above the file.
+Deliberately **not** before/after: the ledger stores content digests, not content, so it
+cannot reconstruct the previous text, and rendering two digests as a "diff" would look
+like one without being one. The `LEDGER-1` row's before/after wording overreaches what
+the ledger can honestly supply.
+
+### The vault was reconciled
+
+`halbert vault-rebuild` removed all 80 stale notes — every one projected from a junk row,
+including the fabricated `file:/etc/b`. The vault is now empty, which is the correct
+projection of a ledger holding zero open `file:` rows.
