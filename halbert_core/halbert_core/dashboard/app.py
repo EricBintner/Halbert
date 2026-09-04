@@ -171,6 +171,51 @@ def run_conversation_boot_hooks() -> dict:
     return result
 
 
+def start_terminal_subsystem() -> Dict[str, bool]:
+    """Turn on the terminal pool and the session reaper (Plan B).
+
+    The pool is what produces *blocks*: a command run through it carries OSC
+    133 markers, so it has a block id, a ``terminal_blocks`` row, head/tail
+    output, and a lifecycle the conversation can render as a live tile that
+    settles into a one-line result. Without it ``_run_command`` falls through
+    to the subprocess path, which streams raw output under no block id at
+    all -- every command equally loud, none of them ever quieter.
+
+    ``terminal_pool_wanted()`` gates that on a module flag whose only caller
+    in the repository used to be a test, so none of it ran in production.
+    This is that caller.
+
+    The two halves are started independently on purpose. A reaper that fails
+    leaves exited PTY sessions occupying the cap -- visible, and eventually
+    loud. A pool that silently stays off produces no blocks at all, which
+    looks like a frontend bug for as long as it takes someone to find this
+    function. Coupling them would trade the loud failure for the quiet one.
+
+    Never raises: the dashboard without a terminal pool is still a dashboard.
+    """
+    result = {"pool": False, "reaper": False}
+    try:
+        from ..streaming.terminal_bridge import set_terminal_pool_enabled
+
+        set_terminal_pool_enabled(True)
+        result["pool"] = True
+    except Exception as e:
+        logger.warning(f"Terminal pool could not be enabled (non-fatal): {e}")
+    try:
+        from ..streaming.session_manager import get_terminal_manager
+
+        get_terminal_manager().start_reaper()
+        result["reaper"] = True
+    except Exception as e:
+        logger.warning(f"Terminal session reaper failed to start (non-fatal): {e}")
+    logger.info(
+        "Terminal subsystem: pool %s, reaper %s",
+        "on" if result["pool"] else "OFF",
+        "started" if result["reaper"] else "NOT started",
+    )
+    return result
+
+
 def register_proactive_jobs(executor, *, load_config=None) -> Dict[str, str]:
     """Register the scheduled background jobs on a started executor.
 
@@ -839,16 +884,12 @@ def create_app(enable_cors: bool = True) -> FastAPI:
 
             start_config_watcher()
 
-        # Terminal session manager (B1b): start the idle/dead session reaper so
-        # exited PTY sessions don't permanently exhaust the session cap.
-        # Capability-based: skip if no terminal capability.
+        # Terminal subsystem (B1b + B7): the block-producing pool and the
+        # idle/dead session reaper. Capability-based: skip with no terminal
+        # capability. See start_terminal_subsystem for why the two halves do
+        # not share a failure.
         if _caps.has(CAP_TERMINAL):
-            try:
-                from ..streaming.session_manager import get_terminal_manager
-                get_terminal_manager().start_reaper()
-                logger.info("Terminal session reaper started")
-            except Exception as e:
-                logger.warning(f"Failed to start terminal session reaper: {e}")
+            start_terminal_subsystem()
 
         # Voice mode (O2): audio pipeline coordinator — the dashboard's ears.
         # Capability-gated presence check (config enabled + sherpa-onnx, probed

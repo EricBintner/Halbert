@@ -21,6 +21,7 @@ from halbert_core.streaming.terminal_bridge import (
     get_terminal_event_bus,
     publish_terminal_event,
     set_terminal_event_bus,
+    set_terminal_pool_enabled,
     terminal_stream_wanted,
 )
 from halbert_core.tools.executor import ToolExecutor
@@ -28,10 +29,19 @@ from halbert_core.tools.executor import ToolExecutor
 
 @pytest.fixture(autouse=True)
 def fresh_bus():
-    """Every test gets its own bus; the singleton is restored afterwards."""
+    """Every test gets its own bus; the singleton is restored afterwards.
+
+    The pool is pinned off because this file tests the *subprocess* path of
+    ``_run_command`` -- the one that streams `output` payloads over the bus.
+    The pool path streams over a PTY WebSocket instead and emits spawn and
+    complete only, so a leaked ``_pool_enabled`` from another test file turns
+    every assertion here into a mystery about missing output.
+    """
     set_terminal_event_bus(TerminalEventBus())
+    set_terminal_pool_enabled(False)
     yield
     set_terminal_event_bus(None)
+    set_terminal_pool_enabled(False)
 
 
 # -----------------------------------------------------------------------------
