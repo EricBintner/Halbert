@@ -787,6 +787,7 @@ class AgentStateMachine:
             return
 
         self.ctx.turn_context = turn
+        self._enter_turn_scope(turn.turn_id)
         self.ctx.thread_id = turn.thread_id
         self.ctx.continuity_hint = turn.hint or ""
         self.ctx.recalled_threads = list(turn.recalled or [])
@@ -949,6 +950,42 @@ class AgentStateMachine:
             "error": tc.error,
         }
 
+    def _enter_turn_scope(self, turn_id: str) -> None:
+        """Put this turn's id where a write four layers down can find it.
+
+        ``record_file_change`` reads it from a ContextVar rather than a
+        parameter, because tool handlers take only their args dict: threading
+        one through every registered tool to reach the ledger would be a
+        change to the whole registry for one field. See
+        continuity/provenance.current_turn.
+        """
+        from ..continuity.provenance import current_turn
+
+        self._turn_scope_token = current_turn.set(turn_id)
+
+    def _leave_turn_scope(self) -> None:
+        """Restore whatever was in scope before this turn.
+
+        Resetting through the token rather than setting None: turns nest --
+        a confirmation resume ends one turn from inside another -- and
+        clearing outright would drop the outer turn's id, putting every write
+        after it on no turn at all. Called from an outer finally that may fire
+        for a turn that never began, so a missing token is not an error.
+        """
+        from ..continuity.provenance import current_turn
+
+        token = getattr(self, "_turn_scope_token", None)
+        if token is None:
+            return
+        self._turn_scope_token = None
+        try:
+            current_turn.reset(token)
+        except ValueError:
+            # The token belongs to another context (the turn began on a
+            # different task). Nothing to restore here; leaving the id set
+            # would be worse than leaving it alone.
+            pass
+
     def _end_turn(self, status: str) -> None:
         """Hand the finished turn to the ThreadManager (spec §4.7).
 
@@ -969,6 +1006,7 @@ class AgentStateMachine:
         if tm is None or turn is None:
             return
         ctx.turn_context = None
+        self._leave_turn_scope()
         blocks = [
             self._tool_block(tc) for tc in ctx.tool_calls
             if tc.name not in THREAD_META_TOOLS

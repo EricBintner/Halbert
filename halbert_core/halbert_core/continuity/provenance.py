@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+from contextvars import ContextVar
 from typing import Any, Dict, Optional
 
 logger = logging.getLogger("halbert.continuity.provenance")
@@ -42,8 +43,22 @@ __all__ = [
     "DIGEST_ABSENT",
     "unreadable_digest",
     "forget_request",
+    "current_turn",
     "ERASURE_LIMITS",
 ]
+
+#: The conversation turn a write is being made in, when there is one.
+#:
+#: It travels in a ContextVar for the reason ``current_agent_session`` does:
+#: tool handlers take only their args dict, so threading a parameter through
+#: every one of them to reach :func:`record_file_change` would be a change to
+#: every tool in the registry for the benefit of one field. Unset outside a
+#: turn -- the config watcher and the editor both write with no conversation
+#: in scope, and an invented id would point the timeline at one that never
+#: happened.
+current_turn: ContextVar[Optional[str]] = ContextVar(
+    "halbert_current_turn", default=None
+)
 
 #: Predicate under which a file's current content digest is held.
 FILE_CONTENT_PREDICATE = "content_sha256"
@@ -126,6 +141,7 @@ def record_file_change(
     ok: bool = True,
     summary: str = "",
     thread_id: Optional[str] = None,
+    turn_id: Optional[str] = None,
     store: Any = None,
 ) -> None:
     """Record one file change in the audit log and the state ledger.
@@ -202,6 +218,7 @@ def record_file_change(
             f"file:{path}", FILE_CONTENT_PREDICATE, after_sha, tool,
             reason=reason, actor=actor, request_id=request_id,
             thread_id=thread_id,
+            turn_id=turn_id if turn_id is not None else current_turn.get(),
         )
     except Exception as e:
         logger.warning(f"state ledger row for {path} could not be written: {e}")
@@ -219,6 +236,7 @@ def record_file_mode_change(
     request_id: str,
     tool: str,
     before_mode: Optional[str] = None,
+    turn_id: Optional[str] = None,
     ok: bool = True,
     summary: str = "",
     thread_id: Optional[str] = None,
@@ -284,6 +302,7 @@ def record_file_mode_change(
             f"file:{path}", FILE_MODE_PREDICATE, mode_octal, tool,
             reason=reason, actor=actor, request_id=request_id,
             thread_id=thread_id,
+            turn_id=turn_id if turn_id is not None else current_turn.get(),
         )
     except Exception as e:
         logger.warning(f"state ledger row for chmod {path} could not be written: {e}")
