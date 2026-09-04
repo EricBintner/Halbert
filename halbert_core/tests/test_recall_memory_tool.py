@@ -327,3 +327,47 @@ class TestPartialListsSaySo:
     def test_a_complete_list_is_not_labelled(self):
         _seed_sshd()
         assert "showing" not in _call()
+
+
+class TestALongReasonIsClippedVisibly:
+    def test_it_is_not_cut_mid_sentence_by_the_observation_budget(self):
+        """The module's own comment says a cut landing after "reason:" leaves
+        a dangling half-reason in the prompt. A long single reason could do
+        exactly that."""
+        record_file_change(path="/etc/verbose.conf", reason="x" * 4000,
+                           actor=ACTOR_USER, request_id="r1", tool="editor",
+                           after_text="a\n")
+        out = _call(path="/etc/verbose.conf")
+
+        assert len(out) < 2000, "would be truncated by the observation budget"
+        assert "(truncated)" in out, "clipped without saying so"
+
+    def test_a_normal_reason_is_untouched(self):
+        record_file_change(path="/etc/normal.conf", reason="a perfectly ordinary reason",
+                           actor=ACTOR_USER, request_id="r2", tool="editor",
+                           after_text="a\n")
+        out = _call(path="/etc/normal.conf")
+        assert "a perfectly ordinary reason" in out and "truncated" not in out
+
+
+class TestPermissionNotationIsSingular:
+    def test_two_spellings_of_one_mode_do_not_read_as_a_change(self):
+        """The write path had "600" and the rollback path had "0o644", so any
+        comparison between them reported a permission change that never
+        happened."""
+        from halbert_core.continuity.provenance import (
+            FILE_MODE_PREDICATE,
+            normalise_mode,
+            record_file_mode_change,
+        )
+
+        record_file_mode_change(path="/etc/k", mode_octal="600", reason="hygiene",
+                                actor=ACTOR_USER, request_id="r1", tool="chmod")
+        record_file_mode_change(path="/etc/k", mode_octal="0o600", reason="again",
+                                actor=ACTOR_USER, request_id="r2", tool="chmod")
+
+        store = _ledger()
+        hist = store.state_history("file:/etc/k", FILE_MODE_PREDICATE)
+        assert len(hist) == 1, "the same mode in two notations looked like a change"
+        assert hist[0].object == normalise_mode("600") == "0600"
+        store.close()

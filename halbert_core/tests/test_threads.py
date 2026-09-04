@@ -1230,8 +1230,11 @@ class TestRecordThreadState:
         assert tm.tick() == [t1.thread_id]
 
         preds = {r["predicate"] for r in recorded}
-        assert "ran_command" in preds, f"expected ran_command in {preds}"
-        assert "entity" in preds, f"expected entity in {preds}"
+        # The item is part of the key now: writing a whole collection against
+        # one (subject, predicate) made each entry close the last, so a thread
+        # that ran eight commands kept one row and seven zero-duration ones.
+        assert any(p.startswith("ran_command:") for p in preds), preds
+        assert any(p.startswith("entity:") for p in preds), preds
         # All records carry the thread_id and source=thread_close
         for r in recorded:
             assert r["thread_id"] == t1.thread_id

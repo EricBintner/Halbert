@@ -37,6 +37,7 @@ __all__ = [
     "record_file_mode_change",
     "FILE_CONTENT_PREDICATE",
     "FILE_MODE_PREDICATE",
+    "normalise_mode",
     "DIGEST_UNREADABLE",
     "DIGEST_ABSENT",
     "unreadable_digest",
@@ -79,6 +80,25 @@ DIGEST_ABSENT = "absent"
 #: landed. A test asserting "a record exists" would pass with half the
 #: contract missing.
 FILE_MODE_PREDICATE = "mode_octal"
+
+
+def normalise_mode(mode: object) -> str:
+    """One notation for permission bits: four octal digits, e.g. "0644".
+
+    The write path had `"600"` (the string from a proposal) and the rollback
+    path had `oct(0o644)` -> `"0o644"`, so the ledger held two spellings of
+    the same concept and any comparison between them reported a permission
+    change that never happened.
+    """
+    if isinstance(mode, int):
+        return format(mode & 0o7777, "04o")
+    text = str(mode).strip()
+    if text.startswith(("0o", "0O")):
+        text = text[2:]
+    try:
+        return format(int(text, 8) & 0o7777, "04o")
+    except ValueError:
+        return text
 
 
 def content_digest(text: Optional[str]) -> Optional[str]:
@@ -227,6 +247,9 @@ def record_file_mode_change(
 
     reason = _require(reason, "reason")
     actor = _require(actor, "actor")
+    mode_octal = normalise_mode(mode_octal)
+    if before_mode is not None:
+        before_mode = normalise_mode(before_mode)
 
     try:
         from ..obs.audit import write_audit

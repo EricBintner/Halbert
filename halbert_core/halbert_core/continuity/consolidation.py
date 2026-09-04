@@ -108,6 +108,10 @@ class Consolidator:
                             f"{len(threads)} {domain} threads"
                         ),
                         actor=ACTOR_SYSTEM,
+                        # Without a request_id these words are unreachable by
+                        # redact_request, which finds rows through it. A reason
+                        # that cannot be forgotten should not be recorded.
+                        request_id=f"consolidation-{domain}",
                     )
                     if rid is not None:
                         facts += 1
@@ -121,6 +125,7 @@ class Consolidator:
                 "consolidation", now=now,
                 reason="consolidation: closed-thread count for this domain",
                 actor=ACTOR_SYSTEM,
+                request_id=f"consolidation-{domain}",
             )
             if rid is not None:
                 facts += 1

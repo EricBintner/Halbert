@@ -120,6 +120,19 @@ def _value(predicate: str, obj: str) -> str:
     return obj
 
 
+#: A single reason may not eat the whole observation budget. Cut with an
+#: explicit marker rather than letting _format_tool_observation truncate at
+#: 2000 chars, which can land mid-word -- and a reason that stops mid-sentence
+#: reads as though that is all that was said.
+_MAX_REASON_CHARS = 240
+
+
+def _clip(text: str, limit: int = _MAX_REASON_CHARS) -> str:
+    if len(text) <= limit:
+        return text
+    return text[: limit - 1].rstrip() + "… (truncated)"
+
+
 def _reason(row: Dict[str, Any]) -> str:
     """Never blank, never the bare token.
 
@@ -129,7 +142,7 @@ def _reason(row: Dict[str, Any]) -> str:
     reason = (row.get("reason") or "").strip()
     if not reason or reason == UNRECORDED:
         return "reason: not recorded (none was captured at the time)"
-    return f"reason: {reason}"
+    return f"reason: {_clip(reason)}"
 
 
 def _render_row(predicate: str, row: Dict[str, Any], label: str) -> List[str]:

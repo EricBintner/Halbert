@@ -30,6 +30,19 @@ from .thread_signals import (
     GRACE_MINUTES, GRACE_TURNS, ThreadDecision, build_hint, decide, format_date,
 )
 
+def _receipt_key(item: str) -> str:
+    """A short, stable key fragment for one receipt item.
+
+    Hashed rather than interpolated: a command line contains spaces, quotes
+    and slashes, and the predicate is a lookup key rather than a display
+    string. Twelve hex characters is ample for the handful of items one
+    thread records.
+    """
+    import hashlib
+
+    return hashlib.sha256(item.encode("utf-8", errors="replace")).hexdigest()[:12]
+
+
 logger = logging.getLogger("halbert.agents.threads")
 
 __all__ = [
@@ -778,30 +791,30 @@ class ThreadManager:
             for m in messages:
                 blocks.extend(m.get("blocks") or [])
                 diffs.extend(m.get("diff_proposals") or [])
-            # Record commands as state: subject=thread, predicate=ran_command
+            # These are SET MEMBERSHIP, not superseding state. Writing every
+            # item of a collection against one (subject, predicate) made each
+            # iteration close the last, so a thread that ran eight commands
+            # kept one open row and seven zero-duration ones -- and recall
+            # rendered them as a chain of changes that never happened. The
+            # item is part of the key, so each fact stands on its own.
+            rid = f"threadclose-{thread_id}"
+
+            def _receipt(predicate: str, item: str, why: str) -> None:
+                store.record_state(
+                    f"thread:{thread_id}", f"{predicate}:{_receipt_key(item)}",
+                    item, "thread_close", thread_id=thread_id, now=now,
+                    reason=why, actor=ACTOR_AGENT, request_id=rid,
+                )
+
             for cmd in _command_lines(blocks)[-8:]:
-                store.record_state(
-                    f"thread:{thread_id}", "ran_command", cmd,
-                    "thread_close", thread_id=thread_id, now=now,
-                    reason="receipt: command run during this thread",
-                    actor=ACTOR_AGENT,
-                )
-            # Record files written as state
+                _receipt("ran_command", cmd,
+                         "receipt: command run during this thread")
             for path in _file_lines(blocks, diffs)[-8:]:
-                store.record_state(
-                    f"thread:{thread_id}", "file_written", path,
-                    "thread_close", thread_id=thread_id, now=now,
-                    reason="receipt: file written during this thread",
-                    actor=ACTOR_AGENT,
-                )
-            # Record canonical entities as state
+                _receipt("file_written", path,
+                         "receipt: file written during this thread")
             for entity in (thread.get("entities_json") or [])[:12]:
-                store.record_state(
-                    f"thread:{thread_id}", "entity", entity,
-                    "thread_close", thread_id=thread_id, now=now,
-                    reason="receipt: entity named in this thread",
-                    actor=ACTOR_AGENT,
-                )
+                _receipt("entity", entity,
+                         "receipt: entity named in this thread")
         except Exception as e:
             logger.warning(f"Failed to record thread state for {thread_id}: {e}")
 

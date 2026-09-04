@@ -73,7 +73,9 @@ class TestChmodNeedsItsOwnPredicate:
         rows = store.by_request("proposal-7")
         assert len(rows) == 1
         assert rows[0].predicate == FILE_MODE_PREDICATE
-        assert rows[0].object == "600"
+        # One notation everywhere: "600", "0o600" and 0o600 all record as 0600,
+        # so a comparison cannot report a change that never happened.
+        assert rows[0].object == "0600"
         store.close()
 
     def test_the_content_recorder_would_have_dropped_it_silently(self, tmp_path):
@@ -368,14 +370,14 @@ class TestRollbackDoesNotLeaveTheLedgerLying:
         gen._apply_chmod({"action": "chmod", "path": str(target), "mode": "600"},
                          applied, reason="hygiene", request_id="proposal-1")
         store = _ledger()
-        assert store.why(f"file:{target}", FILE_MODE_PREDICATE).current.object == "600"
+        assert store.why(f"file:{target}", FILE_MODE_PREDICATE).current.object == "0600"
         store.close()
 
         gen._rollback_change(applied[0], "proposal-1")
 
         store = _ledger()
         current = store.why(f"file:{target}", FILE_MODE_PREDICATE).current
-        assert current.object == "0o644", "the ledger still asserts the undone mode"
+        assert current.object == "0644", "the ledger still asserts the undone mode"
         assert current.reason.startswith("rollback:")
         assert current.actor == ACTOR_SYSTEM
         assert current.request_id == "proposal-1", "the restore left the approval"
