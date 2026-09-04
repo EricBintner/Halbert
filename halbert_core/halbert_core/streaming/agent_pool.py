@@ -231,14 +231,6 @@ class TerminalPool:
             ended_at = time.time()
             duration = time.monotonic() - started_monotonic
 
-            # Publish terminal_complete event (Plan B: B6).
-            publish_terminal_event({
-                "kind": "complete",
-                "terminal_session_id": sid,
-                "exit_code": exit_code if exit_code is not None else -1,
-                "block_id": block_id,
-            })
-
             # Build output head (first 20 lines) and tail (last 4 KiB)
             output_bytes = block_output.bytes()
             output_text = output_bytes.decode("utf-8", errors="replace")
@@ -249,6 +241,25 @@ class TerminalPool:
             # Redact
             head, head_redacted = redact(head)
             tail, tail_redacted = redact(tail)
+
+            # Publish terminal_complete event (Plan B: B6) -- after the output
+            # exists, so it can carry it. The conversation needs three things
+            # to render a finished command as a one-line result instead of a
+            # generic card: the exit code, how long it took, and the block's
+            # own output. The last of those cannot come from the session's
+            # scrollback: a pool session is reused, so its buffer holds every
+            # command it has ever run.
+            #
+            # Redacted head/tail are what ship, never the raw bytes.
+            publish_terminal_event({
+                "kind": "complete",
+                "terminal_session_id": sid,
+                "exit_code": exit_code if exit_code is not None else -1,
+                "block_id": block_id,
+                "duration": duration,
+                "output_head": head,
+                "output_tail": tail,
+            })
 
             # Released here on the success path so the slot is free before the
             # result is built; the finally below is the backstop for every

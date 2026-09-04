@@ -57,6 +57,17 @@ export interface ToolExecution {
   blockId?: string;
   /** The PTY session hosting `blockId`. */
   terminalSessionId?: string;
+  /** Exit code of `blockId`, once it closed. */
+  blockExitCode?: number;
+  /** Seconds `blockId` ran, measured on the host. */
+  blockDuration?: number;
+  /**
+   * The block's OWN output, head and tail. Not the hosting session's
+   * scrollback: a pool session is reused across blocks, so its buffer holds
+   * every command it has ever run.
+   */
+  blockOutputHead?: string;
+  blockOutputTail?: string;
 }
 
 export interface ConfirmationRequest {
@@ -763,9 +774,35 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
         }
 
         case 'terminal_output':
-        case 'terminal_complete':
-          // Output and exit live in the terminal store, not in session state.
+          // Raw output lives in the terminal store, not in session state.
           return prev;
+
+        case 'terminal_complete': {
+          // A block's result belongs to the tool call that ran it. Matched on
+          // block id, which the execution already carries -- never on
+          // position: a short command started second can finish first, and
+          // that is the ordinary case, not the edge one.
+          const blockId = event.block_id as string | undefined;
+          if (!blockId) return prev;
+          const owner = prev.toolExecutions.some((e) => e.blockId === blockId);
+          if (!owner) return prev;
+          return {
+            ...prev,
+            toolExecutions: prev.toolExecutions.map((exec) =>
+              exec.blockId === blockId
+                ? {
+                    ...exec,
+                    blockExitCode:
+                      typeof event.exit_code === 'number' ? event.exit_code : exec.blockExitCode,
+                    blockDuration:
+                      typeof event.duration === 'number' ? event.duration : exec.blockDuration,
+                    blockOutputHead: (event.output_head as string | undefined) ?? exec.blockOutputHead,
+                    blockOutputTail: (event.output_tail as string | undefined) ?? exec.blockOutputTail,
+                  }
+                : exec,
+            ),
+          };
+        }
 
         // Plan B: the block's output and status live in the terminal store
         // (applyTerminalEvent above). What the session needs is the join:

@@ -547,14 +547,30 @@ class StreamEvent:
         exit_code: int,
         *,
         block_id: Optional[str] = None,
+        duration: Optional[float] = None,
+        output_head: Optional[str] = None,
+        output_tail: Optional[str] = None,
     ) -> 'StreamEvent':
-        """The terminal's child process exited (E1f)."""
+        """The terminal's child process exited (E1f).
+
+        For a pool block this also carries what the conversation needs to
+        render the finished command: how long it took and the block's own
+        output (already redacted). Each field is omitted when absent rather
+        than sent as a null -- the subprocess path has no block and no
+        head/tail, and a null duration would render as "0.0s".
+        """
         data: dict = {
             "terminal_session_id": terminal_session_id,
             "exit_code": exit_code,
         }
         if block_id is not None:
             data["block_id"] = block_id
+        if duration is not None:
+            data["duration"] = duration
+        if output_head is not None:
+            data["output_head"] = output_head
+        if output_tail is not None:
+            data["output_tail"] = output_tail
         return cls(
             type="terminal_complete",
             session_id=session_id,

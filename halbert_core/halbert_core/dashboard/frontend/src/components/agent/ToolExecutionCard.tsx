@@ -54,7 +54,16 @@ const STATUS_CONFIG = {
   },
 };
 
-export function ToolExecutionCard({ execution, onRetry, blockId: blockIdProp, blockOutput, blockExitCode, blockDuration, outputHead, outputTail }: ToolExecutionCardProps): ReactNode {
+export function ToolExecutionCard({
+  execution,
+  onRetry,
+  blockId: blockIdProp,
+  blockOutput: blockOutputProp,
+  blockExitCode: blockExitCodeProp,
+  blockDuration: blockDurationProp,
+  outputHead: outputHeadProp,
+  outputTail: outputTailProp,
+}: ToolExecutionCardProps): ReactNode {
   const [isExpanded, setIsExpanded] = useState(false);
   const config = STATUS_CONFIG[execution.status];
 
@@ -64,6 +73,24 @@ export function ToolExecutionCard({ execution, onRetry, blockId: blockIdProp, bl
   // back to a generic box with the internal tool name on it. The prop stays
   // for the timeline, which reads blocks from storage rather than the stream.
   const blockId = blockIdProp ?? execution.blockId;
+  // The block's result travels the same way: props first, then whatever the
+  // stream stamped onto the execution. Without this the id was wired and the
+  // data was not, so isShortBlock and suppressResult -- gated on a duration
+  // and an output nobody supplied -- stayed false and the one-line result
+  // remained unreachable.
+  const blockExitCode = blockExitCodeProp ?? execution.blockExitCode;
+  const blockDuration = blockDurationProp ?? execution.blockDuration;
+  const outputHead = outputHeadProp ?? execution.blockOutputHead;
+  const outputTail = outputTailProp ?? execution.blockOutputTail;
+  // The whole-blob prop has no execution equivalent: head/tail is what the
+  // host actually sends, and `frozenOutput` below prefers it anyway.
+  const blockOutput =
+    blockOutputProp ??
+    (outputHead !== undefined || outputTail !== undefined
+      ? `${outputHead ?? ''}${
+          outputTail !== undefined && outputTail !== outputHead ? `\n${outputTail}` : ''
+        }`
+      : undefined);
 
   // Plan B: map execution status to StatusLight state
   const lightState: StatusLightState =

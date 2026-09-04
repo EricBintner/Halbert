@@ -2417,10 +2417,15 @@ class AgentStateMachine:
             )
         if kind == "complete":
             exit_code = payload.get("exit_code")
+            duration = payload.get("duration")
             return StreamEvent.terminal_complete(
                 session_id,
                 terminal_id,
                 int(exit_code) if exit_code is not None else -1,
+                block_id=payload.get("block_id"),
+                duration=float(duration) if duration is not None else None,
+                output_head=payload.get("output_head"),
+                output_tail=payload.get("output_tail"),
             )
         if kind in ("block", "block_promote"):
             block_id = str(payload.get("block_id", ""))

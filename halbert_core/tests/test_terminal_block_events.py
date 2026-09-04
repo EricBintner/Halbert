@@ -300,3 +300,85 @@ class TestBlockCarriesItsToolCall:
         blocks = [e for e in events if e.type == "terminal_block"]
         assert len(blocks) == 1
         assert blocks[0].data["execution_id"] == "exec-42"
+
+
+class TestCompleteCarriesTheBlocksResult:
+    """The card cannot render a result it is never sent.
+
+    Every block branch in ToolExecutionCard needs three things beyond the
+    block id: the exit code, how long it took, and the block's own output.
+    The complete payload carried only the exit code, so `isShortBlock` and
+    `suppressResult` -- both gated on the other two -- stayed false and the
+    one-line result remained unreachable even after the id was wired.
+
+    Output has to come from here rather than from the session's scrollback:
+    a pool session is REUSED across blocks, so its buffer holds every
+    command it has ever run. Rendering that as "this block's output" would
+    be wrong in the most confusing possible way.
+    """
+
+    @pytest.mark.asyncio
+    async def test_complete_carries_duration_exit_and_this_blocks_output(self, monkeypatch):
+        from halbert_core.streaming import agent_pool as pool_mod
+
+        published = []
+        monkeypatch.setattr(pool_mod, "publish_terminal_event", published.append)
+
+        m, pool = _make_manager_with_pool()
+        try:
+            result = await pool.run_block("printf 'one\\ntwo\\n'", timeout=10.0)
+            assert result is not None
+        finally:
+            await pool.shutdown()
+
+        done = [p for p in published if p.get("kind") == "complete"]
+        assert len(done) == 1
+        payload = done[0]
+        assert payload["block_id"] == result["block_id"]
+        assert payload["exit_code"] == 0
+        assert payload["duration"] == pytest.approx(result["duration"], abs=0.01)
+        assert payload["output_head"] == result["output_head"]
+        assert payload["output_tail"] == result["output_tail"]
+        assert "one" in payload["output_head"]
+
+    @pytest.mark.asyncio
+    async def test_a_reused_session_reports_only_the_second_blocks_output(self, monkeypatch):
+        """The trap this exists to prevent: block two's payload must not
+        carry block one's output."""
+        from halbert_core.streaming import agent_pool as pool_mod
+
+        published = []
+        monkeypatch.setattr(pool_mod, "publish_terminal_event", published.append)
+
+        m, pool = _make_manager_with_pool(cap=1)
+        try:
+            first = await pool.run_block("printf FIRSTMARKER", timeout=10.0)
+            second = await pool.run_block("printf SECONDMARKER", timeout=10.0)
+            assert first is not None and second is not None
+            # Same session, reused -- which is the whole point of the pool.
+            assert first["session_id"] == second["session_id"]
+        finally:
+            await pool.shutdown()
+
+        done = [p for p in published if p.get("kind") == "complete"]
+        assert len(done) == 2
+        assert "SECONDMARKER" in done[1]["output_head"]
+        assert "FIRSTMARKER" not in done[1]["output_head"]
+
+    def test_the_complete_event_relays_what_the_payload_carries(self):
+        event = AgentStateMachine._terminal_event("sess-1", {
+            "kind": "complete",
+            "terminal_session_id": "term-1",
+            "block_id": "blk-1",
+            "exit_code": 1,
+            "duration": 0.42,
+            "output_head": "nope",
+            "output_tail": "nope",
+        })
+
+        assert event.type == "terminal_complete"
+        assert event.data["exit_code"] == 1
+        assert event.data["block_id"] == "blk-1"
+        assert event.data["duration"] == 0.42
+        assert event.data["output_head"] == "nope"
+        assert event.data["output_tail"] == "nope"

@@ -99,3 +99,51 @@ describe('ToolExecutionCard arguments', () => {
     expect(container.textContent).not.toContain('": "');
   });
 })
+
+/** What useAgentStream produces once the block has closed. */
+const finished: ToolExecution = {
+  ...streamed,
+  blockExitCode: 1,
+  blockDuration: 0.34,
+  blockOutputHead: 'no shares',
+  blockOutputTail: 'no shares',
+};
+
+describe('ToolExecutionCard reads its block from the execution', () => {
+  it('shows the one-line result with no block props at all', () => {
+    render(<ToolExecutionCard execution={finished} />);
+
+    // This is the whole fast-command behaviour, and until the execution
+    // carried the block's result it was unreachable: isShortBlock is gated
+    // on a duration and an output that no caller supplied.
+    expect(screen.getByText(/\$ smbstatus · exit 1/)).toBeTruthy();
+    expect(screen.getByText(/0\.3s/)).toBeTruthy();
+  });
+
+  it('does not repeat the raw result once the block renders its output', () => {
+    render(<ToolExecutionCard execution={finished} />);
+    fireEvent.click(screen.getByRole('button', { name: /smbstatus/ }));
+
+    // suppressResult is gated on the same output; without it the card showed
+    // the block output AND the tool's return string, the same text twice.
+    expect(screen.queryByText('Result')).toBeNull();
+    expect(screen.getByText('Block output')).toBeTruthy();
+  });
+
+  it('a slow block keeps its card rather than collapsing to a line', () => {
+    render(<ToolExecutionCard execution={{ ...finished, blockDuration: 9.5 }} />);
+
+    expect(screen.queryByText(/\$ smbstatus · exit 1/)).toBeNull();
+    expect(screen.getByText(/9\.5s/)).toBeTruthy();
+  });
+
+  it('an explicit prop still wins, for the timeline’s stored blocks', () => {
+    render(<ToolExecutionCard execution={finished} blockExitCode={0} blockDuration={2.2} />);
+
+    // The StatusLight and the card label both report it, so there are two.
+    expect(screen.getAllByText(/exit 0/).length).toBeGreaterThan(0);
+    expect(screen.getByText(/2\.2s/)).toBeTruthy();
+    // ...and the execution's own exit 1 is not what shows.
+    expect(screen.queryByText(/exit 1/)).toBeNull();
+  });
+})
