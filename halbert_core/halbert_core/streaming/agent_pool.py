@@ -92,6 +92,25 @@ class TerminalPool:
         self._manager.set_block_open(sid, True)
         return (sid, session)
 
+    @staticmethod
+    async def _promote_after(delay: float, still_open, payload: Dict) -> None:
+        """Publish ``payload`` after ``delay``, if ``still_open()`` says to.
+
+        Split out of ``run_block`` so the decision is testable without racing
+        a real PTY, and because a fire-and-forget task nobody awaits must not
+        be able to raise: an exception here would surface only as asyncio's
+        "exception was never retrieved" at interpreter shutdown, attached to
+        no request and explaining nothing.
+        """
+        try:
+            await asyncio.sleep(delay)
+            if still_open():
+                publish_terminal_event(payload)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # pragma: no cover - defensive
+            logger.warning("promotion timer failed: %s", e)
+
     async def run_block(
         self,
         command: str,
@@ -140,21 +159,27 @@ class TerminalPool:
         })
 
         # Arm the promotion. The timer races the command: whichever wins says
-        # what kind of thing this was. It is cancelled on every exit from the
-        # block below -- a promotion that fires after its block closed would
-        # put a task card on screen for something already over.
-        async def _promote_when_slow():
-            await asyncio.sleep(PROMOTE_AFTER_SECONDS)
-            publish_terminal_event({
+        # what kind of thing this was.
+        #
+        # ``block_closed`` is declared here, ahead of the drain that sets it,
+        # so the timer can read it. Cancelling in the finally below is not
+        # enough on its own: between the D marker arriving and that cancel,
+        # the pool decodes the output, splits head and tail, and redacts both.
+        # A timer expiring inside that window is already scheduled, and the
+        # cancel comes too late -- so it also looks before it speaks.
+        block_closed = False
+        promote_task = asyncio.create_task(self._promote_after(
+            PROMOTE_AFTER_SECONDS,
+            lambda: not block_closed,
+            {
                 "kind": "block_promote",
                 "terminal_session_id": sid,
                 "block_id": block_id,
                 "command": command,
                 "owner": "agent",
                 "interactive": False,
-            })
-
-        promote_task = asyncio.create_task(_promote_when_slow())
+            },
+        ))
 
         # Build the block command with OSC 133 markers.
         # The command runs in a subshell so `exit` doesn't kill the pool shell.
@@ -184,7 +209,6 @@ class TerminalPool:
             parser = OSCParser()
             block_output = BoundedOutput()
             exit_code: Optional[int] = None
-            block_closed = False
 
             # Write the command
             await session.write_stdin(block_cmd)

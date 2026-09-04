@@ -382,3 +382,63 @@ class TestCompleteCarriesTheBlocksResult:
         assert event.data["duration"] == 0.42
         assert event.data["output_head"] == "nope"
         assert event.data["output_tail"] == "nope"
+
+
+class TestPromotionLooksBeforeItSpeaks:
+    """Cancelling the timer is not enough on its own.
+
+    Between the D marker arriving and the finally that cancels the timer, the
+    pool decodes the output, splits head and tail, and redacts both. A timer
+    expiring inside that window has already been scheduled: cancel() comes too
+    late, and a block that finished promotes to a task card for something that
+    is over. The timer therefore checks whether the block is still open at the
+    moment it wakes, not only at the moment it was armed.
+    """
+
+    @pytest.mark.asyncio
+    async def test_it_does_not_publish_for_a_block_that_closed_while_it_slept(self):
+        from halbert_core.streaming import agent_pool as pool_mod
+
+        published = []
+        pool = pool_mod.TerminalPool.__new__(pool_mod.TerminalPool)
+        original = pool_mod.publish_terminal_event
+        pool_mod.publish_terminal_event = published.append
+        try:
+            await pool._promote_after(0, lambda: False, {"kind": "block_promote"})
+        finally:
+            pool_mod.publish_terminal_event = original
+
+        assert published == []
+
+    @pytest.mark.asyncio
+    async def test_it_publishes_while_the_block_is_still_open(self):
+        from halbert_core.streaming import agent_pool as pool_mod
+
+        published = []
+        pool = pool_mod.TerminalPool.__new__(pool_mod.TerminalPool)
+        original = pool_mod.publish_terminal_event
+        pool_mod.publish_terminal_event = published.append
+        try:
+            await pool._promote_after(0, lambda: True, {"kind": "block_promote"})
+        finally:
+            pool_mod.publish_terminal_event = original
+
+        assert published == [{"kind": "block_promote"}]
+
+    @pytest.mark.asyncio
+    async def test_a_publish_failure_does_not_surface_as_an_unretrieved_task(self):
+        """The timer is a fire-and-forget task nobody awaits. An exception
+        inside it would only ever appear as asyncio's "exception was never
+        retrieved" at interpreter shutdown."""
+        from halbert_core.streaming import agent_pool as pool_mod
+
+        def _boom(_payload):
+            raise RuntimeError("bus is gone")
+
+        pool = pool_mod.TerminalPool.__new__(pool_mod.TerminalPool)
+        original = pool_mod.publish_terminal_event
+        pool_mod.publish_terminal_event = _boom
+        try:
+            await pool._promote_after(0, lambda: True, {"kind": "block_promote"})
+        finally:
+            pool_mod.publish_terminal_event = original
