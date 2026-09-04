@@ -29,10 +29,38 @@ class Manifest:
         parsers = data.get("parsers", {})
         return cls(include, exclude, parsers)
 
+    @staticmethod
+    def walk_root(pattern: str) -> str:
+        """The deepest real directory a glob can live under.
+
+        ``os.path.dirname`` is the wrong tool: for ``/etc/**/*.conf`` it
+        returns the literal ``/etc/**``, which is never a directory, so
+        ``os.walk`` yields nothing and the pattern silently matches no files.
+        That is not a macOS quirk -- it kills the broadest include in the
+        shipped Linux manifest, and the codebase already noticed the symptom
+        (``config/scopes/storage.yml`` records that the flat host scope's
+        ``/etc/**/*.conf`` "structurally cannot match" what it should).
+
+        Truncating at the first glob metacharacter instead gives ``/etc``,
+        which walks. A pattern with no metacharacter keeps its own dirname.
+        """
+        # Expanded defensively: from_file already does this, but a caller
+        # passing a raw manifest line would otherwise get "~" as a root.
+        pattern = os.path.expanduser(pattern)
+        head = pattern
+        for i, ch in enumerate(pattern):
+            if ch in "*?[":
+                head = pattern[:i]
+                break
+        else:
+            return os.path.dirname(pattern) or "."
+        root = os.path.dirname(head) if not head.endswith(os.sep) else head
+        return root.rstrip(os.sep) or "/"
+
     def iter_paths(self) -> List[str]:
         # Simple globbing across include globs; exclude patterns take precedence
         results: List[str] = []
-        for root in set(os.path.dirname(p) or "." for p in self.include):
+        for root in sorted({self.walk_root(p) for p in self.include}):
             for dirpath, dirnames, filenames in os.walk(root):
                 rel = dirpath
                 for f in filenames:

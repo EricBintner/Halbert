@@ -203,7 +203,12 @@ class ConfigWatcher:
 
         man = Manifest.from_file(self.manifest_path)
         # Watch unique directories in include globs
-        dirs = sorted(set(os.path.dirname(p) or "." for p in man.include))
+        # Same derivation as Manifest.iter_paths: os.path.dirname on a glob
+        # yields a literal like "/etc/**", which is never a directory, so the
+        # watcher would silently watch nothing for the broadest include.
+        from .manifest import Manifest as _Manifest
+
+        dirs = sorted({_Manifest.walk_root(p) for p in man.include})
         handler = _Handler(self.manifest_path, self._handle_change)
         self._observer = Observer()  # type: ignore
         for d in dirs:
