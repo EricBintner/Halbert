@@ -2413,6 +2413,22 @@ class AgentStateMachine:
                 terminal_id,
                 int(exit_code) if exit_code is not None else -1,
             )
+        if kind in ("block", "block_promote"):
+            block_id = str(payload.get("block_id", ""))
+            if not block_id:
+                # A block record with no id is unaddressable: nothing could
+                # promote it, complete it, or jump to the turn that ran it.
+                # Dropping it beats putting a ghost in the store.
+                return None
+            return StreamEvent.terminal_block(
+                session_id,
+                block_id=block_id,
+                terminal_session_id=terminal_id,
+                command=str(payload.get("command", "")),
+                owner=str(payload.get("owner", "agent")),
+                interactive=bool(payload.get("interactive")),
+                promote=(kind == "block_promote"),
+            )
         return None
 
     def _note_terminal_payload(self, payload: Dict[str, Any]) -> None:

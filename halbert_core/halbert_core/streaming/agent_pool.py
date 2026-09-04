@@ -27,6 +27,13 @@ from .terminal_bridge import publish_terminal_event
 
 logger = logging.getLogger("halbert.streaming.agent_pool")
 
+#: A block still open after this long stops being a passing detail and
+#: becomes a thing the machine is doing: the conversation promotes it to a
+#: task card with a live tile. Below it, a command is a one-line result.
+#: 2 s is the number plan-b-contracts §7/§13 uses for both halves of that
+#: decision, and the frontend's short-block branch reads the same value.
+PROMOTE_AFTER_SECONDS = 2.0
+
 _POOL_SHELL = "bash --norc --noprofile"
 
 
@@ -118,6 +125,36 @@ class TerminalPool:
             "owner": "agent",
             "block_id": block_id,
         })
+        # ...and the block itself. The spawn creates the session on the
+        # frontend; this attaches a block record to it, which is what the
+        # conversation renders and what a promotion later flips to a task
+        # card. Published after the spawn on purpose: a block for a session
+        # the store has not seen yet is dropped.
+        publish_terminal_event({
+            "kind": "block",
+            "terminal_session_id": sid,
+            "block_id": block_id,
+            "command": command,
+            "owner": "agent",
+            "interactive": False,
+        })
+
+        # Arm the promotion. The timer races the command: whichever wins says
+        # what kind of thing this was. It is cancelled on every exit from the
+        # block below -- a promotion that fires after its block closed would
+        # put a task card on screen for something already over.
+        async def _promote_when_slow():
+            await asyncio.sleep(PROMOTE_AFTER_SECONDS)
+            publish_terminal_event({
+                "kind": "block_promote",
+                "terminal_session_id": sid,
+                "block_id": block_id,
+                "command": command,
+                "owner": "agent",
+                "interactive": False,
+            })
+
+        promote_task = asyncio.create_task(_promote_when_slow())
 
         # Build the block command with OSC 133 markers.
         # The command runs in a subshell so `exit` doesn't kill the pool shell.
@@ -231,6 +268,7 @@ class TerminalPool:
                 "redacted": head_redacted or tail_redacted,
             }
         finally:
+            promote_task.cancel()
             if not released:
                 self._manager.set_block_open(sid, False)
 

@@ -412,6 +412,7 @@ class ThreadManager:
                 diff_proposals=list(diff_proposals or []),
                 timestamp=now,
             )
+        self._anchor_blocks(terminal_block_ids, thread_id, turn.turn_id)
         thread = self.store.get_thread(thread_id)
         if thread is None:
             return
@@ -423,6 +424,35 @@ class ThreadManager:
             turns_since_pause=int(thread.get("turns_since_pause") or 0) + 1,
         )
         self._refresh_receipt(thread_id)
+
+    def _anchor_blocks(
+        self, block_ids: List[str], thread_id: str, turn_id: str
+    ) -> None:
+        """Stamp this turn onto every terminal block it ran.
+
+        The block rows are written while the command runs, and the turn id
+        does not exist until the turn is persisted -- so the join has to be
+        made here, at the one moment both halves are known. Without it
+        ``terminal_blocks.turn_id`` stays NULL and the timeline's
+        ``loadAround(turnId)`` has nothing to aim at: "show me where this
+        happened" is unanswerable for every command Halbert has ever run.
+
+        Not every id is a block. Plan A tracked terminal *session* ids in the
+        same field, and ``_note_terminal_payload`` still falls back to one
+        when a spawn carries no block id. An id with no block row is skipped,
+        not an error -- losing the whole turn over a stale id would trade a
+        missing anchor for a missing conversation.
+        """
+        update = getattr(self.store, "update_terminal_block", None)
+        if update is None:
+            return
+        for block_id in block_ids or []:
+            if not block_id:
+                continue
+            try:
+                update(block_id, thread_id=thread_id, turn_id=turn_id)
+            except Exception as e:
+                logger.warning(f"could not anchor block {block_id} to {turn_id}: {e}")
 
     def mark_interrupted(self) -> int:
         """Boot: every ``in_progress`` row becomes ``interrupted``."""

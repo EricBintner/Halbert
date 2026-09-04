@@ -1980,9 +1980,12 @@ class SqliteConversationStore:
             logger.warning(f"insert_terminal_block failed: {e}")
             return False
 
+    #: ``thread_id``/``turn_id`` are updatable because a block cannot be born
+    #: with them: the turn id is assigned when the turn is persisted, which is
+    #: after every command in it has already run. ``end_turn`` stamps them on.
     _TERMINAL_BLOCK_UPDATABLE = frozenset(
         {"ended_at", "exit_code", "output_head", "output_tail",
-         "interactive", "remote", "redacted"}
+         "interactive", "remote", "redacted", "thread_id", "turn_id"}
     )
 
     def update_terminal_block(self, block_id: str, **fields: Any) -> bool:
