@@ -187,6 +187,7 @@ class TestForgetting:
         record_file_change(path="/etc/private.conf", reason="a private reason",
                            actor=ACTOR_USER, request_id="req-9", tool="editor",
                            after_text="x\n")
+        VaultProjector().rebuild()          # forget only reprojects an existing vault
         VaultProjector().forget("req-9")
 
         notes = list((vault_root() / "notes").glob("*private*"))
@@ -201,6 +202,7 @@ class TestForgetting:
         record_file_change(path="/etc/b.conf", reason="forget this one",
                            actor=ACTOR_USER, request_id="req-2", tool="editor",
                            after_text="b\n")
+        VaultProjector().rebuild()          # forget only reprojects an existing vault
         VaultProjector().forget("req-2")
 
         blob = "".join(p.read_text() for p in vault_root().rglob("*.md"))
@@ -394,3 +396,71 @@ class TestWithheldCategories:
                        "consolidation", reason="r", actor=ACTOR_SYSTEM)
         s.close()
         assert VaultProjector().rebuild().written == 0
+
+
+class TestCorroborationIsAboutThisFile:
+    """One request id legitimately covers several files — an approval chmods
+    every path in a proposal under one id. Keyed on the request alone, a row
+    whose own audit write failed still reported corroborated on the strength
+    of a sibling path's record, which is the exact divergence this field
+    exists to show."""
+
+    def test_a_sibling_path_does_not_corroborate(self, monkeypatch):
+        from halbert_core.obs.audit import write_audit
+
+        # One audit record, about a DIFFERENT file, under the same request id.
+        write_audit(tool="editor", mode="apply", request_id="shared", ok=True,
+                    reason="r", actor=ACTOR_USER, path="/etc/sibling.conf")
+        s = _store()
+        s.record_state("file:/etc/target.conf", "content_sha256", "abc", "editor",
+                       reason="r", actor=ACTOR_USER, request_id="shared")
+        s.close()
+
+        VaultProjector().rebuild()
+        text = next((vault_root() / "notes").glob("*target*")).read_text()
+        assert "validation_status: ledger_only" in text
+
+    def test_its_own_record_does_corroborate(self):
+        from halbert_core.obs.audit import write_audit
+
+        write_audit(tool="editor", mode="apply", request_id="shared", ok=True,
+                    reason="r", actor=ACTOR_USER, path="/etc/target.conf")
+        s = _store()
+        s.record_state("file:/etc/target.conf", "content_sha256", "abc", "editor",
+                       reason="r", actor=ACTOR_USER, request_id="shared")
+        s.close()
+
+        VaultProjector().rebuild()
+        text = next((vault_root() / "notes").glob("*target*")).read_text()
+        assert "validation_status: corroborated_by_audit" in text
+
+    def test_a_dry_run_record_does_not_corroborate(self):
+        """It describes a change that never landed."""
+        from halbert_core.obs.audit import write_audit
+
+        write_audit(tool="write_config", mode="dry_run", request_id="r1", ok=True,
+                    reason="r", actor=ACTOR_USER, path="/etc/target.conf")
+        s = _store()
+        s.record_state("file:/etc/target.conf", "content_sha256", "abc", "editor",
+                       reason="r", actor=ACTOR_USER, request_id="r1")
+        s.close()
+
+        VaultProjector().rebuild()
+        text = next((vault_root() / "notes").glob("*target*")).read_text()
+        assert "validation_status: ledger_only" in text
+
+
+class TestForgetDoesNotMaterialise:
+    def test_forgetting_creates_no_vault_where_none_existed(self):
+        """The other entry point, missed when forget_request was fixed."""
+        record_file_change(path="/etc/other.conf", reason="someone else's words",
+                           actor=ACTOR_USER, request_id="req-other",
+                           tool="editor", after_text="x\n")
+        record_file_change(path="/etc/private.conf", reason="a private reason",
+                           actor=ACTOR_USER, request_id="req-9",
+                           tool="editor", after_text="y\n")
+        assert not (vault_root() / "notes").exists()
+
+        VaultProjector().forget("req-9")
+
+        assert not any(vault_root().rglob("*.md")), "a forget published a vault"

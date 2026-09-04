@@ -377,9 +377,7 @@ def verify_audit(directory: Optional[Any] = None) -> "VerifyResult":
         return events.verify()
 
 
-def render_verify_report(
-    result: VerifyResult, peer: Optional[str] = None
-) -> str:
+def render_verify_report(result: VerifyResult) -> str:
     """Render a :class:`VerifyResult` as text for a person to read.
 
     The wording is a correctness requirement, not presentation (§3.5).
@@ -387,11 +385,17 @@ def render_verify_report(
     signing key and the log share a disk, so whoever can rewrite the log
     can re-sign it, and a "verified" badge would assert something the
     system has no basis for.  What it can say is that nothing has been
-    altered since the last independent point of comparison -- a peer sync,
-    where one exists -- and that is what it says.
+    altered since this log began, and that is what it says.
+
+    There is deliberately no ``peer`` wording. It existed, and claimed the
+    log had been "checked against the head last agreed with <peer>" -- an
+    off-machine comparison that no code performs. Asserting a stronger
+    guarantee than the mechanism provides is what ``INTEG-05`` forbids, and
+    it forbids it here for the same reason it forbids a "memory verified"
+    badge. The wording returns when peer root co-signing does.
     """
     lines: list[str] = []
-    against = f"since last sync with {peer}" if peer else "since this log began"
+    against = "since this log began"
 
     if result.checked == 0 and not result.problems:
         lines.append("No records in the audit log -- nothing to check.")
@@ -438,18 +442,13 @@ def render_verify_report(
         return "\n".join(lines)
 
     lines.append("")
-    if peer:
-        lines.append(
-            f"  Checked against the head last agreed with {peer}. Records "
-            f"written since then are attested only by this machine."
-        )
-    else:
-        lines.append(
-            "  Both the log and the key that would sign it live on the same "
-            "machine, so this cannot prove the log was never rewritten -- only "
-            "that nothing has been altered underneath the running system. An "
-            "off-machine comparison (a peer sync) is what would strengthen it."
-        )
+    lines.append(
+        "  Both the log and the key that would sign it live on the same "
+        "machine, so this cannot prove the log was never rewritten -- only "
+        "that nothing has been altered underneath the running system. An "
+        "off-machine comparison (a peer sync) is what would strengthen it, "
+        "and none is performed today."
+    )
     return "\n".join(lines)
 
 

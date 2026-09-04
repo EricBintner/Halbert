@@ -54,6 +54,7 @@ import logging
 import sqlite3
 import threading
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -137,6 +138,11 @@ _PROVENANCE_COLUMNS = ("reason", "actor", "request_id", "closed_reason", "closed
 #: history, they simply cannot answer *why* and must never be backfilled with a
 #: guess. Left on disk, unread.
 _LEGACY_TABLE = "state_triples_pre_provenance"
+
+#: ``executescript`` issues an implicit COMMIT before it runs, which on a
+#: borrowed connection would publish the caller's in-flight work as ours.
+#: Run the statements one at a time instead.
+_SCHEMA_STATEMENTS = tuple(st.strip() for st in _SCHEMA.split(";") if st.strip())
 
 #: Columns added *after* the provenance set, which are migrated in place.
 #:
@@ -298,13 +304,10 @@ class StateStore:
         # cannot both decide to migrate. Python's sqlite3 opens no implicit
         # transaction for DDL, so `with self._conn:` alone would let the
         # rename and the create interleave.
-        try:
-            self._conn.execute("BEGIN IMMEDIATE")
-        except Exception:  # pragma: no cover - already in a transaction
-            pass
-        with self._conn:
+        with self._write_txn():
             self._set_legacy_table_aside()
-            self._conn.executescript(_SCHEMA)
+            for statement in _SCHEMA_STATEMENTS:
+                self._conn.execute(statement)
             self._add_missing_columns()
             self._enforce_one_open_row()
 
@@ -349,6 +352,36 @@ class StateStore:
             # Losing a race with another process that migrated first is the
             # expected case here, and is fine: it already did the work.
             logger.info(f"pre-provenance table not set aside ({e})")
+
+    @contextmanager
+    def _write_txn(self):
+        """Own the write transaction — unless the caller already owns one.
+
+        ``BEGIN IMMEDIATE`` takes the write lock before any SELECT, so a
+        read-modify-write cannot interleave with another writer's.
+
+        But the connection may be borrowed (``conn=``) and already inside the
+        caller's transaction. Committing there would publish their
+        uncommitted work as ours, and no rollback of ours could take it back;
+        rolling back would throw their work away. So commit and roll back only
+        what we began, and otherwise leave their transaction exactly as we
+        found it — durability is then theirs to decide.
+        """
+        began = False
+        try:
+            self._conn.execute("BEGIN IMMEDIATE")
+            began = True
+        except sqlite3.OperationalError:
+            pass                      # the caller's transaction; not ours to end
+        try:
+            yield
+        except Exception:
+            if began:
+                self._conn.rollback()
+            raise
+        else:
+            if began:
+                self._conn.commit()
 
     def _enforce_one_open_row(self) -> None:
         """Create the one-open-row index, or say loudly why it could not be.
@@ -472,27 +505,11 @@ class StateStore:
         sqlite3 defers the transaction to the first DML, so the read sat
         outside the lock and two writers could both see no open row.
         """
-        began = False
-        try:
-            self._conn.execute("BEGIN IMMEDIATE")
-            began = True
-        except sqlite3.OperationalError:
-            # Already inside a transaction -- a caller-owned connection
-            # mid-work. Degrade to the previous behaviour rather than
-            # hijacking their transaction.
-            pass
-        try:
-            result = self._record_body(
+        with self._write_txn():
+            return self._record_body(
                 subject, predicate, obj, source, reason, actor,
                 request_id, confidence, thread_id, ts,
             )
-            if began:
-                self._conn.commit()
-            return result
-        except Exception:
-            if began:
-                self._conn.rollback()
-            raise
 
     def _record_body(self, subject, predicate, obj, source, reason, actor,
                      request_id, confidence, thread_id, ts):
@@ -552,7 +569,7 @@ class StateStore:
         actor = _require(actor, "actor")
         ts = time.time() if now is None else now
         try:
-            with self._lock, self._conn:
+            with self._lock, self._write_txn():
                 c = self._conn.execute(
                     "UPDATE state_triples "
                     "SET valid_to = ?, closed_reason = ?, closed_by = ?, "
@@ -592,7 +609,7 @@ class StateStore:
         actor = _require(actor, "actor")
         request_id = _require(request_id, "request_id")
         try:
-            with self._lock, self._conn:
+            with self._lock, self._write_txn():
                 own = self._conn.execute(
                     "UPDATE state_triples SET reason = ? "
                     "WHERE request_id = ? AND reason != ?",

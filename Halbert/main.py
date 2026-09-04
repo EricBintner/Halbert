@@ -389,7 +389,7 @@ def cmd_audit_verify(args):
         import json as _json
         print(_json.dumps(verify_result_as_dict(result), indent=2, ensure_ascii=False))
     else:
-        print(render_verify_report(result, peer=args.peer))
+        print(render_verify_report(result))
     _sys.exit(0 if result.ok else 1)
 
 
@@ -1876,7 +1876,6 @@ def main():
         help='Check the audit log for tampering (edits, truncation, deleted shards)')
     p_audit_verify.add_argument('--dir', help='Audit log directory (default: <log_dir>/audit)')
     p_audit_verify.add_argument('--json', action='store_true', help='Emit machine-readable JSON')
-    p_audit_verify.add_argument('--peer', help='Name the peer this log was last synced with')
     p_audit_verify.set_defaults(func=cmd_audit_verify)
 
     p_vault = sub.add_parser(

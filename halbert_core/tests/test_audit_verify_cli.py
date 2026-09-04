@@ -74,12 +74,18 @@ def test_a_clean_report_says_what_it_cannot_vouch_for():
     assert "same machine" in report or "this machine" in report
 
 
-def test_a_clean_report_names_the_peer_it_is_measured_against():
+def test_the_report_does_not_claim_a_comparison_nobody_performed():
+    """The peer wording asserted the log had been "checked against the head
+    last agreed with <peer>". No code performs that comparison, and claiming
+    a stronger guarantee than the mechanism provides is what INTEG-05
+    forbids. It returns when peer root co-signing does."""
     _write()
 
-    report = render_verify_report(verify_audit(), peer="workshop")
+    report = render_verify_report(verify_audit())
 
-    assert "workshop" in report
+    assert "last agreed with" not in report
+    assert "since this log began" in report
+    assert "none is performed today" in report
 
 
 def test_an_unsigned_report_says_so_rather_than_staying_quiet():

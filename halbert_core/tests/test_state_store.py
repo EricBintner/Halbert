@@ -643,3 +643,43 @@ class TestRedactionClearsWordsNotFacts:
     def test_an_empty_request_id_is_refused(self, store):
         with pytest.raises(ValueError):
             store.redact_request("", actor=ACTOR_USER)
+
+
+class TestABorrowedConnectionIsNotHijacked:
+    """The documented Plan A fold path passes conn=. Committing there would
+    publish the caller's in-flight work as ours, and no rollback of ours
+    could take it back."""
+
+    def test_opening_the_store_does_not_commit_the_caller(self, tmp_path):
+        conn = sqlite3.connect(str(tmp_path / "threads.db"))
+        conn.execute("CREATE TABLE conversations (id TEXT PRIMARY KEY)")
+        conn.commit()
+
+        conn.execute("INSERT INTO conversations (id) VALUES ('in-flight')")
+        StateStore(conn=conn)          # must not publish that insert
+        conn.rollback()
+
+        rows = conn.execute("SELECT COUNT(*) FROM conversations").fetchone()[0]
+        assert rows == 0, "the caller's uncommitted work was committed for them"
+        conn.close()
+
+    def test_a_write_does_not_commit_the_caller(self, tmp_path):
+        conn = sqlite3.connect(str(tmp_path / "threads.db"))
+        conn.execute("CREATE TABLE conversations (id TEXT PRIMARY KEY)")
+        conn.commit()
+        s = StateStore(conn=conn)
+
+        conn.execute("INSERT INTO conversations (id) VALUES ('in-flight')")
+        _rec(s, "system", "cpu_load", "42%")
+        conn.rollback()
+
+        assert conn.execute("SELECT COUNT(*) FROM conversations").fetchone()[0] == 0
+        conn.close()
+
+    def test_the_store_still_works_on_a_borrowed_connection(self, tmp_path):
+        conn = sqlite3.connect(str(tmp_path / "threads.db"))
+        s = StateStore(conn=conn)
+        _rec(s, "system", "cpu_load", "42%", reason="borrowed write")
+        conn.commit()
+        assert _cur(s) == {("system", "cpu_load"): "42%"}
+        conn.close()

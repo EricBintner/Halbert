@@ -40,7 +40,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 import yaml  # type: ignore
 
@@ -159,7 +159,7 @@ class VaultProjector:
         # lock on every call, and a mid-run change would split the vault
         # across two directories.
         self._persona_id = persona_id
-        self._audit_index: Optional[Dict[str, int]] = None
+        self._audit_index: Optional[Set[Tuple[str, str]]] = None
 
     # -- setup ---------------------------------------------------------
 
@@ -189,25 +189,45 @@ class VaultProjector:
             self._root = vault_root(self.persona_id)
         return self._root
 
-    def _audited_requests(self) -> Dict[str, int]:
-        """``{request_id: seq}``, built once. ``read_all`` is O(N) over the
-        whole log, so per-note lookups would make projection quadratic."""
+    def _audited_requests(self) -> Set[Tuple[str, str]]:
+        """``{(request_id, path)}`` for applied, successful audit records.
+
+        Built once: a per-note lookup that rescanned the log would make
+        projection quadratic.
+
+        Keyed on the **path as well as the request**, because one request id
+        legitimately covers several files -- an approval chmods every path in
+        a proposal under one id, and the rollback reuses it. Keyed on the
+        request alone, a row whose own audit write failed still reported
+        ``corroborated`` on the strength of a sibling path's record, which is
+        exactly the divergence this field exists to show. Only ``ok`` records
+        in ``apply`` mode count: a dry run describes a change that never
+        landed.
+
+        Collected through ``seqs_where``, which streams a shard at a time,
+        rather than ``read_all``, which materialises every event *and every
+        plaintext payload* for a log that has no rotation.
+        """
         if self._audit_index is not None:
             return self._audit_index
-        index: Dict[str, int] = {}
+        found: Set[Tuple[str, str]] = set()
+
+        def _collect(payload: Dict[str, Any]) -> bool:
+            rid, path = payload.get("request_id"), payload.get("path")
+            if rid and path and payload.get("ok") and payload.get("mode") == "apply":
+                found.add((str(rid), str(path)))
+            return False        # membership only; the seqs are not wanted
+
         try:
             from ..obs.audit import audit_log
 
-            for event in audit_log().read_all():
-                rid = (event.payload or {}).get("request_id")
-                if rid and rid not in index:
-                    index[rid] = event.seq
+            audit_log().seqs_where(_collect)
         except Exception as e:
             # A machine without haloysius.integrity must still get a vault;
             # the notes just say so rather than claiming corroboration.
             logger.info("audit log unavailable; notes will say ledger_only (%s)", e)
-        self._audit_index = index
-        return index
+        self._audit_index = found
+        return found
 
     # -- rendering -----------------------------------------------------
 
@@ -290,7 +310,12 @@ class VaultProjector:
                     triple.subject, triple.predicate, strict=True))
                 note_id = _note_id(self.persona_id, triple.subject,
                                    triple.predicate, category)
-                validated = bool(triple.request_id and triple.request_id in index)
+                # The subject is "file:<path>"; corroboration must be about
+                # this file, not merely this request.
+                path = triple.subject.split(":", 1)[1] if ":" in triple.subject else ""
+                validated = bool(
+                    triple.request_id and (str(triple.request_id), path) in index
+                )
                 fm = self._frontmatter(triple, category=category,
                                        version=version, validated=validated)
                 # The 8-hex id is in the filename so two subjects that
@@ -369,6 +394,15 @@ class VaultProjector:
         # Not caught. redact_request raises only when the words are still
         # there, and reprojecting after that would rewrite notes that still
         # carry them while returning an ordinary success.
+        #
+        # Only reproject a vault that already exists. Materialising one during
+        # a forget would write fresh plaintext copies of every OTHER reason to
+        # disk -- publishing on the way to erasing. Same guard as
+        # provenance.forget_request; this is the other entry point, and it was
+        # missed when that one was fixed.
+        notes = self.root / "notes"
+        if not (notes.exists() and any(notes.glob("*.md"))):
+            return ProjectionResult(root=str(self.root))
         return self.rebuild()
 
 
