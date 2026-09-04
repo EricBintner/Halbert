@@ -628,3 +628,69 @@ both are known, so `ctx` should record `{block_id: execution_id}` pairs and
 effect: `terminal_block_promote` sets a flag on a block that nothing reads.
 That is D4, and it is the next thing worth building — a promoted command
 needs somewhere to be.
+
+---
+
+## 16. Second pass: the two structural gaps closed (3e9a438a, 4a862fee)
+
+### The historical timeline now renders blocks
+
+`terminal_blocks` gained an `execution_id` column, stamped at `end_turn` from
+a pairing the drain records (the one place a block id and a tool call id are
+both in scope). The timeline route joins on it and fills each `run_command`
+block in with the stored exit code, duration and output. A reloaded turn now
+renders the way the live one did.
+
+Three rules that fell out and are worth keeping:
+
+- **Join on the id, never the command.** A turn that runs the same command
+  twice is ordinary, not an edge case.
+- **An unfinished block reports no duration**, not `0.0` — which would read
+  as "it finished instantly".
+- **Hydration failure is swallowed.** The turns are the page; this is an
+  improvement on top of them, and an improvement that fails must not take the
+  conversation with it.
+
+Adding the `block_executions` kwarg broke twelve tests through their fake
+ThreadManagers, and *how* it broke them was the finding: `_end_turn` swallowed
+the `TypeError` as "end_turn failed (non-fatal)", so twelve turns silently
+went unpersisted and the only symptom was an empty list. Non-fatal to the
+stream, but the turn is gone — the words the user said and the answer they got
+written nowhere. That log now names the turn and the thread and says what was
+lost.
+
+### Promotion is now visible
+
+`useTasks` derives task cards from the terminal store's promoted blocks;
+`ContextStage` mounts `TasksColumn` in place of the accordion.
+
+Two properties had to survive the swap, and one of them was nearly lost:
+
+- The **empty state**. The accordion refused to disappear when empty because
+  "Nothing running" and an absent column say different things. Preserved.
+- The **shell launcher**. The accordion carried the *only* one on the page.
+  `YourShellRegion` renders "No shell session" with no way to start one, so
+  wiring that instead would have removed the admin's ability to open a
+  terminal at all — silently, as a side effect of a layout change. A
+  `ShellLauncher` now fills the column's `yourShell` slot.
+
+Also fixed on the way: `TaskCard`'s jump passed `threadId` to a handler that
+scrolls to an element, so it resolved nothing. It carries the block id now,
+and `findJumpTarget` tries the inline origin first and `data-terminal-block`
+second, so both kinds of id land.
+
+`TerminalAccordionDock` is deleted rather than left orphaned.
+
+### What is left
+
+| Item | State |
+|---|---|
+| Status strip (the ephemeral layer, §3) | not built |
+| Inspection grouping (§6.2, review F13) | not built |
+| Output truncation marker (T7) | partial — the elision is honest now, but unlabelled |
+| `YourShellRegion` proper (watched toggle, stage-into-shell, a real xterm) | written, still unmounted; its terminal mount point is a div the parent never fills |
+
+The first two are the remaining half of the original request: *quiet when
+fast* now has a record-level answer (a finished command collapses to one
+line) but not a present-tense one (nothing shows what is happening while a
+fast command runs, and nothing groups a run of inspection calls).
