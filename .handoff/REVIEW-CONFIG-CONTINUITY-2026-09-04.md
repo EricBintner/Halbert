@@ -837,3 +837,80 @@ review, those two documents are the planning spine. If this work is going ahead,
 phases above should land as ROADMAP rows and the F7 host decision as a DECISIONS
 entry — otherwise the plan lives only in `.handoff/`, which is where the previous
 round of drift started.
+
+---
+
+## 15. Phase 0 done, and two corrections to this document
+
+Branch `feat/write-guard`, 2026-09-04. Phases **0**, **0b** and **0c** are
+implemented; 1 and 1b landed earlier on `feat/cli-in-conversation`.
+
+### Correction 1 — F5 named two write paths. There are three, and it missed
+### the one that matters
+
+F5 said Halbert has no read-before-write guard on "either write path",
+meaning `write_config` and `POST /file`. **`write_file` is the tool the agent
+actually writes files with** — it is in the schema list handed to the model —
+and it wrote to any path on the machine while recording *nothing*: no audit
+row, no ledger triple, no reason, no actor, no backup, and no check that the
+file was still what Halbert last saw.
+
+Four write paths called `record_file_change`. That was the fifth, and it was
+the agent's. LEDGER-1's premise — that the ledger answers why any config is
+the way it is — had a hole the size of the tool that changes them.
+
+It now records on both planes and looks first, and the tool schema gains a
+`reason` field so the model has somewhere to state why.
+
+### Correction 2 — F10 named the wrong resolver as canonical
+
+F10 recommended collapsing onto `utils/paths.config_dir()`, on the strength
+of its XDG and root handling. Following that would have been a serious
+mistake: **fourteen call sites hold Halbert's actual config behind
+`utils/platform.get_config_dir()`** — `being.yml`, `preferences.yml`,
+`models.yml`, `gpu_config.yml`, `web_search.yml`, `vision_config.yml`, the
+config-registry probe — while *nothing* imported `paths.config_dir` for a
+config file at all. Moving to it would have left Halbert unable to find its
+own `being.yml` on macOS.
+
+The collapse went the other way. `paths.config_dir` and the editor's
+hardcoded copy now delegate to the platform resolver, and the root branch —
+the only thing `paths.config_dir` had that the platform one did not — moved
+across rather than dying.
+
+F10 also understated the damage. Both directories were live on the dev
+machine, and `being.yml.lock` existed in **both**. The advisory lock is
+derived from the config path, so two callers resolving `being.yml`
+differently take out two different locks and neither sees the other: the
+one-writer guarantee on the file holding the machine's own settings was void,
+silently, on every macOS install.
+
+### What Phase 0 shipped
+
+| | |
+|---|---|
+| `continuity/write_guard.py` | digest compare-and-swap against the ledger; never fails closed |
+| `write_file` | records on both planes, guarded, `reason` in the schema |
+| `write_config` | guarded on apply only — a dry run has nothing to protect |
+| `POST /file` | `expected_sha256` from the client, ledger check when absent, **409** not 500 |
+| `GET /file` | returns `sha256`, so the client can say what it is editing |
+| `ConfigEditor.tsx` | round-trips the digest; recomputes after a save |
+| ledger `turn_id` | via a ContextVar, set by the state machine at `begin_turn` |
+| one `config_dir` | three resolvers become one |
+
+Suites: backend **5349 passed, 14 skipped**; frontend **936 passed**, tsc
+clean.
+
+### Still open
+
+- **2a, the host decision, is still yours** (§12 Q1). Linux target, macOS
+  registry, or fixtures — it blocks 2c and 3, and no amount of implementation
+  moves it.
+- **2b** backup-store reconciliation, **2c** the recent-configs route, **3**
+  the dock, **4** the rollback index.
+- §12 Q4 — *what should a CAS refusal do?* — is now live rather than
+  hypothetical. Today every path refuses and explains. For `/etc/fstab` that
+  is almost certainly right; for a dotfile an "overwrite anyway" affordance
+  may be wanted. It has not been built, deliberately: the safe default is
+  cheap to loosen and expensive to have skipped.
+- `tools/safety.py` read-only defaults (from the CLI strategy doc §17).

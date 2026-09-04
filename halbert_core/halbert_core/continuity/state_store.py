@@ -94,6 +94,7 @@ CREATE TABLE IF NOT EXISTS state_triples (
     valid_from    REAL NOT NULL,
     valid_to      REAL,
     thread_id     TEXT,
+    turn_id       TEXT,
     reason        TEXT NOT NULL,
     actor         TEXT NOT NULL,
     request_id    TEXT,
@@ -158,7 +159,10 @@ _SCHEMA_STATEMENTS = tuple(st.strip() for st in _SCHEMA.split(";") if st.strip()
 #: list. The ledger would read blank with nothing raising anywhere — and no
 #: tmp-directory test could catch it, because a fresh database gets the column
 #: from ``_SCHEMA`` on creation. Hence a real ``ALTER TABLE``.
-_ADDITIVE_COLUMNS = {"closed_by_request": "TEXT"}
+#: ``turn_id``: the conversation turn a change was made in, so "jump to
+#: where this happened" has something to aim at. Added after the table
+#: shipped, like ``closed_by_request``.
+_ADDITIVE_COLUMNS = {"closed_by_request": "TEXT", "turn_id": "TEXT"}
 
 
 def default_state_db_path() -> Path:
@@ -200,6 +204,7 @@ class StateTriple:
     valid_from: float
     valid_to: Optional[float]
     thread_id: Optional[str]
+    turn_id: Optional[str]
     reason: str
     actor: str
     request_id: Optional[str] = None
@@ -221,6 +226,7 @@ class StateTriple:
             "valid_from": self.valid_from,
             "valid_to": self.valid_to,
             "thread_id": self.thread_id,
+            "turn_id": self.turn_id,
             "reason": self.reason,
             "actor": self.actor,
             "request_id": self.request_id,
@@ -257,12 +263,22 @@ class StateWhy:
         }
 
 
+def _col(r: sqlite3.Row, name: str):
+    """A column that may predate this row's database. Returns None when the
+    additive migration has not run against whatever produced ``r``."""
+    try:
+        return r[name]
+    except (IndexError, KeyError):
+        return None
+
+
 def _row(r: sqlite3.Row) -> StateTriple:
     return StateTriple(
         id=r["id"], subject=r["subject"], predicate=r["predicate"],
         object=r["object"], source=r["source"], confidence=r["confidence"],
         valid_from=r["valid_from"], valid_to=r["valid_to"],
-        thread_id=r["thread_id"], reason=r["reason"], actor=r["actor"],
+        thread_id=r["thread_id"], turn_id=_col(r, "turn_id"),
+        reason=r["reason"], actor=r["actor"],
         request_id=r["request_id"], closed_reason=r["closed_reason"],
         closed_by=r["closed_by"], closed_by_request=r["closed_by_request"],
     )
@@ -456,6 +472,7 @@ class StateStore:
         request_id: Optional[str] = None,
         confidence: float = 1.0,
         thread_id: Optional[str] = None,
+        turn_id: Optional[str] = None,
         now: Optional[float] = None,
     ) -> Optional[int]:
         """Record a fact, closing whatever it supersedes.
@@ -491,7 +508,7 @@ class StateStore:
                 try:
                     return self._record_locked(
                         subject, predicate, obj, source, reason, actor,
-                        request_id, confidence, thread_id, ts,
+                        request_id, confidence, thread_id, turn_id, ts,
                     )
                 except sqlite3.IntegrityError:
                     # Lost the one-open-row race. The winner has now closed
@@ -504,14 +521,14 @@ class StateStore:
                     )
                     return self._record_locked(
                         subject, predicate, obj, source, reason, actor,
-                        request_id, confidence, thread_id, ts,
+                        request_id, confidence, thread_id, turn_id, ts,
                     )
         except Exception as e:
             logger.warning(f"Failed to record {subject}/{predicate}: {e}")
             return None
 
     def _record_locked(self, subject, predicate, obj, source, reason, actor,
-                       request_id, confidence, thread_id, ts):
+                       request_id, confidence, thread_id, turn_id, ts):
         """The read-modify-write, under one immediate transaction.
 
         BEGIN IMMEDIATE takes the write lock before the SELECT. Without it
@@ -521,11 +538,11 @@ class StateStore:
         with self._write_txn():
             return self._record_body(
                 subject, predicate, obj, source, reason, actor,
-                request_id, confidence, thread_id, ts,
+                request_id, confidence, thread_id, turn_id, ts,
             )
 
     def _record_body(self, subject, predicate, obj, source, reason, actor,
-                     request_id, confidence, thread_id, ts):
+                     request_id, confidence, thread_id, turn_id, ts):
         """Close whatever this supersedes, then insert. Assumes the caller
         holds the write transaction."""
         cur = self._conn.execute(
@@ -551,9 +568,9 @@ class StateStore:
         c = self._conn.execute(
             "INSERT INTO state_triples "
             "(subject, predicate, object, source, confidence, valid_from, "
-            " valid_to, thread_id, reason, actor, request_id) "
-            "VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)",
-            (subject, predicate, obj, source, confidence, ts, thread_id,
+            " valid_to, thread_id, turn_id, reason, actor, request_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)",
+            (subject, predicate, obj, source, confidence, ts, thread_id, turn_id,
              reason, actor, request_id),
         )
         return c.lastrowid

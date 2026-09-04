@@ -299,6 +299,14 @@ def apple_intelligence_eligible(min_ram_gb: int = _APPLE_INTELLIGENCE_MIN_RAM_GB
     return True
 
 
+def _is_root() -> bool:
+    """True when running as uid 0. False on platforms without geteuid."""
+    try:
+        return os.geteuid() == 0  # type: ignore[attr-defined]
+    except AttributeError:  # pragma: no cover - Windows
+        return False
+
+
 def get_config_dir() -> Path:
     """
     Get platform-appropriate configuration directory.
@@ -317,6 +325,12 @@ def get_config_dir() -> Path:
     override = os.environ.get("HALBERT_CONFIG_DIR") or os.environ.get("Halbert_CONFIG_DIR")
     if override:
         return Path(override).expanduser()
+    # A root-run Halbert configures the MACHINE, not one login account's
+    # home. This branch came from utils/paths.config_dir when the resolvers
+    # were folded together; losing it would have put a system install's
+    # config under /var/root.
+    if _is_root():
+        return Path("/etc/halbert")
     if is_macos():
         return Path.home() / "Library" / "Application Support" / "Halbert"
     elif is_windows():
