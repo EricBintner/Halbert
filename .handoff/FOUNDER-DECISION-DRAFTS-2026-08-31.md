@@ -1,5 +1,12 @@
 # Founder Decision Drafts — FDR-DEC-01…04 (U5)
 
+> **Status: SUPERSEDED for FDR-DEC-01/02/03 (decided 2026-09-04).** The exception
+> text drafted in FDR-DEC-02 below is now committed as `LICENSE-EXCEPTION-APPSTORE`
+> at the repository root — **that file is the operative grant; the copy below is a
+> historical draft and must not be quoted as the licence.** FDR-DEC-04 (pricing) is
+> still open. See `DECISIONS.md` and
+> `.handoff/HANDOFF-DISTRIBUTION-CHANNELS-2026-09-04.md`.
+
 **Date:** 2026-08-31
 **Author:** GLM-5.3 (drafting only — every decision below is the founder's; no model closes these)
 **Purpose:** All four U5 deliverables drafted and ready for sign-off. Per the batch plan, this is

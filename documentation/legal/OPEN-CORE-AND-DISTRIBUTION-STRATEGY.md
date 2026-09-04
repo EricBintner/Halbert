@@ -106,10 +106,16 @@ equivalent — each contradicts either the sandbox or the product boundary in §
 
 ### 5.2 Private API (`FDR-08`)
 
-`tauri.conf.json` sets `macOSPrivateApi: true`, which the floating voice HUD needs for
-its transparent window. Private API use is grounds for App Store rejection. **Decided:
-Pro channel only.** The App Store build sets it false and the voice HUD degrades to an
-opaque window rather than failing to open.
+The floating voice HUD needs a transparent window, which on macOS needs Tauri's
+private-API path. Private API use is grounds for App Store rejection. **Decided: Pro
+channel only.** The App Store build ships without it and the HUD degrades to an opaque
+window rather than failing to open.
+
+Note for whoever implements it: this is not one switch. `macos-private-api` is a
+compile-time Cargo feature (`src-tauri/Cargo.toml`), `macOSPrivateApi` in
+`tauri.conf.json` is only its runtime half, and `floating_panel.rs` calls
+`.transparent(true)` unconditionally. Turning it off per channel needs a feature gate
+and an opaque fallback path in Rust, not a JSON edit.
 
 ### 5.3 App Store review, beyond licensing
 
@@ -158,6 +164,13 @@ the corpus licence gate and the App Store dependency gate, both automated and pa
 **Does not exist yet:** any `Dockerfile` (there is none in the tree); a Home Assistant
 add-on repository; apt/deb packaging; Developer ID certificates; notarization; licence
 key verification; Sparkle; a Lemon Squeezy product.
+
+**Works, but not yet compliant to ship.** `scripts/build-macos.sh` produces a bundle
+and passes both licence gates, but it does not copy `LICENSE` or
+`LICENSE-EXCEPTION-APPSTORE` into the `.app`. GPLv3 §4 requires conveying the licence
+with the object code, and an additional permission reaches nobody who never receives
+it. The `halbert license` notice likewise still says plain `GPL-3.0-or-later`. Both
+are part of `DIST-1`; neither is a licensing question, both are packaging work.
 
 **Deferred by earlier decisions:** Windows as a target (2026-08-31, HA strategy §8).
 

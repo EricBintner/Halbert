@@ -21,16 +21,42 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 EXCEPTION_FILE = REPO / "LICENSE-EXCEPTION-APPSTORE"
 
-# The clause that makes this text the operative grant rather than a description
-# of one. Short enough to survive reflowing, specific enough not to false-positive.
+# The clause that makes the canonical file itself the operative grant.
 OPERATIVE_PHRASE = "grant you additional"
+
+# A *grant* — as opposed to a description of one — reads performatively and cites
+# the sections it overrides. Matching the canonical wording alone would only catch
+# copy-paste; the four wordings this repo accumulated were rewordings, so the
+# signature has to be shape-based:
+#
+#   performative verb  +  the channel  +  the sections being set aside
+#
+# Descriptions pass: "builds conveyed through the Mac App Store carry one
+# additional permission under GPLv3 §7" has no performative verb and cites no
+# overridden section. "you grant that same exception on your contribution"
+# (CONTRIBUTING) has the verb but sets nothing aside.
+GRANT_VERBS = ("grant permission", "grant you", "grants permission", "grants you",
+               "grant the copyright", "hereby grant")
+CHANNEL = "app store"
+OVERRIDES = ("notwithstanding", "section 6", "sections 6", "§6", "§ 6")
 
 # Quoting the text here is the rationale document's job, not a second grant.
 ALLOWED = {"documentation/legal/APP-STORE-DISTRIBUTION-STRATEGY.md"}
 
 SEARCH_SUFFIXES = {".md", ".txt", ".rst", ".py", ".rs", ".ts", ".tsx", ".toml", ".yml", ".yaml"}
+
+# Only first-party files are policed.
+#
+#   data/            scraped RAG corpus — third-party prose that discusses App
+#                    Store licensing is not this project making a grant, and one
+#                    such page (ask-different) trips the shape signature.
+#   .handoff/        dated working records. FOUNDER-DECISION-DRAFTS-2026-08-31.md
+#                    legitimately carries the draft that became the canonical
+#                    file; it is marked superseded rather than rewritten, because
+#                    editing history to satisfy a test is the wrong direction.
 SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv", "dist", "build",
-             "storybook-static", ".handoff", "target", ".pytest_cache"}
+             "storybook-static", ".handoff", "target", ".pytest_cache",
+             "data", "site-packages", ".mypy_cache", "htmlcov"}
 
 SELF = Path(__file__).resolve()
 
@@ -70,12 +96,15 @@ def test_exception_text_is_not_paraphrased_elsewhere():
             body = path.read_text(errors="ignore")
         except OSError:
             continue
-        flat = _flat(body)
-        if OPERATIVE_PHRASE in flat and "GNU GPL version 3 section 7" in flat:
+        flat = _flat(body).lower()
+        if (any(v in flat for v in GRANT_VERBS)
+                and CHANNEL in flat
+                and any(o in flat for o in OVERRIDES)):
             offenders.append(rel)
 
     assert not offenders, (
-        "The §7 App Store exception text appears outside LICENSE-EXCEPTION-APPSTORE in:\n  "
+        "Something that reads as a §7 App Store grant appears outside "
+        "LICENSE-EXCEPTION-APPSTORE in:\n  "
         + "\n  ".join(sorted(offenders))
         + "\n\nA second wording is a second, different additional permission. Replace the copy "
           "with a pointer to LICENSE-EXCEPTION-APPSTORE."

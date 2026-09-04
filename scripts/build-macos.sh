@@ -326,8 +326,23 @@ EOF
 if [[ "$CHANNEL" == "macos-app-store" ]]; then
     cat <<'EOF'
 
-REMINDER — Mac App Store distribution requires the GPLv3 §7 exception to be in
-place before submission. See documentation/legal/APP-STORE-DISTRIBUTION-STRATEGY.md
-(LEG-CRIT-03); the founder decision is a release blocker, not a formality.
+REMINDER — Mac App Store submission checklist.
+
+The GPLv3 §7 exception is DECIDED and committed (LICENSE-EXCEPTION-APPSTORE,
+2026-09-04). The licensing question is closed. What is NOT yet done, and what
+this script does not yet do for you:
+
+  * This build does not carry the licence files. GPLv3 §4 requires conveying
+    LICENSE and LICENSE-EXCEPTION-APPSTORE with the object code — copy both
+    into the bundle before submitting.
+  * SPDX "WITH LicenseRef-Halbert-AppStore-Exception" headers are not applied
+    to covered sources yet.
+  * The bundle identifier and entitlements are not injected per channel; this
+    build carries the dev identifier and no entitlements file.
+  * The macos-private-api Cargo feature is still compiled in. It must be off
+    for an App Store submission.
+
+See documentation/legal/OPEN-CORE-AND-DISTRIBUTION-STRATEGY.md and ROADMAP row
+DIST-1. Do not submit a bundle produced by this script until those are done.
 EOF
 fi

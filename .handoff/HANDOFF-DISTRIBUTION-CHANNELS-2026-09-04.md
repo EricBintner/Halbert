@@ -152,6 +152,11 @@ identifier or entitlements injection at all**. `tauri.conf.json` sets
 - Neither plist may request `temporary-exception.*`, `inherit` for privileged
   helpers, or any Full Disk Access equivalent — those contradict the sandbox or
   the product boundary.
+- **Also reconcile the app category**, found on review: `tauri.conf.json:50` says
+  `DeveloperTool` while `config/platforms.yml:244` says `developer-tools`. Beyond
+  the mismatch, `DeveloperTool` is the wrong `LSApplicationCategoryType` for
+  Halbert Home, which is listed as a consumer Home Assistant companion. The Pro
+  build may legitimately keep a developer category.
 
 Both channels are first-class here. `macos-pro` is built and signed in this phase.
 
@@ -161,9 +166,50 @@ Both channels are first-class here. `macos-pro` is built and signed in this phas
 needs for its transparent window (`floating_panel.rs:19` already flags the
 conflict). Private API use is grounds for App Store rejection.
 
-Decision: **Pro-only.** The App Store channel builds with the flag off and the
-voice HUD degrades to an opaque window rather than failing to open. Gated by a test
-asserting the App Store channel config has private API disabled.
+Decision: **Pro-only.** The App Store channel builds without it and the voice HUD
+degrades to an opaque window rather than failing to open.
+
+**Corrected on review — this is not a config flag.** `macos-private-api` is a
+**compile-time Cargo feature**, declared in
+`src-tauri/Cargo.toml:35` (`tauri = { version = "2", features = [..., "macos-private-api"] }`),
+and `tauri.conf.json`'s `macOSPrivateApi` is only its runtime half. Worse,
+`floating_panel.rs:118` calls `.transparent(true)` **unconditionally** — it sits
+inside `#[cfg(target_os = "macos")]`, but nothing gates it on the feature.
+
+So the App Store variant needs all three, not one:
+
+1. a Cargo feature of our own (say `hud-transparency`) that forwards to Tauri's
+   `macos-private-api`, defaulted on and disabled for the App Store build;
+2. `#[cfg(feature = "hud-transparency")]` around the `.transparent(true)` call,
+   with an opaque fallback path — otherwise the builder call is still compiled;
+3. `macOSPrivateApi: false` in the channel's generated `tauri.conf.json`.
+
+Estimate accordingly: this is a Rust change with a fallback UI path, not a JSON
+edit. Test: the App Store channel builds with the feature off **and** the HUD still
+opens — a config assertion alone would not have caught the unconditional call.
+
+### Unit 4b — ship the licence with the binary, and tell the truth in the notice
+
+Found by reverse-engineering the chain from decision to shipped bundle; neither
+was in the original plan.
+
+**Nothing copies the licence into any bundle.** `scripts/build-macos.sh` stages the
+corpus and runs both gates, but never copies `LICENSE` or
+`LICENSE-EXCEPTION-APPSTORE` into the `.app`. GPLv3 §4 requires conveying the
+licence with the object code, and an additional permission is worthless to a
+recipient who never receives it. Both files must land in the bundle — for the App
+Store channel this is what makes the exception operative for the people receiving
+that build.
+
+**The runtime notice does not mention the exception.** `halbert_core/__init__.py`'s
+`LEGAL_NOTICE` and the `halbert license` CLI state `GPL-3.0-or-later` and stop
+there. For a build conveyed under an additional permission, the Appropriate Legal
+Notices should say so. Make it channel-aware rather than adding the exception text
+a fifth time — read the committed file, do not retype it.
+
+*Also fixed while here:* `build-macos.sh` printed a reminder calling the founder
+§7 decision "a release blocker, not a formality". That decision is made; the
+message now lists what actually remains.
 
 ### Unit 6 — correct the record
 
@@ -195,6 +241,27 @@ Apple Developer Program enrollment, both external to the repo:
 
 Named here so the sequencing survives; none of it is written in Phase A.
 
+## 6a. Two licence risks that are *not* blockers today — and the reason is fragile
+
+`SONNET-05` flagged `opencv-python` (its PyPI wheels are documented to bundle an
+LGPL-2.1 FFmpeg build) and `openwakeword` (its stock pretrained models are
+CC-BY-NC) as needing a founder call before reaching a commercial channel.
+
+Checked on review: **neither reaches either macOS binary today.** `opencv-python`
+lives in the `vision` extra in `halbert_core/pyproject.toml:112`, and
+`scripts/build-macos.sh:243` installs `.[dashboard]` and nothing else.
+
+The reason that is fragile, and why it belongs written down rather than assumed:
+`scripts/check_appstore_deps.py` reads package *manifests*. It cannot see what a
+wheel bundles inside it, and it cannot see what a package downloads at runtime. So
+adding `vision` to that one `pip install` line would pull LGPL FFmpeg into an App
+Store bundle **with every gate still green**. The gate is not the guard here; the
+build line is.
+
+Before either extra is ever added to a macOS channel: settle whether the wheel
+actually used bundles FFmpeg and whether it links dynamically, and confirm no stock
+wake-word model ships or auto-downloads. Until then, leave the build line alone.
+
 ## 7. Out of scope
 
 - Per-feature tier-gating machinery. The line is deferred, and §2 suggests it may
@@ -211,4 +278,5 @@ Named here so the sequencing survives; none of it is written in Phase A.
 | 3 | Every identifier in `platforms.yml` is one of the four agreed values |
 | 4 | Both plists parse; the MAS plist requests only the four allowed entitlements and none of the forbidden ones; `build-macos.sh --gate-only` resolves an identifier and an entitlements path per channel |
 | 5 | The App Store channel config has private API disabled |
+| 4b | A built `.app` contains `LICENSE` and `LICENSE-EXCEPTION-APPSTORE`; the App Store channel's legal notice names the additional permission |
 | 6 | `tests/test_legal_metadata.py` stays green |
