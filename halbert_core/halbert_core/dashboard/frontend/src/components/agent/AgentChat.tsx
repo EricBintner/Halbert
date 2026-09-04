@@ -33,6 +33,8 @@ import { useInstanceVariant } from '../../hooks/useInstanceVariant';
 import { StateBadge } from './StateBadge';
 import { PlanChecklist } from './PlanChecklist';
 import { ToolExecutionCard } from './ToolExecutionCard';
+import { InspectionGroup } from './InspectionGroup';
+import { groupInspections } from './groupInspections';
 import { ConfirmationDialog } from './ConfirmationDialog';
 import { ThinkingPanel } from './ThinkingPanel';
 import { WhyChip, type ProvenanceRef } from '../WhyChip';
@@ -1128,9 +1130,17 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
                     />
                   )}
 
-                  {session.toolExecutions.map((exec) => (
-                    <ToolExecutionCard key={exec.executionId} execution={exec} />
-                  ))}
+                  {/* The same folding the timeline does, so the turn does not
+                      change shape when the page is reloaded. A call still
+                      running is never folded, so the step in flight stays
+                      visible while the ones before it settle into a line. */}
+                  {groupInspections(session.toolExecutions).map((row, i) =>
+                    row.kind === 'group' ? (
+                      <InspectionGroup key={`insp-${i}`} items={row.items} />
+                    ) : (
+                      <ToolExecutionCard key={row.item.executionId} execution={row.item} />
+                    ),
+                  )}
 
                   {/* Terminals Halbert opened for this turn, flowing in the
                       conversation; they dock to the right column on scroll. */}
