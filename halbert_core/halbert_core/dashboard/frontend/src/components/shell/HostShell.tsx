@@ -23,6 +23,7 @@ import { useNavigate } from 'react-router-dom';
 import { AgentChat } from '../agent/AgentChat';
 import { useShellMode } from '@/contexts/ShellModeContext';
 import { ContextStage } from './ContextStage';
+import { findJumpTarget } from './jumpToBlock';
 import { LiveRegion } from './LiveRegion';
 
 /**
@@ -46,11 +47,12 @@ export function HostShell({ compact = false }: HostShellProps = {}) {
    * Scroll the conversation back to where a docked terminal was opened.
    * InlineTerminals stamps each origin with data-terminal-origin.
    */
-  const jumpToTerminal = useCallback((sessionId: string) => {
+  const jumpToTerminal = useCallback((id: string) => {
     const root = conversationRef.current;
     if (!root) return;
-    const origin = root.querySelector(`[data-terminal-origin="${CSS.escape(sessionId)}"]`);
-    origin?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    // Both a docked terminal's session id and a task card's block id arrive
+    // here, anchored by different attributes. See jumpToBlock.
+    findJumpTarget(root, id)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }, []);
 
   /**

@@ -90,7 +90,11 @@ export function TaskCard({
         )}
         {onJumpToTurn && (
           <button
-            onClick={() => onJumpToTurn(threadId)}
+            /* The block, not the thread: a thread is a conversation, not a
+               place on screen. Every surface that renders a block stamps
+               `data-terminal-block`, in the live feed and in the reloaded
+               timeline alike, so this resolves in both. */
+            onClick={() => onJumpToTurn(blockId ?? threadId)}
             className="text-[10px] text-muted-foreground hover:text-text"
             aria-label="Jump to turn"
             title="Jump to turn"

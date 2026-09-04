@@ -4,10 +4,19 @@
  * ContextStage — the right half of the engaged surface.
  *
  * Holds what the conversation is about rather than the conversation itself:
- * the host's live vitals at the top, the terminal accordion dock below it, and
- * (via the module registry) any dashboard module summoned into view. The dock
- * is always mounted — its idle state is the proof that the terminal nervous
- * system is up, which is exactly what an unconditional `return null` hid.
+ * the host's live vitals at the top, the tasks column below it, and (via the
+ * module registry) any dashboard module summoned into view.
+ *
+ * The tasks column is always mounted — its idle state is the proof that the
+ * terminal nervous system is up, which is exactly what an unconditional
+ * `return null` hid, and the reason the accordion it replaced also refused to
+ * disappear when empty. "Nothing running" and an absent column say different
+ * things.
+ *
+ * It lists PROMOTED blocks only: a command that finished inside two seconds
+ * is a line in the conversation, not an entry in a list of what the machine
+ * is doing. That is the whole point of the promotion, and until this column
+ * was mounted the promotion had no effect anyone could see.
  *
  * Plan B (B19): below the md breakpoint, renders as a Sheet (bottom sheet)
  * opened from the aggregate StatusLight on the PanelToggle. "Go back to
@@ -15,7 +24,9 @@
  */
 
 import { useState, type ReactNode } from 'react';
-import { TerminalAccordionDock } from '../agent/TerminalAccordionDock';
+import { TasksColumn } from '../agent/TasksColumn';
+import { useTasks } from '../../hooks/useTasks';
+import { ShellLauncher } from './ShellLauncher';
 import { ProactiveEventsBadge } from '../agent/ProactiveEventsBadge';
 import { ModuleRenderer } from '../ModuleRenderer';
 import { HostVitals } from './HostVitals';
@@ -43,6 +54,7 @@ export function ContextStage({
   aggregateStatusLight,
 }: ContextStageProps) {
   const [sheetOpen, setSheetOpen] = useState(false);
+  const { running, finished } = useTasks();
 
   const stageContent: ReactNode = (
     <>
@@ -70,7 +82,12 @@ export function ContextStage({
       </div>
 
       <div className="shrink-0 max-h-[55%] overflow-y-auto">
-        <TerminalAccordionDock onJumpTo={onJumpToTerminal} />
+        <TasksColumn
+          runningTasks={running}
+          finishedTasks={finished}
+          onJumpToTurn={onJumpToTerminal}
+          yourShell={<ShellLauncher />}
+        />
       </div>
     </>
   );

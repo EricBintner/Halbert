@@ -7,10 +7,8 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 
-// Mock the child components to avoid pulling in xterm etc.
-vi.mock('../agent/TerminalAccordionDock', () => ({
-  TerminalAccordionDock: () => <div data-testid="dock" />,
-}));
+// Mock the child components to avoid pulling in xterm etc. The tasks column
+// needs no mock: TaskCard renders a StatusLight and nothing else.
 vi.mock('../agent/ProactiveEventsBadge', () => ({
   ProactiveEventsBadge: () => <div data-testid="proactive" />,
 }));
@@ -87,9 +85,12 @@ describe('ContextStage responsive layout (Plan B: B19)', () => {
     expect(screen.getAllByTestId('vitals').length).toBeGreaterThan(0);
   });
 
-  it('renders dock in both desktop and sheet', () => {
+  it('renders the tasks column in both desktop and sheet', () => {
     render(<ContextStage />);
-    expect(screen.getAllByTestId('dock').length).toBeGreaterThan(0);
+    // The column replaced the accordion (plan-b-contracts §12) and inherits
+    // its one indispensable property: it is mounted even when empty, because
+    // "Nothing running" and an absent column say different things.
+    expect(document.querySelectorAll('[data-tasks-column]').length).toBeGreaterThan(0);
   });
 
   it('renders staged modules', () => {
