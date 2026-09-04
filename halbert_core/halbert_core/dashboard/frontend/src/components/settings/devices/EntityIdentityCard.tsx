@@ -194,7 +194,12 @@ export function EntityIdentityCard({ state, onRefresh }: EntityIdentityCardProps
               className={`rounded-lg border p-3 text-left transition-colors
                           ${!singular ? 'border-primary bg-primary/5' : 'hover:bg-accent'}`}
             >
-              <span className="text-sm font-medium">Independent Node</span>
+              {/* "Body", not "Node". The sibling option one line up says
+                  "one Halbert, many bodies"; a reader choosing between the
+                  two was choosing between two vocabularies for the same
+                  thing. CORE-CONCEPTS-AND-ALIGNMENT §terminology lists node,
+                  instance, host-as-noun and satellite under avoid. */}
+              <span className="text-sm font-medium">Independent Body</span>
               <span className="block text-xs text-muted-foreground pt-0.5">
                 This body keeps its own memory and conversations.
               </span>
