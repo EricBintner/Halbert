@@ -37,13 +37,17 @@ def repo_root() -> Optional[str]:
 
 
 def config_dir() -> str:
-    val = os.environ.get("HALBERT_CONFIG_DIR") or os.environ.get("Halbert_CONFIG_DIR")
-    if val:
-        return val
-    if _is_root():
-        return "/etc/halbert"
-    xdg = os.environ.get("XDG_CONFIG_HOME") or os.path.join(Path.home(), ".config")
-    return os.path.join(xdg, "halbert")
+    """Where Halbert's own config files live.
+
+    Delegates to :func:`utils.platform.get_config_dir`, which is the resolver
+    fourteen call sites already use for being.yml, models.yml, preferences.yml
+    and the rest. Two answers to this question is how being.yml and
+    being.yml.lock ended up in different directories, with the advisory lock
+    protecting nothing.
+    """
+    from .platform import get_config_dir
+
+    return str(get_config_dir())
 
 
 def data_dir() -> str:

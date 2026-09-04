@@ -91,8 +91,18 @@ class SessionState(BaseModel):
 # --- Helpers ---
 
 def get_config_dir() -> Path:
-    """Get Halbert config directory."""
-    config_dir = Path.home() / ".config" / "halbert"
+    """Halbert's config directory — the same one everything else uses.
+
+    This used to hardcode ``Path.home() / ".config" / "halbert"``, so it
+    ignored HALBERT_CONFIG_DIR, ignored the root install location, and on
+    macOS pointed somewhere no other module looked. A test that isolated its
+    data directory and ran an editor save still wrote backups into the
+    developer's real home, which is how ~/.config/halbert/backups filled up
+    with debris from throwaway probes.
+    """
+    from ...utils.platform import get_config_dir as _resolve
+
+    config_dir = _resolve()
     config_dir.mkdir(parents=True, exist_ok=True)
     return config_dir
 
