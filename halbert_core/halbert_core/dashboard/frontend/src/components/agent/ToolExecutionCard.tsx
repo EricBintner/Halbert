@@ -7,7 +7,7 @@
  * Based on research5.md Part 8.3.
  */
 
-import { useState, type ReactNode } from 'react';
+import { Fragment, useState, type ReactNode } from 'react';
 import { type ToolExecution } from '../../hooks/useAgentStream';
 import { useTerminalSessions } from '../../hooks/useTerminalSessions';
 import { StatusLight, type StatusLightState } from './StatusLight';
@@ -73,6 +73,16 @@ export function ToolExecutionCard({ execution, onRetry, blockId: blockIdProp, bl
 
   // Plan B: for run_command with a block, render the block output
   const isCommandBlock = execution.tool === 'run_command' && blockId;
+
+  // Arguments as readable fields. A nested value still needs JSON to be
+  // shown at all, but it is one value on one line rather than the whole
+  // object pretty-printed across six.
+  const argFields: Array<[string, string]> = Object.entries(execution.args ?? {}).map(
+    ([key, value]) => [
+      key,
+      typeof value === 'string' ? value : JSON.stringify(value) ?? String(value),
+    ],
+  );
 
   // The command line, when this card is a shell command at all.
   const rawCommand = (execution.args as Record<string, unknown>)?.command;
@@ -155,12 +165,24 @@ export function ToolExecutionCard({ execution, onRetry, blockId: blockIdProp, bl
           aria-label={`${execution.tool} details`}
           className="border-t p-2 space-y-2"
         >
-          <div>
-            <div className="text-[10px] font-medium text-muted-foreground mb-1">Arguments</div>
-            <pre className="text-[10px] bg-muted rounded p-1.5 overflow-x-auto border">
-              {JSON.stringify(execution.args, null, 2)}
-            </pre>
-          </div>
+          {/* A shell command's arguments ARE the command, and the header
+              already carries it; repeating it as {"command": "..."} adds
+              braces, quotes and a second copy of the same fact. Every other
+              tool shows its arguments as fields -- the path is the useful
+              part, the JSON punctuation never was. */}
+          {!commandLabel && argFields.length > 0 && (
+            <div>
+              <div className="text-[10px] font-medium text-muted-foreground mb-1">Arguments</div>
+              <dl className="text-[10px] grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5">
+                {argFields.map(([key, value]) => (
+                  <Fragment key={key}>
+                    <dt className="text-muted-foreground font-mono">{key}</dt>
+                    <dd className="text-foreground font-mono break-all">{value}</dd>
+                  </Fragment>
+                ))}
+              </dl>
+            </div>
+          )}
 
           {/* Plan B: live long-running block — render a live xterm via TerminalTile */}
           {isLiveBlock && liveSession && (

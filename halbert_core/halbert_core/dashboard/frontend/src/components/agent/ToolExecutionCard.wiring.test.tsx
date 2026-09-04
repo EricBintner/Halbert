@@ -11,7 +11,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { ToolExecutionCard } from './ToolExecutionCard';
 import type { ToolExecution } from '../../hooks/useAgentStream';
 
@@ -65,3 +65,37 @@ describe('ToolExecutionCard wiring', () => {
     expect(screen.getByText('read_file')).toBeTruthy();
   });
 });
+
+describe('ToolExecutionCard arguments', () => {
+  it('does not repeat the command as JSON for a shell block', () => {
+    const { container } = render(
+      <ToolExecutionCard execution={streamed} blockExitCode={0} blockDuration={0.3} />
+    );
+    fireEvent.click(screen.getByRole('button', { name: /smbstatus/ }));
+
+    // The command is the header. Repeating it as {"command": "smbstatus"}
+    // below adds braces, quotes and a second copy of the one fact the card
+    // already leads with.
+    expect(screen.queryByText('Arguments')).toBeNull();
+    expect(container.textContent).not.toContain('{');
+    expect(container.textContent).not.toContain('"command"');
+  });
+
+  it('shows another tool’s arguments as fields, not as a JSON dump', () => {
+    const read: ToolExecution = {
+      executionId: 'exec-2',
+      tool: 'read_file',
+      args: { path: '/etc/fstab', limit: 40 },
+      status: 'success',
+    };
+    const { container } = render(<ToolExecutionCard execution={read} />);
+    fireEvent.click(screen.getByRole('button', { name: /read_file/ }));
+
+    // The path is the useful part and must survive; the punctuation is not.
+    expect(screen.getByText('/etc/fstab')).toBeTruthy();
+    expect(screen.getByText('path')).toBeTruthy();
+    expect(screen.getByText('40')).toBeTruthy();
+    expect(container.textContent).not.toContain('{');
+    expect(container.textContent).not.toContain('": "');
+  });
+})
