@@ -694,3 +694,80 @@ The first two are the remaining half of the original request: *quiet when
 fast* now has a record-level answer (a finished command collapses to one
 line) but not a present-tense one (nothing shows what is happening while a
 fast command runs, and nothing groups a run of inspection calls).
+
+---
+
+## 17. Final state (055aef68, 22241c8c)
+
+Both halves of the original request now have an answer.
+
+### Quiet when fast — the record
+
+A run of read-only calls folds into one line (`Looked at 3 files · 1 memory`,
+expandable). Applied at **both** render sites, so a turn does not change shape
+when the page is reloaded.
+
+Four things may never be folded, each with its own test: anything that
+**failed** (a 40 ms read that failed is more interesting than a 4 s one that
+did not), anything **promoted** (a command that earned a task card does not
+then vanish into a summary of things that did not matter), anything that
+**wrote**, and anything **redacted** — the last needing care, because a
+redaction marker carries neither exit code nor status and would have passed a
+success check straight into "3 files", turning a forgetting into an
+increment.
+
+A run of one stays a single card. One row is not a wall.
+
+### Present when working — the layer
+
+`StatusStrip` sits above the composer and holds what is happening *now*. A
+read still in flight is reported there and not in the feed; a command keeps
+its card, because it may become a live tile. Nothing is hidden while it
+happens — it simply does not earn a permanent row afterwards, which is the
+distinction the whole request turned on.
+
+It renders nothing when nothing is running: a persistent empty bar is
+furniture, and furniture is what this removes.
+
+### One thing found and deliberately not fixed
+
+The principled source for "is this an inspection" ought to be the safety
+framework's `RiskLevel`, and it cannot be used as one:
+
+```
+read_file           safe        list_directory      medium
+recall_memory       safe        read_log_tail       medium
+run_command (ls)    safe        get_service_status  medium
+                                check_disk_space    medium
+```
+
+The noisiest read-only tools default to `medium` — rated above reading
+`/etc/fstab`. That is a defaulting gap in `tools/safety.py` deserving its own
+change; grouping on it today would have folded almost nothing. The tier list
+is instead an explicit set, checked against the real registry by a test that
+fails on any name Halbert does not have.
+
+### Ledger of the branch
+
+| | |
+|---|---|
+| D1 the card cannot find its block | closed (`9a8bf231`, `7c3c3931`) |
+| D2 the pool is off in production | closed (`afba3c22`) |
+| D3 no promotion timer | closed (`d2f21e5e`, `f8281774`) |
+| D4 promotion has no consumer | closed (`4a862fee`) |
+| D5 tests cannot catch D1 | closed (`ec2870de`, and every new test drives a real path) |
+| historical timeline renders no blocks | closed (`3e9a438a`) |
+| inspection grouping | closed (`055aef68`) |
+| status strip | closed (`22241c8c`) |
+
+### Still open, and why
+
+- **`YourShellRegion`** (watched toggle, stage-into-shell, a real xterm) is
+  written and still unmounted; its terminal mount point is a div the parent
+  never fills. A `ShellLauncher` covers the affordance the accordion carried,
+  which is what could not be allowed to disappear. The region proper is its
+  own piece of work.
+- **`tools/safety.py` read-only defaults**, above.
+- **The review's F5** — read-before-write as a digest compare-and-swap —
+  remains the highest-value item in either document and is untouched by this
+  branch.
