@@ -45,6 +45,18 @@ export interface ToolExecution {
   status: 'running' | 'success' | 'error';
   result?: unknown;
   error?: string;
+  /**
+   * Plan B: the terminal block this call opened, when it opened one. Set from
+   * the `terminal_block` event's own `execution_id`, which is the only join
+   * between a tool card and a terminal tile -- matching on the command string
+   * or the tool name breaks the moment a turn runs two commands.
+   *
+   * Undefined for every tool that is not a shell command, and for blocks that
+   * belong to no tool call at all (a watched user shell).
+   */
+  blockId?: string;
+  /** The PTY session hosting `blockId`. */
+  terminalSessionId?: string;
 }
 
 export interface ConfirmationRequest {
@@ -755,10 +767,29 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
           // Output and exit live in the terminal store, not in session state.
           return prev;
 
-        // Plan B: somatic blocks live in the terminal store (applyTerminalEvent
-        // above). The session only needs to know about promoted task cards so
-        // the conversation can render them inline.
-        case 'terminal_block':
+        // Plan B: the block's output and status live in the terminal store
+        // (applyTerminalEvent above). What the session needs is the join:
+        // which tool call opened this block, so ToolExecutionCard can render
+        // it instead of a generic card. Without this the card's every block
+        // branch is unreachable -- which is exactly how it shipped.
+        case 'terminal_block': {
+          const execId = event.execution_id as string | undefined;
+          const blockId = event.block_id as string | undefined;
+          if (!execId || !blockId) return prev;
+          return {
+            ...prev,
+            toolExecutions: prev.toolExecutions.map((exec) =>
+              exec.executionId === execId
+                ? {
+                    ...exec,
+                    blockId,
+                    terminalSessionId: event.terminal_session_id as string | undefined,
+                  }
+                : exec,
+            ),
+          };
+        }
+
         case 'terminal_block_promote':
         case 'terminal_needs_input':
           return prev;

@@ -576,23 +576,33 @@ class StreamEvent:
         owner: str,
         interactive: bool = False,
         promote: bool = False,
+        execution_id: Optional[str] = None,
     ) -> 'StreamEvent':
         """A new terminal block opened, or a block was promoted to long-running.
 
         type="terminal_block" when a new block opens.
         type="terminal_block_promote" when promote=True (block is >2s old
         and still open — the tile appears in the Tasks column).
+
+        ``execution_id`` is the tool call that ran this block, and it is the
+        join between the conversation's card and the terminal's tile. It is
+        omitted rather than emptied when there is none — a watched user shell
+        block has no tool call, and an empty string would join to nothing
+        while still looking like an id.
         """
+        data = {
+            "block_id": block_id,
+            "terminal_session_id": terminal_session_id,
+            "command": command,
+            "owner": owner,
+            "interactive": interactive,
+        }
+        if execution_id:
+            data["execution_id"] = execution_id
         return cls(
             type="terminal_block_promote" if promote else "terminal_block",
             session_id=session_id,
-            data={
-                "block_id": block_id,
-                "terminal_session_id": terminal_session_id,
-                "command": command,
-                "owner": owner,
-                "interactive": interactive,
-            },
+            data=data,
         )
 
     @classmethod

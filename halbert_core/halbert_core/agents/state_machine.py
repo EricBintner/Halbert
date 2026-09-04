@@ -2386,8 +2386,17 @@ class AgentStateMachine:
     # -------------------------------------------------------------------------
 
     @staticmethod
-    def _terminal_event(session_id: str, payload: Dict[str, Any]) -> Optional[StreamEvent]:
-        """Convert a terminal-bridge payload into its SSE event."""
+    def _terminal_event(
+        session_id: str,
+        payload: Dict[str, Any],
+        execution_id: Optional[str] = None,
+    ) -> Optional[StreamEvent]:
+        """Convert a terminal-bridge payload into its SSE event.
+
+        ``execution_id`` is the tool call the payload was drained under. Only
+        block events carry it: it is what lets the conversation's tool card
+        find its terminal tile without matching on a command string.
+        """
         kind = payload.get("kind")
         terminal_id = str(payload.get("terminal_session_id", ""))
         if kind == "spawn":
@@ -2428,6 +2437,7 @@ class AgentStateMachine:
                 owner=str(payload.get("owner", "agent")),
                 interactive=bool(payload.get("interactive")),
                 promote=(kind == "block_promote"),
+                execution_id=execution_id,
             )
         return None
 
@@ -2448,6 +2458,7 @@ class AgentStateMachine:
         tool_args: Dict[str, Any],
         confirmed: bool,
         sink: List[Any],
+        execution_id: Optional[str] = None,
     ) -> AsyncIterator[StreamEvent]:
         """Execute a tool, yielding terminal events while it runs.
 
@@ -2456,6 +2467,12 @@ class AgentStateMachine:
         session. Draining that bus concurrently with the tool task is what
         makes a running command visible in the conversation *as it runs*;
         awaiting the tool first would only ever produce a finished transcript.
+
+        Every payload drained here belongs to *this* tool call — the bus is
+        subscribed for its duration and nothing else is running under it — so
+        ``execution_id`` can be stamped onto the block events on the way out.
+        That is the join the frontend needs, and the reason it never has to
+        match a result back to a card by tool name.
 
         The ExecutionResult is appended to ``sink`` — an async generator
         cannot return a value.
@@ -2478,7 +2495,9 @@ class AgentStateMachine:
                 if getter in done:
                     payload = getter.result()
                     self._note_terminal_payload(payload)
-                    event = self._terminal_event(self.ctx.session_id, payload)
+                    event = self._terminal_event(
+                        self.ctx.session_id, payload, execution_id
+                    )
                     if event is not None:
                         yield event
                     continue
@@ -2490,7 +2509,9 @@ class AgentStateMachine:
             while not queue.empty():
                 payload = queue.get_nowait()
                 self._note_terminal_payload(payload)
-                event = self._terminal_event(self.ctx.session_id, payload)
+                event = self._terminal_event(
+                    self.ctx.session_id, payload, execution_id
+                )
                 if event is not None:
                     yield event
 
@@ -2541,7 +2562,7 @@ class AgentStateMachine:
             # once the command has already finished.
             sink: List[Any] = []
             async for terminal_event in self._run_tool_streaming(
-                tool_name, tool_args, confirmed, sink
+                tool_name, tool_args, confirmed, sink, execution_id=exec_id
             ):
                 yield terminal_event
             result = sink[0]

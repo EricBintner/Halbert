@@ -54,9 +54,16 @@ const STATUS_CONFIG = {
   },
 };
 
-export function ToolExecutionCard({ execution, onRetry, blockId, blockOutput, blockExitCode, blockDuration, outputHead, outputTail }: ToolExecutionCardProps): ReactNode {
+export function ToolExecutionCard({ execution, onRetry, blockId: blockIdProp, blockOutput, blockExitCode, blockDuration, outputHead, outputTail }: ToolExecutionCardProps): ReactNode {
   const [isExpanded, setIsExpanded] = useState(false);
   const config = STATUS_CONFIG[execution.status];
+
+  // The block id comes from the execution when no caller supplies one. Every
+  // block branch below is gated on it, and for as long as the only source was
+  // a prop, no caller passed one and none of them could render: the card fell
+  // back to a generic box with the internal tool name on it. The prop stays
+  // for the timeline, which reads blocks from storage rather than the stream.
+  const blockId = blockIdProp ?? execution.blockId;
 
   // Plan B: map execution status to StatusLight state
   const lightState: StatusLightState =
@@ -66,6 +73,13 @@ export function ToolExecutionCard({ execution, onRetry, blockId, blockOutput, bl
 
   // Plan B: for run_command with a block, render the block output
   const isCommandBlock = execution.tool === 'run_command' && blockId;
+
+  // The command line, when this card is a shell command at all.
+  const rawCommand = (execution.args as Record<string, unknown>)?.command;
+  const commandLabel =
+    execution.tool === 'run_command' && typeof rawCommand === 'string' && rawCommand
+      ? rawCommand
+      : undefined;
   // Suppress the card's own <pre> result when a block renders
   const suppressResult = isCommandBlock && blockOutput !== undefined;
 
@@ -106,8 +120,14 @@ export function ToolExecutionCard({ execution, onRetry, blockId, blockOutput, bl
             exitCode={blockExitCode ?? (execution.status === 'error' ? 1 : 0)}
             size="sm"
           />
-          <div>
-            <div className="font-medium text-foreground text-xs">{execution.tool}</div>
+          <div className="min-w-0">
+            {/* A shell command is named by what it ran, not by the Python
+                function that ran it. `run_command` tells the reader nothing
+                they did not already know; `smbstatus` is the thing they
+                asked for. Non-command tools keep their name. */}
+            <div className="font-medium text-foreground text-xs font-mono truncate">
+              {commandLabel ?? execution.tool}
+            </div>
             {/* Plan B: labels are measurements, not "Success"/"Error" */}
             <div className="text-[10px] text-muted-foreground">
               {isCommandBlock && blockExitCode != null

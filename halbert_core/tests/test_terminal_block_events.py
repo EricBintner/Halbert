@@ -209,3 +209,94 @@ class TestLongRunningPromotion:
 
         await asyncio.sleep(0.3)
         assert [p for p in published if p.get("kind") == "block_promote"] == []
+
+
+class TestBlockCarriesItsToolCall:
+    """A block says which tool call ran it.
+
+    The conversation renders a card per tool call and a tile per block, and
+    until now nothing connected the two: the card had an execution id, the
+    block had a session id and a command, and no field was common to both.
+    Matching them on the command string is what open-claude-code does
+    (ui/app.mjs matches a result to a running card by *tool name*), and it
+    breaks the moment two commands run in one turn.
+
+    The state machine is the one place that knows both, because it drains the
+    bridge while one specific tool call is running.
+    """
+
+    def test_a_block_event_carries_the_execution_id_it_was_given(self):
+        event = AgentStateMachine._terminal_event(
+            "sess-1",
+            {
+                "kind": "block",
+                "terminal_session_id": "term-1",
+                "block_id": "blk-1",
+                "command": "ls",
+                "owner": "agent",
+            },
+            execution_id="exec-42",
+        )
+
+        assert event.data["execution_id"] == "exec-42"
+
+    def test_without_one_the_field_is_absent_rather_than_empty(self):
+        """An empty string would join to nothing while looking like an id.
+        A missing key is the honest shape for "this block has no tool call"
+        -- a watched user shell block, for instance."""
+        event = AgentStateMachine._terminal_event("sess-1", {
+            "kind": "block",
+            "terminal_session_id": "term-1",
+            "block_id": "blk-1",
+            "command": "ls",
+        })
+
+        assert event.data.get("execution_id") is None
+
+    @pytest.mark.asyncio
+    async def test_run_tool_streaming_stamps_the_running_tool_call(self):
+        from halbert_core.agents.states import StateContext
+        from halbert_core.streaming.terminal_bridge import (
+            TerminalEventBus,
+            current_agent_session,
+            publish_terminal_event,
+            set_terminal_event_bus,
+        )
+
+        set_terminal_event_bus(TerminalEventBus())
+        try:
+            machine = AgentStateMachine(llm_client=None, tool_executor=None)
+            machine.ctx = StateContext(
+                session_id="sess-1", request_id="req-1", user_query="ls"
+            )
+
+            class _Tools:
+                async def execute(self, name, args, **kwargs):
+                    token = current_agent_session.set("sess-1")
+                    try:
+                        publish_terminal_event({
+                            "kind": "block",
+                            "terminal_session_id": "term-1",
+                            "block_id": "blk-1",
+                            "command": "ls",
+                            "owner": "agent",
+                        })
+                        await asyncio.sleep(0.05)
+                        return "done"
+                    finally:
+                        current_agent_session.reset(token)
+
+            machine.tools = _Tools()
+            sink = []
+            events = [
+                e async for e in machine._run_tool_streaming(
+                    "run_command", {"command": "ls"}, True, sink,
+                    execution_id="exec-42",
+                )
+            ]
+        finally:
+            set_terminal_event_bus(None)
+
+        blocks = [e for e in events if e.type == "terminal_block"]
+        assert len(blocks) == 1
+        assert blocks[0].data["execution_id"] == "exec-42"

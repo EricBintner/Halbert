@@ -197,7 +197,9 @@ describe('Timeline', () => {
   it('renders static tool cards, an ended-terminal chip and a read-only diff', () => {
     render(<Timeline byDay={groupByDay(TURNS, NOW)} hasMore={false} loading={false} onLoadOlder={() => {}} />)
 
-    expect(screen.getByText('run_command')).toBeInTheDocument()
+    // A shell command is named by what it ran, not by the tool that ran it.
+    expect(screen.getByText('systemctl status smbd')).toBeInTheDocument()
+    expect(screen.queryByText('run_command')).not.toBeInTheDocument()
     expect(screen.getByText('terminal · ended')).toBeInTheDocument()
     expect(screen.queryByTestId('live-tile')).not.toBeInTheDocument()
     expect(screen.getByText('/etc/samba/smb.conf')).toBeInTheDocument()
@@ -359,6 +361,7 @@ describe('Timeline — Forget this', () => {
     ])
     expect(screen.queryByText('is samba running?')).not.toBeInTheDocument()
     expect(screen.queryByText('Answer to is samba running?')).not.toBeInTheDocument()
+    expect(screen.queryByText('ls /srv')).not.toBeInTheDocument()
     expect(screen.queryByText('run_command')).not.toBeInTheDocument()
     // A forgotten tool call is not a successful one.
     expect(screen.queryByText('Success')).not.toBeInTheDocument()
@@ -446,7 +449,7 @@ describe('Timeline — Forget this', () => {
     expect(screen.getAllByText(REDACTED)).toHaveLength(1)
     // ...and row 2 is not, so its words and its tool card still stand.
     expect(screen.getByText('Answer to is samba running?')).toBeInTheDocument()
-    expect(screen.getByText('run_command')).toBeInTheDocument()
+    expect(screen.getByText('systemctl status smbd')).toBeInTheDocument()
     expect(warn).toHaveBeenCalled()
     expect(lastAlert()).toBe(FORGET_PARTLY_FAILED)
     // Half a redaction is the worst thing to leave silent: the user bubble
