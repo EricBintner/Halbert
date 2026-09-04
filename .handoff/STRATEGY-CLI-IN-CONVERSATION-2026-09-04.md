@@ -541,3 +541,90 @@ Items 3–8 are the answer to this request. Items 1–2 are shared prerequisites
    hover.
 4. **Is `TerminalAccordionDock` deleted or kept?** T6 replaces it in `ContextStage`.
    If nothing else mounts it, it and its tests become dead code.
+
+---
+
+## 15. Audit of the build (2026-09-04, after commits afba3c22..8cb65c85)
+
+Re-checked every claim against the tree rather than against the commit
+messages. Four things were wrong or incomplete and are now fixed; three
+remain open and are stated here rather than implied.
+
+### Fixed by the audit
+
+**A1 — `9a8bf231` overclaimed.** It wired `blockId` and stopped, so
+`isCommandBlock` became true and nothing else did. Every branch that renders
+something needs more than the id:
+
+| branch | also needs | was |
+|---|---|---|
+| `isShortBlock` (the one-liner) | `blockDuration` + `blockOutput` | unreachable |
+| `suppressResult` | `blockOutput` | unreachable |
+| frozen `<pre>` | `blockOutput` | unreachable |
+| exit/duration label | `blockExitCode` | unreachable |
+
+The completion payload carried only an exit code. `run_block` now publishes
+`complete` **after** head/tail are computed and carries `duration`,
+`output_head`, `output_tail`. Output must come from the payload and never
+from the hosting session's scrollback: a pool session is reused across
+blocks, so its buffer holds every command it has ever run. Fixed in
+`7c3c3931`.
+
+**A2 — the promotion timer could fire after its block closed.** Cancelling
+in the `finally` is not enough: between the D marker and that cancel the pool
+decodes, splits and redacts the output, and a timer expiring inside that
+window is already scheduled. It now also checks `block_closed` on waking, and
+lives in `_promote_after` so the decision is testable without racing a real
+PTY — and so a fire-and-forget task nobody awaits cannot raise into asyncio's
+"exception was never retrieved" at shutdown. Fixed in `f8281774`.
+
+**A3 — `test_e2e_long_running_promotion` never ran a command.** It built a
+`StreamEvent` with `promote=True` and asserted its type, so it passed for the
+entire period in which the factory had no caller — while carrying the name of
+the one behaviour that was missing. Replaced with a test that runs two
+commands through the pool and asserts the slow one publishes exactly one
+promotion and the fast one publishes none; verified it fails when the
+promotion is disarmed. Fixed in `ec2870de`.
+
+*(The first draft of that replacement was itself a false pass: it rebound
+`published = []` between runs while `published.append` stayed bound to the
+original list. It "passed" for the wrong reason until the disarm check
+contradicted it. Prove-it-can-fail is the only step that catches this.)*
+
+**A4 — a short block printed its output twice.** The host sends
+`head` = first 20 lines and `tail` = the whole text when it fits in 4 KiB, so
+for any short command the two are the same string; the card joined them
+unconditionally and rendered `two shares are up\n…\ntwo shares are up`. The
+bug is as old as the component and had never been seen, because nothing
+supplied the output it renders. Wiring dead code is what makes its latent
+bugs stop being latent. Fixed in `8cb65c85`.
+
+### Still open, verified by grep against the tree
+
+| Gap | Check | Result |
+|---|---|---|
+| **Historical timeline renders no blocks** | `TimelineToolBlock` fields in `types/timeline.ts` | no `block_id`, no duration, no output — only `terminalBlockIds` at the turn level |
+| **Promotion is invisible** | files rendering `isTaskCard` | 0 |
+| **Tasks column unmounted** | non-test imports of `TasksColumn` | 0 |
+| **No status strip** | references to a status strip | 0 |
+| **No inspection grouping** | references to `InspectionGroup` | 0 |
+
+**The historical gap is the one that matters most**, because it makes the
+same turn render two different ways. Live, a fast command shows
+`$ smbstatus · exit 1 · 0.3s`; after a reload the stored turn has only the
+tool-call block (`tool`, `args`, `result`, `exit`, `executionId`) and its
+terminal ids render as "terminal · ended" chips. The data exists — the
+`terminal_blocks` row holds `exit_code`, `output_head`, `output_tail`,
+`started_at`, `ended_at`, and now `turn_id` — but the timeline route never
+hydrates it.
+
+Closing it needs a durable join from a stored tool-call block to its terminal
+block. The event now carries `execution_id`; the row does not. The same
+argument that put `turn_id` on the row applies: `end_turn` is the one moment
+both are known, so `ctx` should record `{block_id: execution_id}` pairs and
+`_anchor_blocks` should stamp both.
+
+**Promotion having no consumer** means T2 currently has zero user-visible
+effect: `terminal_block_promote` sets a flag on a block that nothing reads.
+That is D4, and it is the next thing worth building — a promoted command
+needs somewhere to be.
