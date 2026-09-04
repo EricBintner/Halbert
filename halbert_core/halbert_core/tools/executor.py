@@ -196,6 +196,15 @@ class ToolExecutor:
                         "append": {
                             "type": "boolean",
                             "description": "Append instead of overwrite"
+                        },
+                        "reason": {
+                            "type": "string",
+                            "description": (
+                                "Why this change is being made, in one line, "
+                                "from the request that caused it. Recorded on "
+                                "the change ledger; omitted means the record "
+                                "says the reason is unknown."
+                            )
                         }
                     },
                     "required": ["path", "content"]
@@ -772,26 +781,106 @@ class ToolExecutor:
         with open(path, 'r', encoding=encoding) as f:
             return f.read()
     
+    @staticmethod
+    def _read_text(path: str) -> "Optional[str]":
+        """What is on disk now, or None when there is no file.
+
+        Best-effort: a file we cannot read is recorded as an admitted unknown
+        rather than stopping the write.
+        """
+        try:
+            if not os.path.exists(path):
+                return None
+            with open(path, "r", encoding="utf-8", errors="replace") as f:
+                return f.read()
+        except Exception:
+            return None
+
     async def _write_file(self, args: Dict) -> str:
-        """Write content to a file."""
+        """Write content to a file, on the record and not over anyone.
+
+        This is the tool the agent actually writes files with, and until now
+        it wrote to any path on the machine while recording nothing: no audit
+        row, no ledger triple, no reason, no actor, and no check that the file
+        was still what Halbert last saw. Four other write paths called
+        ``record_file_change``; this was the fifth, and the one in the
+        schema list handed to the model.
+
+        Two things happen around the write now:
+
+        * **The guard.** The ledger holds this file's last recorded digest, so
+          content that no longer matches means someone or something else
+          changed it. Writing over that unseen is the failure mode
+          open-claude-code's read-before-write exists to prevent, and on a
+          host steward it costs more than a lost edit. The guard never fails
+          closed -- see continuity/write_guard.
+        * **The record.** Both planes, with the reason the model stated for
+          the write it is making now, or an explicit UNRECORDED. Never a
+          rationale invented after the fact.
+        """
+        from ..continuity.provenance import record_file_change
+        from ..continuity.state_store import ACTOR_AGENT, UNRECORDED
+        from ..continuity.write_guard import check_before_write
+
         path = args["path"]
         content = args["content"]
         append = args.get("append", False)
-        
+        # A model may state its reason for the write it is making now; what
+        # the ledger forbids is inventing one for a write that already
+        # happened. Absent means unknown, and stays unknown.
+        reason = str(args.get("reason") or UNRECORDED)
+
         # Security: expand and normalize path
         path = os.path.expanduser(path)
         path = os.path.abspath(path)
-        
-        # Create parent directories if needed
-        parent = os.path.dirname(path)
-        if parent and not os.path.exists(parent):
-            os.makedirs(parent, exist_ok=True)
-        
-        mode = 'a' if append else 'w'
-        with open(path, mode, encoding='utf-8') as f:
-            f.write(content)
-        
-        return f"Written {len(content)} bytes to {path}"
+
+        store = None
+        try:
+            from ..continuity.state_store import StateStore, default_state_db_path
+
+            store = StateStore(db_path=str(default_state_db_path()))
+        except Exception as e:
+            logger.warning(f"write guard has no ledger to check against: {e}")
+
+        try:
+            before = self._read_text(path)
+            guard = check_before_write(path, current_text=before, store=store)
+            if not guard.ok:
+                logger.warning(f"refused write to {path}: {guard.detail}")
+                return (
+                    f"Refused to write {path}: {guard.detail}\n"
+                    "Nothing was written. Read the file first if this change "
+                    "should still be made."
+                )
+
+            # Create parent directories if needed
+            parent = os.path.dirname(path)
+            if parent and not os.path.exists(parent):
+                os.makedirs(parent, exist_ok=True)
+
+            mode = 'a' if append else 'w'
+            with open(path, mode, encoding='utf-8') as f:
+                f.write(content)
+
+            request_id = f"write-{uuid.uuid4().hex[:12]}"
+            record_file_change(
+                path=path, reason=reason, actor=ACTOR_AGENT,
+                request_id=request_id, tool="write_file",
+                before_text=before,
+                # Read back rather than assuming: an append is not its own
+                # argument, and a write that landed differently than asked
+                # must record what is actually there.
+                after_text=self._read_text(path),
+                mode="apply", ok=True,
+                summary=f"{'appended to' if append else 'wrote'} {path}",
+            )
+            return f"Written {len(content)} bytes to {path}"
+        finally:
+            if store is not None:
+                try:
+                    store.close()
+                except Exception:
+                    pass
     
     async def _list_directory(self, args: Dict) -> str:
         """List directory contents."""
