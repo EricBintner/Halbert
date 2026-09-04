@@ -16,6 +16,7 @@ import pytest
 
 from halbert_core.agents.conversation_sqlite import SqliteConversationStore
 from halbert_core.agents.events import StreamEvent
+from halbert_core.agents.state_machine import AgentStateMachine
 from halbert_core.agents.llm_client import LLMResponse, ToolCall, FunctionCall
 from halbert_core.agents.state_machine import AgentStateMachine
 from halbert_core.streaming.terminal_bridge import (
@@ -237,10 +238,15 @@ def test_e2e_watched_shell_in_hint(store):
 
 # ── Test 3: long-running promotion ───────────────────────────────
 
-def test_e2e_long_running_promotion():
-    """Long-running command (> 2s) -> terminal_block_promote event emitted.
+def test_the_promote_factory_names_the_event_the_frontend_switches_on():
+    """The event factory produces type='terminal_block_promote'.
 
-    The event factory produces type='terminal_block_promote' when promote=True.
+    This is a factory test and is named as one. It used to be called
+    ``test_e2e_long_running_promotion`` and asserted nothing beyond the
+    factory, so it passed for the entire period during which the factory had
+    no caller and no command was ever promoted. A test named for a behaviour
+    it does not exercise is worse than no test: it reports coverage of the
+    one thing that was missing. The behaviour is now covered below.
     """
     ev = StreamEvent.terminal_block(
         "sess-1",
@@ -254,6 +260,65 @@ def test_e2e_long_running_promotion():
     assert ev.data["block_id"] == "blk-long-1"
     assert ev.data["command"] == "npm run build"
     assert ev.data["owner"] == "agent"
+
+
+@pytest.mark.asyncio
+async def test_e2e_a_slow_command_promotes_and_a_fast_one_does_not():
+    """The real chain: a command through the pool, over the bridge, onto the
+    agent's SSE stream, with nothing faked between the PTY and the event.
+
+    Two commands in one assertion because the distinction IS the feature:
+    the slow one earns a task card, the fast one stays a passing detail.
+    """
+    from halbert_core.streaming import agent_pool as pool_mod
+    from halbert_core.streaming.session_manager import TerminalSessionManager
+
+    manager = TerminalSessionManager(
+        max_sessions=8, kind_caps={"user": 3, "agent-pool": 3, "oneshot": 2}
+    )
+    pool = pool_mod.TerminalPool(manager, cap=3)
+
+    # One list, sliced at the boundary. Rebinding `published` between the two
+    # runs would not work: `published.append` is bound to the original list
+    # object, so the second run would keep filling the first run's slice.
+    published: list = []
+    original_publish = pool_mod.publish_terminal_event
+    original_after = pool_mod.PROMOTE_AFTER_SECONDS
+    pool_mod.publish_terminal_event = published.append
+    pool_mod.PROMOTE_AFTER_SECONDS = 0.2
+    try:
+        slow = await pool.run_block("sleep 0.8", timeout=10.0)
+        boundary = len(published)
+        fast = await pool.run_block("printf hi", timeout=10.0)
+        slow_payloads = published[:boundary]
+        fast_payloads = published[boundary:]
+    finally:
+        pool_mod.publish_terminal_event = original_publish
+        pool_mod.PROMOTE_AFTER_SECONDS = original_after
+        await pool.shutdown()
+
+    assert slow is not None and fast is not None
+
+    # The slow one earned a promotion...
+    slow_promotes = [p for p in slow_payloads if p["kind"] == "block_promote"]
+    assert len(slow_promotes) == 1
+    assert slow_promotes[0]["block_id"] == slow["block_id"]
+
+    # ...and the fast one did not.
+    assert [p for p in fast_payloads if p["kind"] == "block_promote"] == []
+
+    # Translate the promotion exactly as the state machine does, so a break
+    # anywhere from the pool's payload to the SSE type shows up here.
+    promoted = AgentStateMachine._terminal_event("s1", slow_promotes[0])
+    assert promoted.type == "terminal_block_promote"
+    assert promoted.data["block_id"] == slow["block_id"]
+
+    # And the fast one's completion carries what the card needs to render it
+    # as a line rather than a card.
+    done = next(p for p in fast_payloads if p["kind"] == "complete")
+    assert done["duration"] < 0.2
+    assert "hi" in done["output_head"]
+    assert done["exit_code"] == 0
 
 
 # ── Test 4: pool fallback at cap ─────────────────────────────────
