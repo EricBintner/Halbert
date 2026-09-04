@@ -147,3 +147,42 @@ describe('ToolExecutionCard reads its block from the execution', () => {
     expect(screen.queryByText(/exit 1/)).toBeNull();
   });
 })
+
+describe('ToolExecutionCard frozen output', () => {
+  it('does not print a short block’s output twice with an ellipsis between', () => {
+    // The pool sends head = first 20 lines and tail = the whole text when it
+    // fits in 4 KiB, so for any short command head and tail are the SAME
+    // string. Joining them unconditionally renders "hi\n…\nhi": the output
+    // duplicated, with an elision marker claiming something was cut.
+    const short: ToolExecution = {
+      ...streamed,
+      blockExitCode: 0,
+      blockDuration: 5,
+      blockOutputHead: 'two shares are up',
+      blockOutputTail: 'two shares are up',
+    };
+    render(<ToolExecutionCard execution={short} />);
+    fireEvent.click(screen.getByRole('button', { name: /smbstatus/ }));
+
+    const pre = screen.getByText(/two shares are up/);
+    expect(pre.textContent).toBe('two shares are up');
+    expect(pre.textContent).not.toContain('…');
+  });
+
+  it('marks the elision when output really was cut', () => {
+    const long: ToolExecution = {
+      ...streamed,
+      blockExitCode: 0,
+      blockDuration: 5,
+      blockOutputHead: 'first twenty lines',
+      blockOutputTail: 'last four kilobytes',
+    };
+    render(<ToolExecutionCard execution={long} />);
+    fireEvent.click(screen.getByRole('button', { name: /smbstatus/ }));
+
+    // A reader must be able to tell "this is all of it" from "there is more".
+    const pre = screen.getByText(/first twenty lines/);
+    expect(pre.textContent).toContain('…');
+    expect(pre.textContent).toContain('last four kilobytes');
+  });
+})

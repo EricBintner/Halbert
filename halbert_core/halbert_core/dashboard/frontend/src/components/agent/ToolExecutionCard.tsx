@@ -133,8 +133,16 @@ export function ToolExecutionCard({
 
   // Plan B: frozen block output — prefer output_head/tail over the whole blob.
   const hasHeadTail = outputHead !== undefined && outputTail !== undefined;
+  // Head and tail are the SAME string for any short command: the host sends
+  // head = first 20 lines and tail = the whole text when it fits in 4 KiB.
+  // Joining them unconditionally printed the output twice with an elision
+  // marker between, claiming a cut that never happened. The elision is only
+  // honest when the two halves actually differ -- the same rule the backend
+  // already applies in _format_block_result.
   const frozenOutput = hasHeadTail
-    ? `${outputHead}${outputHead && outputTail ? '\n\u2026\n' : ''}${outputTail}`
+    ? outputHead && outputTail && outputHead !== outputTail
+      ? `${outputHead}\n\u2026\n${outputTail}`
+      : outputHead || outputTail
     : blockOutput;
 
   return (
