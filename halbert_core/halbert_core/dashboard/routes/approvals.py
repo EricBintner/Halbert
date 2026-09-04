@@ -289,9 +289,19 @@ async def approve_request(request_id: str, body: ApprovalDecisionRequest, reques
             }
         })
 
+        # The approval was recorded either way; whether the CHANGES applied
+        # is a separate fact, and reporting "approved" over a rollback or a
+        # failure showed the operator a success for work that did not happen.
+        status = (proposal_result or {}).get('status')
+        applied = status in (None, 'applied', 'no_changes')
         return {
             'success': True,
-            'message': 'Request approved',
+            'applied': applied,
+            'message': (
+                'Request approved'
+                if applied
+                else f'Approved, but the changes did not apply ({status})'
+            ),
             'request_id': request_id,
             'proposal': proposal_result,
         }

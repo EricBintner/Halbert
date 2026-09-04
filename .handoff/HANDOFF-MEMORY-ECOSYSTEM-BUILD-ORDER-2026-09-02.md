@@ -1,5 +1,19 @@
 # Memory Ecosystem — Verified Build Order
 
+> **HISTORICAL, 2026-09-04. This is the plan, not the state.**
+>
+> All eleven steps are resolved: 1–8 built, 9 cut, 10 deferred, 11a/11b cut on evidence.
+> `LEDGER-1` is **Landed**, not "Missing"; `MEM-01`..`MEM-05` are **ratified**, not pending;
+> the Haloysius lock **shipped** (`7b1ddc0`); and `erase()` now has a live caller
+> (`forget_request` → `erase_audit_by_request` → `EventLog.erase_many`), so every
+> "harmless today only because erase() has no callers" risk note below is **inverted**.
+> The "[start here]" tag on step 2 and the "live cost of delay" warning are both spent.
+>
+> Current state lives in `ROADMAP.md` (`LEDGER-1`) and
+> [`NOTE-MEMORY-STEPS-CUT-AND-DEFERRED-2026-09-02.md`](NOTE-MEMORY-STEPS-CUT-AND-DEFERRED-2026-09-02.md).
+> Kept because the *reasoning* about why this order was chosen still holds, and it is the
+> only record of it.
+
 **Date:** 2026-09-02
 **Design doc:** `Haloysius/docs/HANDOFF-SELF-HEALING-MEMORY-ECOSYSTEM.md` (rev. 3)
 **ROADMAP row:** `LEDGER-1` — Change ledger ("I remember why"), currently *Missing*

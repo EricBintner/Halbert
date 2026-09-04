@@ -142,17 +142,17 @@ export function getPendingApprovals(): Promise<PendingApprovalsResponse> {
  * afterwards — which is why this passes through rather than defaulting to a
  * plausible string.
  */
-export function approveRequest(requestId: string, saveToMemory = false, reason?: string) {
+export function approveRequest(requestId: string, reason?: string) {
   return request(`/api/approvals/${encodeURIComponent(requestId)}/approve`, {
     method: 'POST',
-    body: JSON.stringify({ approved: true, reason: reason ?? null, save_to_memory: saveToMemory }),
+    body: JSON.stringify({ approved: true, reason: reason ?? null }),
   })
 }
 
-export function rejectRequest(requestId: string, reason?: string, saveToMemory = false) {
+export function rejectRequest(requestId: string, reason?: string) {
   return request(`/api/approvals/${encodeURIComponent(requestId)}/reject`, {
     method: 'POST',
-    body: JSON.stringify({ approved: false, reason: reason ?? null, save_to_memory: saveToMemory }),
+    body: JSON.stringify({ approved: false, reason: reason ?? null }),
   })
 }
 

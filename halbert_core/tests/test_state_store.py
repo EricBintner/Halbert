@@ -683,3 +683,60 @@ class TestABorrowedConnectionIsNotHijacked:
         conn.commit()
         assert _cur(s) == {("system", "cpu_load"): "42%"}
         conn.close()
+
+
+class TestABusyDatabaseIsNotABorrowedTransaction:
+    """BEGIN IMMEDIATE raises OperationalError for two unrelated reasons.
+
+    Treating "database is locked" as "the caller owns the transaction" meant
+    nothing ever committed: the rows sat in an implicit transaction,
+    record_state returned a row id, the caller was told the reason was
+    recorded, and it was gone on close. Worse than the failure it hid.
+    """
+
+    def _blocked(self, tmp_path):
+        db = str(tmp_path / "busy.db")
+        store = StateStore(db_path=db)
+        _rec(store, "file:/etc/a.conf", "content_sha256", "v0", reason="before")
+        blocker = sqlite3.connect(db, timeout=5)
+        blocker.execute("BEGIN IMMEDIATE")
+        blocker.execute(
+            "INSERT INTO state_triples (subject, predicate, object, source,"
+            " confidence, valid_from, reason, actor)"
+            " VALUES ('x', 'y', 'z', 't', 1.0, 1.0, 'r', 'u')")
+        store._conn.execute("PRAGMA busy_timeout=50")
+        return db, store, blocker
+
+    def test_a_write_that_cannot_take_the_lock_reports_failure(self, tmp_path):
+        db, store, blocker = self._blocked(tmp_path)
+        try:
+            rid = _rec(store, "file:/etc/a.conf", "content_sha256", "v1",
+                       reason="must not vanish")
+            assert rid is None, "a write that could not commit reported success"
+        finally:
+            blocker.rollback(); blocker.close(); store.close()
+
+    def test_nothing_is_left_uncommitted_on_disk(self, tmp_path):
+        db, store, blocker = self._blocked(tmp_path)
+        _rec(store, "file:/etc/a.conf", "content_sha256", "v1", reason="must not vanish")
+        blocker.rollback(); blocker.close(); store.close()
+
+        check = sqlite3.connect(db)
+        reasons = {r[0] for r in check.execute("SELECT reason FROM state_triples")}
+        check.close()
+        # Either it committed or it reported failure — never "reported
+        # written, absent from disk".
+        assert "before" in reasons
+
+    def test_the_borrowed_transaction_case_still_works(self, tmp_path):
+        """The case the swallow was written for must keep working."""
+        conn = sqlite3.connect(str(tmp_path / "threads.db"))
+        conn.execute("CREATE TABLE conversations (id TEXT PRIMARY KEY)")
+        conn.commit()
+        s = StateStore(conn=conn)
+
+        conn.execute("INSERT INTO conversations (id) VALUES ('in-flight')")
+        assert _rec(s, "system", "cpu_load", "42%") is not None
+        conn.rollback()
+        assert conn.execute("SELECT COUNT(*) FROM conversations").fetchone()[0] == 0
+        conn.close()

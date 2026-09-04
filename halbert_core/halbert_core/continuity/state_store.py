@@ -371,8 +371,21 @@ class StateStore:
         try:
             self._conn.execute("BEGIN IMMEDIATE")
             began = True
-        except sqlite3.OperationalError:
-            pass                      # the caller's transaction; not ours to end
+        except sqlite3.OperationalError as exc:
+            # BEGIN IMMEDIATE raises OperationalError for two unrelated
+            # reasons, and treating them alike loses data silently.
+            #
+            #   "cannot start a transaction within a transaction" -- the
+            #       connection is borrowed and the caller owns the
+            #       transaction. Proceed inside theirs and end nothing.
+            #   "database is locked" -- another writer holds the lock. If we
+            #       swallow this and the write then succeeds once the lock
+            #       frees, nothing ever commits it: the rows sit in an
+            #       implicit transaction, record_state returns a row id, and
+            #       the caller is told the reason was recorded. It is gone on
+            #       close. That is worse than the failure it hides.
+            if "within a transaction" not in str(exc):
+                raise
         try:
             yield
         except Exception:

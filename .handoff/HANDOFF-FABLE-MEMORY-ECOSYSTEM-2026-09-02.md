@@ -7,8 +7,10 @@
 > The step-by-step sections below are kept as the record of *what was asked for*, not as
 > a description of outstanding work.
 >
-> **Still open:** step 5c (config-diff reads the ledger — frontend only; its backend is
-> done), and step 10 (Doubt Queue).
+> **Update 2026-09-04: fully resolved.** Step 5c is built (reduced — the panel shows the
+> recorded reason, actor and time; the ledger stores digests, so before/after content was
+> never possible). Step 9 is **cut**, not deferred. Step 10 (Doubt Queue) remains deferred,
+> and its case is stronger now that step 9 is cut. Nothing here is outstanding work.
 >
 > **Cut or deferred on evidence, not on schedule** — steps 9, 11a and 11b. Do not
 > re-plan them from this document: see
@@ -47,8 +49,10 @@
 | 8. Markdown vault projector | **Done** | `0d88da8c` |
 | 7b. "forget that" across both planes | **Done** | `ba9a3e3a` |
 | — a failed read must not read as "nothing recorded" | **Fixed after review** | `eb68d968` |
+| — five further review rounds | **Fixed** | `0ea21032`, `a91714f4`, `2386d54d`, `b25e647b`, `1424bbe4`, `a6b5e353`, `82f25ff2` |
 
-Suite now: **5,345 passed, 14 skipped, 0 failed** across both test roots. Run it as
+Suite at the time of writing: **5,345 passed**. It has moved since — see `ROADMAP.md`
+for the current gate rather than trusting a count in a handoff. Run it as
 `arch -arm64 /Volumes/4TB-BAD/Halbert/.venv/bin/python ./wt_pytest.py halbert_core/tests tests -q`
 from the worktree root — naming the interpreter explicitly rather than relying on an
 activated venv, because the shebang otherwise resolves to a system python with no

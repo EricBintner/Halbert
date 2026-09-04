@@ -40,6 +40,10 @@ export default function ConfigDiffModule({ path, findingId }: ConfigDiffModulePr
   // the diff must still render when the ledger has nothing, and "nothing
   // recorded" is a legitimate answer rather than a failure.
   const [why, setWhy] = useState<WhyRecord | null>(null)
+  // "could not read" is not "nothing recorded" — the same distinction the
+  // ledger's own API draws with 503 vs found:false. Collapsing them here
+  // would tell the reader nothing was recorded when nobody could look.
+  const [whyUnavailable, setWhyUnavailable] = useState(false)
 
   useEffect(() => {
     if (!path) {
@@ -53,17 +57,24 @@ export default function ConfigDiffModule({ path, findingId }: ConfigDiffModulePr
     // Independent of the diff fetch on purpose. A ledger that is empty,
     // unreachable or answering 503 must not stop the file rendering.
     setWhy(null)
+    setWhyUnavailable(false)
     fetch(apiUrl(`/api/state/why?path=${encodeURIComponent(path)}`))
-      .then(r => (r.ok ? r.json() : null))
+      .then(async r => {
+        if (r.status === 503) return { unavailable: true }
+        if (!r.ok) return null
+        return r.json()
+      })
       .then(d => {
-        if (cancelled || !d?.found || !d?.current) return
+        if (cancelled || !d) return
+        if (d.unavailable) { setWhyUnavailable(true); return }
+        if (!d.found || !d.current) return
         setWhy({
           reason: d.current.reason,
           actor: d.current.actor,
           valid_from: d.current.valid_from,
         })
       })
-      .catch(() => { /* no record is a normal answer, not an error */ })
+      .catch(() => setWhyUnavailable(true))
 
     fetch(apiUrl(`/api/modules/config-diff/data?path=${encodeURIComponent(path)}${findingId ? `&finding_id=${findingId}` : ''}`))
       .then(async r => {
@@ -125,7 +136,12 @@ export default function ConfigDiffModule({ path, findingId }: ConfigDiffModulePr
   // not content, so it cannot reconstruct the previous text — and rendering
   // two digests as a "diff" would look like one without being one. What it
   // can say truthfully is who changed this, when, and why.
-  const recordedWhy = why && (
+  const recordedWhy = whyUnavailable ? (
+    <div className="border-b border-border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+      The change ledger could not be read, so nothing can be said about why this
+      file is as it is. That is a failure to look, not an absence of records.
+    </div>
+  ) : why && (
     <div className="border-b border-border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
       <span className="font-medium text-foreground">
         {why.reason === 'unrecorded'

@@ -13,7 +13,7 @@ import {
   type ApprovalRequest,
   type ApprovalHistoryItem
 } from '@/lib/tauri'
-import { CheckCircle, XCircle, AlertTriangle, Clock, History, ShieldAlert, X, Brain, Loader2 } from 'lucide-react'
+import { CheckCircle, XCircle, AlertTriangle, Clock, History, ShieldAlert, X, Loader2 } from 'lucide-react'
 import { PageHeader } from '@/components/domain'
 
 export function Approvals() {
@@ -28,7 +28,6 @@ export function Approvals() {
   const [selectedRequestId, setSelectedRequestId] = useState<string | null>(null)
   const [selectedRequestAction, setSelectedRequestAction] = useState<string>('')
   const [decisionReason, setDecisionReason] = useState('')
-  const [saveToMemory, setSaveToMemory] = useState(true)
   const [decisionLoading, setDecisionLoading] = useState(false)
 
   useEffect(() => {
@@ -59,7 +58,6 @@ export function Approvals() {
     setSelectedRequestAction(action)
     setDecisionType(type)
     setDecisionReason('')
-    setSaveToMemory(true)
     setDecisionModalOpen(true)
   }
   
@@ -70,9 +68,9 @@ export function Approvals() {
     setDecisionLoading(true)
     try {
       if (decisionType === 'approve') {
-        await approveRequest(selectedRequestId, saveToMemory, decisionReason.trim() || undefined)
+        await approveRequest(selectedRequestId, decisionReason.trim() || undefined)
       } else {
-        await rejectRequest(selectedRequestId, decisionReason, saveToMemory)
+        await rejectRequest(selectedRequestId, decisionReason)
       }
       setDecisionModalOpen(false)
       loadAll()
@@ -320,28 +318,18 @@ export function Approvals() {
                   />
               </div>
 
-              {/* Memory checkbox */}
-              <div className="flex items-start gap-3 rounded-md bg-error/10 border border-error/20 p-3">
-                <input
-                  type="checkbox"
-                  id="saveToMemory"
-                  checked={saveToMemory}
-                  onChange={(e) => setSaveToMemory(e.target.checked)}
-                  className="mt-1 accent-pink-500"
-                />
-                <label htmlFor="saveToMemory" className="text-sm cursor-pointer">
-                  <span className="flex items-center gap-1.5 font-medium text-error dark:text-error">
-                    <Brain className="h-4 w-4" />
-                    Remember this decision
-                  </span>
-                  <span className="text-muted-foreground block mt-0.5">
-                    {decisionType === 'approve' 
-                      ? 'AI will learn that similar actions are acceptable'
-                      : 'AI will learn to avoid similar actions in the future'
-                    }
-                  </span>
-                </label>
-              </div>
+              {/* The "Remember this decision" checkbox lived here. It was
+                  inert: the decision routes (/api/approvals/{id}/approve and
+                  /reject) do not declare save_to_memory, so pydantic dropped
+                  it, and nothing learned anything. It promised "AI will learn
+                  that similar actions are acceptable" over a no-op.
+
+                  Not wired rather than removed-and-forgotten: the only
+                  implementation of it (routes/settings.py) writes the
+                  decision into ChromaDB, and DECISIONS.md 2026-08-23 keeps
+                  ChromaDB for eval only. Making the control real means
+                  deciding where approval history belongs first, which is a
+                  product call and not a UI fix. */}
 
               {/* Actions */}
               <div className="flex justify-end gap-3 pt-2">

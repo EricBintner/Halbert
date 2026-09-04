@@ -88,7 +88,9 @@ Zero hits for `doubt_queue` anywhere in the tree. It is step 10, and step 10
 does not exist. The vault deliberately does **not** create an empty
 `_doubt_queue/` to make a test look complete.
 
-## DEFERRED — step 5c, config-diff reads the ledger
+## ~~DEFERRED~~ BUILT (reduced) — step 5c, config-diff reads the ledger
+
+*Superseded by Addendum 2: this shipped 2026-09-03. Kept for the reasoning.*
 
 Frontend work. The backend it needs is done: `GET /api/state/why?path=…` returns
 `current` and `superseded` with reason, actor and timestamp, and
@@ -101,7 +103,7 @@ Frontend work. The backend it needs is done: `GET /api/state/why?path=…` retur
 | Concern | Evidence |
 |:---|:---|
 | Thread-close writes a collection into a single-valued key | `agents/threads.py` records `ran_command` / `file_written` / `entity` in a loop against one `(subject, predicate)`, so each iteration supersedes the last. 93 of the live ledger's 186 `entity` rows have zero duration. The subject should carry the item, or the predicate should be indexed. |
-| No turn→request join exists | `grep -n request_id` over `agents/threads.py`, `conversation_sqlite.py` and `receipt.py` returns nothing, and no production caller of `record_file_change` passes `thread_id`. So `state_triples.thread_id` is always NULL, and a user saying "forget that" in conversation has no `request_id` to act on. `POST /api/state/forget` is therefore reachable from the why/config-diff panel but **not** from the timeline. |
+| No turn→request join exists (**partly stale** — thread-close now writes `request_id=threadclose-<id>` and passes `thread_id`; a conversational "forget that" still has no request id for a *config* change) | `grep -n request_id` over `agents/threads.py`, `conversation_sqlite.py` and `receipt.py` returns nothing, and no production caller of `record_file_change` passes `thread_id`. So `state_triples.thread_id` is always NULL, and a user saying "forget that" in conversation has no `request_id` to act on. `POST /api/state/forget` is therefore reachable from the why/config-diff panel but **not** from the timeline. |
 | `invalidate_state` has no production callers | Harmless today, but the vault enumerates via `current_state()`, which returns only open triples. The first production caller silently makes those facts unprojectable. Named in `vault.py`'s docstring. |
 | The agent's own file write records nothing | `ToolExecutor._write_file` (`executor.py:767-786`) opens, writes and returns a string — no audit, no ledger. `WriteConfig` is never registered on the `ToolExecutor` at all. So "ask the agent to change a config, then ask why" correctly answers *no record*, which will look like a broken tool. The acceptance path runs through the dashboard editor. |
 

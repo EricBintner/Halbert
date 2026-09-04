@@ -398,12 +398,20 @@ export function ConfigEditor({ filePath, onClose }: ConfigEditorProps) {
     onClose();
   };
   
+  // addCommand registers ONCE, at editor creation, over the closure of that
+  // render. Calling handleSave directly from it saved the file as it was at
+  // mount -- discarding every edit made since -- and could never see a reason
+  // typed afterwards. Monaco keeps onMount in a ref it never refreshes, so
+  // the command cannot be re-registered; route it through a ref instead.
+  const saveRef = useRef(handleSave);
+  saveRef.current = handleSave;
+
   const handleEditorMount = (editor: any, monaco: any) => {
     editorRef.current = editor;
-    
-    // Add Ctrl+S shortcut
+
+    // Ctrl+S -- through the ref, so it saves what is on screen now.
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
-      handleSave();
+      saveRef.current();
     });
   };
   
