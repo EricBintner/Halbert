@@ -811,9 +811,16 @@ refute it. 23 confirmed, 34 partial, 28 further remaining-work items. The
 well-reviewed `LEDGER-1` thread (`b343171d`..`e98ce544`, six rounds) was deliberately
 excluded — the target was everything else.*
 
-**Three were fixed on the spot** because they were live and small; the rest are below.
-Fixed: the `cwd` command injection (`44fc501e`), the confirmation-dialog HTML injection
-(`44fc501e`), and the pool dying after idle (`36de0032`).
+**Three were fixed on the spot** because they were live and small: the `cwd` command
+injection (`44fc501e`), the confirmation-dialog HTML injection (`44fc501e`), and the pool
+dying after idle (`36de0032`).
+
+**Six more were fixed on 2026-09-05** and are struck through below: `f2ebec8c` `ba8c6bf1`
+`478369e8` `deba0e63` `ade04b7f` `e4176a30` `4bbdd38d`. Each fix was watched failing under
+a mutant before being kept, and two of the *proposed* fixes were thrown away after
+adversarial review showed they would have made things worse — the `lexists` probe in H1a
+would have dropped a refusal the guard gets right, and guarding the rollback path in H1b
+would have disabled recovery for exactly the files that need it.
 
 **The one thing to take from this section if you read nothing else.** `afba3c22` swapped
 the execution substrate for *every interactive agent command* — from
@@ -831,12 +838,12 @@ the code is the claims.
 
 | # | Item | Tier · Effort |
 |---|---|---|
-| **H1a** | **A file needing privileges to read is treated as deleted.** The guard conflates "cannot read" with "gone", so the polkit save path is unreachable behind a 409 that says something untrue — the case the editor exists for. **Live loss of function; fix first.** | **opus · high** |
+| ~~H1a~~ | **PARTLY FIXED** (`478369e8`). The guard no longer calls an unreadable file removed: `read_for_guard` reads `open`'s error instead of probing, because `exists` is blind past a closed parent directory and `lexists` is true for a dangling symlink. **Still open:** the editor's POST reads with a plain `open()` while its GET reads through pkexec, so on a privileged file the `expected_sha256` comparison 409s before the ledger branch is consulted. The guard conflates "cannot read" with "gone", so the polkit save path is unreachable behind a 409 that says something untrue — the case the editor exists for. **Live loss of function; fix first.** | **opus · high** |
 | H1b | "Every write path looks first" is false for three writers, two of them the *restore* paths — the operations most likely to follow something going wrong. | sonnet · high |
 | H1c | The guard never passes `strict=True`, so a ledger it could not read reports as a ledger with no record — the exact conflation `eb68d968` fixed elsewhere, reintroduced in a new caller. | sonnet · med |
 | H1d | The turn anchor is missing on exactly the writes it was built for: a confirmed action resumes in a different task, so `current_turn` is unset. | sonnet · med |
 | H1e | One file, several subject keys — the ledger's identity for a path is whatever string the caller passed (`~` vs expanded, symlink vs real). | sonnet · med |
-| H1f | A whitespace-only reason turns a completed write into a reported failure with nothing recorded. | fable · med |
+| ~~H1f~~ | **FIXED** (`deba0e63`). Stripped before the coalesce at all five sites. `_require` left raising, deliberately: it is the only signal a call site is broken, and `record_file_change` already fails soft on both planes. | — |
 | H1g | Every ledger-branch 409 the editor emits is malformed. | fable · med |
 
 **Also left undone:** make the guard's refusal exitable without leaving the ledger
@@ -853,7 +860,7 @@ confirms that and found the risk is larger than anticipated in one specific way.
 | # | Item | Tier · Effort |
 |---|---|---|
 | **H2a** | **The ledger's digest is not merely a digest.** It is byte-identical to the filename of an *unredacted JSON copy* of the same file, written by the same snapshot into `~/.local/share/halbert/config/canon/`. Proven on `/etc/hosts`, not inferred. So invariant 3 ("records carry digests, never content") holds only on paper, and `ERASURE_LIMITS` does not name that store — so invariant 6's promise to say what erasure misses is unmet. | **opus · high** |
-| **H2b** | **The allowlist is not an allowlist.** `Manifest.iter_paths` matches with `fnmatch` over an already-recursive `os.walk`, and `fnmatch`'s `*` crosses `/` — so `/etc/*.conf` reaches every `.conf` at any depth. The 135 files it resolves to include `snmpd.conf`, `ldap.conf`, `cups/printers.conf` and `racoon.conf`, none of which appear in the registry's own enumeration; the registry's `/private/etc/racoon/**` exclusion can never match a path the walker produces in `/etc` form. | **opus · med** |
+| ~~H2b~~ | **FIXED** (`f2ebec8c`). Segment-aware matching: macOS 135 → 96 files, 39 dropped and 0 added; Linux `/etc/**/*.conf` 45 → 59, so it repaired an under-match too. `/etc/racoon/racoon.conf` *was* being watched. **Still open:** the dead exclusion — `os.walk('/etc')` yields `/etc/...` however `/etc` resolves, so `/private/etc/racoon/**` can never match. Recorded as a test. ~~ `Manifest.iter_paths` matches with `fnmatch` over an already-recursive `os.walk`, and `fnmatch`'s `*` crosses `/` — so `/etc/*.conf` reaches every `.conf` at any depth. The 135 files it resolves to include `snmpd.conf`, `ldap.conf`, `cups/printers.conf` and `racoon.conf`, none of which appear in the registry's own enumeration; the registry's `/private/etc/racoon/**` exclusion can never match a path the walker produces in `/etc` form. | **opus · med** |
 | H2c | `find_registry`'s "shipped default" is not shipped — it is the repo checkout, found by walking parents. Off a wheel there is no registry at all. | sonnet · med |
 | H2d | A binary plist's digest is a hash of mojibake, so two different plists can collide. | sonnet · med |
 | H2e | A change is timestamped when the *snapshot ran*, not when the file changed — and the 600s poll is dead whenever watchdog is installed, while a symlink into `/var/run` fires no FSEvent on `/etc`. A noise problem becomes a truthfulness problem. | sonnet · med |
@@ -874,7 +881,7 @@ Three fixed here. What remains:
 
 | # | Item | Tier · Effort |
 |---|---|---|
-| **H3a** | **A `#` comment or a heredoc swallows the closing paren and the OSC 133 marker**, so the command hangs for the full timeout, returns exit −1 with empty output, and destroys a pool session. Verified at 6.00s. | **opus · high** |
+| ~~H3a~~ | **FIXED** (`ba8c6bf1`). The command is passed as a quoted argument to `eval`, so the outer line stays syntactically complete whatever it contains. Real-PTY tests; the mutant run takes 43s against 1.1s. ~~, so the command hangs for the full timeout, returns exit −1 with empty output, and destroys a pool session. Verified at 6.00s. | **opus · high** |
 | H3b | The model and the card are shown the first 20 lines **twice**, spliced onto the full output, with a fabricated elision marker. `8cb65c85` fixed only the exactly-equal case, with a fixture the host cannot produce. | sonnet · high |
 | **H3c** | **A destructive shell command is folded into a collapsed row labelled "Looked at."** `groupInspections` documents "anything that WROTE may never be folded" and then folds any sub-2-second `run_command`. | **opus · high** |
 | H3d | Block output is redacted; **the command that produced it never is** — and `9a8bf231` made the command the card's title. | opus · med |
@@ -896,8 +903,8 @@ could have caught any of this, and it caught the thing it was aimed at.
 | # | Item | Tier · Effort |
 |---|---|---|
 | **H4a** | **The App Store exception guard still only matches the strings it was taught.** Every realistic rewording passes it. A guard that passes on a paraphrase is the recurring failure mode in test form — and this one guards a licence claim. | **opus · high** |
-| **H4b** | **The Legal Notices panel names four AI model families**, against the standing directive never to name or recommend AI models on a user-facing surface. | **sonnet · med** |
-| H4c | "Independent Node" → "Independent Body" reverses a ratified decision and was applied where the ratified noun belongs. | opus · med |
+| ~~H4b~~ | **FIXED** (`4bbdd38d`). The strings were in the backend (`routes/legal.py`), not the .tsx. Notices now derive from the licence text the runtime ships with the weights; a model whose licence cannot be read still gets a row, and an unreachable runtime says so rather than rendering blank. The Vision tab's model recommendation went too, and the directive finally has a guard. | — |
+| ~~H4c~~ | **FIXED** (`ade04b7f`, `e4176a30`). The avoid-list cell is in the *Physical device* row and bans `node` as the noun for a machine; it does not rename a mode. One repo-wide vocabulary guard replaces the per-component assertions. | — |
 
 **Also left undone:** one repo-wide vocabulary guard replacing three per-component
 assertions (**sonnet · high**); redesign and re-prove the App Store exception guard
