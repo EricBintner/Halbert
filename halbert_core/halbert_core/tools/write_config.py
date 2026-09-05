@@ -23,15 +23,18 @@ class WriteConfig(BaseTool):
     side_effects = True
 
     @staticmethod
+    def _read_and_readability(path) -> "tuple[str | None, bool]":
+        """Current text, and whether the read was refused rather than absent."""
+        if not path:
+            return None, False
+        from ..continuity.write_guard import read_for_guard
+
+        return read_for_guard(path)
+
+    @staticmethod
     def _read(path) -> "str | None":
         """Current text of the file, or None if there is not one."""
-        if not path or not os.path.exists(path):
-            return None
-        try:
-            with open(path, "r", encoding="utf-8", errors="replace") as f:
-                return f.read()
-        except Exception:
-            return None
+        return WriteConfig._read_and_readability(path)[0]
 
     @staticmethod
     def _provenance(req: ToolRequest) -> "tuple[str, str]":
@@ -95,7 +98,7 @@ class WriteConfig(BaseTool):
                 outputs["applied"] = True
                 return ToolResponse(request_id=req.request_id, ok=True, outputs=outputs)
 
-            before_txt = self._read(path)
+            before_txt, before_unreadable = self._read_and_readability(path)
 
             # Look before writing. Only on an apply: a dry run changes
             # nothing, so there is nothing to protect, and refusing it would
@@ -112,7 +115,8 @@ class WriteConfig(BaseTool):
                     logger.warning(f"write guard has no ledger to check against: {e}")
                 try:
                     guard = check_before_write(
-                        path, current_text=before_txt, store=guard_store
+                        path, current_text=before_txt,
+                        unreadable=before_unreadable, store=guard_store
                     )
                 finally:
                     if guard_store is not None:
