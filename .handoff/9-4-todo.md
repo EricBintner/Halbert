@@ -362,3 +362,110 @@ fine; it is the noun on screen that matters. `EntityIdentityCard` was fixed in
 `df929ea8`; the cockpit's own strings ("Pair a Satellite") have not been.
 
 **Tier: sonnet · Effort: med.**
+
+---
+
+## D. Found on the way, not fixed
+
+These are not part of any phase. They were noticed while doing something else,
+and each one is the kind of thing that stays invisible until it costs a day.
+
+### D1 — Read-only tools default to MEDIUM in `tools/safety.py`
+
+**What.** The safety framework classifies per tool. Measured:
+
+```
+read_file           safe        list_directory      medium
+recall_memory       safe        read_log_tail       medium
+run_command (ls)    safe        get_service_status  medium
+                                check_disk_space    medium
+```
+
+**Why it matters.** `list_directory`, `read_log_tail`, `get_service_status`
+and `check_disk_space` are read-only — they look at the host and change
+nothing — and they are rated *above* reading `/etc/fstab`. They are falling
+through to a default rather than being classified.
+
+Two consequences. It is noise in whatever consumes risk levels. And it means
+the framework cannot serve as the authority for "is this an inspection", which
+is the principled source the inspection-grouping work wanted and could not use
+(`055aef68` uses an explicit list instead, checked against the real registry by
+a test).
+
+**Definition of done.** Genuinely read-only tools classify `SAFE`. Then
+`groupInspections` can derive its tier from the framework instead of a hand
+list, and the list can go.
+
+**Careful.** Changing a risk level changes auditing and visibility behaviour.
+Check every consumer of `RiskLevel` before moving one.
+
+**Tier: opus · Effort: med.** Small change, cross-cutting blast radius.
+
+### D2 — `test_scheduler_executor` real-clock flake
+
+**What.** `test_one_time_job_runs_and_records_outcome` schedules a job 0.3 s
+out against the real clock and waits 10 s. It failed twice during full-suite
+runs (~5,350 tests) and passed 8/8 in isolation.
+
+**Why it matters.** A suite that fails once in a while for reasons unrelated to
+the change under test is a suite people stop reading.
+
+**Definition of done.** Deterministic — either a generous misfire grace or a
+controllable clock. Check the neighbours in the same file while there;
+`test_timeout_is_enforced_off_the_main_thread` does a real `time.sleep(5)`.
+
+**Tier: sonnet · Effort: med.** A background task chip already exists for this
+(`task_b28f415d`).
+
+### D3 — Stale ROADMAP status rows
+
+**What.** Two rows describe a world that changed under them.
+
+- **LEDGER-1** says *"the agent's `run_command` and `ToolExecutor._write_file`
+  are outside the ledger entirely"*. `_write_file` was fixed in `9418e106`;
+  `run_command` is still true (that is **A1**).
+- **TERM-1** says *"TasksColumn/YourShellRegion mounted"* as an open item.
+  `TasksColumn` was mounted in `4a862fee`; `YourShellRegion` is still true
+  (that is **C1**).
+
+**Why it matters.** LD-1 said "UI cannot complete it" for two days after it
+stopped being true, and I nearly planned a week of work around it. A status row
+that is wrong is worse than one that is missing, because it is trusted.
+
+**Definition of done.** Both rows split into what landed and what remains, in
+the manner LD-1 was corrected in `df929ea8`.
+
+**Tier: fable · Effort: med.**
+
+### D4 — Two config directories still hold live data
+
+**What.** `0c` (`61073752`) made the three resolvers agree, so *new* writes go
+to one place. It did not move what is already split: `being.yml`, `models.yml`,
+`llm.lock` under `~/Library/Application Support/Halbert`; `backups/`,
+`conversations/`, `prep_token` under `~/.config/halbert`. `being.yml.lock`
+exists in **both**.
+
+**Why it matters.** After the collapse, everything resolves to the Library
+path. So `conversations/` and `backups/` under `~/.config/halbert` are now
+**unread** — the data is not lost, it is simply no longer where anything looks.
+
+**The judgement.** The standing rule is *no users, no legacy support: do not
+build migrations unasked, leave old data unread, never delete*. That rule was
+written for shipped versions and this is the developer's own machine, which may
+hold conversations worth keeping. So: **ask before deciding**, and if the
+answer is "keep them", it is a one-time move, not a migration path in the code.
+
+**Tier: fable · Effort: med.** Blocked on: a founder answer.
+
+### D5 — The two-machine hardware run
+
+**What.** LD-1's last undone item: pair two real machines and drive a turn
+across them.
+
+**Why it matters.** Everything about Linked Devices is tested in-process. The
+one thing no test covers is whether it works between two computers on a
+network — which is the entire feature.
+
+**Tier: opus · Effort: high.** Not because the code is hard, but because the
+first real run of a distributed feature is where the assumptions surface, and
+someone has to be able to tell a protocol bug from a firewall.
