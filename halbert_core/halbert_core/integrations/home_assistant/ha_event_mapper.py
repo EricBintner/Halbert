@@ -37,6 +37,37 @@ _OCCUPANCY_DOMAINS = ("person", "device_tracker")
 _UNKNOWN_STATES = (None, "", "unknown", "unavailable", "none")
 
 
+#: Entry-door hints, matched against the entity id. An unlocked shed is not
+#: the same event as an unlocked front door, and the mapper already draws
+#: this line when it decides whether to raise a worry.
+_ENTRY_HINTS = ("front", "back", "door", "entry", "garage")
+
+
+def classify_severity(event: Dict[str, Any]) -> str:
+    """Severity for a state change: info, warning or critical.
+
+    An explicit table rather than something derived, because CD-3 sorts by it
+    and ProactiveGate keys off it -- this is the policy that decides what the
+    morning report puts in front of someone, so it should be readable and
+    arguable in one screen rather than inferred from tuned intensities.
+
+    Pure and total, like the describer beside it.
+    """
+    attributes = event.get("attributes") or {}
+    domain = event.get("domain", "")
+    entity_id = (event.get("entity_id") or "").lower()
+    new_state = event.get("new_state") or ""
+    device_class = attributes.get("device_class") or ""
+
+    if domain == "alarm_control_panel" and new_state == "triggered":
+        return "critical"
+    if domain == "binary_sensor" and device_class == "moisture" and new_state == "on":
+        return "critical"
+    if domain == "lock" and new_state == "unlocked":
+        return "warning" if any(h in entity_id for h in _ENTRY_HINTS) else "info"
+    return "info"
+
+
 def describe_state_change(event: Dict[str, Any]) -> str:
     """One line of prose for a state change, for the ledger row's title.
 
@@ -189,6 +220,7 @@ class HAEventMapper:
             event_type="ha_state_change",
             source="ha",
             entity_id=entity_id,
+            severity=classify_severity(event),
             title=title,
             data={
                 "domain": domain,

@@ -320,7 +320,10 @@ ERASURE_LIMITS = (
     "It does NOT reach: an approval's own copies of the reason, kept in "
     "findings.db under proposals.execution_result and in the approval "
     "decision history; conversation messages, "
-    "which are redacted separately; Haloysius memory_v2's plaintext store; "
+    "which are redacted separately; the event ledger in timeline.db, which "
+    "holds sensor and occupancy history including arrivals and departures "
+    "keyed to a named person, and which no erasure reaches today; "
+    "Haloysius memory_v2's plaintext store; "
     "blocks of a rewritten log shard the filesystem has not yet reused; or any "
     "backup, snapshot or replica taken before now."
 )

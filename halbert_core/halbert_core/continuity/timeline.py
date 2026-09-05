@@ -94,6 +94,7 @@ class TimelineStore:
         self.db_path = db_path
         self._lock = threading.Lock()
         self._init_db()
+        self._prune_to_retention()
 
     def _init_db(self) -> None:
         """Initialize the database schema."""
@@ -104,6 +105,30 @@ class TimelineStore:
                 conn.commit()
             finally:
                 conn.close()
+
+    #: CD-5 kept 90 days. Pruning here rather than on a schedule because the
+    #: store has to be constructed before anything can write to it, so this
+    #: runs on every daemon start with no scheduler dependency. A machine that
+    #: never restarts still grows -- a periodic job is tasked under MIND-1.
+    RETENTION_DAYS = 90
+
+    def _prune_to_retention(self) -> None:
+        """Drop rows past the retention window. Never fatal.
+
+        A store that cannot prune is still a usable store, and refusing to
+        open it would take the integrations down with it -- the same rule as
+        get_timeline_store() returning None rather than raising.
+        """
+        try:
+            removed = self.cleanup(max_age_days=self.RETENTION_DAYS)
+        except Exception as e:
+            logger.warning(f"Timeline retention prune failed ({type(e).__name__}: {e})")
+            return
+        if removed:
+            logger.info(
+                f"Timeline: pruned {removed} row(s) older than "
+                f"{self.RETENTION_DAYS} days"
+            )
 
     def record(self, event: TimelineEvent) -> int:
         """Record an event in the timeline.

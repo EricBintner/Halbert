@@ -108,6 +108,30 @@ class FrigateStateTracker:
             self._active.clear()
 
 
+#: Same entry-camera test _apply_label_emotion already uses, lifted so the
+#: severity table and the affect cannot disagree about what an entry is.
+_ENTRY_HINTS = ("front", "back", "door", "entry", "garage")
+
+
+def classify_detection_severity(payload: dict, at: float) -> str:
+    """Severity for a detection: info, warning or critical.
+
+    Warning is a person at an entry camera at night -- the case the mapper
+    already treats as its highest worry. Everything else is info: a cat in the
+    garden is not news, and a ledger that says it is would make the dial
+    useless.
+    """
+    state = payload.get("after") or payload.get("before") or {}
+    camera = (state.get("camera") or "").lower()
+    label = state.get("label") or ""
+    hour = datetime.fromtimestamp(at).hour
+    is_night = hour < 6 or hour > 22
+    is_entry = any(h in camera for h in _ENTRY_HINTS)
+    if label == "person" and is_entry and is_night:
+        return "warning"
+    return "info"
+
+
 def describe_detection(payload: dict) -> str:
     """One line of prose for a Frigate message, for the ledger row's title.
 
@@ -245,6 +269,7 @@ class FrigateEventMapper:
                 event_type="frigate_event",
                 source="frigate",
                 entity_id=normalise_entity_id(f"{camera}:{sub_label or label}"),
+                severity=classify_detection_severity(payload, detected_at),
                 title=normalise_observation_title(describe_detection(payload)),
                 data={
                     "type": event_type,

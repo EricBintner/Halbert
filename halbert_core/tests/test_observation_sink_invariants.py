@@ -318,3 +318,83 @@ class TestRecordingCannotBreakIngestion:
                       "current_zones": [], "top_score": 0.9},
         })
         assert mapper._pending_events, "a ledger fault must not cost the affect too"
+
+
+class TestSeverityAtTheSink:
+    """CD-3 sorts by (count, severity, recency) and ProactiveGate keys off
+    severity, so a ledger where every row is ``info`` contributes nothing to
+    either. The mapping is an explicit table, not derived, so it can be read
+    and argued with.
+    """
+
+    @pytest.mark.parametrize("event, expected", [
+        ({"domain": "alarm_control_panel", "old_state": "armed_away",
+          "new_state": "triggered"}, "critical"),
+        ({"domain": "binary_sensor", "old_state": "off", "new_state": "on",
+          "attributes": {"device_class": "moisture"}}, "critical"),
+        ({"domain": "lock", "old_state": "locked", "new_state": "unlocked",
+          "entity_id": "lock.front_door"}, "warning"),
+        ({"domain": "lock", "old_state": "locked", "new_state": "unlocked",
+          "entity_id": "lock.shed"}, "info"),
+        ({"domain": "light", "old_state": "off", "new_state": "on"}, "info"),
+        ({}, "info"),
+    ])
+    def test_ha_severity(self, store, event, expected):
+        base = {"entity_id": "x.y", "domain": "", "old_state": "", "new_state": "",
+                "attributes": {}, "timestamp": 1000.0}
+        base.update(event)
+        HAEventMapper(timeline=store).add_event(base)
+        assert store.query(event_type="ha_state_change")[0]["severity"] == expected
+
+    def test_a_person_at_an_entry_at_night_is_a_warning(self, store):
+        import time as _t
+        # 02:00 local, an entry zone.
+        night = _t.mktime(_t.struct_time((2026, 9, 5, 2, 0, 0, 4, 248, -1)))
+        FrigateEventMapper(timeline=store).handle_event(TOPIC_EVENTS, {
+            "type": "new",
+            "after": {"id": "1", "camera": "front_door", "label": "person",
+                      "current_zones": ["porch"], "top_score": 0.9,
+                      "start_time": night},
+        })
+        assert store.query(event_type="frigate_event")[0]["severity"] == "warning"
+
+    def test_a_cat_in_the_garden_is_info(self, store):
+        FrigateEventMapper(timeline=store).handle_event(TOPIC_EVENTS, {
+            "type": "new",
+            "after": {"id": "2", "camera": "garden", "label": "cat",
+                      "current_zones": [], "top_score": 0.9, "start_time": 500.0},
+        })
+        assert store.query(event_type="frigate_event")[0]["severity"] == "info"
+
+
+class TestRetentionAndErasure:
+    """CD-5 kept 90 days, and this branch gave the ledger its first writer."""
+
+    def test_rows_past_the_retention_window_are_pruned_at_construction(self, tmp_path):
+        import time as _t
+        from halbert_core.continuity.timeline import TimelineEvent
+
+        db = str(tmp_path / "t.db")
+        old = TimelineStore(db_path=db)
+        old.record(TimelineEvent(timestamp=_t.time() - 91 * 86400,
+                                 event_type="ha_state_change", source="ha"))
+        old.record(TimelineEvent(timestamp=_t.time() - 1 * 86400,
+                                 event_type="ha_state_change", source="ha"))
+        assert len(TimelineStore(db_path=db).query(limit=99)) == 1
+
+    def test_a_prune_failure_does_not_prevent_the_store_opening(self, tmp_path, monkeypatch):
+        from halbert_core.continuity import timeline as mod
+
+        monkeypatch.setattr(mod.TimelineStore, "cleanup",
+                            lambda self, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+        assert TimelineStore(db_path=str(tmp_path / "t.db")) is not None
+
+    def test_erasure_limits_names_the_event_ledger(self):
+        from halbert_core.continuity.provenance import ERASURE_LIMITS
+
+        text = ERASURE_LIMITS.lower()
+        assert "event ledger" in text or "timeline" in text, (
+            "ERASURE_LIMITS is user-facing text asserting what forget reaches; "
+            "the ledger holds a named person's movement history and forget "
+            "cannot reach it, so it has to be named"
+        )
