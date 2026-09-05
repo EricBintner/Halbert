@@ -248,3 +248,73 @@ class TestOccupancyNeedsAKnownPriorState:
             "attributes": {"friendly_name": "Sarah"}, "timestamp": 1000.0,
         })
         assert len(store.query(event_type="ha_state_change")) == 1
+
+
+class TestRecordingCannotBreakIngestion:
+    """The ledger is downstream of ingestion and must never break it.
+
+    ``add_event`` records to the timeline and *then* queues the event for the
+    cognitive tick. Anything that escapes the recording step therefore costs
+    the affect too, not just the row -- and ``ha_event_stream`` catches it as
+    a generic "Event callback error", so it reads as a transport fault.
+    """
+
+    def test_a_removed_entity_sends_new_state_none_without_crashing(self, store):
+        # HA sends new_state=null when an entity is removed, and the stream
+        # forwards it because None != "armed_away".
+        mapper = HAEventMapper(timeline=store)
+        mapper.add_event({
+            "entity_id": "alarm_control_panel.house", "domain": "alarm_control_panel",
+            "old_state": "armed_away", "new_state": None,
+            "attributes": {"friendly_name": "House alarm"}, "timestamp": 1000.0,
+        })
+        assert len(store.query(event_type="ha_state_change")) == 1
+        assert mapper._pending_events, "the event must still reach the tick"
+
+    @pytest.mark.parametrize("event", [
+        {"entity_id": "x.y", "domain": "lock", "old_state": None, "new_state": None},
+        {"entity_id": "x.y", "domain": "person", "old_state": None, "new_state": None},
+        {"entity_id": "x.y", "domain": "binary_sensor", "old_state": None, "new_state": None},
+        {"entity_id": "x.y", "domain": "climate", "old_state": None, "new_state": None},
+        {"entity_id": "x.y", "domain": "light", "old_state": None, "new_state": None},
+        {},
+    ])
+    def test_describe_is_total(self, event):
+        from halbert_core.integrations.home_assistant.ha_event_mapper import (
+            describe_state_change,
+        )
+        assert isinstance(describe_state_change(event), str)
+
+    def test_a_failing_describer_still_queues_the_event(self, store, monkeypatch):
+        import halbert_core.integrations.home_assistant.ha_event_mapper as mod
+
+        monkeypatch.setattr(mod, "describe_state_change", lambda e: 1 / 0)
+        mapper = mod.HAEventMapper(timeline=store)
+        mapper.add_event({
+            "entity_id": "lock.front_door", "domain": "lock",
+            "old_state": "locked", "new_state": "unlocked",
+            "attributes": {}, "timestamp": 1000.0,
+        })
+        assert mapper._pending_events, "a ledger fault must not cost the affect too"
+
+    def test_a_failing_frigate_describer_still_queues_the_event(self, store, monkeypatch):
+        # Symmetry with the HA case: handle_event() records first and queues
+        # second, so the same rule has to hold on this side.
+        #
+        # The injected failure is in the recording step, not a malformed
+        # payload: FrigateStateTracker.on_event runs before this and does not
+        # guard against a non-dict "after", so a malformed payload never
+        # reaches here. That is pre-existing and contained -- the MQTT
+        # subscriber wraps the whole callback and drops the one message -- so
+        # it is out of this branch's scope and asserting on it here would test
+        # the wrong component.
+        import halbert_core.integrations.frigate.frigate_event_mapper as mod
+
+        monkeypatch.setattr(mod, "describe_detection", lambda p: 1 / 0)
+        mapper = mod.FrigateEventMapper(timeline=store)
+        mapper.handle_event(TOPIC_EVENTS, {
+            "type": "new",
+            "after": {"id": "1", "camera": "front_door", "label": "person",
+                      "current_zones": [], "top_score": 0.9},
+        })
+        assert mapper._pending_events, "a ledger fault must not cost the affect too"

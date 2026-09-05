@@ -54,9 +54,13 @@ def describe_state_change(event: Dict[str, Any]) -> str:
     entity_id = event.get("entity_id", "")
     friendly = attributes.get("friendly_name") or entity_id
     domain = event.get("domain", "")
-    old_state = event.get("old_state", "")
-    new_state = event.get("new_state", "")
-    device_class = attributes.get("device_class", "")
+    # Coerced, not defaulted: HA sends a null state object when an entity is
+    # removed, and ha_event_stream passes that through as None. `.get(k, "")`
+    # returns None for a key that is present and null, so a bare default is
+    # not enough and a later new_state.startswith() raises.
+    old_state = event.get("old_state") or ""
+    new_state = event.get("new_state") or ""
+    device_class = attributes.get("device_class") or ""
 
     if domain == "lock" and new_state in ("locked", "unlocked"):
         return f"{friendly} was {new_state}"
@@ -164,51 +168,57 @@ class HAEventMapper:
         """
         if self._timeline is None:
             return
+        try:
+            self._record_to_timeline_inner(event)
+        except Exception as e:
+            # add_event() queues the event for the cognitive tick *after*
+            # this, so anything escaping here costs the affect as well as the
+            # row -- and the stream reports it as a generic callback error.
+            logger.warning(f"Could not record HA event to timeline: {e}")
+
+    def _record_to_timeline_inner(self, event: Dict[str, Any]) -> None:
         entity_id = normalise_entity_id(event.get("entity_id", ""))
         domain = event.get("domain", "")
-        old_state = event.get("old_state", "")
-        new_state = event.get("new_state", "")
+        old_state = event.get("old_state") or ""
+        new_state = event.get("new_state") or ""
         attributes = event.get("attributes", {}) or {}
         timestamp = event.get("timestamp") or time.time()
         title = normalise_observation_title(describe_state_change(event))
-        try:
-            self._timeline.record(TimelineEvent(
-                timestamp=timestamp,
-                event_type="ha_state_change",
-                source="ha",
-                entity_id=entity_id,
-                title=title,
-                data={
-                    "domain": domain,
-                    "old_state": old_state,
-                    "new_state": new_state,
-                    "device_class": attributes.get("device_class", ""),
-                },
-            ))
-            # An occupancy_change row asserts a transition, so it needs a
-            # known prior state to have transitioned from. The state row above
-            # is still written either way: the state was observed, only the
-            # movement cannot be claimed.
-            known_prior = not (
-                old_state is None or str(old_state).strip().lower() in _UNKNOWN_STATES
-            )
-            if domain in _OCCUPANCY_DOMAINS and known_prior:
-                direction = None
-                if new_state == "home" and old_state != "home":
-                    direction = "arrival"
-                elif new_state == "not_home" and old_state != "not_home":
-                    direction = "departure"
-                if direction:
-                    self._timeline.record(TimelineEvent(
-                        timestamp=timestamp,
-                        event_type="occupancy_change",
-                        source="ha",
-                        entity_id=entity_id,
-                        title=title,
-                        data={"direction": direction},
-                    ))
-        except Exception as e:
-            logger.warning(f"Could not record HA event to timeline: {e}")
+        self._timeline.record(TimelineEvent(
+            timestamp=timestamp,
+            event_type="ha_state_change",
+            source="ha",
+            entity_id=entity_id,
+            title=title,
+            data={
+                "domain": domain,
+                "old_state": old_state,
+                "new_state": new_state,
+                "device_class": attributes.get("device_class", ""),
+            },
+        ))
+        # An occupancy_change row asserts a transition, so it needs a
+        # known prior state to have transitioned from. The state row above
+        # is still written either way: the state was observed, only the
+        # movement cannot be claimed.
+        known_prior = not (
+            old_state is None or str(old_state).strip().lower() in _UNKNOWN_STATES
+        )
+        if domain in _OCCUPANCY_DOMAINS and known_prior:
+            direction = None
+            if new_state == "home" and old_state != "home":
+                direction = "arrival"
+            elif new_state == "not_home" and old_state != "not_home":
+                direction = "departure"
+            if direction:
+                self._timeline.record(TimelineEvent(
+                    timestamp=timestamp,
+                    event_type="occupancy_change",
+                    source="ha",
+                    entity_id=entity_id,
+                    title=title,
+                    data={"direction": direction},
+                ))
 
     def populate_cognition(self, cognition) -> None:
         """Flush pending events into PersonaCognition cognitive layers.
