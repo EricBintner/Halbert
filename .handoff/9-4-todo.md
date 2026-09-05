@@ -469,3 +469,78 @@ network — which is the entire feature.
 **Tier: opus · Effort: high.** Not because the code is hard, but because the
 first real run of a distributed feature is where the assumptions surface, and
 someone has to be able to tell a protocol bug from a firewall.
+
+---
+
+## E. Sequencing
+
+Dependencies first, then value. Nothing here is blocked on anything outside
+this document except the two founder answers called out below.
+
+| # | Item | Tier | Effort | Blocked by |
+|---|---|---|---|---|
+| 1 | **A2** CAS refusal policy | opus | med | **founder answer** |
+| 2 | **D3** stale ROADMAP rows | fable | med | — |
+| 3 | **A3** reconcile the backup stores | sonnet | high | — |
+| 4 | **B1** `GET /api/state/recent-configs` | sonnet | med | A3 |
+| 5 | **B2** `RecentConfigsDock` | sonnet | high | B1 |
+| 6 | **B3** rollback off the ledger | sonnet | high | A3 |
+| 7 | **A1** `run_command` on the ledger | opus | xhigh | — |
+| 8 | **C1** `YourShellRegion` | sonnet | high | — |
+| 9 | **C2** retire `/terminal` | fable | med | C1 |
+| 10 | **C3** aggregate StatusLight | sonnet | med | — |
+| 11 | **C5** mount the cockpit | sonnet | med | — |
+| 12 | **D1** safety read-only defaults | opus | med | — |
+| 13 | **B4** prompt hydration | opus | high | — |
+| 14 | **C4** label the elision | sonnet | med | — |
+| 15 | **B5** micro-compaction: fold or cut | sonnet / fable | med | — |
+| 16 | **D2** scheduler flake | sonnet | med | — |
+| 17 | **D4** the split config directories | fable | med | **founder answer** |
+| 18 | **D5** two-machine hardware run | opus | high | — |
+
+### A fan-out worth considering
+
+Items **8, 10, 11, 14** are four independent frontend pieces with no shared
+state: the shell region, the aggregate light, the cockpit mount, and the
+elision label. They touch different files, each has its own verification, and
+none blocks another.
+
+**Tier: ultracode · Effort: high.** Only if you want them at once — there is no
+correctness argument for parallelising them, just wall-clock.
+
+Do **not** fan out **A1**, **A2**, **B4** or **D1**. Each is a judgement about
+an invariant, and the failure mode of getting one plausibly-but-wrongly right
+is exactly what this thread of work spent its time correcting.
+
+### The two founder answers, collected
+
+1. **A2 — what should a refused write offer?** Today: refuse and explain,
+   everywhere. Recommendation: the model never overrides (it cannot see the
+   other change); the person may, from the editor, with the current content
+   shown beside theirs.
+2. **D4 — the conversations and backups under `~/.config/halbert` are now
+   unread.** Move them to the Library path, or leave them?
+
+---
+
+## F. What this thread already landed, for context
+
+So that whoever picks this up knows what has *just* changed underneath the
+code they are reading.
+
+| Merge | What |
+|---|---|
+| `844bff4a` | CLI in the conversation: pool on in production, block + promotion events, the tool card finds its block, arguments render as fields |
+| `9418e106` | Look before you write: `write_guard`, `_write_file` on the record, `expected_sha256` on the editor, one `config_dir`, `turn_id` on the ledger |
+| `c8ce601c` | The watcher runs on this body: platform-aware registry, one finder, macOS registry verified against this machine (135 files) |
+| `a8227d72` | Roadmap correction |
+
+And the two review documents this todo descends from:
+`.handoff/REVIEW-CONFIG-CONTINUITY-2026-09-04.md` (16 findings, §15 records two
+corrections to itself) and `.handoff/STRATEGY-CLI-IN-CONVERSATION-2026-09-04.md`
+(§15 the audit of the build, §17 the final state).
+
+**One thing to carry forward more than any item above.** The recurring defect
+on this thread was not bugs — it was *tests that could not fail* over features
+that could not run. Five separate instances. If you inherit a green suite here,
+that is not yet evidence.
