@@ -31,6 +31,10 @@ interface FoundationModel {
   name: string
   license: string
   notice: string
+  license_id?: string | null
+  license_url?: string | null
+  /** The runtime served no licence text, so any notice it requires is unmet. */
+  unknown_license?: boolean
 }
 
 interface LegalNotices {
@@ -44,6 +48,9 @@ interface LegalNotices {
   rag_sources: RagSource[]
   software_dependencies: SoftwareDep[]
   foundation_models: FoundationModel[]
+  /** ok | no_models | runtime_unreachable — why the list is what it is. */
+  foundation_models_status?: string
+  foundation_models_detail?: string
   legal_docs: Record<string, string>
 }
 
@@ -230,19 +237,67 @@ export function LegalNoticesModal({ open, onOpenChange }: LegalNoticesModalProps
 
           {notices && tab === 'models' && (
             <div className="space-y-2">
+              {/* The models named here are the ones THIS machine serves, read
+                  from the licence text its runtime ships with the weights.
+                  Halbert's own source names no model: a list baked in here
+                  would be a licence claim about models the reader may never
+                  have installed, while saying nothing about the ones they
+                  have. */}
               <p className="text-xs text-muted-foreground mb-3">
-                Foundation models referenced by Halbert's model catalog. Each
-                model's license requires the shown user-facing notice when in use.
+                Models this machine can serve, and the licence each one's
+                runtime reports. Some licences require the notice shown to
+                appear on a user-facing page while the model is in use.
               </p>
+
+              {notices.foundation_models_status === 'runtime_unreachable' && (
+                <div className="rounded-md border border-dashed p-3">
+                  <p className="text-xs text-muted-foreground">
+                    No local model runtime answered, so the licences of the
+                    models this machine serves could not be read. This is not a
+                    statement that there are none.
+                  </p>
+                </div>
+              )}
+
+              {notices.foundation_models_status === 'no_models' && (
+                <div className="rounded-md border border-dashed p-3">
+                  <p className="text-xs text-muted-foreground">
+                    The model runtime is reachable and serving no models.
+                  </p>
+                </div>
+              )}
+
               {notices.foundation_models.map(m => (
                 <div key={m.name} className="rounded-md border p-3 space-y-1">
-                  <div className="flex items-center justify-between">
-                    <span className="font-medium text-sm">{m.name}</span>
-                    <Badge variant="secondary" className="text-xs">{m.license}</Badge>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-medium text-sm break-all">{m.name}</span>
+                    <Badge
+                      variant={m.unknown_license ? 'outline' : 'secondary'}
+                      className="text-xs shrink-0"
+                    >
+                      {m.license}
+                    </Badge>
                   </div>
-                  <p className="text-xs text-muted-foreground italic">"{m.notice}"</p>
+                  {m.unknown_license ? (
+                    <p className="text-xs text-muted-foreground">
+                      The runtime supplied no licence text for this model. If its
+                      licence requires a notice, it is not being shown.
+                    </p>
+                  ) : m.notice ? (
+                    <p className="text-xs text-muted-foreground italic">"{m.notice}"</p>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">
+                      This licence asks for no user-facing notice.
+                    </p>
+                  )}
                 </div>
               ))}
+
+              {notices.foundation_models_detail && (
+                <p className="text-xs text-muted-foreground pt-1">
+                  {notices.foundation_models_detail}
+                </p>
+              )}
             </div>
           )}
         </div>

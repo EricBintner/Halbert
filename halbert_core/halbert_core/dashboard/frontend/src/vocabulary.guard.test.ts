@@ -23,23 +23,20 @@
  */
 
 import { describe, it, expect } from 'vitest'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
-import { join } from 'node:path'
 
-const SRC = join(__dirname)
-const EXT = /\.(ts|tsx)$/
-const SKIP = new Set(['node_modules', 'dist', 'build', '__snapshots__'])
-
-function sources(dir: string): string[] {
-  const out: string[] = []
-  for (const entry of readdirSync(dir)) {
-    if (SKIP.has(entry)) continue
-    const full = join(dir, entry)
-    if (statSync(full).isDirectory()) out.push(...sources(full))
-    else if (EXT.test(entry)) out.push(full)
-  }
-  return out
-}
+/**
+ * Every source file, as text, via Vite's own raw glob.
+ *
+ * Deliberately not `node:fs`: this project's tsconfig carries no @types/node,
+ * so importing it typechecks clean under vitest and red under `tsc --noEmit`.
+ * (Which is how the first version of this file shipped: the frontend gate ran
+ * before the file existed.)
+ */
+const SOURCES = import.meta.glob('./**/*.{ts,tsx}', {
+  query: '?raw',
+  import: 'default',
+  eager: true,
+}) as Record<string, string>
 
 
 /**
@@ -67,7 +64,7 @@ const RETIRED: Array<{ bad: RegExp; use: string; why: string }> = [
 ]
 
 describe('ratified vocabulary', () => {
-  const files = sources(SRC)
+  const files = Object.keys(SOURCES)
 
   it('finds source files to check', () => {
     expect(files.length).toBeGreaterThan(100)
@@ -78,9 +75,9 @@ describe('ratified vocabulary', () => {
       const offenders: string[] = []
       for (const file of files) {
         // This file names the retired terms in order to ban them.
-        if (file === join(SRC, 'vocabulary.guard.test.ts')) continue
-        stripComments(readFileSync(file, 'utf8')).split('\n').forEach((line, i) => {
-          if (bad.test(line)) offenders.push(`${file.slice(SRC.length + 1)}:${i + 1}`)
+        if (file.endsWith('/vocabulary.guard.test.ts')) continue
+        stripComments(SOURCES[file]).split('\n').forEach((line, i) => {
+          if (bad.test(line)) offenders.push(`${file}:${i + 1}`)
         })
       }
       expect(offenders, `use "${use}" instead. ${why}`).toEqual([])
@@ -89,11 +86,12 @@ describe('ratified vocabulary', () => {
 
   it('both surfaces that name the mode agree on the name', () => {
     const surfaces = [
-      'components/settings/devices/EntityIdentityCard.tsx',
-      'components/shell/PresencePill.tsx',
+      './components/settings/devices/EntityIdentityCard.tsx',
+      './components/shell/PresencePill.tsx',
     ]
     for (const rel of surfaces) {
-      const text = readFileSync(join(SRC, rel), 'utf8')
+      const text = SOURCES[rel]
+      expect(text, `${rel} was not found by the glob`).toBeTruthy()
       expect(text, `${rel} should name the ratified mode`).toContain('Independent Node')
     }
   })

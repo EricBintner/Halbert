@@ -369,7 +369,7 @@ export function VisionTab() {
             All capture is local. Frames are sent only to your configured vision
             model endpoint. If your vision model is a cloud API (not localhost),
             screenshots and webcam frames will be sent to that external service.
-            Consider using a local Ollama vision model (e.g., llava) for privacy.
+            Consider using a locally served vision model for privacy.
             Images are not stored to disk unless you explicitly save the conversation.
           </p>
         </CardContent>

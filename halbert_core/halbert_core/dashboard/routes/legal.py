@@ -185,13 +185,100 @@ _SOFTWARE_DEPS: List[Dict[str, Any]] = [
     {"name": "lucide-react", "license": "ISC", "purpose": "Icon set", "language": "typescript"},
 ]
 
-# Foundation model attribution notices (THIRD-PARTY-LICENSES.md §5).
-_FOUNDATION_MODELS: List[Dict[str, Any]] = [
-    {"name": "Meta Llama 3.1", "license": "Llama 3.1 Community License", "notice": "Built with Llama 3.1."},
-    {"name": "DeepSeek", "license": "DeepSeek License", "notice": "Powered by DeepSeek."},
-    {"name": "Qwen", "license": "Apache 2.0 / Tongyi Qianwen License", "notice": "Powered by Qwen."},
-    {"name": "nomic-embed-text-v1.5", "license": "Apache 2.0", "notice": "Embeddings by Nomic AI."},
-]
+# Model attribution notices come from the RUNTIME, never from this source.
+#
+# This list used to be four model families transcribed from
+# THIRD-PARTY-LICENSES.md §5 and served straight to the About panel. Two
+# things were wrong with that. It broke the standing rule that Halbert names
+# no AI model in any string, comment, doc or UI copy -- and this was the one
+# surface in the product publishing model families out of Halbert's own
+# source. And it was a licence claim about models the user may never have
+# installed, while saying nothing about the ones they had.
+#
+# A community licence that asks for "Built with X" on a user-facing surface is
+# only satisfied by naming what is actually running. So the panel now reports
+# what this machine serves, read from the licence text the runtime ships with
+# the weights -- the path model/attribution.py was written for and already
+# lists this panel as a consumer of.
+
+#: Per-model licence lookups are network calls. The panel is not worth a long
+#: wait, and a partial answer that says it is partial beats a slow complete one.
+_MODEL_LICENCE_TIMEOUT = 1.5
+_MODEL_LIMIT = 60
+
+
+def _model_notices() -> Dict[str, Any]:
+    """Licence notices for the models this body can actually serve.
+
+    Returns ``{"models": [...], "status": ..., "detail": ...}``. The status is
+    part of the answer, not an error path: an empty list because no runtime
+    answered means something different from an empty list because the runtime
+    serves nothing, and a panel that renders both as blank is making a licence
+    claim it has not checked.
+    """
+    from ...model.attribution import (
+        classify_license_text,
+        default_ollama_url,
+        fetch_ollama_license,
+    )
+
+    url = default_ollama_url()
+    try:
+        import requests
+
+        resp = requests.get(f"{url}/api/tags", timeout=_MODEL_LICENCE_TIMEOUT)
+        resp.raise_for_status()
+        tags = resp.json().get("models") or []
+    except Exception as e:
+        logger.debug("legal: no model runtime answered at %s: %s", url, e)
+        return {
+            "models": [],
+            "status": "runtime_unreachable",
+            "detail": (
+                "No local model runtime answered, so the licences of the "
+                "models this machine serves could not be read."
+            ),
+        }
+
+    names = [str(m.get("name") or m.get("model") or "").strip() for m in tags]
+    names = [n for n in names if n]
+    truncated = len(names) > _MODEL_LIMIT
+    out: List[Dict[str, Any]] = []
+    for name in sorted(set(names))[:_MODEL_LIMIT]:
+        try:
+            text = fetch_ollama_license(url, name, timeout=_MODEL_LICENCE_TIMEOUT)
+        except Exception:
+            text = None
+        info = classify_license_text(text) if text else None
+        if info is None:
+            # Say so. An unmet attribution obligation must be visible, not an
+            # absent row: the licence may well require a notice we cannot show.
+            out.append({
+                "name": name,
+                "license": "not supplied by the runtime",
+                "notice": "",
+                "license_id": None,
+                "license_url": None,
+                "unknown_license": True,
+            })
+            continue
+        out.append({
+            "name": name,
+            "license": info.name,
+            "notice": info.notice or "",
+            "license_id": info.license_id,
+            "license_url": info.license_url,
+            "unknown_license": False,
+        })
+
+    return {
+        "models": out,
+        "status": "ok" if out else "no_models",
+        "detail": (
+            f"Showing the first {_MODEL_LIMIT} of {len(set(names))} models."
+            if truncated else ""
+        ),
+    }
 
 
 def _acceptance_file() -> Path:
@@ -201,6 +288,7 @@ def _acceptance_file() -> Path:
 @router.get("/notices")
 async def get_notices() -> Dict[str, Any]:
     """Structured third-party license manifest for the dashboard UI."""
+    model_notices = _model_notices()
     return {
         "project": {
             "name": "Halbert",
@@ -211,7 +299,9 @@ async def get_notices() -> Dict[str, Any]:
         },
         "rag_sources": _RAG_SOURCES,
         "software_dependencies": _SOFTWARE_DEPS,
-        "foundation_models": _FOUNDATION_MODELS,
+        "foundation_models": model_notices["models"],
+        "foundation_models_status": model_notices["status"],
+        "foundation_models_detail": model_notices["detail"],
         "legal_docs": {
             "license": "documentation/legal/LICENSE.md",
             "third_party_licenses": "documentation/legal/THIRD-PARTY-LICENSES.md",
