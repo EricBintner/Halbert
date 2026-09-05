@@ -23,6 +23,39 @@ const RISK_CONFIG: Record<string, { color: string; bgColor: string; icon: string
   critical: { color: 'text-error', bgColor: 'bg-error/20', icon: '⛔' },
 };
 
+/**
+ * Render a confirmation description as limited markup, escaping first.
+ *
+ * `description` carries a model-supplied command, and this is the one screen
+ * where a person authorises a privileged action. Passing it to
+ * dangerouslySetInnerHTML unescaped meant anything that could influence the
+ * description -- a filename, a package name, the contents of a config file
+ * the agent had just read -- could inject arbitrary HTML into the dialog:
+ * overlay reassuring text over an alarming command, or run script on the
+ * approval surface itself.
+ *
+ * Escaping happens BEFORE the markdown pass, not after. The formatting
+ * regexes match on backticks, asterisks and newlines, none of which HTML
+ * escaping touches, so the intended rendering is unchanged while injected
+ * tags arrive as visible text.
+ */
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+export function renderDescription(description: string): string {
+  return escapeHtml(description ?? '')
+    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+    .replace(/```([\s\S]*?)```/g, '<pre class="bg-muted p-2 rounded text-xs">$1</pre>')
+    .replace(/`([^`]+)`/g, '<code class="bg-muted px-1 rounded">$1</code>')
+    .replace(/\n/g, '<br/>');
+}
+
 export function ConfirmationDialog({ 
   confirmation, 
   onConfirm, 
@@ -54,13 +87,7 @@ export function ConfirmationDialog({
             <div className="text-sm text-muted-foreground mb-1">Action</div>
             <div 
               className="text-sm text-foreground prose prose-sm prose-invert max-w-none"
-              dangerouslySetInnerHTML={{ 
-                __html: confirmation.description
-                  .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-                  .replace(/```([\s\S]*?)```/g, '<pre class="bg-muted p-2 rounded text-xs">$1</pre>')
-                  .replace(/`([^`]+)`/g, '<code class="bg-muted px-1 rounded">$1</code>')
-                  .replace(/\n/g, '<br/>')
-              }}
+              dangerouslySetInnerHTML={{ __html: renderDescription(confirmation.description) }}
             />
           </div>
 

