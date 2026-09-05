@@ -17,7 +17,14 @@ import threading
 import time
 from typing import Any, Dict, List, Optional
 
+from ...continuity.timeline import TimelineEvent, TimelineStore
+
 logger = logging.getLogger("halbert.integrations.home_assistant.event_mapper")
+
+# Domains whose person/device_tracker home<->not_home transition is also an
+# occupancy event (A2 row contract), on top of the unconditional
+# ha_state_change row every event gets.
+_OCCUPANCY_DOMAINS = ("person", "device_tracker")
 
 
 class HAEventMapper:
@@ -35,10 +42,26 @@ class HAEventMapper:
     # (REV-03 F1). media_player attributes are large; 500 events is ~2MB.
     MAX_PENDING_EVENTS = 500
 
-    def __init__(self, trackers: Optional[Dict] = None):
+    # Minimum seconds between "queue over cap" log lines — mirrors
+    # FrigateEventMapper's rate limit (A2: "do not silently drop again").
+    _DROP_LOG_INTERVAL = 60.0
+
+    # Same rationale for emotion-write failures.
+    _EMOTION_LOG_INTERVAL = 60.0
+
+    def __init__(self, trackers: Optional[Dict] = None, timeline: Optional[TimelineStore] = None):
         self._pending_events: List[Dict[str, Any]] = []
         self._lock = threading.Lock()
         self._trackers = trackers or {}
+        self._timeline = timeline
+        self._dropped_since_log = 0
+        self._last_drop_log_ts = 0.0
+        self._last_emotion_log_ts = 0.0
+        if self._timeline is None:
+            logger.warning(
+                "No TimelineStore configured — HA state changes will not be "
+                "durably recorded (they still reach cognition this tick)"
+            )
 
     def add_event(self, event: Dict[str, Any]) -> None:
         """Add a HA state_changed event for the next cognitive tick.
@@ -47,11 +70,66 @@ class HAEventMapper:
             event: Dict with entity_id, domain, old_state, new_state,
                    attributes, timestamp.
         """
+        self._record_to_timeline(event)
+
         with self._lock:
             self._pending_events.append(event)
             # Cap the queue: drop oldest if over limit (REV-03 F1).
-            if len(self._pending_events) > self.MAX_PENDING_EVENTS:
-                del self._pending_events[: len(self._pending_events) - self.MAX_PENDING_EVENTS]
+            overflow = len(self._pending_events) - self.MAX_PENDING_EVENTS
+            if overflow > 0:
+                del self._pending_events[:overflow]
+                self._dropped_since_log += overflow
+                now = time.time()
+                if now - self._last_drop_log_ts > self._DROP_LOG_INTERVAL:
+                    logger.warning(
+                        "HA pending-event queue over cap (%d); dropped %d "
+                        "oldest event(s) since last log",
+                        self.MAX_PENDING_EVENTS, self._dropped_since_log,
+                    )
+                    self._dropped_since_log = 0
+                    self._last_drop_log_ts = now
+
+    def _record_to_timeline(self, event: Dict[str, Any]) -> None:
+        """A2 row contract: one ha_state_change row per event, plus an
+        occupancy_change row for a person/device_tracker home transition.
+        """
+        if self._timeline is None:
+            return
+        entity_id = event.get("entity_id", "")
+        domain = event.get("domain", "")
+        old_state = event.get("old_state", "")
+        new_state = event.get("new_state", "")
+        attributes = event.get("attributes", {}) or {}
+        timestamp = event.get("timestamp") or time.time()
+        try:
+            self._timeline.record(TimelineEvent(
+                timestamp=timestamp,
+                event_type="ha_state_change",
+                source="ha",
+                entity_id=entity_id,
+                data={
+                    "domain": domain,
+                    "old_state": old_state,
+                    "new_state": new_state,
+                    "device_class": attributes.get("device_class", ""),
+                },
+            ))
+            if domain in _OCCUPANCY_DOMAINS:
+                direction = None
+                if new_state == "home" and old_state != "home":
+                    direction = "arrival"
+                elif new_state == "not_home" and old_state != "not_home":
+                    direction = "departure"
+                if direction:
+                    self._timeline.record(TimelineEvent(
+                        timestamp=timestamp,
+                        event_type="occupancy_change",
+                        source="ha",
+                        entity_id=entity_id,
+                        data={"direction": direction},
+                    ))
+        except Exception as e:
+            logger.warning(f"Could not record HA event to timeline: {e}")
 
     def populate_cognition(self, cognition) -> None:
         """Flush pending events into PersonaCognition cognitive layers.
@@ -202,4 +280,7 @@ class HAEventMapper:
                 source=source,
             )
         except Exception as e:
-            logger.debug(f"Could not add emotion: {e}")
+            now = time.time()
+            if now - self._last_emotion_log_ts > self._EMOTION_LOG_INTERVAL:
+                logger.warning(f"Could not add emotion {emotion_name!r}: {e}")
+                self._last_emotion_log_ts = now

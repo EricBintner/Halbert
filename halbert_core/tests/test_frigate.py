@@ -225,28 +225,38 @@ class TestFrigateMQTTFilter:
 # ── FrigateEventMapper cognition tests ─────────────────────────────────────
 
 class TestFrigateEventMapper:
+    def _make_timeline_store(self, tmp_path, name="timeline.db"):
+        from halbert_core.continuity.timeline import TimelineStore
+        return TimelineStore(db_path=str(tmp_path / name))
+
     def _make_mock_cognition(self):
         cognition = MagicMock()
         cognition.worries = MagicMock()
         cognition.worries.get_active_worries.return_value = []
         cognition.emotional_state = MagicMock()
-        cognition.internal_state = MagicMock()
         return cognition
 
-    def _make_mapper(self):
-        mapper = FrigateEventMapper()
-        mapper._add_emotion = MagicMock()
-        return mapper
+    def _make_mapper(self, timeline=None):
+        return FrigateEventMapper(timeline=timeline)
 
-    def test_new_person_event_adds_observation(self):
-        mapper = self._make_mapper()
-        cognition = self._make_mock_cognition()
+    def test_new_person_event_records_one_timeline_row(self, tmp_path):
+        store = self._make_timeline_store(tmp_path)
+        mapper = self._make_mapper(timeline=store)
         mapper.handle_event(TOPIC_EVENTS, {
             "type": "new",
             "after": {"id": "1", "camera": "front_door", "label": "person", "current_zones": ["porch"], "top_score": 0.9},
         })
-        mapper.populate_cognition(cognition)
-        assert cognition.internal_state.add_observation.called
+        rows = store.query(event_type="frigate_event")
+        assert len(rows) == 1
+        row = rows[0]
+        assert row["source"] == "frigate"
+        assert row["entity_id"] == "front_door:person"
+        assert row["data"] == {
+            "type": "new",
+            "frigate_event_id": "1",
+            "zones": ["porch"],
+            "score": 0.9,
+        }
 
     def test_new_person_at_entry_adds_worry(self):
         mapper = self._make_mapper()
@@ -276,18 +286,18 @@ class TestFrigateEventMapper:
         mapper.populate_cognition(cognition)
         cognition.worries.resolve_worry.assert_called_once()
 
-    def test_zone_change_adds_observation(self):
-        mapper = self._make_mapper()
-        cognition = self._make_mock_cognition()
+    def test_zone_change_records_update_row(self, tmp_path):
+        store = self._make_timeline_store(tmp_path)
+        mapper = self._make_mapper(timeline=store)
         mapper.handle_event(TOPIC_EVENTS, {
             "type": "update",
             "before": {"id": "1", "camera": "front", "label": "person", "current_zones": ["porch"]},
             "after": {"id": "1", "camera": "front", "label": "person", "current_zones": ["driveway"]},
         })
-        mapper.populate_cognition(cognition)
-        assert cognition.internal_state.add_observation.called
-        obs = cognition.internal_state.add_observation.call_args[0][0]
-        assert "driveway" in obs
+        rows = store.query(event_type="frigate_event")
+        assert len(rows) == 1
+        assert rows[0]["data"]["type"] == "update"
+        assert rows[0]["data"]["zones"] == ["driveway"]
 
     def test_review_alert_adds_worry(self):
         mapper = self._make_mapper()
@@ -301,30 +311,65 @@ class TestFrigateEventMapper:
         assert cognition.worries.add_worry.called
 
     def test_package_detection_adds_joy(self):
+        pytest.importorskip("haloysius")
         mapper = self._make_mapper()
         cognition = self._make_mock_cognition()
-        mapper._add_emotion = MagicMock()
         mapper.handle_event(TOPIC_EVENTS, {
             "type": "new",
             "after": {"id": "1", "camera": "front_door", "label": "package", "current_zones": ["porch"], "top_score": 0.9},
         })
         mapper.populate_cognition(cognition)
-        # Should have called _add_emotion with JOY
-        emotion_calls = mapper._add_emotion.call_args_list
+        # Real _add_emotion (un-mocked, DEFECT-2/§3.1): should have called
+        # cognition.emotional_state.add_emotion with a real EmotionCategory.JOY.
+        emotion_calls = cognition.emotional_state.add_emotion.call_args_list
         assert any("JOY" in str(c) for c in emotion_calls)
 
-    def test_animal_detection_no_cognitive_effect(self):
-        mapper = self._make_mapper()
+    def test_animal_detection_records_row_without_cognitive_effect(self, tmp_path):
+        pytest.importorskip("haloysius")
+        store = self._make_timeline_store(tmp_path)
+        mapper = self._make_mapper(timeline=store)
         cognition = self._make_mock_cognition()
-        mapper._add_emotion = MagicMock()
         mapper.handle_event(TOPIC_EVENTS, {
             "type": "new",
             "after": {"id": "1", "camera": "back", "label": "dog", "current_zones": [], "top_score": 0.9},
         })
         mapper.populate_cognition(cognition)
-        # Dog should produce an observation but no worry or emotion
-        assert cognition.internal_state.add_observation.called
+        # A dog is still one row in the durable ledger (A2's row contract
+        # is unconditional — every message gets a row) even though it
+        # produces no worry or emotion (_apply_label_emotion's animal
+        # branch is a no-op).
+        rows = store.query(event_type="frigate_event")
+        assert len(rows) == 1
+        assert rows[0]["entity_id"] == "back:dog"
         assert not cognition.worries.add_worry.called
+        assert not cognition.emotional_state.add_emotion.called
+
+    def test_person_elsewhere_against_real_cognition(self):
+        """§3.1: EmotionCategory has no VIGILANCE — every one of these calls
+        used to raise KeyError (swallowed by the bare except) and no emotion
+        was ever recorded. Green only once VIGILANCE -> ANTICIPATION."""
+        pytest.importorskip("haloysius")
+        from haloysius.persona.cognition import PersonaCognition
+        from haloysius.persona.emotional_state import EmotionCategory
+
+        cognition = PersonaCognition(persona_id="test-frigate")
+        mapper = self._make_mapper()
+        # "patio_cam" is neither an entry point nor covered by is_night, so
+        # this deterministically takes the person-elsewhere branch regardless
+        # of the time the test runs.
+        mapper.handle_event(TOPIC_EVENTS, {
+            "type": "new",
+            "after": {"id": "1", "camera": "patio_cam", "label": "person", "current_zones": [], "top_score": 0.9},
+        })
+        mapper.populate_cognition(cognition)
+
+        assert cognition.emotional_state.active_emotions
+        assert cognition.emotional_state.active_emotions[0].emotion == EmotionCategory.ANTICIPATION
+
+    def test_no_vigilance_left_in_source(self):
+        import inspect
+        import halbert_core.integrations.frigate.frigate_event_mapper as mod
+        assert '"VIGILANCE"' not in inspect.getsource(mod)
 
 
 # ── FrigateClient tests (mocked aiohttp) ───────────────────────────────────
@@ -364,6 +409,22 @@ class TestFrigateEventMapperQueueBound:
             pending = list(mapper._pending_events)
         assert len(pending) == 3
         assert [e["payload"]["after"]["id"] for e in pending] == ["2", "3", "4"]
+
+    def test_cap_drop_is_logged_with_count(self, caplog):
+        """A2: 'do not silently drop again' — the cap previously dropped
+        events with no log at all."""
+        mapper = FrigateEventMapper()
+        mapper.MAX_PENDING_EVENTS = 3
+        with caplog.at_level("WARNING", logger="halbert.integrations.frigate.event_mapper"):
+            for i in range(5):
+                mapper.handle_event(TOPIC_EVENTS, {"type": "update", "after": {"id": str(i), "label": "car"}})
+        # Two of the five events overflow the cap of 3 (i=3 and i=4), but the
+        # rate limit means only the first overflow logs immediately; the
+        # second's drop count is folded into whichever log line comes next.
+        drop_records = [r for r in caplog.records if "over cap" in r.getMessage()]
+        assert len(drop_records) == 1
+        assert "over cap (3)" in drop_records[0].getMessage()
+        assert "dropped 1" in drop_records[0].getMessage()
 
     def test_default_cap_matches_ha_mapper(self):
         from halbert_core.integrations.home_assistant.ha_event_mapper import HAEventMapper

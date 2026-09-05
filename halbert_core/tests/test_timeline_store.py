@@ -9,6 +9,17 @@ import pytest
 from halbert_core.home.timeline import TimelineStore, TimelineEvent
 
 
+def test_home_timeline_is_a_shim_for_continuity_timeline():
+    """A1: TimelineStore moved to continuity/timeline.py (the event ledger
+    belongs with state_store/provenance, not under home/); home/timeline.py
+    is kept as a one-line shim so this module path stays importable."""
+    from halbert_core.continuity.timeline import TimelineStore as CanonicalStore
+    from halbert_core.continuity.timeline import TimelineEvent as CanonicalEvent
+
+    assert TimelineStore is CanonicalStore
+    assert TimelineEvent is CanonicalEvent
+
+
 @pytest.fixture
 def store():
     """Create a TimelineStore with a temp database."""

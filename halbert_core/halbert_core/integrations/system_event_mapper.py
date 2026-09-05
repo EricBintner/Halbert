@@ -48,15 +48,22 @@ class SystemEventMapper:
         discovery_engine=None,
         telemetry_store=None,
         trackers: Optional[Dict] = None,
+        timeline=None,
     ):
         self._discovery = discovery_engine
         self._telemetry = telemetry_store
         self._trackers = trackers or {}
+        self._timeline = timeline
         self._pending_events: List[Dict[str, Any]] = []
         self._lock = threading.Lock()
         self._scan_thread: Optional[threading.Thread] = None
         self._scanning = False
         self._scan_interval = 30.0  # seconds
+        if self._timeline is None:
+            logger.warning(
+                "No TimelineStore configured — system events will not be "
+                "durably recorded (they still reach cognition this tick)"
+            )
 
     def populate_cognition(self, cognition) -> None:
         """Populate PersonaCognition with current system state.
@@ -72,10 +79,34 @@ class SystemEventMapper:
             self._pending_events.clear()
 
         for event in events:
+            self._record_to_timeline(event)
             self._apply_event_to_cognition(cognition, event)
 
         # Also do a quick synchronous check for critical conditions
         self._check_critical_conditions(cognition)
+
+    def _record_to_timeline(self, event: Dict[str, Any]) -> None:
+        """A2b: record each drained event to the ledger before applying it.
+
+        This is the primary mapper — the one a sysadmin install (no HA,
+        no Frigate) actually has. Without this it has a ledger and still
+        no writer. Uses the event's own timestamp (captured in add_event()
+        at ingestion), never a fresh one at drain time.
+        """
+        if self._timeline is None:
+            return
+        try:
+            from ..continuity.timeline import TimelineEvent
+
+            self._timeline.record(TimelineEvent(
+                timestamp=event.get("timestamp") or time.time(),
+                event_type=event["type"],
+                source=event["source"],
+                severity=event["severity"],
+                title=event["detail"],
+            ))
+        except Exception as e:
+            logger.warning(f"Could not record system event to timeline: {e}")
 
     def add_event(self, event_type: str, severity: str, source: str, detail: str) -> None:
         """Add a system event for the next cognitive tick.
@@ -191,7 +222,7 @@ class SystemEventMapper:
                 intrusion_rate=0.3 if severity == "critical" else 0.1,
             )
             cognition.emotional_state.add_emotion(
-                emotion=self._emotion("VIGILANCE"),
+                emotion=self._emotion("ANTICIPATION"),
                 intensity=intensity * 0.6,
                 source=source,
             )
@@ -217,7 +248,7 @@ class SystemEventMapper:
                 source=source,
             )
             cognition.emotional_state.add_emotion(
-                emotion=self._emotion("VIGILANCE"),
+                emotion=self._emotion("ANTICIPATION"),
                 intensity=intensity * 0.7,
                 source=source,
             )

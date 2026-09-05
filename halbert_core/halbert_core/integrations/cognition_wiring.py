@@ -27,6 +27,7 @@ _ha_event_mapper = None
 _ha_event_stream = None
 _frigate_event_mapper = None
 _trackers = None
+_timeline_store = None
 
 # Multi-instance: ensure Haloysius memory tree follows HALBERT_DATA_DIR
 # so persona memory stores are fully isolated per instance.
@@ -419,6 +420,7 @@ def get_event_mapper():
             discovery_engine=discovery,
             telemetry_store=None,
             trackers=_trackers,
+            timeline=get_timeline_store(),
         )
 
         # Start background scan
@@ -465,6 +467,25 @@ def get_trackers():
     return _trackers
 
 
+def get_timeline_store():
+    """Get or create the singleton TimelineStore instance.
+
+    The persistent event ledger (HA state changes, Frigate detections,
+    system events, occupancy). Always constructed — no capability gate,
+    unlike ``get_event_mapper()``'s sources: a local SQLite file has
+    nothing to probe. Path resolved through ``TimelineStore``'s own
+    default (``utils.paths.data_dir()``), so ``HALBERT_DATA_DIR`` is
+    honoured (CFG-1). Logged once here, at first construction.
+    """
+    global _timeline_store
+    if _timeline_store is None:
+        from ..continuity.timeline import TimelineStore
+
+        _timeline_store = TimelineStore()
+        logger.info(f"Timeline store created at {_timeline_store.db_path}")
+    return _timeline_store
+
+
 def get_ha_event_mapper():
     """Get or create the singleton HAEventMapper instance.
 
@@ -474,7 +495,7 @@ def get_ha_event_mapper():
     if _ha_event_mapper is None:
         try:
             from .home_assistant.ha_event_mapper import HAEventMapper
-            _ha_event_mapper = HAEventMapper(trackers=_trackers)
+            _ha_event_mapper = HAEventMapper(trackers=_trackers, timeline=get_timeline_store())
         except Exception as e:
             logger.warning(f"Could not create HA event mapper: {e}")
     return _ha_event_mapper
@@ -483,9 +504,13 @@ def get_ha_event_mapper():
 def get_frigate_event_mapper():
     """Get or create the singleton FrigateEventMapper instance.
 
-    Returns None if Frigate is not configured. The mapper is also
-    used by the MQTT subscriber (via dashboard/app.py) — if that
-    has already created one, we reuse it.
+    Returns None if Frigate is not configured — by either the REST API
+    (``is_configured``) or MQTT alone (``is_mqtt_configured``). An
+    MQTT-only install used to fall through here (the REST URL is what
+    ``is_configured`` checks), so its mapper was never in the composite
+    and dashboard/app.py had to construct its own uninjected fallback;
+    checking both means this singleton is the one mapper for both the
+    MQTT subscriber and the composite event mapper.
     """
     global _frigate_event_mapper
     if _frigate_event_mapper is None:
@@ -494,10 +519,10 @@ def get_frigate_event_mapper():
             from .frigate.frigate_event_mapper import FrigateEventMapper
 
             config = load_frigate_config()
-            if not config.is_configured():
+            if not (config.is_configured() or config.is_mqtt_configured()):
                 return None
 
-            _frigate_event_mapper = FrigateEventMapper()
+            _frigate_event_mapper = FrigateEventMapper(timeline=get_timeline_store())
             logger.info("Frigate event mapper created")
         except Exception as e:
             logger.warning(f"Could not create Frigate event mapper: {e}")
@@ -565,7 +590,7 @@ def start_ha_event_stream() -> None:
 
 def shutdown():
     """Clean shutdown of background threads and trackers."""
-    global _event_mapper, _cognition, _trackers, _ha_event_mapper, _ha_event_stream, _frigate_event_mapper
+    global _event_mapper, _cognition, _trackers, _ha_event_mapper, _ha_event_stream, _frigate_event_mapper, _timeline_store
     if _event_mapper is not None:
         _event_mapper.stop_background_scan()
         _event_mapper = None
@@ -574,4 +599,5 @@ def shutdown():
     _frigate_event_mapper = None
     _cognition = None
     _trackers = None
+    _timeline_store = None
     logger.info("Cognition wiring shut down")
