@@ -203,10 +203,23 @@ class TerminalPool:
         # substrate was never exposed to this -- create_subprocess_shell
         # takes cwd as a real chdir argument, not as shell text -- so the
         # hole opened when the pool became the production path.
+        #
+        # `eval` on a quoted string, not interpolation of the command either.
+        # Everything here is spliced onto ONE line, so any command whose text
+        # can swallow the rest of that line swallows the closing paren and the
+        # D marker with it. `echo hi  # note` left bash sitting at a
+        # continuation prompt: the block hung for the full timeout, returned
+        # exit -1 with no output, and took its pool session down with it.
+        # Heredocs and unterminated quotes failed the same way, for the same
+        # reason. Passing the command as a single-quoted argument to `eval`
+        # keeps the outer line syntactically complete whatever the command
+        # contains -- a `#` then comments only within the evaluated script, a
+        # heredoc gets its real newlines, and a genuine syntax error becomes a
+        # non-zero exit with the D marker still printed instead of a hang.
         cwd_prefix = f"cd {shlex.quote(cwd)} && " if cwd else ""
         block_cmd = (
             f"printf '\\x1b]133;C;id={block_id}\\x07';"
-            f"({cwd_prefix}{command});"
+            f"({cwd_prefix}eval {shlex.quote(command)});"
             f"printf '\\x1b]133;D;%d;id={block_id}\\x07' \"$?\"\n"
         )
 
