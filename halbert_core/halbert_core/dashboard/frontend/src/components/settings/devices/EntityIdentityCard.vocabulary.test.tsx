@@ -15,6 +15,10 @@
  * The previous version of this file asserted `not.toMatch(/\bnode/i)` over
  * the whole card, which bans the ratified mode name too. It passed only
  * because the component had been changed to match it.
+ *
+ * Retired terms are banned repo-wide by `src/vocabulary.guard.test.ts`, not
+ * here. Sixteen per-component assertions were green while two screens
+ * disagreed; one guard over every file is the point.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
@@ -43,13 +47,6 @@ describe('EntityIdentityCard vocabulary', () => {
 
     expect(screen.getByText('Singular Entity')).toBeTruthy()
     expect(screen.getByText('Independent Node')).toBeTruthy()
-  })
-
-  it('does not invent a third name for a mode', () => {
-    const { container } = render(
-      <EntityIdentityCard state={STATE} onRefresh={() => {}} />
-    )
-    expect(container.textContent).not.toMatch(/Independent Body/i)
   })
 
   it('calls the machine a body', () => {

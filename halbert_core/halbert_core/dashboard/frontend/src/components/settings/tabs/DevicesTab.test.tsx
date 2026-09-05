@@ -135,7 +135,7 @@ describe('DevicesTab', () => {
       devices: [device()],
     }))
     await screen.findByText('Mac Studio')
-    await user.click(screen.getByRole('radio', { name: /independent body/i }))
+    await user.click(screen.getByRole('radio', { name: /independent node/i }))
     await waitFor(() => {
       const puts = screen.getAllByRole('radio')
       expect(puts).toBeTruthy()
