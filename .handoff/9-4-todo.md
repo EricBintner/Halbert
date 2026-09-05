@@ -134,3 +134,116 @@ twice through the agent and restores the *first* version.
 
 **Tier: sonnet · Effort: high.** Depends on: nothing (0c landed, so there is
 one config dir). Unblocks: **B1**, **B3**.
+
+---
+
+## B. The config-continuity surface — the original handoff, unblocked
+
+The watcher now runs on this body (`c8ce601c`), so the ledger will accumulate
+real `file:` rows for the first time. Everything below was blocked on that and
+is not any more.
+
+### B1 — `GET /api/state/recent-configs`
+
+**What.** The read the "Recent & Managed Configs" surface needs: which files
+this body has touched, most recent first, each with its last actor, reason,
+timestamp, digest and backup count.
+
+**Why it matters.** It is the whole point of the original handoff. It was
+blocked twice over — the ledger was empty, and the backup count could not be
+answered honestly.
+
+**Where.** `dashboard/routes/state.py`, **not** `editor.py` and **not** a new
+`/api/continuity` prefix (review **F15**). `state.py` is already the ledger
+read surface (`/why`, `/history`, `/by-request`) and already has the error
+contract this needs.
+
+**Definition of done.** The route inherits `state.py`'s contract: **503 when
+the ledger cannot be read, never a 200 with an empty list** — "I could not
+look" and "there is nothing recorded" are different answers and the module's
+own docstring says so. An empty ledger returns `[]` and the *client* renders
+"nothing recorded yet", never "no configs are managed". Backup count is honest
+after **A3** or absent before it — not zero.
+
+**Tier: sonnet · Effort: med.** Depends on: **A3** for the backup count.
+
+### B2 — `RecentConfigsDock.tsx`
+
+**What.** The surface itself: a list of recently touched configs with relative
+timestamps, actor badges and the recorded reason, with two actions per row.
+
+**Why it matters.** This is the founder's original insight — that a system
+administrator remembers *files*, not conversations — made real.
+
+**Where.** New component; docked in `Layout.tsx` or `AgentChat.tsx`.
+
+**Definition of done.** "Edit in Monaco" opens `ConfigEditor` for that path.
+"Jump to Chat" calls `loadAround(turn_id)` — which **works now**: ledger rows
+carry `turn_id` since `f8cd5cad`. An empty state that says nothing has been
+recorded yet, in those words.
+
+**Tier: sonnet · Effort: high.** Depends on: **B1**.
+
+### B3 — A rollback that can find the last thing Halbert did
+
+**What.** One-click "Rollback Change" on `DiffBlock.tsx` and on timeline turns.
+
+**Why it matters.** Backups are per-file directories, so "undo the last thing
+Halbert did" currently requires scanning every directory and comparing
+timestamps. The ledger already *is* the global index: `state_triples` ordered
+by `valid_from DESC`, each row carrying `request_id`, `turn_id` and the digest
+that was superseded.
+
+**Where.** A read over the ledger plus the reconciled backup store; button on
+`DiffBlock.tsx`.
+
+**The trap.** The ledger stores **digests, not content** (this is why
+`82f25ff2` refused to render config-diff as before/after). So the ledger says
+*what* to roll back to and the backup store must supply the *bytes*. A row with
+no corresponding backup must say so rather than offering a button that fails.
+
+**Tier: sonnet · Effort: high.** Depends on: **A3**.
+
+### B4 — Prompt hydration through the seam that already exists
+
+**What.** Review **F14**. The original handoff proposed injecting a continuity
+block when the agent is asked about a file. Two corrections stand.
+
+**Why it matters, and what not to build.** The proposed block ended
+`Current sha256: 8f1a2b… (verified intact on disk)`. `recall_state` does not
+verify anything on disk, deliberately — `82f25ff2`: *"a recall that silently
+probed the filesystem would stop being a ledger read while still answering like
+one"*. Either drop the clause or make drift a separately labelled line sourced
+from a probe that says it is a probe.
+
+**Where.** `AgentPromptBuilder.build_planning_prompt(..., continuity=...)`
+already exists, is tested (`tests/test_agent_prompts_continuity.py`), places
+the block immediately before `## Current Task`, and has per-voice preambles and
+a `tools_supported=False` variant. It currently carries *thread* continuity.
+Extend that; do not invent an injection point.
+
+**The judgement call.** Push-hydration partly duplicates `recall_memory`, which
+already answers on demand. Injecting on every file mention spends tokens every
+turn to save a tool call on some turns. That may well be right for a steward —
+but it is a trade, and the original handoff did not acknowledge it. A middle
+path: hydrate only when the user's message contains a path the ledger knows.
+
+**Tier: opus · Effort: high.** Depends on: nothing.
+
+### B5 — Micro-compaction: fold it in or cut it
+
+**What.** Review **F11**. The original handoff proposed building micro-
+compaction from `open-claude-code`'s `context-manager.mjs`.
+
+**Why it matters.** It is already owned twice. `compact_boundaries` exists in
+the conversation schema with the comment *"compaction stays default-off until a
+later plan"*, and there is a separate three-tier compression system with its
+own routes. Building a third would give Halbert three answers to one question.
+
+**Definition of done.** Either ~30 lines writing into the existing
+`compact_boundaries` seam using the truncation rule from the OSS repo
+(truncate `tool_result` blocks past a turn boundary, never `text` or
+`thinking`) — **or** an explicit cut, recorded, in the manner of `82f25ff2`'s
+"Step 9 is CUT rather than deferred".
+
+**Tier: sonnet · Effort: med.** Or **fable · med** if the decision is to cut.
