@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from ...continuity.timeline import TimelineEvent, TimelineStore
-from ..observation_text import normalise_entity_id
+from ..observation_text import normalise_entity_id, normalise_observation_title
 from .frigate_mqtt_subscriber import (
     EVENT_TYPE_END,
     EVENT_TYPE_NEW,
@@ -108,6 +108,39 @@ class FrigateStateTracker:
             self._active.clear()
 
 
+def describe_detection(payload: dict) -> str:
+    """One line of prose for a Frigate message, for the ledger row's title.
+
+    Deliberately the same wording ``_apply_detection_event`` builds, because
+    the two must not drift: that one runs at flush time and its text goes
+    nowhere, this one runs at ingestion and is what A4 and C1a render.
+
+    Pure and total -- an unrecognised type still describes itself, since a
+    missing title cannot be told apart from a lost one.
+    """
+    event_type = payload.get("type", "")
+    state = payload.get("after") or payload.get("before") or {}
+    camera = state.get("camera", "unknown")
+    label = state.get("label", "unknown")
+    sub_label = state.get("sub_label")
+    zones = state.get("current_zones", []) or []
+
+    zone_str = f" in {', '.join(zones)}" if zones else ""
+    sub_str = f" ({sub_label})" if sub_label else ""
+
+    if event_type == EVENT_TYPE_NEW:
+        return f"Detected {label}{sub_str} at {camera}{zone_str}"
+    if event_type == EVENT_TYPE_UPDATE:
+        before_zones = set((payload.get("before") or {}).get("current_zones", []) or [])
+        new_zones = set(zones) - before_zones
+        if new_zones:
+            return f"{label}{sub_str} entered {', '.join(sorted(new_zones))} at {camera}"
+        return f"{label}{sub_str} still at {camera}{zone_str}"
+    if event_type == EVENT_TYPE_END:
+        return f"{label}{sub_str} left {camera}{zone_str}"
+    return f"{label}{sub_str} at {camera}{zone_str}"
+
+
 class FrigateEventMapper:
     """Maps Frigate MQTT events to PersonaCognition cognitive updates.
 
@@ -188,9 +221,15 @@ class FrigateEventMapper:
                     self._dropped_since_log = 0
                     self._last_drop_log_ts = now
 
-    def _record_to_timeline(self, payload: dict, timestamp: float) -> None:
+    def _record_to_timeline(self, payload: dict, received_at: float) -> None:
         """A2 row contract: one row per Frigate message, never a second row
         for the affect strings in ``_apply_label_emotion``.
+
+        The row carries the detection's own ``start_time`` where Frigate sent
+        one, falling back to when we received the message. In steady state the
+        two differ by milliseconds; after an MQTT reconnect the whole backlog
+        would otherwise land at "now", which is exactly the case A5's windows
+        and ``get_correlations()`` exist to read.
         """
         if self._timeline is None:
             return
@@ -199,12 +238,14 @@ class FrigateEventMapper:
         camera = state.get("camera", "unknown")
         label = state.get("label", "unknown")
         sub_label = state.get("sub_label")
+        detected_at = state.get("start_time") or received_at
         try:
             self._timeline.record(TimelineEvent(
-                timestamp=timestamp,
+                timestamp=detected_at,
                 event_type="frigate_event",
                 source="frigate",
                 entity_id=normalise_entity_id(f"{camera}:{sub_label or label}"),
+                title=normalise_observation_title(describe_detection(payload)),
                 data={
                     "type": event_type,
                     "frigate_event_id": state.get("id", ""),
@@ -355,6 +396,9 @@ class FrigateEventMapper:
     def _add_worry(
         self, cognition, content: str, source: str, category: str, intensity: float
     ) -> None:
+        # See HAEventMapper._add_worry: a worry is the one piece of mapper
+        # text that reaches the prompt today, through check_intrusions().
+        content = normalise_observation_title(content)
         try:
             cognition.worries.add_worry(
                 content=content,

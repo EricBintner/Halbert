@@ -18,7 +18,7 @@ import time
 from typing import Any, Dict, List, Optional
 
 from ...continuity.timeline import TimelineEvent, TimelineStore
-from ..observation_text import normalise_entity_id
+from ..observation_text import normalise_entity_id, normalise_observation_title
 
 logger = logging.getLogger("halbert.integrations.home_assistant.event_mapper")
 
@@ -26,6 +26,65 @@ logger = logging.getLogger("halbert.integrations.home_assistant.event_mapper")
 # occupancy event (A2 row contract), on top of the unconditional
 # ha_state_change row every event gets.
 _OCCUPANCY_DOMAINS = ("person", "device_tracker")
+
+
+def describe_state_change(event: Dict[str, Any]) -> str:
+    """One line of prose for a state change, for the ledger row's title.
+
+    A row with no title renders as nothing in A4's Eyes block and in C1a's
+    Noticed section, which would leave the prose the mapper computes discarded
+    exactly as DEFECT-2 describes -- so the description is built here, at
+    ingestion, where the row is written. ``populate_cognition`` runs at flush
+    and cannot reach a row that was already appended.
+
+    Pure and total: every branch falls through to a generic transition rather
+    than returning "", because a missing title is indistinguishable from a
+    lost one.
+    """
+    attributes = event.get("attributes") or {}
+    entity_id = event.get("entity_id", "")
+    friendly = attributes.get("friendly_name") or entity_id
+    domain = event.get("domain", "")
+    old_state = event.get("old_state", "")
+    new_state = event.get("new_state", "")
+    device_class = attributes.get("device_class", "")
+
+    if domain == "lock" and new_state in ("locked", "unlocked"):
+        return f"{friendly} was {new_state}"
+
+    if domain == "alarm_control_panel":
+        if new_state == "triggered":
+            return f"Alarm triggered: {friendly}"
+        if new_state == "disarmed":
+            return f"Alarm disarmed: {friendly}"
+        if new_state.startswith("armed_"):
+            return f"Alarm armed ({new_state[len('armed_'):]}): {friendly}"
+
+    if domain in _OCCUPANCY_DOMAINS:
+        if new_state == "home":
+            return f"{friendly} arrived home"
+        if new_state == "not_home":
+            return f"{friendly} left home"
+
+    if domain == "climate":
+        if old_state == "off" and new_state != "off":
+            target = attributes.get("temperature", "?")
+            return f"{friendly} turned on ({new_state}), target {target}C"
+        if new_state == "off":
+            return f"{friendly} turned off"
+
+    if domain == "binary_sensor":
+        if device_class in ("door", "opening"):
+            return f"{friendly} {'opened' if new_state == 'on' else 'closed'}"
+        if device_class == "motion" and new_state == "on":
+            return f"Motion detected: {friendly}"
+        if device_class == "moisture" and new_state == "on":
+            return f"Water leak detected: {friendly}"
+
+    if domain in ("light", "switch") and new_state in ("on", "off"):
+        return f"{friendly} turned {new_state}"
+
+    return f"{friendly}: {old_state or 'unknown'} to {new_state or 'unknown'}"
 
 
 class HAEventMapper:
@@ -102,12 +161,14 @@ class HAEventMapper:
         new_state = event.get("new_state", "")
         attributes = event.get("attributes", {}) or {}
         timestamp = event.get("timestamp") or time.time()
+        title = normalise_observation_title(describe_state_change(event))
         try:
             self._timeline.record(TimelineEvent(
                 timestamp=timestamp,
                 event_type="ha_state_change",
                 source="ha",
                 entity_id=entity_id,
+                title=title,
                 data={
                     "domain": domain,
                     "old_state": old_state,
@@ -127,6 +188,7 @@ class HAEventMapper:
                         event_type="occupancy_change",
                         source="ha",
                         entity_id=entity_id,
+                        title=title,
                         data={"direction": direction},
                     ))
         except Exception as e:
@@ -250,6 +312,12 @@ class HAEventMapper:
     def _add_worry(
         self, cognition, content: str, source: str, category: str, intensity: float
     ) -> None:
+        # Normalised here rather than at each call site: a worry reaches the
+        # prompt through check_intrusions() -> ctx.add_observation("[worry] …")
+        # -> _format_observations' f"- {obs}", which strips no newlines, so a
+        # friendly_name carrying one forges a markdown heading inside the
+        # system prompt. One choke point, so a new call site cannot miss it.
+        content = normalise_observation_title(content)
         """Add a worry to cognition."""
         try:
             cognition.worries.add_worry(
