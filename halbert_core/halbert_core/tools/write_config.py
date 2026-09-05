@@ -46,7 +46,11 @@ class WriteConfig(BaseTool):
         A caller that states none gets UNRECORDED, which renders as unknown
         and is never later filled in.
         """
-        reason = req.inputs.get("reason") or UNRECORDED
+        # .strip() before the coalesce, not after. A reason of "   " is
+        # truthy, so it survived `or UNRECORDED` and then failed _require
+        # AFTER the file had already been written: the tool reported a
+        # failure for a write that had happened, and recorded nothing.
+        reason = str(req.inputs.get("reason") or "").strip() or UNRECORDED
         actor = req.inputs.get("actor") or ACTOR_AGENT
         return str(reason), str(actor)
 
