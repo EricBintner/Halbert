@@ -1,16 +1,20 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 /**
- * One noun for a machine, and it is not "node".
+ * The mode names are ratified; the noun for a machine is "body".
  *
- * CORE-CONCEPTS-AND-ALIGNMENT-2026-09-02 §terminology: a physical device is a
- * **Body**; `node`, `instance`, `host` (as the noun) and `satellite` are
- * listed under avoid. C1-02 puts it plainly — "`I` is the entity, bodies are
- * 'my desk body'".
+ * Two different rules, and conflating them is how this screen came to
+ * contradict the other one.
  *
- * The two mode buttons sat side by side contradicting each other: one said
- * "one Halbert, many bodies" and the other was headed "Independent Node".
- * A reader choosing between them was choosing between two vocabularies.
+ * DECISIONS.md 2026-09-01 sets the UI strings literally: "Singular Entity /
+ * Independent Node / Linked Devices". CORE-CONCEPTS §terminology lists
+ * `node`, `instance`, `host` (as the noun) and `satellite` under avoid -- but
+ * that cell sits in the **Physical device** row. It bans calling a machine a
+ * node. It does not rename a mode.
+ *
+ * The previous version of this file asserted `not.toMatch(/\bnode/i)` over
+ * the whole card, which bans the ratified mode name too. It passed only
+ * because the component had been changed to match it.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
@@ -34,21 +38,25 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals())
 
 describe('EntityIdentityCard vocabulary', () => {
-  it('offers a choice between two entity modes, in one vocabulary', () => {
+  it('uses the ratified names for the two entity modes', () => {
     render(<EntityIdentityCard state={STATE} onRefresh={() => {}} />)
 
     expect(screen.getByText('Singular Entity')).toBeTruthy()
-    expect(screen.getByText('Independent Body')).toBeTruthy()
+    expect(screen.getByText('Independent Node')).toBeTruthy()
   })
 
-  it('does not call a machine a node', () => {
+  it('does not invent a third name for a mode', () => {
     const { container } = render(
       <EntityIdentityCard state={STATE} onRefresh={() => {}} />
     )
-    // A leading boundary only. textContent concatenates sibling elements
-    // with no separator, so "Independent Node" followed by its description
-    // reads as "NodeThis body keeps..." — a trailing \b never matches, and
-    // the assertion passes while the word is right there on screen.
-    expect(container.textContent).not.toMatch(/\bnode/i)
+    expect(container.textContent).not.toMatch(/Independent Body/i)
+  })
+
+  it('calls the machine a body', () => {
+    const { container } = render(
+      <EntityIdentityCard state={STATE} onRefresh={() => {}} />
+    )
+    // The description under the mode, and the label for the device name.
+    expect(container.textContent).toMatch(/this body keeps its own memory/i)
   })
 })

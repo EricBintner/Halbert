@@ -194,12 +194,17 @@ export function EntityIdentityCard({ state, onRefresh }: EntityIdentityCardProps
               className={`rounded-lg border p-3 text-left transition-colors
                           ${!singular ? 'border-primary bg-primary/5' : 'hover:bg-accent'}`}
             >
-              {/* "Body", not "Node". The sibling option one line up says
-                  "one Halbert, many bodies"; a reader choosing between the
-                  two was choosing between two vocabularies for the same
-                  thing. CORE-CONCEPTS-AND-ALIGNMENT §terminology lists node,
-                  instance, host-as-noun and satellite under avoid. */}
-              <span className="text-sm font-medium">Independent Body</span>
+              {/* "Independent Node" is the ratified name for this MODE, and
+                  DECISIONS.md 2026-09-01 sets the UI strings literally:
+                  "Singular Entity / Independent Node / Linked Devices". It
+                  was briefly changed to "Independent Body" on the reasoning
+                  that §terminology lists `node` under avoid -- but that cell
+                  is in the "Physical device" row, and bans node as the noun
+                  for a machine. It does not rename a mode. The sibling
+                  surface, PresencePill, never stopped saying "Independent
+                  Node", so the change left the product contradicting itself
+                  on two mounted screens. */}
+              <span className="text-sm font-medium">Independent Node</span>
               <span className="block text-xs text-muted-foreground pt-0.5">
                 This body keeps its own memory and conversations.
               </span>
