@@ -289,20 +289,22 @@ def _write_with_sudo(file_path: str, content: str) -> bool:
 
 # --- Routes ---
 
-def _current_text(path: str) -> Optional[str]:
-    """File text before a write, for the content digest. None if unreadable.
+def _current_text_and_readability(path: str) -> "tuple[Optional[str], bool]":
+    """File text before a write, and whether the read was refused.
 
     Best-effort on purpose: not being able to read the old bytes (a
     root-owned file, say) must not stop the save, it just means the record
-    states no before-digest.
+    states no before-digest. But it must not be mistaken for the file being
+    gone either -- see :func:`read_for_guard`, which this delegates to.
     """
-    try:
-        if not os.path.exists(path):
-            return None
-        with open(path, "r", encoding="utf-8", errors="replace") as f:
-            return f.read()
-    except Exception:
-        return None
+    from ...continuity.write_guard import read_for_guard
+
+    return read_for_guard(path)
+
+
+def _current_text(path: str) -> Optional[str]:
+    """Just the text, for the callers that only record a digest."""
+    return _current_text_and_readability(path)[0]
 
 
 def _record_editor_change(
@@ -377,7 +379,7 @@ async def write_file(request: FileWriteRequest) -> FileWriteResponse:
     if not path or not path.startswith('/'):
         raise HTTPException(400, "Invalid path - must be absolute")
 
-    on_disk = _current_text(path)
+    on_disk, on_disk_unreadable = _current_text_and_readability(path)
 
     # Two questions, in order of who is asking. The client's own expectation
     # first: it knows what its editor loaded, and a stale tab is the common
@@ -407,7 +409,9 @@ async def write_file(request: FileWriteRequest) -> FileWriteResponse:
         except Exception as e:
             logger.warning(f"write guard has no ledger to check against: {e}")
         try:
-            guard = check_before_write(path, current_text=on_disk, store=guard_store)
+            guard = check_before_write(
+                path, current_text=on_disk, unreadable=on_disk_unreadable,
+                store=guard_store)
         finally:
             if guard_store is not None:
                 try:

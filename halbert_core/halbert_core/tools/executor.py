@@ -783,19 +783,20 @@ class ToolExecutor:
             return f.read()
     
     @staticmethod
-    def _read_text(path: str) -> "Optional[str]":
-        """What is on disk now, or None when there is no file.
+    def _read_text_and_readability(path: str) -> "tuple[Optional[str], bool]":
+        """What is on disk now, and whether the read was refused.
 
         Best-effort: a file we cannot read is recorded as an admitted unknown
-        rather than stopping the write.
+        rather than stopping the write -- but it is not recorded as absent.
         """
-        try:
-            if not os.path.exists(path):
-                return None
-            with open(path, "r", encoding="utf-8", errors="replace") as f:
-                return f.read()
-        except Exception:
-            return None
+        from ..continuity.write_guard import read_for_guard
+
+        return read_for_guard(path)
+
+    @staticmethod
+    def _read_text(path: str) -> "Optional[str]":
+        """What is on disk now, or None when there is no file."""
+        return ToolExecutor._read_text_and_readability(path)[0]
 
     async def _write_file(self, args: Dict) -> str:
         """Write content to a file, on the record and not over anyone.
@@ -844,8 +845,9 @@ class ToolExecutor:
             logger.warning(f"write guard has no ledger to check against: {e}")
 
         try:
-            before = self._read_text(path)
-            guard = check_before_write(path, current_text=before, store=store)
+            before, before_unreadable = self._read_text_and_readability(path)
+            guard = check_before_write(
+                path, current_text=before, unreadable=before_unreadable, store=store)
             if not guard.ok:
                 logger.warning(f"refused write to {path}: {guard.detail}")
                 return (
