@@ -27,6 +27,15 @@ logger = logging.getLogger("halbert.integrations.home_assistant.event_mapper")
 # ha_state_change row every event gets.
 _OCCUPANCY_DOMAINS = ("person", "device_tracker")
 
+# States that mean "we do not know where this was", not "it was away". Home
+# Assistant sends old_state=None when it first adds an entity (a restart, an
+# integration reload), and a Wi-Fi device tracker reports unavailable/unknown
+# every time it drops off the network -- which it does constantly. Reading any
+# of those as a prior location turns a phone rejoining Wi-Fi into an arrival,
+# and A5's recurrence count then reports a person arriving home a dozen times
+# a day.
+_UNKNOWN_STATES = (None, "", "unknown", "unavailable", "none")
+
 
 def describe_state_change(event: Dict[str, Any]) -> str:
     """One line of prose for a state change, for the ledger row's title.
@@ -176,7 +185,14 @@ class HAEventMapper:
                     "device_class": attributes.get("device_class", ""),
                 },
             ))
-            if domain in _OCCUPANCY_DOMAINS:
+            # An occupancy_change row asserts a transition, so it needs a
+            # known prior state to have transitioned from. The state row above
+            # is still written either way: the state was observed, only the
+            # movement cannot be claimed.
+            known_prior = not (
+                old_state is None or str(old_state).strip().lower() in _UNKNOWN_STATES
+            )
+            if domain in _OCCUPANCY_DOMAINS and known_prior:
                 direction = None
                 if new_state == "home" and old_state != "home":
                     direction = "arrival"

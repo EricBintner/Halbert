@@ -198,3 +198,53 @@ class TestTheLedgerIsNotLoadBearing:
             "old_state": "locked", "new_state": "unlocked",
             "attributes": {"friendly_name": "Front door"}, "timestamp": 1000.0,
         })  # must not raise
+
+
+class TestOccupancyNeedsAKnownPriorState:
+    """An occupancy_change row asserts a *transition*, and A5 counts them.
+
+    ``old_state`` is None when Home Assistant first adds an entity (a restart,
+    an integration reload) and "unavailable"/"unknown" whenever a Wi-Fi device
+    tracker flaps -- which it does constantly. Treating any of those as "was
+    not home" turns a phone rejoining the network into an arrival, and the
+    recurrence count this ledger exists to support then reports a person
+    arriving home a dozen times a day.
+    """
+
+    @pytest.mark.parametrize("old_state, why", [
+        (None, "entity first seen after an HA restart"),
+        ("", "empty prior state"),
+        ("unavailable", "device tracker dropped off the network and came back"),
+        ("unknown", "tracker had no fix yet"),
+    ])
+    def test_an_unknown_prior_state_is_not_an_arrival(self, store, old_state, why):
+        HAEventMapper(timeline=store).add_event({
+            "entity_id": "person.sarah", "domain": "person",
+            "old_state": old_state, "new_state": "home",
+            "attributes": {"friendly_name": "Sarah"}, "timestamp": 1000.0,
+        })
+        assert store.query(event_type="occupancy_change") == [], why
+
+    @pytest.mark.parametrize("old_state, new_state, direction", [
+        ("not_home", "home", "arrival"),
+        ("home", "not_home", "departure"),
+    ])
+    def test_a_real_transition_is_still_recorded(self, store, old_state, new_state, direction):
+        HAEventMapper(timeline=store).add_event({
+            "entity_id": "person.sarah", "domain": "person",
+            "old_state": old_state, "new_state": new_state,
+            "attributes": {"friendly_name": "Sarah"}, "timestamp": 1000.0,
+        })
+        rows = store.query(event_type="occupancy_change")
+        assert len(rows) == 1
+        assert rows[0]["data"]["direction"] == direction
+
+    def test_the_state_row_is_still_written_for_an_unknown_prior_state(self, store):
+        # The state was observed even though no transition can be claimed --
+        # suppressing the occupancy row must not suppress the ledger entry.
+        HAEventMapper(timeline=store).add_event({
+            "entity_id": "person.sarah", "domain": "person",
+            "old_state": None, "new_state": "home",
+            "attributes": {"friendly_name": "Sarah"}, "timestamp": 1000.0,
+        })
+        assert len(store.query(event_type="ha_state_change")) == 1
