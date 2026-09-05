@@ -62,6 +62,14 @@ export interface ToolExecution {
   /** Seconds `blockId` ran, measured on the host. */
   blockDuration?: number;
   /**
+   * Whether the host judged this command read-only.
+   *
+   * Undefined means nobody said, which is not the same as "no". The feed
+   * treats it as a write: a run that only looked is worth folding away, and
+   * being wrong about that in the other direction hides an action.
+   */
+  blockReadOnly?: boolean;
+  /**
    * The block's OWN output, head and tail. Not the hosting session's
    * scrollback: a pool session is reused across blocks, so its buffer holds
    * every command it has ever run.
@@ -802,6 +810,8 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
                       typeof event.exit_code === 'number' ? event.exit_code : exec.blockExitCode,
                     blockDuration:
                       typeof event.duration === 'number' ? event.duration : exec.blockDuration,
+                    blockReadOnly:
+                      typeof event.read_only === 'boolean' ? event.read_only : exec.blockReadOnly,
                     blockOutputHead: (event.output_head as string | undefined) ?? exec.blockOutputHead,
                     blockOutputTail: (event.output_tail as string | undefined) ?? exec.blockOutputTail,
                     blockElidedLines:

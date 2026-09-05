@@ -72,7 +72,8 @@ describe('groupInspections', () => {
     const rows = groupInspections([
       ex({ executionId: 'a' }),
       ex({ executionId: 'b', tool: 'run_command', args: { command: 'id' },
-           blockId: 'blk-1', blockDuration: 0.1, blockExitCode: 0 }),
+           blockId: 'blk-1', blockDuration: 0.1, blockExitCode: 0,
+           blockReadOnly: true }),
     ])
 
     expect(rows).toHaveLength(1)
@@ -83,7 +84,8 @@ describe('groupInspections', () => {
     const rows = groupInspections([
       ex({ executionId: 'a' }),
       ex({ executionId: 'b', tool: 'run_command', args: { command: 'id' },
-           blockId: 'blk-1', blockDuration: 0.1, blockExitCode: 1 }),
+           blockId: 'blk-1', blockDuration: 0.1, blockExitCode: 1,
+           blockReadOnly: true }),
     ])
 
     expect(ids(rows)).toEqual(['a', 'b'])
@@ -147,5 +149,45 @@ describe('groupInspections', () => {
     for (const tool of INSPECTION_TOOLS) {
       expect(real.has(tool), `${tool} is not a registered Halbert tool`).toBe(true)
     }
+  })
+
+  // What the command DID, not what it cost. Every one of these returns in
+  // milliseconds with exit 0, and every one of them was folding into a row
+  // headed "Looked at" — over a docstring in this very module saying an
+  // action is not an inspection whatever it cost.
+  const DESTRUCTIVE = [
+    'rm -rf /tmp/victim',
+    'echo pwned > /tmp/wiped.txt',
+    'git push --force',
+    'systemctl stop nginx',
+    'mkfs.ext4 /dev/sda1',
+  ]
+
+  it.each(DESTRUCTIVE)('a fast successful write is never folded: %s', (command) => {
+    const rows = groupInspections([
+      ex({ executionId: 'a' }),
+      ex({ executionId: 'b', tool: 'run_command', args: { command },
+           blockId: 'blk-1', blockDuration: 0.05, blockExitCode: 0,
+           blockReadOnly: false }),
+      ex({ executionId: 'c' }),
+    ])
+
+    // The write stands alone, between the two reads. Asserted as the whole
+    // shape rather than "b is somewhere", so a fold that merged everything
+    // into one row could not pass it.
+    expect(ids(rows)).toEqual(['a', 'b', 'c'])
+  })
+
+  it('a command nobody classified is not folded', () => {
+    // Undefined is not "no". An older row, or a fallback to the subprocess
+    // path, has no verdict — and folding on the absence of a judgement is
+    // how the destructive cases above got in.
+    const rows = groupInspections([
+      ex({ executionId: 'a' }),
+      ex({ executionId: 'b', tool: 'run_command', args: { command: 'id' },
+           blockId: 'blk-1', blockDuration: 0.1, blockExitCode: 0 }),
+    ])
+
+    expect(ids(rows)).toEqual(['a', 'b'])
   })
 })

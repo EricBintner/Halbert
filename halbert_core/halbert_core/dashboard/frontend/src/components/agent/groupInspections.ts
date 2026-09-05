@@ -61,6 +61,18 @@ export function isQuietInspection(exec: ToolExecution): boolean {
   if (exec.status !== 'success') return false;
 
   if (exec.tool === 'run_command') {
+    // What the command DID, first. The rule above says an action is not an
+    // inspection whatever it cost, and then this function folded on cost
+    // alone: `rm -rf /tmp/x`, `git push --force`, `systemctl stop nginx` and
+    // `mkfs.ext4 /dev/sda1` all return in well under two seconds with exit 0,
+    // and all of them were collapsing into a row headed "Looked at".
+    //
+    // The host answers this — the same safety classification that gates
+    // approval — so the feed does not have to parse shell. Undefined means
+    // nobody said, which is not the same as "no": an older row, or a fallback
+    // to the subprocess path, must not fold.
+    if (exec.blockReadOnly !== true) return false;
+
     // A command is only quiet once something has SAID it was quick. With no
     // block it may still be running, or the pool may have fallen back to the
     // subprocess path; assuming brevity would hide a command still going.

@@ -141,6 +141,23 @@ class TerminalPool:
             return None
         sid, session = acquired
         block_id = str(uuid.uuid4())
+
+        # Did this command only LOOK at the host? The feed folds runs of
+        # inspection into one row, and that decision has to be about what a
+        # command does, not how long it took: `rm -rf` returns in
+        # milliseconds. The safety framework has already answered this
+        # question for the approval gate, so ask it rather than teaching the
+        # frontend to parse shell. Imported here, not at module scope, because
+        # tools.executor imports this module.
+        try:
+            from ..tools.safety import RiskLevel, ToolSafetyFramework
+
+            read_only = ToolSafetyFramework().classify(
+                "run_command", {"command": command}
+            ).risk_level == RiskLevel.SAFE
+        except Exception:  # pragma: no cover - the gate is never optional
+            logger.warning("could not classify a block command; treating it as a write")
+            read_only = False
         started_monotonic = time.monotonic()
         started_at = time.time()
 
@@ -334,6 +351,9 @@ class TerminalPool:
                 # stating, and an absent field renders the same as an unknown.
                 "output_elided_lines": elided_lines,
                 "output_total_lines": total_lines,
+                # Whether this command only read the host. Absent means
+                # unknown, and unknown must never fold.
+                "read_only": read_only,
             })
 
             # Released here on the success path so the slot is free before the
@@ -353,6 +373,7 @@ class TerminalPool:
                 "started_at": started_at,
                 "ended_at": ended_at,
                 "redacted": head_redacted or tail_redacted,
+                "read_only": read_only,
             }
         finally:
             promote_task.cancel()
