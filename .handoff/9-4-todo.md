@@ -4,6 +4,8 @@
 **Covers**: the work arising from `.handoff/REVIEW-CONFIG-CONTINUITY-2026-09-04.md`,
 `.handoff/STRATEGY-CLI-IN-CONVERSATION-2026-09-04.md`, and the six merges that
 followed them (`844bff4a`, `9418e106`, `c8ce601c`, `a8227d72` and parents).
+**Also covers**, in **section H**, the findings of a review of the *last five
+days across the whole repo* — a wider net than this thread, added afterwards.
 **Not covered**: the rest of `ROADMAP.md`. That document is the planning spine
 and already holds twenty-one workstreams; this one is the todo for *this*
 thread, cross-referenced to it rather than duplicating it.
@@ -740,6 +742,32 @@ a judgement I did not make and cannot see the working for. Read E in its own
 order; the one item that appears in both threads is **E1**, which *is* **A1**
 and is cross-referenced rather than restated.
 
+### Section H is a different axis, not a later phase
+
+Sections A–E are *what was planned and not finished*. **Section H** is *what was
+built and is wrong* — the output of a review of the last five days, run after
+the table above was written. It is not sequenced into that table because most of
+it is defect repair, which is ordered by severity rather than by dependency, and
+because three of its clusters are outside this thread entirely.
+
+Where the two touch:
+
+- **H3b** (output head shown twice) sits directly on **C4**, which is struck
+  through as done. C4 *is* done for the case it addressed; H3b is the case it
+  did not.
+- **H3** as a whole is the substrate under **C1**. Mounting `YourShellRegion`
+  over an execution path with H3a and H3c open puts a wider surface on a
+  narrower foundation. Do H3a and H3c first.
+- **H1** is the write guard shipped by `9418e106`, which is the merge **A1**
+  extends. Whoever takes A1 should read H1 first; H1a in particular is a live
+  loss of function in the path A1 builds on.
+- **H2** is the macOS watcher from `c8ce601c`, listed in section G as landed.
+  It landed; H2 is the argument that one part of it should not have.
+
+Nothing in A–E is blocked on H. But **H1a, H2a, H3a and H3c are open defects in
+shipped code**, and everything in A–E is work not yet begun. Defects in what
+users can already reach come first.
+
 ### The two founder answers, collected
 
 1. **A2 — what should a refused write offer?** Today: refuse and explain,
@@ -775,9 +803,7 @@ that is not yet evidence.
 
 ---
 
----
-
-## E. What the five-day review found
+## H. What the five-day review found
 
 *Added 2026-09-04. Method: five reviewers over the clusters of the last five days that
 had had **little or no review**, each finding then handed to a separate agent told to
@@ -797,7 +823,7 @@ a command more complicated than `printf hi`. All three fixed defects came from i
 several below still do. When a commit changes what executes, that is the commit to
 review, not the ones that follow it.
 
-### E1 — The write-guard cluster (`f0af083e`, `7f836ae5`, `f8cd5cad`, `61073752`)
+### H1 — The write-guard cluster (`f0af083e`, `7f836ae5`, `f8cd5cad`, `61073752`)
 
 Real work: `_write_file` genuinely records on both planes now, `turn_id` exists, and the
 config-dir split is genuinely narrower. The seven ledger invariants survive. What outran
@@ -805,13 +831,13 @@ the code is the claims.
 
 | # | Item | Tier · Effort |
 |---|---|---|
-| **E1a** | **A file needing privileges to read is treated as deleted.** The guard conflates "cannot read" with "gone", so the polkit save path is unreachable behind a 409 that says something untrue — the case the editor exists for. **Live loss of function; fix first.** | **opus · high** |
-| E1b | "Every write path looks first" is false for three writers, two of them the *restore* paths — the operations most likely to follow something going wrong. | sonnet · high |
-| E1c | The guard never passes `strict=True`, so a ledger it could not read reports as a ledger with no record — the exact conflation `eb68d968` fixed elsewhere, reintroduced in a new caller. | sonnet · med |
-| E1d | The turn anchor is missing on exactly the writes it was built for: a confirmed action resumes in a different task, so `current_turn` is unset. | sonnet · med |
-| E1e | One file, several subject keys — the ledger's identity for a path is whatever string the caller passed (`~` vs expanded, symlink vs real). | sonnet · med |
-| E1f | A whitespace-only reason turns a completed write into a reported failure with nothing recorded. | fable · med |
-| E1g | Every ledger-branch 409 the editor emits is malformed. | fable · med |
+| **H1a** | **A file needing privileges to read is treated as deleted.** The guard conflates "cannot read" with "gone", so the polkit save path is unreachable behind a 409 that says something untrue — the case the editor exists for. **Live loss of function; fix first.** | **opus · high** |
+| H1b | "Every write path looks first" is false for three writers, two of them the *restore* paths — the operations most likely to follow something going wrong. | sonnet · high |
+| H1c | The guard never passes `strict=True`, so a ledger it could not read reports as a ledger with no record — the exact conflation `eb68d968` fixed elsewhere, reintroduced in a new caller. | sonnet · med |
+| H1d | The turn anchor is missing on exactly the writes it was built for: a confirmed action resumes in a different task, so `current_turn` is unset. | sonnet · med |
+| H1e | One file, several subject keys — the ledger's identity for a path is whatever string the caller passed (`~` vs expanded, symlink vs real). | sonnet · med |
+| H1f | A whitespace-only reason turns a completed write into a reported failure with nothing recorded. | fable · med |
+| H1g | Every ledger-branch 409 the editor emits is malformed. | fable · med |
 
 **Also left undone:** make the guard's refusal exitable without leaving the ledger
 (**opus · high**); nothing reads `turn_id` yet, so the jump it was built for is unbuilt
@@ -819,20 +845,20 @@ the code is the claims.
 (**sonnet · med**); decide whether the digest is over bytes or over text and say so once
 (**opus · high**).
 
-### E2 — The watcher on macOS (`62203bdf`) — read this as a security item
+### H2 — The watcher on macOS (`62203bdf`) — read this as a security item
 
 Earlier analysis said enabling this was a *feature with real risk*, not a fix. The review
 confirms that and found the risk is larger than anticipated in one specific way.
 
 | # | Item | Tier · Effort |
 |---|---|---|
-| **E2a** | **The ledger's digest is not merely a digest.** It is byte-identical to the filename of an *unredacted JSON copy* of the same file, written by the same snapshot into `~/.local/share/halbert/config/canon/`. Proven on `/etc/hosts`, not inferred. So invariant 3 ("records carry digests, never content") holds only on paper, and `ERASURE_LIMITS` does not name that store — so invariant 6's promise to say what erasure misses is unmet. | **opus · high** |
-| **E2b** | **The allowlist is not an allowlist.** `Manifest.iter_paths` matches with `fnmatch` over an already-recursive `os.walk`, and `fnmatch`'s `*` crosses `/` — so `/etc/*.conf` reaches every `.conf` at any depth. The 135 files it resolves to include `snmpd.conf`, `ldap.conf`, `cups/printers.conf` and `racoon.conf`, none of which appear in the registry's own enumeration; the registry's `/private/etc/racoon/**` exclusion can never match a path the walker produces in `/etc` form. | **opus · med** |
-| E2c | `find_registry`'s "shipped default" is not shipped — it is the repo checkout, found by walking parents. Off a wheel there is no registry at all. | sonnet · med |
-| E2d | A binary plist's digest is a hash of mojibake, so two different plists can collide. | sonnet · med |
-| E2e | A change is timestamped when the *snapshot ran*, not when the file changed — and the 600s poll is dead whenever watchdog is installed, while a symlink into `/var/run` fires no FSEvent on `/etc`. A noise problem becomes a truthfulness problem. | sonnet · med |
-| E2f | Every test of the new registry asserts what the *document says*, never what it *resolves to* — which is why E2b survived a test suite. | sonnet · med |
-| E2g | Two documents and a comment two lines above the code still say the watcher is Linux-only. `app.py:844` is the comment; the handoff note is the other. | fable · med |
+| **H2a** | **The ledger's digest is not merely a digest.** It is byte-identical to the filename of an *unredacted JSON copy* of the same file, written by the same snapshot into `~/.local/share/halbert/config/canon/`. Proven on `/etc/hosts`, not inferred. So invariant 3 ("records carry digests, never content") holds only on paper, and `ERASURE_LIMITS` does not name that store — so invariant 6's promise to say what erasure misses is unmet. | **opus · high** |
+| **H2b** | **The allowlist is not an allowlist.** `Manifest.iter_paths` matches with `fnmatch` over an already-recursive `os.walk`, and `fnmatch`'s `*` crosses `/` — so `/etc/*.conf` reaches every `.conf` at any depth. The 135 files it resolves to include `snmpd.conf`, `ldap.conf`, `cups/printers.conf` and `racoon.conf`, none of which appear in the registry's own enumeration; the registry's `/private/etc/racoon/**` exclusion can never match a path the walker produces in `/etc` form. | **opus · med** |
+| H2c | `find_registry`'s "shipped default" is not shipped — it is the repo checkout, found by walking parents. Off a wheel there is no registry at all. | sonnet · med |
+| H2d | A binary plist's digest is a hash of mojibake, so two different plists can collide. | sonnet · med |
+| H2e | A change is timestamped when the *snapshot ran*, not when the file changed — and the 600s poll is dead whenever watchdog is installed, while a symlink into `/var/run` fires no FSEvent on `/etc`. A noise problem becomes a truthfulness problem. | sonnet · med |
+| H2f | Every test of the new registry asserts what the *document says*, never what it *resolves to* — which is why H2b survived a test suite. | sonnet · med |
+| H2g | Two documents and a comment two lines above the code still say the watcher is Linux-only. `app.py:844` is the comment; the handoff note is the other. | fable · med |
 
 **Governance, not code:** the capability probe now beats the home preset with no guard of
 the kind `CAP_SOURCEPREP` has, so a home body silently acquires config harvesting; and
@@ -842,18 +868,18 @@ Building that consent surface is **opus · xhigh** and is the honest gate on thi
 
 *Nothing has run yet: canon and snapshots are both empty on disk. This is preventive.*
 
-### E3 — The CLI-in-conversation stack (twelve commits)
+### H3 — The CLI-in-conversation stack (twelve commits)
 
 Three fixed here. What remains:
 
 | # | Item | Tier · Effort |
 |---|---|---|
-| **E3a** | **A `#` comment or a heredoc swallows the closing paren and the OSC 133 marker**, so the command hangs for the full timeout, returns exit −1 with empty output, and destroys a pool session. Verified at 6.00s. | **opus · high** |
-| E3b | The model and the card are shown the first 20 lines **twice**, spliced onto the full output, with a fabricated elision marker. `8cb65c85` fixed only the exactly-equal case, with a fixture the host cannot produce. | sonnet · high |
-| **E3c** | **A destructive shell command is folded into a collapsed row labelled "Looked at."** `groupInspections` documents "anything that WROTE may never be folded" and then folds any sub-2-second `run_command`. | **opus · high** |
-| E3d | Block output is redacted; **the command that produced it never is** — and `9a8bf231` made the command the card's title. | opus · med |
-| E3e | Every promoted task card is stuck in "Running" forever: nothing emits `task_completed`. The title is the first command the reused session ever ran, and the elapsed time is the session's age. | sonnet · med |
-| E3f | `terminal_blocks` hands the model command output from every thread, not just this one. | sonnet · med |
+| **H3a** | **A `#` comment or a heredoc swallows the closing paren and the OSC 133 marker**, so the command hangs for the full timeout, returns exit −1 with empty output, and destroys a pool session. Verified at 6.00s. | **opus · high** |
+| H3b | The model and the card are shown the first 20 lines **twice**, spliced onto the full output, with a fabricated elision marker. `8cb65c85` fixed only the exactly-equal case, with a fixture the host cannot produce. | sonnet · high |
+| **H3c** | **A destructive shell command is folded into a collapsed row labelled "Looked at."** `groupInspections` documents "anything that WROTE may never be folded" and then folds any sub-2-second `run_command`. | **opus · high** |
+| H3d | Block output is redacted; **the command that produced it never is** — and `9a8bf231` made the command the card's title. | opus · med |
+| H3e | Every promoted task card is stuck in "Running" forever: nothing emits `task_completed`. The title is the first command the reused session ever ran, and the elapsed time is the session's age. | sonnet · med |
+| H3f | `terminal_blocks` hands the model command output from every thread, not just this one. | sonnet · med |
 
 **Also left undone:** a pool block that hits an interactive prompt has no path but the
 timeout (**sonnet · high**); a promoted long-running command cannot be stopped from the UI
@@ -865,13 +891,13 @@ this is the gap that let all three fixed defects ship).
 PTY, runs real commands, and can genuinely fail. It is the only test in the cluster that
 could have caught any of this, and it caught the thing it was aimed at.
 
-### E4 — Legal and vocabulary (`076347d6`, `121786b5`, `df929ea8`)
+### H4 — Legal and vocabulary (`076347d6`, `121786b5`, `df929ea8`)
 
 | # | Item | Tier · Effort |
 |---|---|---|
-| **E4a** | **The App Store exception guard still only matches the strings it was taught.** Every realistic rewording passes it. A guard that passes on a paraphrase is the recurring failure mode in test form — and this one guards a licence claim. | **opus · high** |
-| **E4b** | **The Legal Notices panel names four AI model families**, against the standing directive never to name or recommend AI models on a user-facing surface. | **sonnet · med** |
-| E4c | "Independent Node" → "Independent Body" reverses a ratified decision and was applied where the ratified noun belongs. | opus · med |
+| **H4a** | **The App Store exception guard still only matches the strings it was taught.** Every realistic rewording passes it. A guard that passes on a paraphrase is the recurring failure mode in test form — and this one guards a licence claim. | **opus · high** |
+| **H4b** | **The Legal Notices panel names four AI model families**, against the standing directive never to name or recommend AI models on a user-facing surface. | **sonnet · med** |
+| H4c | "Independent Node" → "Independent Body" reverses a ratified decision and was applied where the ratified noun belongs. | opus · med |
 
 **Also left undone:** one repo-wide vocabulary guard replacing three per-component
 assertions (**sonnet · high**); redesign and re-prove the App Store exception guard
@@ -880,18 +906,18 @@ assertions (**sonnet · high**); redesign and re-prove the App Store exception g
 (**opus · med**); wire the Legal Notices model section to `attribution.py`
 (**sonnet · med**).
 
-### E5 — My own two commits, reviewed for the first time
+### H5 — My own two commits, reviewed for the first time
 
 | # | Item | Tier · Effort |
 |---|---|---|
-| E5a | The approve route's new `applied` field never reaches the operator — `Approvals.tsx` discards the response body, so a rollback still closes the modal like a success. I fixed the backend half and not the front. | sonnet · med |
+| H5a | The approve route's new `applied` field never reaches the operator — `Approvals.tsx` discards the response body, so a rollback still closes the modal like a success. I fixed the backend half and not the front. | sonnet · med |
 
 **Also left undone:** decide where approval history belongs and retire the second decision
 route (**opus · high**); give `EventLog.verify` a signing policy (**opus · xhigh**); cover
 the `StateStore` open-under-contention seam with a test (**sonnet · med**); make the
 `/why` read path non-blocking (**sonnet · med**).
 
-### E6 — What is still unreviewed
+### H6 — What is still unreviewed
 
 - The other ~290 commits of the five-day window outside these five clusters.
 - The three fixes in this section (`44fc501e`, `36de0032`, `ca00390c`) — written after the
