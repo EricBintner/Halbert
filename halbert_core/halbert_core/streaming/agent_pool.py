@@ -52,8 +52,19 @@ class TerminalPool:
         Returns None when at cap and all sessions are busy/interactive
         (caller falls back to subprocess).
         """
+        # Drop sessions that are gone before counting against the cap. The
+        # loop below skips dead sessions but left them in the dict, so once
+        # the idle reaper had collected `cap` of them the length check below
+        # was permanently true and every acquire returned None -- the pool
+        # died about fifteen minutes after the dashboard went quiet and never
+        # came back, silently falling back to subprocess for the rest of the
+        # process's life.
+        for sid in [s for s, sess in self._sessions.items() if not sess.is_alive()]:
+            self._sessions.pop(sid, None)
+            logger.debug("pool: dropped dead session %s", sid)
+
         # Look for an existing idle, non-interactive session
-        for sid, session in self._sessions.items():
+        for sid, session in list(self._sessions.items()):
             if self._manager._block_open.get(sid, False):
                 continue
             if not session.is_alive():
