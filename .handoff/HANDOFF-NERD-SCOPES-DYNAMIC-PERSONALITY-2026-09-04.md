@@ -2,7 +2,7 @@
 
 **Date**: 2026-09-04  
 **Author**: Antigravity / Pair Programming with Founder  
-**Status**: Design & Architectural Blueprint — Ready for Review  
+**Status**: SUPERSEDED-BY `.handoff/HANDOFF-OBSERVATION-LENSES-2026-09-04.md` (rev 2, 2026-09-05). Kept as history; the founder requirements quoted in §1.2 and §6 are carried forward there (§1.1, D9, §13 CD-5).  
 **Target Subsystems**:
 - **Haloysius (Universal Engine)**: `src/haloysius/scopes/` (new module), `src/haloysius/context/prompt_pipeline.py`, `src/haloysius/persona/cognition_tick.py`, `src/haloysius/memory_v2/`
 - **Halbert Core (Host/Platform)**: `halbert_core/persona/`, `halbert_core/prompts/builder.py`, `halbert_core/continuity/state_store.py`, `halbert_core/rag/`
@@ -147,6 +147,13 @@ We reverse engineered the skills and agent loading implementation in [`open-clau
 ## 3. The Nerd-Scope Abstraction & `.md` File Specification
 
 A **Nerd-Scope** is a modular, declarative package of conversational intelligence, cultural flavor, and domain competence. It provides the AI with a specific worldview, analogy bank, and conversational depth without affecting tool safety.
+
+> **Note on Nomenclature (2026-09-05)**:  
+> Because Claude Code standardizes on "Skills" for procedural tool actions (`.claude/skills/{name}/SKILL.md`), and "Nerd-Scopes" was a working title, the team is evaluating cleaner taxonomy (see `HANDOFF-OBSERVATION-LENSES-2026-09-04.md` D10 & CD-11):
+> 1. **Affinities** (`affinities/`) — *Recommended for relational flavor & learned user favorites*. Natural growth/decay without jargon.
+> 2. **Lenses** (`lenses/`) — *Recommended for observational framing of the timeline/events*.
+> 3. **Facets** (`facets/`) — Stresses multi-sided singular entity architecture.
+> 4. **Enthusiasms** (`enthusiasms/`) — Plainspoken, dignified British sysadmin tone.
 
 ### 3.1 Two-Way Definition Model
 
