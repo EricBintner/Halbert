@@ -2001,6 +2001,7 @@ if FASTAPI_AVAILABLE:
                 block["block_id"] = row.get("block_id")
                 block["output_head"] = row.get("output_head")
                 block["output_tail"] = row.get("output_tail")
+                block["output_elided_lines"] = row.get("output_elided_lines")
                 if row.get("exit_code") is not None:
                     block["exit"] = row.get("exit_code")
                 started, ended = row.get("started_at"), row.get("ended_at")

@@ -58,6 +58,10 @@ _THREAD_COLUMNS: List[Tuple[str, str]] = [
 #: stored command the same way the live stream did.
 _TERMINAL_BLOCK_ADDITIVE: List[Tuple[str, str]] = [
     ("execution_id", "TEXT"),
+    # How many lines fell between output_head and output_tail. Stored so a
+    # reloaded turn shows the same elision the live one did; the frontend
+    # cannot recompute it from the two halves it receives.
+    ("output_elided_lines", "INTEGER"),
 ]
 
 _MESSAGE_COLUMNS: List[Tuple[str, str]] = [
@@ -412,7 +416,8 @@ class SqliteConversationStore:
                         exit_code   INTEGER,
                         output_head TEXT NOT NULL DEFAULT '',
                         output_tail TEXT NOT NULL DEFAULT '',
-                        execution_id TEXT
+                        execution_id TEXT,
+                        output_elided_lines INTEGER
                     )"""
                 )
                 cur.execute(
@@ -1970,7 +1975,7 @@ class SqliteConversationStore:
         "block_id", "session_id", "thread_id", "turn_id", "command",
         "cwd", "owner", "interactive", "remote", "redacted",
         "started_at", "ended_at", "exit_code", "output_head", "output_tail",
-        "execution_id",
+        "execution_id", "output_elided_lines",
     )
 
     def insert_terminal_block(self, block: Dict[str, Any]) -> bool:
@@ -1998,7 +2003,7 @@ class SqliteConversationStore:
     _TERMINAL_BLOCK_UPDATABLE = frozenset(
         {"ended_at", "exit_code", "output_head", "output_tail",
          "interactive", "remote", "redacted", "thread_id", "turn_id",
-         "execution_id"}
+         "execution_id", "output_elided_lines"}
     )
 
     def update_terminal_block(self, block_id: str, **fields: Any) -> bool:

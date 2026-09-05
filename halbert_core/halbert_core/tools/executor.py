@@ -611,6 +611,7 @@ class ToolExecutor:
                             "exit_code": result["exit_code"],
                             "output_head": result["output_head"],
                             "output_tail": result["output_tail"],
+                            "output_elided_lines": result.get("output_elided_lines"),
                         })
                     except Exception as e:
                         logger.warning(f"Failed to store terminal_block: {e}")

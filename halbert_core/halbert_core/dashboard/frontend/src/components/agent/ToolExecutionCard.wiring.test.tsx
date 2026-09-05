@@ -186,3 +186,47 @@ describe('ToolExecutionCard frozen output', () => {
     expect(pre.textContent).toContain('last four kilobytes');
   });
 })
+
+describe('ToolExecutionCard elision', () => {
+  it('says how many lines are missing from the middle', () => {
+    // A bare "…" says something was cut without saying how much, and a
+    // reader cannot tell "this is all of it" from "there is more".
+    render(<ToolExecutionCard execution={{
+      ...streamed, blockExitCode: 0, blockDuration: 9,
+      blockOutputHead: 'first twenty lines',
+      blockOutputTail: 'last four kilobytes',
+      blockElidedLines: 4812,
+    }} />)
+    fireEvent.click(screen.getByRole('button', { name: /smbstatus/ }))
+
+    expect(screen.getByText(/4,812 lines elided/)).toBeTruthy()
+  })
+
+  it('says nothing when nothing was cut', () => {
+    render(<ToolExecutionCard execution={{
+      ...streamed, blockExitCode: 0, blockDuration: 9,
+      blockOutputHead: 'head', blockOutputTail: 'tail',
+      blockElidedLines: 0,
+    }} />)
+    fireEvent.click(screen.getByRole('button', { name: /smbstatus/ }))
+
+    const pre = screen.getByText(/head/)
+    expect(pre.textContent).not.toMatch(/elided/)
+    // Head and tail still differ, so they are still both shown.
+    expect(pre.textContent).toContain('tail')
+  })
+
+  it('falls back to a bare marker when the count is unknown', () => {
+    // A stored block from before the count existed. Better an unlabelled
+    // elision than a confident "0 lines elided" that is not known to be true.
+    render(<ToolExecutionCard execution={{
+      ...streamed, blockExitCode: 0, blockDuration: 9,
+      blockOutputHead: 'head', blockOutputTail: 'tail',
+    }} />)
+    fireEvent.click(screen.getByRole('button', { name: /smbstatus/ }))
+
+    const pre = screen.getByText(/head/)
+    expect(pre.textContent).toContain('…')
+    expect(pre.textContent).not.toMatch(/elided/)
+  })
+})

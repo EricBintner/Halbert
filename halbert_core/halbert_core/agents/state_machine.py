@@ -2473,6 +2473,8 @@ class AgentStateMachine:
                 duration=float(duration) if duration is not None else None,
                 output_head=payload.get("output_head"),
                 output_tail=payload.get("output_tail"),
+                output_elided_lines=payload.get("output_elided_lines"),
+                output_total_lines=payload.get("output_total_lines"),
             )
         if kind in ("block", "block_promote"):
             block_id = str(payload.get("block_id", ""))

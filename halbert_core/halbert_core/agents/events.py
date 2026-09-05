@@ -550,6 +550,8 @@ class StreamEvent:
         duration: Optional[float] = None,
         output_head: Optional[str] = None,
         output_tail: Optional[str] = None,
+        output_elided_lines: Optional[int] = None,
+        output_total_lines: Optional[int] = None,
     ) -> 'StreamEvent':
         """The terminal's child process exited (E1f).
 
@@ -571,6 +573,10 @@ class StreamEvent:
             data["output_head"] = output_head
         if output_tail is not None:
             data["output_tail"] = output_tail
+        if output_elided_lines is not None:
+            data["output_elided_lines"] = output_elided_lines
+        if output_total_lines is not None:
+            data["output_total_lines"] = output_total_lines
         return cls(
             type="terminal_complete",
             session_id=session_id,

@@ -117,15 +117,16 @@ export function NodeFleetCockpit() {
       <div className="flex flex-col items-center justify-center py-20 gap-4">
         <Server className="h-12 w-12 text-muted-foreground/50" />
         <div className="text-center space-y-1">
-          <h3 className="text-sm font-medium">No satellites paired</h3>
+          <h3 className="text-sm font-medium">No other bodies yet</h3>
           <p className="text-xs text-muted-foreground max-w-sm">
-            Pair a Raspberry Pi, homelab server, or laptop to monitor its
-            health, stream logs, and offload compute to this machine's GPU.
+            Link a Raspberry Pi, homelab server, or laptop to watch its
+            health, stream its logs, and offload compute to this machine's
+            GPU.
           </p>
         </div>
         <Button size="sm" onClick={() => setShowPairingModal(true)}>
           <Plus className="h-4 w-4 mr-1" />
-          Pair a Satellite
+          Link a body
         </Button>
         {showPairingModal && (
           <PeerPairingModal onClose={() => setShowPairingModal(false)} onPaired={refresh} />
@@ -162,7 +163,7 @@ export function NodeFleetCockpit() {
         </div>
       )}
 
-      {/* Node grid */}
+      {/* One card per body */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
         {nodes.map((node) => (
           <FleetNodeCard

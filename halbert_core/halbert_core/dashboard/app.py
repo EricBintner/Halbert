@@ -67,6 +67,7 @@ def _find_config_registry():
 SPA_ROUTES = (
     "/dashboard",
     "/terminal",
+    "/bodies",
     "/services",
     "/storage",
     "/gpu",

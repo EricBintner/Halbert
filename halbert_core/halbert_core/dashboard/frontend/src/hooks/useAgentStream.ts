@@ -68,6 +68,12 @@ export interface ToolExecution {
    */
   blockOutputHead?: string;
   blockOutputTail?: string;
+  /**
+   * Lines that fell between head and tail. Undefined means the host did not
+   * say — a block stored before the count existed. Zero means nothing was
+   * cut, which is a different and useful fact.
+   */
+  blockElidedLines?: number;
 }
 
 export interface ConfirmationRequest {
@@ -798,6 +804,10 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
                       typeof event.duration === 'number' ? event.duration : exec.blockDuration,
                     blockOutputHead: (event.output_head as string | undefined) ?? exec.blockOutputHead,
                     blockOutputTail: (event.output_tail as string | undefined) ?? exec.blockOutputTail,
+                    blockElidedLines:
+                      typeof event.output_elided_lines === 'number'
+                        ? event.output_elided_lines
+                        : exec.blockElidedLines,
                   }
                 : exec,
             ),

@@ -5,6 +5,7 @@ import { BrowserRouter as Router, Routes, Route, Navigate, useNavigate } from 'r
 import { Layout } from './components/Layout'
 import { Dashboard } from './pages/Dashboard'
 import { Terminal } from './pages/Terminal'
+import { Bodies } from './pages/Bodies'
 import { Services } from './pages/Services'
 import { Storage } from './pages/Storage'
 import { GPU } from './pages/GPU'
@@ -118,6 +119,7 @@ function App() {
                   <Routes>
                     <Route path="/" element={<Dashboard />} />
                     <Route path="/terminal" element={<Terminal />} />
+                    <Route path="/bodies" element={<Bodies />} />
                     <Route path="/services" element={<Services />} />
                     <Route path="/storage" element={<Storage />} />
                     <Route path="/gpu" element={<GPU />} />

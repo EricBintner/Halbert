@@ -39,6 +39,8 @@ export interface TimelineToolBlock {
   duration?: number;
   outputHead?: string;
   outputTail?: string;
+  /** Lines elided between the two halves; undefined when the host did not say. */
+  elidedLines?: number;
   /**
    * True for the marker block `redact_message` leaves behind for a forgotten
    * row (conversation_sqlite.py: `{tool: "[redacted by admin]", args: {},
@@ -143,6 +145,8 @@ export function blockFromServer(raw: unknown): TimelineToolBlock {
     duration: typeof r.duration === 'number' ? r.duration : undefined,
     outputHead: typeof r.output_head === 'string' ? r.output_head : undefined,
     outputTail: typeof r.output_tail === 'string' ? r.output_tail : undefined,
+    elidedLines:
+      typeof r.output_elided_lines === 'number' ? r.output_elided_lines : undefined,
   };
 }
 

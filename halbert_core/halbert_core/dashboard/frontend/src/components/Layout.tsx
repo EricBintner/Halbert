@@ -36,6 +36,7 @@ import {
   Shield,
   Settings as SettingsIcon,
   Terminal,
+  MonitorSmartphone,
   Loader2,
   ScanSearch,
   AudioLines,
@@ -54,6 +55,8 @@ import { ConfigEditor } from './ConfigEditor'
 import { HalbertMark, NavRail, type NavRailSection } from '@halbert/design-system'
 import { PanelToggle } from './shell/PanelToggle'
 import { PresencePill, type InstanceInfo } from './shell/PresencePill'
+import { AggregateStatusLight } from './agent/AggregateStatusLight'
+import { useTasks } from '@/hooks/useTasks'
 import { AcousticAuraIndicator, VoiceHudSummonButton } from '@/components/audio'
 import { HostShell } from './shell/HostShell'
 import { useShellMode } from '@/contexts/ShellModeContext'
@@ -108,6 +111,7 @@ export const navSections: NavSection[] = [
       { id: '/storage', label: 'Storage', icon: HardDrive },
       { id: '/backups', label: 'Backups', icon: Archive },
       { id: '/terminal', label: 'Terminal', icon: Terminal },
+      { id: '/bodies', label: 'Bodies', icon: MonitorSmartphone },
     ],
   },
   {
@@ -160,6 +164,8 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const location = useLocation()
   const navigate = useNavigate()
   const { isVoice, setMode, enterVoice, exitVoice, centerVisible, rightVisible } = useShellMode()
+  // Derived from the terminal store, not a second list kept in step with it.
+  const { running: runningTasks, finished: finishedTasks } = useTasks()
 
   // Global config editor state (triggered from chat "Edit Config" button)
   const [editingConfigPath, setEditingConfigPath] = useState<string | null>(null)
@@ -531,6 +537,12 @@ export function Layout({ children }: { children: React.ReactNode }) {
           <VoiceHudSummonButton />
 
           <PresencePill />
+
+          {/* TERM-1's last row: with the tasks column in the right panel, a
+              long-running command is visible only while that panel is open.
+              This is how the machine says something is running when you are
+              not looking at it. Renders nothing when nothing is. */}
+          <AggregateStatusLight tasks={[...runningTasks, ...finishedTasks]} />
 
           <AcousticAuraIndicator />
 
