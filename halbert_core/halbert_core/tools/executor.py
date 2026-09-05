@@ -830,7 +830,9 @@ class ToolExecutor:
         # A model may state its reason for the write it is making now; what
         # the ledger forbids is inventing one for a write that already
         # happened. Absent means unknown, and stays unknown.
-        reason = str(args.get("reason") or UNRECORDED)
+        # Stripped before the coalesce: "   " is truthy, so it used to
+        # reach _require and raise after the write had already landed.
+        reason = str(args.get("reason") or "").strip() or UNRECORDED
 
         # Security: expand and normalize path
         path = os.path.expanduser(path)

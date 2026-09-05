@@ -450,7 +450,7 @@ async def write_file(request: FileWriteRequest) -> FileWriteResponse:
             # downstream drift check permanently wrong.
             _record_editor_change(
                 path=path,
-                reason=request.reason or UNRECORDED,
+                reason=str(request.reason or "").strip() or UNRECORDED,
                 request_id=request_id,
                 before_text=before_text,
                 after_text=_current_text(path),
@@ -465,7 +465,7 @@ async def write_file(request: FileWriteRequest) -> FileWriteResponse:
             raise HTTPException(500, "Failed to write file")
     except PermissionError as e:
         _record_editor_change(
-            path=path, reason=request.reason or UNRECORDED,
+            path=path, reason=str(request.reason or "").strip() or UNRECORDED,
             request_id=request_id, before_text=before_text, after_text=None,
             summary=f"editor save of {path} refused: {e}", ok=False,
         )
@@ -473,7 +473,7 @@ async def write_file(request: FileWriteRequest) -> FileWriteResponse:
     except Exception as e:
         logger.error(f"Error writing file {path}: {e}")
         _record_editor_change(
-            path=path, reason=request.reason or UNRECORDED,
+            path=path, reason=str(request.reason or "").strip() or UNRECORDED,
             request_id=request_id, before_text=before_text, after_text=None,
             summary=f"editor save of {path} failed: {e}", ok=False,
         )
