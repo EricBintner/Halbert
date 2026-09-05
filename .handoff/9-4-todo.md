@@ -504,9 +504,197 @@ network — which is the entire feature.
 first real run of a distributed feature is where the assumptions surface, and
 someone has to be able to tell a protocol bug from a firewall.
 
+## E. The change ledger — what six review rounds left
+
+*Added 2026-09-04 by the session that built `LEDGER-1`, and relabelled from D to E on merge: two sessions appended a section D to the same file on the same day, so `D1` named two different items. Its own items are now `E1`–`E9`; nothing outside this file referenced them. Sections A–C came from the
+config-continuity and CLI threads; this is the memory thread, which those explicitly
+do not cover. Where an item is already in A–C it is cross-referenced, not restated.*
+
+**Read this first if you are picking up any D item.** The ledger's value is entirely in
+being trustworthy, and the fastest way to destroy it is a plausible-looking entry nobody
+can falsify. Six review rounds produced one rule that outranks the rest: **a reason is
+recorded at the instant of the write or it is `UNRECORDED` forever.** No pass may fill it
+in afterwards, no model may infer one, and no code may substitute something reasonable.
+`MEM-06` states it; `state_store.record_state` enforces it by making `reason` and `actor`
+keyword-only with no default. If a D item ever seems to want a backfill, that is the sign
+the item is wrong, not the rule.
+
+### E1 — `run_command` is the last real hole
+
+**Cross-reference: this is §A1.** Do not plan it twice. Recorded here only so the ledger
+thread's own inventory is complete: it is the largest remaining gap in the promise, and
+`ROADMAP.md`'s `LEDGER-1` row now names it as such. A config changed through the terminal,
+by a package manager, or by a service rewriting its own file is still invisible.
+
+### E2 — Diff-apply records on a route production cannot reach
+
+**What.** `dashboard/routes/agent.py`'s diff-apply path records both planes correctly, and
+production never gets there: the only production writer of a pending diff sets
+`"file_path": None` (`agents/state_machine.py:3075`, "filled by frontend or tool context"),
+and `_apply_target` rejects a diff with no path. The recording is exercised only by tests.
+
+**Why it matters.** It is a fully-built, fully-tested feature that has never run, sitting
+in a subsystem whose entire point is that its records are complete. Worse, its tests pass,
+so nothing signals the gap — the failure mode this thread kept finding, in its most
+comfortable disguise.
+
+**Where.** `agents/state_machine.py:3075` (the `None`), `dashboard/routes/agent.py`
+`_write_file` / `_apply_target`, `halbert_core/tests/test_provenance_remaining_write_paths.py`
+`TestDiffApplyProvenance`.
+
+**Definition of done.** Either a production diff carries a real `file_path` and a test
+drives the route the way production does; or the recording is deleted as dead code and the
+`LEDGER-1` row stops listing diff apply as a write path. **Deciding which is the work** —
+do not wire it just because it is wireable.
+
+**Tier: sonnet · Effort: med.** Depends on: nothing. If the answer is "delete", **fable · med**.
+
+### E3 — Erasure cannot reach the approver's own copies
+
+**What.** `forget_request` clears the reason from the ledger and erases the matching audit
+records. The approver's words also live in `findings.db` under
+`proposals.execution_result`, and in the approval decision history. Neither is reached.
+`ERASURE_LIMITS` (`continuity/provenance.py`) names both, and the `POST /api/state/forget`
+response returns that text verbatim — so the product is honest about the gap, which is why
+this is a todo and not a defect.
+
+**Why it matters.** "Forget that" is a privacy affordance. Honest-about-the-gap is the
+right interim state, but the gap is real: a person who asks Halbert to forget why they
+changed something has that sentence survive in two other stores.
+
+**Where.** `continuity/provenance.py` (`forget_request`, `ERASURE_LIMITS`),
+`findings/proposal_generator.py` (`_record_result`, which persists `execution_result`),
+`approval/engine.py` (decision history).
+
+**Definition of done.** Either `forget_request` reaches both stores and `ERASURE_LIMITS`
+shrinks accordingly, or a ratified decision says approval history is deliberately exempt
+(it is arguably a governance record, not a private one) and `ERASURE_LIMITS` says *that*
+instead of merely listing them.
+
+**Tier: opus · Effort: high.** This is a privacy contract, not a fan-out. The
+implementation is small; deciding whether an approval's justification is the user's to
+delete is the job. Depends on: nothing.
+
+### E4 — Nothing retires a row for a file that no longer exists
+
+**What.** `invalidate_state` has no production caller. The watcher's `DIGEST_ABSENT`
+handling covers watched paths *going forward*; nothing retires rows already open. A
+`file:` row stays open and projectable forever, whatever happens to the file.
+
+**Why it matters.** It is the difference between a ledger and a graveyard. It also feeds
+the vault: `VaultProjector` enumerates via `current_state()`, so a stale row becomes a
+confident note about a path that is gone. This was not theoretical — before the 2026-09-03
+cleanup, all 80 open `file:` rows pointed at paths that did not exist, and asking Halbert
+what it remembered about ssh returned twelve pytest temp directories.
+
+**Where.** `continuity/state_store.py` (`invalidate_state`), `continuity/vault.py`
+(the enumeration and its docstring, which already flags this), a new CLI command
+alongside `vault-rebuild`.
+
+**Definition of done.** A `halbert ledger-sweep` that closes rows whose `file:` subject no
+longer exists, with an explicit reason (`"sweep: file no longer on disk"`) and a `--dry-run`
+that prints what it would close. **Not** a liveness check inside the projector: that puts
+filesystem I/O into something whose stated invariant is being a pure function of the
+ledger, and a permission-denied stat is indistinguishable from absent for exactly the
+`/etc` files this exists for.
+
+**Tier: sonnet · Effort: med.** Depends on: nothing.
+
+### E5 — `_write_txn` distinguishes two errors by matching a message string
+
+**What.** `BEGIN IMMEDIATE` raises `sqlite3.OperationalError` both for a nested
+transaction (a borrowed `conn=`) and for a busy database. Conflating them lost data
+silently — a write reported as recorded and gone on close — so `state_store.py:403` now
+re-raises unless the message contains `"within a transaction"`.
+
+**Why it matters.** It is correct today and fragile by construction. SQLite could reword
+that message; the code would then treat a nested transaction as a busy database and start
+raising on the borrowed-connection path that `StateStore(conn=...)` is documented to
+support. A string comparison is standing in for an error code.
+
+**Where.** `continuity/state_store.py:394-404`, with the regression tests in
+`tests/test_state_store.py::TestABusyDatabaseIsNotABorrowedTransaction`.
+
+**Definition of done.** On Python 3.11+, `sqlite3.Error.sqlite_errorname` gives
+`SQLITE_BUSY` / `SQLITE_ERROR` directly — verified absent on this interpreter (3.10). So:
+use the error name where available and fall back to the string, with a test that pins both
+branches. Or record a decision that Halbert's floor moves to 3.11 (`ENV-01` is already open
+on exactly that question) and use the attribute unconditionally.
+
+**Tier: sonnet · Effort: med.** Depends on: `ENV-01` if the clean version is wanted.
+
+### E6 — `state_dir()` ignores `HALBERT_DATA_DIR`
+
+**What.** `utils/paths.py`'s `state_dir()` reads only `XDG_STATE_HOME`. Its siblings
+`data_dir()` and `log_dir()` both honour the `HALBERT_*` override. So two instances sharing
+a `HALBERT_DATA_DIR` still share one state directory.
+
+**Why it matters.** `CFG-1` is the row that says there is one config and data story. This
+is the same bug the ledger path had before `b343171d`, in the one resolver nobody fixed.
+
+**Where.** `halbert_core/utils/paths.py`, plus whatever writes under `state_subdir(...)`.
+
+**Definition of done.** `state_dir()` honours `HALBERT_STATE_DIR` then `HALBERT_DATA_DIR`
+then XDG, matching its siblings; a test asserts two instances with different
+`HALBERT_DATA_DIR` values get different state directories.
+
+**Tier: fable · Effort: med.** Mechanical, and the definition of done is checkable.
+Depends on: nothing. Check callers first — something may rely on the current path.
+
+### E7 — The Doubt Queue
+
+**Status: deferred, and the case is stronger than when it was first deferred.**
+
+It curates contradictions produced by the dream cycle, and the dream cycle is **cut**, not
+deferred — of its two remaining checks, duplicate open triples is now structurally
+impossible (the partial unique index enforces one open row per key at the storage layer, so
+a job to detect what the schema forbids has no work), and file-digest drift duplicates what
+the freshness/PROBE path is for. Building a curation UI against content nothing produces is
+the "beautiful empty vault" failure with a nicer frontend.
+
+**Do not start this without first answering: what produces a contradiction?** If that has a
+real answer, it is a new design, and this entry is the wrong description of it.
+
+**Tier: opus · Effort: xhigh** *if the premise is ever re-established.* Otherwise leave.
+
+### E8 — The Fable review is owed on seven dimensions
+
+**What.** A Fable-tier review of the ledger work was commissioned and 14 of its 15 agents
+failed on usage credits. Only `recall-abstention` completed, and its own verifiers did not
+run — its single finding was verified by hand instead, and was real (a failed ledger read
+rendered as "nothing was recorded").
+
+**Why it matters.** Seven dimensions were never reviewed by that tier: provenance
+integrity, data loss, concurrency, erasure honesty, vault projection, test quality, and
+coherence. Later self-review at a lower tier covered the same ground and found 42 confirmed
+defects across two rounds, so the work is not unreviewed — but it has not had the tier that
+was asked for.
+
+**Where.** The workflow can resume from cache: the completed dimension replays instantly
+and only the failed agents re-run, so a top-up costs one run rather than two.
+
+**Tier: fable · Effort: high.** This is the review itself, not code. Budget for the finding
+count: the two lower-tier rounds produced 13 and 29 confirmed defects respectively.
+
+### E9 — Two items deliberately cut, recorded so nobody re-plans them
+
+Both were cut **on evidence**, not on schedule, and the evidence is in
+`.handoff/NOTE-MEMORY-STEPS-CUT-AND-DEFERRED-2026-09-02.md`:
+
+- **Micro-compaction (was step 11a).** Nothing in production emits a tool_result block in
+  either vocabulary, so the plumbing work would leave `micro_compact` truncating zero
+  blocks while *looking* live. **See also §B5**, which reaches the same fold-it-in-or-cut-it
+  decision from the config-continuity side — the two should be decided together, once.
+- **Epistemic thresholds (was step 11b).** `grep -rn '\.composite' halbert_core/` returns
+  zero hits: the proposed 0.85 / 0.40 are thresholds on a knob nothing reads. Two of the
+  design doc's numbers could not have come from the scorer they name — the Phase-72 floor
+  gate makes 0.31–0.43 a dead band, and 0.85 is unreachable with `cross_reference_count=0`.
+
+**Tier: n/a.** Reopen only with new evidence, and put the evidence in the note.
+
 ---
 
-## E. Sequencing
+## F. Sequencing
 
 Dependencies first, then value. Nothing here is blocked on anything outside
 this document except the two founder answers called out below.
@@ -543,6 +731,15 @@ Do **not** fan out **A1**, **A2**, **B4** or **D1**. Each is a judgement about
 an invariant, and the failure mode of getting one plausibly-but-wrongly right
 is exactly what this thread of work spent its time correcting.
 
+### Section E is sequenced on its own terms
+
+The table above covers A–D. **Section E (the change ledger)** arrived from the
+memory thread with its own ordering and its own reasoning, including two items
+its author deliberately cut. Ranking those against these would mean overriding
+a judgement I did not make and cannot see the working for. Read E in its own
+order; the one item that appears in both threads is **E1**, which *is* **A1**
+and is cross-referenced rather than restated.
+
 ### The two founder answers, collected
 
 1. **A2 — what should a refused write offer?** Today: refuse and explain,
@@ -554,7 +751,7 @@ is exactly what this thread of work spent its time correcting.
 
 ---
 
-## F. What this thread already landed, for context
+## G. What this thread already landed, for context
 
 So that whoever picks this up knows what has *just* changed underneath the
 code they are reading.
@@ -577,191 +774,3 @@ that could not run. Five separate instances. If you inherit a green suite here,
 that is not yet evidence.
 
 ---
-
-## D. The change ledger — what six review rounds left
-
-*Added 2026-09-04 by the session that built `LEDGER-1`. Sections A–C came from the
-config-continuity and CLI threads; this is the memory thread, which those explicitly
-do not cover. Where an item is already in A–C it is cross-referenced, not restated.*
-
-**Read this first if you are picking up any D item.** The ledger's value is entirely in
-being trustworthy, and the fastest way to destroy it is a plausible-looking entry nobody
-can falsify. Six review rounds produced one rule that outranks the rest: **a reason is
-recorded at the instant of the write or it is `UNRECORDED` forever.** No pass may fill it
-in afterwards, no model may infer one, and no code may substitute something reasonable.
-`MEM-06` states it; `state_store.record_state` enforces it by making `reason` and `actor`
-keyword-only with no default. If a D item ever seems to want a backfill, that is the sign
-the item is wrong, not the rule.
-
-### D1 — `run_command` is the last real hole
-
-**Cross-reference: this is §A1.** Do not plan it twice. Recorded here only so the ledger
-thread's own inventory is complete: it is the largest remaining gap in the promise, and
-`ROADMAP.md`'s `LEDGER-1` row now names it as such. A config changed through the terminal,
-by a package manager, or by a service rewriting its own file is still invisible.
-
-### D2 — Diff-apply records on a route production cannot reach
-
-**What.** `dashboard/routes/agent.py`'s diff-apply path records both planes correctly, and
-production never gets there: the only production writer of a pending diff sets
-`"file_path": None` (`agents/state_machine.py:3075`, "filled by frontend or tool context"),
-and `_apply_target` rejects a diff with no path. The recording is exercised only by tests.
-
-**Why it matters.** It is a fully-built, fully-tested feature that has never run, sitting
-in a subsystem whose entire point is that its records are complete. Worse, its tests pass,
-so nothing signals the gap — the failure mode this thread kept finding, in its most
-comfortable disguise.
-
-**Where.** `agents/state_machine.py:3075` (the `None`), `dashboard/routes/agent.py`
-`_write_file` / `_apply_target`, `halbert_core/tests/test_provenance_remaining_write_paths.py`
-`TestDiffApplyProvenance`.
-
-**Definition of done.** Either a production diff carries a real `file_path` and a test
-drives the route the way production does; or the recording is deleted as dead code and the
-`LEDGER-1` row stops listing diff apply as a write path. **Deciding which is the work** —
-do not wire it just because it is wireable.
-
-**Tier: sonnet · Effort: med.** Depends on: nothing. If the answer is "delete", **fable · med**.
-
-### D3 — Erasure cannot reach the approver's own copies
-
-**What.** `forget_request` clears the reason from the ledger and erases the matching audit
-records. The approver's words also live in `findings.db` under
-`proposals.execution_result`, and in the approval decision history. Neither is reached.
-`ERASURE_LIMITS` (`continuity/provenance.py`) names both, and the `POST /api/state/forget`
-response returns that text verbatim — so the product is honest about the gap, which is why
-this is a todo and not a defect.
-
-**Why it matters.** "Forget that" is a privacy affordance. Honest-about-the-gap is the
-right interim state, but the gap is real: a person who asks Halbert to forget why they
-changed something has that sentence survive in two other stores.
-
-**Where.** `continuity/provenance.py` (`forget_request`, `ERASURE_LIMITS`),
-`findings/proposal_generator.py` (`_record_result`, which persists `execution_result`),
-`approval/engine.py` (decision history).
-
-**Definition of done.** Either `forget_request` reaches both stores and `ERASURE_LIMITS`
-shrinks accordingly, or a ratified decision says approval history is deliberately exempt
-(it is arguably a governance record, not a private one) and `ERASURE_LIMITS` says *that*
-instead of merely listing them.
-
-**Tier: opus · Effort: high.** This is a privacy contract, not a fan-out. The
-implementation is small; deciding whether an approval's justification is the user's to
-delete is the job. Depends on: nothing.
-
-### D4 — Nothing retires a row for a file that no longer exists
-
-**What.** `invalidate_state` has no production caller. The watcher's `DIGEST_ABSENT`
-handling covers watched paths *going forward*; nothing retires rows already open. A
-`file:` row stays open and projectable forever, whatever happens to the file.
-
-**Why it matters.** It is the difference between a ledger and a graveyard. It also feeds
-the vault: `VaultProjector` enumerates via `current_state()`, so a stale row becomes a
-confident note about a path that is gone. This was not theoretical — before the 2026-09-03
-cleanup, all 80 open `file:` rows pointed at paths that did not exist, and asking Halbert
-what it remembered about ssh returned twelve pytest temp directories.
-
-**Where.** `continuity/state_store.py` (`invalidate_state`), `continuity/vault.py`
-(the enumeration and its docstring, which already flags this), a new CLI command
-alongside `vault-rebuild`.
-
-**Definition of done.** A `halbert ledger-sweep` that closes rows whose `file:` subject no
-longer exists, with an explicit reason (`"sweep: file no longer on disk"`) and a `--dry-run`
-that prints what it would close. **Not** a liveness check inside the projector: that puts
-filesystem I/O into something whose stated invariant is being a pure function of the
-ledger, and a permission-denied stat is indistinguishable from absent for exactly the
-`/etc` files this exists for.
-
-**Tier: sonnet · Effort: med.** Depends on: nothing.
-
-### D5 — `_write_txn` distinguishes two errors by matching a message string
-
-**What.** `BEGIN IMMEDIATE` raises `sqlite3.OperationalError` both for a nested
-transaction (a borrowed `conn=`) and for a busy database. Conflating them lost data
-silently — a write reported as recorded and gone on close — so `state_store.py:403` now
-re-raises unless the message contains `"within a transaction"`.
-
-**Why it matters.** It is correct today and fragile by construction. SQLite could reword
-that message; the code would then treat a nested transaction as a busy database and start
-raising on the borrowed-connection path that `StateStore(conn=...)` is documented to
-support. A string comparison is standing in for an error code.
-
-**Where.** `continuity/state_store.py:394-404`, with the regression tests in
-`tests/test_state_store.py::TestABusyDatabaseIsNotABorrowedTransaction`.
-
-**Definition of done.** On Python 3.11+, `sqlite3.Error.sqlite_errorname` gives
-`SQLITE_BUSY` / `SQLITE_ERROR` directly — verified absent on this interpreter (3.10). So:
-use the error name where available and fall back to the string, with a test that pins both
-branches. Or record a decision that Halbert's floor moves to 3.11 (`ENV-01` is already open
-on exactly that question) and use the attribute unconditionally.
-
-**Tier: sonnet · Effort: med.** Depends on: `ENV-01` if the clean version is wanted.
-
-### D6 — `state_dir()` ignores `HALBERT_DATA_DIR`
-
-**What.** `utils/paths.py`'s `state_dir()` reads only `XDG_STATE_HOME`. Its siblings
-`data_dir()` and `log_dir()` both honour the `HALBERT_*` override. So two instances sharing
-a `HALBERT_DATA_DIR` still share one state directory.
-
-**Why it matters.** `CFG-1` is the row that says there is one config and data story. This
-is the same bug the ledger path had before `b343171d`, in the one resolver nobody fixed.
-
-**Where.** `halbert_core/utils/paths.py`, plus whatever writes under `state_subdir(...)`.
-
-**Definition of done.** `state_dir()` honours `HALBERT_STATE_DIR` then `HALBERT_DATA_DIR`
-then XDG, matching its siblings; a test asserts two instances with different
-`HALBERT_DATA_DIR` values get different state directories.
-
-**Tier: fable · Effort: med.** Mechanical, and the definition of done is checkable.
-Depends on: nothing. Check callers first — something may rely on the current path.
-
-### D7 — The Doubt Queue
-
-**Status: deferred, and the case is stronger than when it was first deferred.**
-
-It curates contradictions produced by the dream cycle, and the dream cycle is **cut**, not
-deferred — of its two remaining checks, duplicate open triples is now structurally
-impossible (the partial unique index enforces one open row per key at the storage layer, so
-a job to detect what the schema forbids has no work), and file-digest drift duplicates what
-the freshness/PROBE path is for. Building a curation UI against content nothing produces is
-the "beautiful empty vault" failure with a nicer frontend.
-
-**Do not start this without first answering: what produces a contradiction?** If that has a
-real answer, it is a new design, and this entry is the wrong description of it.
-
-**Tier: opus · Effort: xhigh** *if the premise is ever re-established.* Otherwise leave.
-
-### D8 — The Fable review is owed on seven dimensions
-
-**What.** A Fable-tier review of the ledger work was commissioned and 14 of its 15 agents
-failed on usage credits. Only `recall-abstention` completed, and its own verifiers did not
-run — its single finding was verified by hand instead, and was real (a failed ledger read
-rendered as "nothing was recorded").
-
-**Why it matters.** Seven dimensions were never reviewed by that tier: provenance
-integrity, data loss, concurrency, erasure honesty, vault projection, test quality, and
-coherence. Later self-review at a lower tier covered the same ground and found 42 confirmed
-defects across two rounds, so the work is not unreviewed — but it has not had the tier that
-was asked for.
-
-**Where.** The workflow can resume from cache: the completed dimension replays instantly
-and only the failed agents re-run, so a top-up costs one run rather than two.
-
-**Tier: fable · Effort: high.** This is the review itself, not code. Budget for the finding
-count: the two lower-tier rounds produced 13 and 29 confirmed defects respectively.
-
-### D9 — Two items deliberately cut, recorded so nobody re-plans them
-
-Both were cut **on evidence**, not on schedule, and the evidence is in
-`.handoff/NOTE-MEMORY-STEPS-CUT-AND-DEFERRED-2026-09-02.md`:
-
-- **Micro-compaction (was step 11a).** Nothing in production emits a tool_result block in
-  either vocabulary, so the plumbing work would leave `micro_compact` truncating zero
-  blocks while *looking* live. **See also §B5**, which reaches the same fold-it-in-or-cut-it
-  decision from the config-continuity side — the two should be decided together, once.
-- **Epistemic thresholds (was step 11b).** `grep -rn '\.composite' halbert_core/` returns
-  zero hits: the proposed 0.85 / 0.40 are thresholds on a knob nothing reads. Two of the
-  design doc's numbers could not have come from the scorer they name — the Phase-72 floor
-  gate makes 0.31–0.43 a dead band, and 0.85 is unreachable with `cross_reference_count=0`.
-
-**Tier: n/a.** Reopen only with new evidence, and put the evidence in the note.

