@@ -167,3 +167,34 @@ class TestDetectionTimestamp:
         assert row["timestamp"] == 500.0, (
             "after an MQTT reconnect the backlog would all land at 'now'"
         )
+
+
+class TestTheLedgerIsNotLoadBearing:
+    """Halbert must still see the front door open when it cannot write it down.
+
+    Both mappers take ``timeline=None`` and warn, so degrading is the designed
+    behaviour -- but ``get_timeline_store()`` constructs eagerly and any
+    failure there propagates out through the mapper getters, so an unwritable
+    data directory takes the whole integration down rather than just the
+    ledger. An observation source must not depend on the ledger that observes
+    it.
+    """
+
+    def test_an_unwritable_data_dir_does_not_kill_the_ha_mapper(self, monkeypatch, tmp_path):
+        import halbert_core.integrations.cognition_wiring as cw
+
+        unwritable = tmp_path / "ro"
+        unwritable.mkdir()
+        unwritable.chmod(0o500)
+        monkeypatch.setenv("HALBERT_DATA_DIR", str(unwritable / "nested"))
+        monkeypatch.setattr(cw, "_timeline_store", None, raising=False)
+
+        store = cw.get_timeline_store()
+        assert store is None, "an unusable ledger should be absent, not raise"
+
+        mapper = HAEventMapper(timeline=store)
+        mapper.add_event({
+            "entity_id": "lock.front_door", "domain": "lock",
+            "old_state": "locked", "new_state": "unlocked",
+            "attributes": {"friendly_name": "Front door"}, "timestamp": 1000.0,
+        })  # must not raise

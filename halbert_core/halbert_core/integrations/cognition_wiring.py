@@ -28,6 +28,7 @@ _ha_event_stream = None
 _frigate_event_mapper = None
 _trackers = None
 _timeline_store = None
+_timeline_store_failed = False
 
 # Multi-instance: ensure Haloysius memory tree follows HALBERT_DATA_DIR
 # so persona memory stores are fully isolated per instance.
@@ -468,20 +469,39 @@ def get_trackers():
 
 
 def get_timeline_store():
-    """Get or create the singleton TimelineStore instance.
+    """Get or create the singleton TimelineStore instance, or None.
 
     The persistent event ledger (HA state changes, Frigate detections,
-    system events, occupancy). Always constructed — no capability gate,
+    system events, occupancy). Always attempted -- no capability gate,
     unlike ``get_event_mapper()``'s sources: a local SQLite file has
     nothing to probe. Path resolved through ``TimelineStore``'s own
     default (``utils.paths.data_dir()``), so ``HALBERT_DATA_DIR`` is
     honoured (CFG-1). Logged once here, at first construction.
+
+    Returns None if the store cannot be created -- an unwritable data
+    directory, a corrupt file, a full disk. Both mappers already accept
+    ``timeline=None`` and warn, because an observation *source* must not
+    depend on the ledger that observes it: Halbert should still see the
+    front door open on a machine where it cannot write that down. Raising
+    here would propagate out through the mapper getters and take the whole
+    HA and Frigate integration with it.
+
+    Logged at ERROR, not swallowed: a ledger that is silently absent is
+    the defect this branch exists to close, one layer up.
     """
-    global _timeline_store
-    if _timeline_store is None:
+    global _timeline_store, _timeline_store_failed
+    if _timeline_store is None and not _timeline_store_failed:
         from ..continuity.timeline import TimelineStore
 
-        _timeline_store = TimelineStore()
+        try:
+            _timeline_store = TimelineStore()
+        except Exception as e:
+            _timeline_store_failed = True
+            logger.error(
+                f"Timeline store unavailable ({type(e).__name__}: {e}); events "
+                f"will reach cognition but will not be durably recorded"
+            )
+            return None
         logger.info(f"Timeline store created at {_timeline_store.db_path}")
     return _timeline_store
 
@@ -590,7 +610,7 @@ def start_ha_event_stream() -> None:
 
 def shutdown():
     """Clean shutdown of background threads and trackers."""
-    global _event_mapper, _cognition, _trackers, _ha_event_mapper, _ha_event_stream, _frigate_event_mapper, _timeline_store
+    global _event_mapper, _cognition, _trackers, _ha_event_mapper, _ha_event_stream, _frigate_event_mapper, _timeline_store, _timeline_store_failed
     if _event_mapper is not None:
         _event_mapper.stop_background_scan()
         _event_mapper = None
@@ -600,4 +620,5 @@ def shutdown():
     _cognition = None
     _trackers = None
     _timeline_store = None
+    _timeline_store_failed = False
     logger.info("Cognition wiring shut down")
