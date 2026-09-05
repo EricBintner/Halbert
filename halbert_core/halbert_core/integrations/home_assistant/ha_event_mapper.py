@@ -18,6 +18,7 @@ import time
 from typing import Any, Dict, List, Optional
 
 from ...continuity.timeline import TimelineEvent, TimelineStore
+from ..observation_text import normalise_entity_id
 
 logger = logging.getLogger("halbert.integrations.home_assistant.event_mapper")
 
@@ -95,7 +96,7 @@ class HAEventMapper:
         """
         if self._timeline is None:
             return
-        entity_id = event.get("entity_id", "")
+        entity_id = normalise_entity_id(event.get("entity_id", ""))
         domain = event.get("domain", "")
         old_state = event.get("old_state", "")
         new_state = event.get("new_state", "")

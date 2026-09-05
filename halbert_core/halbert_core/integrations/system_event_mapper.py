@@ -97,13 +97,14 @@ class SystemEventMapper:
             return
         try:
             from ..continuity.timeline import TimelineEvent
+            from .observation_text import normalise_observation_title
 
             self._timeline.record(TimelineEvent(
                 timestamp=event.get("timestamp") or time.time(),
                 event_type=event["type"],
                 source=event["source"],
                 severity=event["severity"],
-                title=event["detail"],
+                title=normalise_observation_title(event["detail"]),
             ))
         except Exception as e:
             logger.warning(f"Could not record system event to timeline: {e}")

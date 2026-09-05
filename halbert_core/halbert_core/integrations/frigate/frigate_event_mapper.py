@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from ...continuity.timeline import TimelineEvent, TimelineStore
+from ..observation_text import normalise_entity_id
 from .frigate_mqtt_subscriber import (
     EVENT_TYPE_END,
     EVENT_TYPE_NEW,
@@ -203,7 +204,7 @@ class FrigateEventMapper:
                 timestamp=timestamp,
                 event_type="frigate_event",
                 source="frigate",
-                entity_id=f"{camera}:{sub_label or label}",
+                entity_id=normalise_entity_id(f"{camera}:{sub_label or label}"),
                 data={
                     "type": event_type,
                     "frigate_event_id": state.get("id", ""),
