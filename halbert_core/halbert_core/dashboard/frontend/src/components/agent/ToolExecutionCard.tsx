@@ -82,6 +82,7 @@ export function ToolExecutionCard({
   const blockDuration = blockDurationProp ?? execution.blockDuration;
   const outputHead = outputHeadProp ?? execution.blockOutputHead;
   const outputTail = outputTailProp ?? execution.blockOutputTail;
+  const elidedLines = execution.blockElidedLines;
   // The whole-blob prop has no execution equivalent: head/tail is what the
   // host actually sends, and `frozenOutput` below prefers it anyway.
   const blockOutput =
@@ -139,9 +140,19 @@ export function ToolExecutionCard({
   // marker between, claiming a cut that never happened. The elision is only
   // honest when the two halves actually differ -- the same rule the backend
   // already applies in _format_block_result.
+  // What the gap between the two halves says. A bare "…" reports that
+  // something was cut without saying how much, and a reader cannot tell
+  // "this is all of it" from "there is more". The host counts it, because
+  // head and tail between them do not know the length of what sits in the
+  // middle. Undefined stays unlabelled: better an unmarked elision than a
+  // confident "0 lines" that is not known to be true.
+  const elisionMarker =
+    elidedLines && elidedLines > 0
+      ? `\n\u2026 ${elidedLines.toLocaleString()} lines elided \u2026\n`
+      : '\n\u2026\n';
   const frozenOutput = hasHeadTail
     ? outputHead && outputTail && outputHead !== outputTail
-      ? `${outputHead}\n\u2026\n${outputTail}`
+      ? `${outputHead}${elisionMarker}${outputTail}`
       : outputHead || outputTail
     : blockOutput;
 

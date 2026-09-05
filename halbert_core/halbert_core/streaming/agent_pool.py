@@ -262,6 +262,20 @@ class TerminalPool:
             head = "\n".join(lines[:20])
             tail = output_text[-4096:] if len(output_text) > 4096 else output_text
 
+            # How much fell between the two halves. The frontend receives head
+            # and tail and nothing else, so it cannot work this out: neither
+            # half knows the length of what sits between them. Without a
+            # number the card can only print a bare "…", which says something
+            # was cut without saying how much -- and a reader cannot tell
+            # "this is all of it" from "there is more".
+            total_lines = len(lines)
+            head_lines = min(20, total_lines)
+            tail_line_count = len(tail.split("\n")) if tail else 0
+            elided_lines = max(0, total_lines - head_lines - tail_line_count)
+            # Head and tail overlap for anything short enough to fit in both,
+            # which is the common case; the max() above already floors that to
+            # zero rather than reporting a negative elision.
+
             # Redact
             head, head_redacted = redact(head)
             tail, tail_redacted = redact(tail)
@@ -283,6 +297,10 @@ class TerminalPool:
                 "duration": duration,
                 "output_head": head,
                 "output_tail": tail,
+                # Zero rather than absent: "nothing was cut" is a fact worth
+                # stating, and an absent field renders the same as an unknown.
+                "output_elided_lines": elided_lines,
+                "output_total_lines": total_lines,
             })
 
             # Released here on the success path so the slot is free before the
@@ -297,6 +315,7 @@ class TerminalPool:
                 "exit_code": exit_code if exit_code is not None else -1,
                 "output_head": head,
                 "output_tail": tail,
+                "output_elided_lines": elided_lines,
                 "duration": duration,
                 "started_at": started_at,
                 "ended_at": ended_at,

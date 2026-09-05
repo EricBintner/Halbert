@@ -133,6 +133,7 @@ export function executionFromBlock(block: TimelineToolBlock, fallbackId: string)
     blockDuration: block.duration,
     blockOutputHead: block.outputHead,
     blockOutputTail: block.outputTail,
+    blockElidedLines: block.elidedLines,
   };
 }
 

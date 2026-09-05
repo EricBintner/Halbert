@@ -2,7 +2,7 @@
 // Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 /**
  * NodeFleetCockpit tests (FE-15 audit cleanup) — covers the fleet grid
- * built from listFleetNodes(): the empty "Pair a Satellite" state, node
+ * built from listFleetNodes(): the empty "Link a body" state, node
  * cards (status badge, vitals, capabilities, footer endpoint), the 15s
  * auto-refresh poll (REFRESH_INTERVAL_MS), a fetch failure surfaced as a
  * banner, and the dual-action Inspect/Switch affordances (§11.2).
@@ -74,15 +74,15 @@ const OFFLINE_NODE: FleetNodeStatus = {
 }
 
 describe('NodeFleetCockpit', () => {
-  it('renders the empty state with a Pair a Satellite CTA and opens the pairing modal', async () => {
+  it('renders the empty state with a Link a body CTA and opens the pairing modal', async () => {
     const user = userEvent.setup()
     listFleetNodesMock.mockResolvedValue([])
     render(<NodeFleetCockpit />)
 
-    expect(await screen.findByText('No satellites paired')).toBeTruthy()
-    expect(screen.getByText(/pair a raspberry pi, homelab server, or laptop/i)).toBeTruthy()
+    expect(await screen.findByText('No other bodies yet')).toBeTruthy()
+    expect(screen.getByText(/link a raspberry pi, homelab server, or laptop/i)).toBeTruthy()
 
-    await user.click(screen.getByRole('button', { name: /pair a satellite/i }))
+    await user.click(screen.getByRole('button', { name: /link a body/i }))
     expect(await screen.findByText('Mock Peer Pairing Modal')).toBeTruthy()
   })
 

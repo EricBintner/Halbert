@@ -508,3 +508,78 @@ class TestTheTurnRemembersWhichCallRanWhichBlock:
 
         assert machine.ctx.terminal_block_ids == ["term-1"]
         assert machine.ctx.block_executions == {}
+
+
+class TestTheElisionSaysHowMuchIsMissing:
+    """A reader must be able to tell "this is all of it" from "there is more".
+
+    head is the first 20 lines and tail is the last 4 KiB, so for a long
+    command the middle is simply gone. The card joined the two halves with a
+    bare "…", which says something was cut without saying how much -- and for
+    a short command, where head and tail are the same string, said nothing at
+    all because there was nothing to join.
+
+    open-claude-code gets the principle right with "[output truncated at
+    1MB]". The frontend cannot compute the number: head and tail are all it
+    receives, and neither knows the length of what sits between them.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_long_output_reports_the_lines_it_elided(self, monkeypatch):
+        from halbert_core.streaming import agent_pool as pool_mod
+
+        published = []
+        monkeypatch.setattr(pool_mod, "publish_terminal_event", published.append)
+
+        m, pool = _make_manager_with_pool()
+        try:
+            # 400 lines: comfortably past the 20-line head, and the 4 KiB tail
+            # cannot reach back to line 21.
+            result = await pool.run_block(
+                "for i in $(seq 1 400); do "
+                "printf 'line %d padding padding padding padding padding\\n' $i; done",
+                timeout=20.0,
+            )
+            assert result is not None
+        finally:
+            await pool.shutdown()
+
+        done = next(p for p in published if p["kind"] == "complete")
+        assert done["output_elided_lines"] > 0, (
+            "a 400-line output reported nothing elided"
+        )
+        assert done["output_total_lines"] >= 400
+
+    @pytest.mark.asyncio
+    async def test_a_short_output_elides_nothing(self, monkeypatch):
+        from halbert_core.streaming import agent_pool as pool_mod
+
+        published = []
+        monkeypatch.setattr(pool_mod, "publish_terminal_event", published.append)
+
+        m, pool = _make_manager_with_pool()
+        try:
+            assert await pool.run_block("printf 'one\\ntwo\\n'", timeout=10.0) is not None
+        finally:
+            await pool.shutdown()
+
+        done = next(p for p in published if p["kind"] == "complete")
+        # Zero, not absent: "nothing was cut" is a fact worth stating, and an
+        # absent field would render the same as an unknown one.
+        assert done["output_elided_lines"] == 0
+
+    def test_the_event_relays_the_count(self):
+        event = AgentStateMachine._terminal_event("s1", {
+            "kind": "complete",
+            "terminal_session_id": "term-1",
+            "block_id": "blk-1",
+            "exit_code": 0,
+            "duration": 1.0,
+            "output_head": "a",
+            "output_tail": "z",
+            "output_elided_lines": 4812,
+            "output_total_lines": 4850,
+        })
+
+        assert event.data["output_elided_lines"] == 4812
+        assert event.data["output_total_lines"] == 4850

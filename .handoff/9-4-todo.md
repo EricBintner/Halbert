@@ -300,7 +300,7 @@ together. The real terminal lives in the conversation and the tasks column.
 **Tier: fable · Effort: med.** Depends on: **C1**, so the shell has somewhere
 to be first.
 
-### C3 — Aggregate StatusLight in the top bar
+### C3 — Aggregate StatusLight in the top bar ✅ DONE (`733f408c`)
 
 **What.** TERM-1's last row. `ContextStage` already takes an
 `aggregateStatusLight` prop for the mobile sheet toggle; nothing passes one,
@@ -317,7 +317,7 @@ same node passed into `ContextStage` for the mobile sheet.
 **Tier: sonnet · Effort: med.** Depends on: nothing (`useTasks` from
 `4a862fee` already derives the state).
 
-### C4 — Label the elision
+### C4 — Label the elision ✅ DONE (`733f408c`)
 
 **What.** Strategy doc T7, partially done. `8cb65c85` fixed a short block
 printing its output twice; the elision between head and tail is still a bare
@@ -334,7 +334,7 @@ from head and tail alone.
 
 **Tier: sonnet · Effort: med.**
 
-### C5 — Mount `NodeFleetCockpit`
+### C5 — Mount `NodeFleetCockpit` ✅ DONE (`733f408c`, at `/bodies`)
 
 **What.** The all-bodies health view: a grid of paired machines with CPU, RAM,
 temperature, uptime and services, with per-card *Inspect* and *Switch active
@@ -414,10 +414,44 @@ the change under test is a suite people stop reading.
 controllable clock. Check the neighbours in the same file while there;
 `test_timeout_is_enforced_off_the_main_thread` does a real `time.sleep(5)`.
 
-**Tier: sonnet · Effort: med.** A background task chip already exists for this
-(`task_b28f415d`).
+**Investigated 2026-09-04, not fixed.** Two dead ends ruled out, so the next
+person starts ahead of where I did:
 
-### D3 — Stale ROADMAP status rows
+* **It is not a misfire.** `job_defaults` already sets
+  `misfire_grace_time: 60` (`scheduler/executor.py:196`) — far more slack than
+  a 0.3 s schedule needs.
+* **The likely contributor is teardown.** Both the `executor` and
+  `guarded_executor` fixtures end with `ex.stop(wait=False)`
+  (`tests/test_scheduler_executor.py:70`). Eleven tests in the file each start
+  a `BackgroundScheduler` with its own `ThreadPoolExecutor`, and none waits for
+  the previous one to finish shutting down. In a full-suite run that is a
+  growing pile of half-stopped schedulers competing for the same CPU as five
+  thousand other tests.
+
+Whoever takes this: reproduce **under load**, not in isolation — it has never
+failed alone — and try `stop(wait=True)` in the fixtures before touching the
+test's timings. Lengthening a timeout makes the symptom go away without
+establishing what was slow, which is how a flake becomes permanent.
+
+**Tier: sonnet · Effort: med.** Task chip: `task_b28f415d`.
+
+### D2b — `module_invoke` StrictMode flake (frontend)
+
+**What.** `hooks/useAgentStream.strictmode.test.tsx`, "records one module
+invocation per module_invoke event", fails intermittently in full parallel runs
+and has never failed in isolation.
+
+**Why it matters.** Same reason as D2, and it is now a **second sighting across
+two sessions** — which is what promotes it from noise to a defect.
+
+**Where to start.** `useAgentStream` batches streamed text through
+`requestAnimationFrame` and commits once per frame, and holds buffers in module
+state. Either module state leaking between test files, or an assertion that
+depends on a frame having been committed.
+
+**Tier: sonnet · Effort: med.** Task chip: `task_a1d8024f`.
+
+### D3 — Stale ROADMAP status rows ✅ DONE (LEDGER-1 by a concurrent session at `a3f9adea`; TERM-1 here)
 
 **What.** Two rows describe a world that changed under them.
 
@@ -480,7 +514,7 @@ this document except the two founder answers called out below.
 | # | Item | Tier | Effort | Blocked by |
 |---|---|---|---|---|
 | 1 | **A2** CAS refusal policy | opus | med | **founder answer** |
-| 2 | **D3** stale ROADMAP rows | fable | med | — |
+| ~~2~~ | ~~**D3** stale ROADMAP rows~~ | — | — | **done** |
 | 3 | **A3** reconcile the backup stores | sonnet | high | — |
 | 4 | **B1** `GET /api/state/recent-configs` | sonnet | med | A3 |
 | 5 | **B2** `RecentConfigsDock` | sonnet | high | B1 |
@@ -488,25 +522,22 @@ this document except the two founder answers called out below.
 | 7 | **A1** `run_command` on the ledger | opus | xhigh | — |
 | 8 | **C1** `YourShellRegion` | sonnet | high | — |
 | 9 | **C2** retire `/terminal` | fable | med | C1 |
-| 10 | **C3** aggregate StatusLight | sonnet | med | — |
-| 11 | **C5** mount the cockpit | sonnet | med | — |
+| ~~10~~ | ~~**C3** aggregate StatusLight~~ | — | — | **done** |
+| ~~11~~ | ~~**C5** mount the cockpit~~ | — | — | **done** |
 | 12 | **D1** safety read-only defaults | opus | med | — |
 | 13 | **B4** prompt hydration | opus | high | — |
-| 14 | **C4** label the elision | sonnet | med | — |
+| ~~14~~ | ~~**C4** label the elision~~ | — | — | **done** |
 | 15 | **B5** micro-compaction: fold or cut | sonnet / fable | med | — |
 | 16 | **D2** scheduler flake | sonnet | med | — |
 | 17 | **D4** the split config directories | fable | med | **founder answer** |
 | 18 | **D5** two-machine hardware run | opus | high | — |
 
-### A fan-out worth considering
+### The fan-out, mostly spent
 
-Items **8, 10, 11, 14** are four independent frontend pieces with no shared
-state: the shell region, the aggregate light, the cockpit mount, and the
-elision label. They touch different files, each has its own verification, and
-none blocks another.
-
-**Tier: ultracode · Effort: high.** Only if you want them at once — there is no
-correctness argument for parallelising them, just wall-clock.
+Items 10, 11 and 14 — the aggregate light, the cockpit mount and the elision
+label — were done sequentially on `feat/todo-obvious` and are struck through
+above. **C1** (the shell region) is the one that remains, and on its own it is
+not a fan-out.
 
 Do **not** fan out **A1**, **A2**, **B4** or **D1**. Each is a judgement about
 an invariant, and the failure mode of getting one plausibly-but-wrongly right
