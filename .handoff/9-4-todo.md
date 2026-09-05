@@ -247,3 +247,118 @@ own routes. Building a third would give Halbert three answers to one question.
 "Step 9 is CUT rather than deferred".
 
 **Tier: sonnet · Effort: med.** Or **fable · med** if the decision is to cut.
+
+---
+
+## C. The conversation surface — what the CLI work left
+
+### C1 — `YourShellRegion` is written and mounted nowhere
+
+**What.** The admin's own shell, pinned in the tasks column: a real xterm, a
+watched/unwatched toggle, an unhooked badge when OSC 133 markers are missing,
+and a stage-a-command input.
+
+**Why it matters.** It is the user half of TERM-1. The agent half is real —
+the pool produces blocks, commands promote, tasks render. The person's own
+shell is a `ShellLauncher` button and nothing else, and the founder's recorded
+direction is that user shells *stay* but are **watched by the AI**.
+
+**Where.** `components/agent/YourShellRegion.tsx`; the slot is already there —
+`TasksColumn`'s `yourShell` prop, currently filled by `ShellLauncher`.
+
+**The unfinished part.** Its terminal mount point is a bare `div` with a
+comment saying *"the parent fills this with an xterm instance"*. No parent
+does. Whoever picks this up is writing that parent.
+
+**Definition of done.** A real shell in the right column that the agent can
+read blocks from; watched toggle round-trips to the backend; the unhooked badge
+appears when the rc files are not installed. `ShellLauncher` stays or is
+absorbed — but **the ability to open a shell must not disappear**, which is
+what nearly happened when the accordion was deleted.
+
+**Tier: sonnet · Effort: high.** Depends on: nothing.
+
+### C2 — Retire the legacy `/terminal` page
+
+**What.** `pages/Terminal.tsx` is still routed at `App.tsx:120`.
+
+**Why it matters.** `HALBERT-CLEANUP-AND-WIRING-PLAN-2026-08-27` calls it
+*"the best single deletion in the frontend"*: it advertises an "AI-enhanced
+shell with /explain /dryrun", reports "● Connected to local shell" while
+connecting to nothing, and answers every slash command from
+`simulateAIResponse` with a hardcoded string after a fake 1000 ms think —
+`/fix` returns the same three suggestions regardless of what failed. It is a
+page that lies about being connected.
+
+**Where.** `App.tsx:7,120`, `pages/Terminal.tsx`, the `/terminal` nav entry in
+`Layout.tsx`, and `SPA_ROUTES` in `dashboard/app.py` (`test_spa_routes.py`
+keeps the two in step and will fail if you forget).
+
+**Definition of done.** Route, page, nav entry and SPA allowlist entry gone
+together. The real terminal lives in the conversation and the tasks column.
+
+**Tier: fable · Effort: med.** Depends on: **C1**, so the shell has somewhere
+to be first.
+
+### C3 — Aggregate StatusLight in the top bar
+
+**What.** TERM-1's last row. `ContextStage` already takes an
+`aggregateStatusLight` prop for the mobile sheet toggle; nothing passes one,
+and there is none in the desktop top bar.
+
+**Why it matters.** With the tasks column now mounted, a long-running command
+is visible only if the right column is open. The aggregate light is how the
+machine says "something is running" when you are not looking at it.
+
+**Definition of done.** One light in the top bar reflecting the worst state
+across running tasks (`needs_attention` > `error` > `running` > idle), and the
+same node passed into `ContextStage` for the mobile sheet.
+
+**Tier: sonnet · Effort: med.** Depends on: nothing (`useTasks` from
+`4a862fee` already derives the state).
+
+### C4 — Label the elision
+
+**What.** Strategy doc T7, partially done. `8cb65c85` fixed a short block
+printing its output twice; the elision between head and tail is still a bare
+`…`.
+
+**Why it matters.** A reader cannot tell "this is all of it" from "there is
+more, and I am not showing you". `open-claude-code` gets this right with
+`[output truncated at 1MB]`.
+
+**Definition of done.** The host sends how much was elided (it has the full
+output; head/tail are slices) and the card renders `… 4,812 lines elided …`.
+Requires a field on the completion payload — the frontend cannot compute it
+from head and tail alone.
+
+**Tier: sonnet · Effort: med.**
+
+### C5 — Mount `NodeFleetCockpit`
+
+**What.** The all-bodies health view: a grid of paired machines with CPU, RAM,
+temperature, uptime and services, with per-card *Inspect* and *Switch active
+context*. Written, tested, imported by nothing.
+
+**Why it matters.** The founder's described model is bodies grouped by
+identity, switchable per tab. `PresencePill` does the switching; Settings ›
+Linked Devices does the management; there is no *see them all at once*.
+
+**Where.** New route (suggest `/bodies`), nav entry in `Layout.tsx`, and the
+matching `SPA_ROUTES` entry in `dashboard/app.py`.
+
+**A note on a false lead, so nobody repeats it.** I initially flagged this as
+blocked on a commercial decision, having found "Multi-Host Server Fleet
+Cockpit" listed as a paid tier in
+`documentation/legal/OPEN-CORE-AND-DISTRIBUTION-STRATEGY.md`. **The founder has
+confirmed that document is brainstorming and not a constraint.** It is an
+ordinary wiring gap. Treat that whole document as unratified unless told
+otherwise.
+
+**Vocabulary.** The nav entry and headings use **Body**, not Node — the
+alignment doc's terminology table lists node, instance, host-as-noun and
+satellite under *avoid*. The component's internal `node_id` field names are
+fine; it is the noun on screen that matters. `EntityIdentityCard` was fixed in
+`df929ea8`; the cockpit's own strings ("Pair a Satellite") have not been.
+
+**Tier: sonnet · Effort: med.**
