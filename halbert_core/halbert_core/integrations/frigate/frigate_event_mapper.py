@@ -282,34 +282,23 @@ class FrigateEventMapper:
 
         camera = state.get("camera", "unknown")
         label = state.get("label", "unknown")
-        sub_label = state.get("sub_label")
         zones = state.get("current_zones", []) or []
-        score = state.get("top_score", 0.0) or state.get("score", 0.0)
         event_id = state.get("id", "")
 
-        # Build a human-readable description
-        zone_str = f" in {', '.join(zones)}" if zones else ""
-        sub_str = f" ({sub_label})" if sub_label else ""
-
+        # The prose for this event is built by describe_detection() at
+        # ingestion and lives on the ledger row. This method is affect only.
         if event_type == EVENT_TYPE_NEW:
-            desc = f"Detected {label}{sub_str} at {camera}{zone_str}"
-            self._add_observation(cognition, desc)
             self._apply_label_emotion(cognition, label, camera, zones, event_id)
 
         elif event_type == EVENT_TYPE_UPDATE:
             # Zone changes are significant — entering a new zone
             before = payload.get("before") or {}
             before_zones = set(before.get("current_zones", []) or [])
-            after_zones = set(zones)
-            new_zones = after_zones - before_zones
+            new_zones = set(zones) - before_zones
             if new_zones:
-                desc = f"{label}{sub_str} entered {', '.join(new_zones)} at {camera}"
-                self._add_observation(cognition, desc)
                 self._apply_label_emotion(cognition, label, camera, list(new_zones), event_id)
 
         elif event_type == EVENT_TYPE_END:
-            desc = f"{label}{sub_str} left {camera}{zone_str}"
-            self._add_observation(cognition, desc)
             # Resolve the worry when a person leaves
             if label == "person":
                 self._resolve_worry(cognition, f"person_at_{camera}", "person left")
@@ -366,32 +355,18 @@ class FrigateEventMapper:
                 self._add_emotion(cognition, "ANTICIPATION", 0.3, source)
             else:
                 # Person elsewhere — mild awareness
-                self._add_observation(cognition, f"Person seen at {camera}")
                 self._add_emotion(cognition, "ANTICIPATION", 0.15, source)
 
         elif label in ("car", "vehicle"):
             if is_night and is_entry:
-                self._add_observation(cognition, f"Vehicle at {camera} at night")
                 self._add_emotion(cognition, "ANTICIPATION", 0.2, source)
-            else:
-                self._add_observation(cognition, f"Vehicle at {camera}")
 
         elif label in ("dog", "cat", "bird", "squirrel"):
             # Animals are routine — no cognitive effect unless unusual
             pass
 
         elif label == "package":
-            self._add_observation(cognition, f"Package detected at {camera}")
             self._add_emotion(cognition, "JOY", 0.2, source)
-
-    def _add_observation(self, cognition, text: str) -> None:
-        try:
-            if hasattr(cognition, "internal_state"):
-                cognition.internal_state.add_observation(text)
-            elif hasattr(cognition, "observations"):
-                cognition.observations.append(text)
-        except Exception as e:
-            logger.debug(f"Could not add observation: {e}")
 
     def _add_worry(
         self, cognition, content: str, source: str, category: str, intensity: float
