@@ -1,6 +1,24 @@
 # TODO: Observation lenses and the user-interest half — everything still open
 
-**Date**: 2026-09-05 · **Status:** ACTIVE — the open-work list for this workstream
+**Date**: 2026-09-05 · **Updated**: 2026-09-06 · **Status:** ACTIVE — the open-work list for this workstream
+
+> **2026-09-06 — branches 1 and 2 are merged to `main` (`755a3e29`, `3efd3145`).**
+> Verified on the merged tree, not from the branch logs: full suite `5598 passed,
+> 14 skipped`. §2's first two residue rows and the whole of §3 are done and struck
+> through below. Nothing else in this file has moved.
+>
+> **Landed:** A0, A1, A2, A2b, A2c · B1, B2, B3 · B5's `kind` field · B7 · the
+> worktree-isolation conftest · retention pruning at construction · `ERASURE_LIMITS`
+> naming the ledger · severity at the sink · `title` in the row contract.
+>
+> **Still open, in dependency order:** the founder calls in §1 (`CD-8`, `CD-9`,
+> `CD-10`, `C4-07`, `C2-03`, `RQ-1..9`) → branch 3 (A3/A4/A5) → branch 4 (C0/C1a)
+> → the `CD-1` gate → branches 5 and 6 → §8 and §9.
+>
+> **Highest-value thing not in any branch:** §11's first two rows. Two egress paths
+> reach the network with no `CAP_WEB` gate, against a stated invariant that every
+> egress path is gated. That is a live leak, not a plan gap, and it outranks the
+> remaining lens work.
 **ROADMAP rows:** `MIND-1` (`C4-04`), `STATE-1` (`J2-2`), `CFG-1` (`A2-02`), `SKILL-1`, `ATTN-2` (`C2-10`), `TRUST-1`; lens work is §4 Next
 **Plan of record:** `.handoff/HANDOFF-OBSERVATION-LENSES-2026-09-04.md` (rev 2.1) · **tiers:** `.handoff/DISPATCH-OBSERVATION-LENSES-2026-09-05.md` · **research:** `.handoff/HANDOFF-USER-INTEREST-MEMORY-RESEARCH-2026-09-05.md`
 **Rule:** `ROADMAP.md` alone says now / next / deferred. This file lists what is left and where each item lands; it moves nothing.
@@ -35,21 +53,42 @@ founder calls, code for other tiers, and upstream asks.
 
 | Item | Tier | Note |
 |---|---|---|
-| Periodic retention job: `TimelineStore.cleanup(90)` runs at construction only; the daemon never restarts | sonnet · med | APScheduler under the heartbeat (`MEM-04`); `RETENTION_DAYS` is the constant |
+| Periodic retention job: `cleanup(90)` runs at construction (**landed**); the daemon that never restarts still grows | sonnet · med | APScheduler under the heartbeat (`MEM-04`); `RETENTION_DAYS` is the constant |
 | Subject-scoped erasure of `occupancy_change` rows (a named person's movement history; `timeline_events` has no `request_id`) | opus · high | `ERASURE_LIMITS` names the ledger as unreached today; keep that sentence true until this lands |
 | DetectorRunner → `add_event`; rewrite `_scan_discovery` / `_check_critical_conditions` against `DiscoveryEngine` methods that exist | sonnet · high | until it lands a sysadmin ledger receives only VisualWatcher anomalies (dispatch §3.2) |
 | `PatternInferrer.infer_from_timeline` needs a since-last-run watermark before anything schedules it (re-upserts its whole window; ~7× inflation at a daily cadence) | sonnet · med | or scope it out; nothing calls it today |
 | The affective half: worries reach the prompt only by ~12 % random intrusion, emotions never; `to_prompt_block()` has no consumer | — | deferred explicitly under `CD-10`; `C4-05` territory |
 | Merge branch 1 into main; the handoff exists in two versions (rev 2 + D10 on `fix/observation-text-normalisation`, rev 2.1 here, a descendant) — take this branch's copy | whoever merges | rebase before the RESULTS row; line numbers drift |
 
-## 3. Branch 2 — `feat/skills-wired` = B1 + B2 + B3 (`SKILL-1`, opus, independent of branch 1)
+## 3. ~~Branch 2 — `feat/skills-wired` = B1 + B2 + B3~~ — **DONE, merged `3efd3145`**
 
-Spec: lenses §8 B1–B3 and §14 branch 2; `CD-6` decided. Done evidence is written there. Reminders that came out of review:
+All three of DEFECT-1's breaks are closed. What the work found on top of the
+spec, all measured before the fix:
+
+- `default_skill_dirs()` reads `Path.cwd()`, so with cwd = `$HOME` the daemon
+  loaded **twelve unrelated Claude Code skills** from `~/.claude/skills` as
+  Halbert skills — which B2 would have put into `messages[0]`. `daemon_skill_dirs()`
+  is builtin + `~/.config/halbert/skills` and nothing else.
+- `SENSITIVE_PATHS` held literal tildes while `_classify_write` compares against
+  expanded paths, so `~/.ssh/`, `~/.gnupg/` and `~/.config/` matched nothing. A
+  write to `$HOME/.config/halbert/skills/evil.md` was MEDIUM with no confirmation.
+- A same-named user file replaced a builtin outright, dropping its
+  `protected_paths`. Refused now, at WARNING.
+- `cwd` was never classified: `rm grub.cfg` with `cwd=/boot` was MEDIUM with no
+  confirmation while `cd /boot && rm grub.cfg` was HIGH.
+- The blocked-command fallback matched anywhere in the string, so `man mkfs` was
+  CRITICAL and blocked. Anchored to the head of each shell segment.
+
+**Left open deliberately:** `which mkfs.ext4` is still blocked by the *base*
+classifier's own unanchored `mkfs\.` regex — the same defect one level down,
+with a far wider blast radius to change. Its own row in §11.
+
+Original spec, kept for reference:
 
 - B1: trusted list only (`builtin` + `~/.config/halbert/skills`); no cwd; same-name override of a builtin refused or flagged; skill dirs into `SENSITIVE_PATHS` with the literal-`~/.config/` bug fixed; acceptance checks for the three routing effects that go live with the matcher alone.
 - B2: the seam is `AgentStateMachine._build_messages`; cap per skill and in total with a logged marker; the lens cap (250) is a separate number.
 - B3: install on `self.tools.safety` after intake, clear in the turn's `finally`, re-install on `confirm_action()` resume; classify the `cwd` tool argument; anchor the substring fallback to the first token; test a rule only the skill supplies (`zpool destroy*`), not `mkfs` which the base classifier already blocks.
-- `DOCS-1` half done: `ROLE-SCOPED-SKILLS` §11 status claims corrected 2026-09-05. Still to do there: nothing until B1–B3 land, then flip the annotations.
+- `DOCS-1`: `ROLE-SCOPED-SKILLS` §11 status claims corrected 2026-09-05. **Now due**: B1–B3 have landed, so flip the §12 annotations from "verified end to end against the live daemon" (it was verified through a directly-constructed matcher) to what is now actually true.
 
 ## 4. Branch 3 — `feat/eyes-timeline` = A3 + A4 + A5 (`MIND-1`, `STATE-1`; after branch 1; needs `CD-10`)
 
@@ -113,8 +152,9 @@ Observations-only input; `summarizer=None` unless `active_lens` is set and `lens
 | `_is_local_url` is URL-only; no `:cloud` tag assertion exists in `model/` although `being_config.py` states the rule | `TRUST-1` (before any scheduled model call) |
 | The scheduler's `enable_llm=False` is a dead flag nothing reads | `MIND-1` |
 | `knowledge_scope` is parsed and composed but consumed nowhere; keep for the research scope binding or remove | `KNOW-1` |
-| `_check_skill_safety` substring fallback over-blocks (`man mkfs` → CRITICAL) | `SKILL-1` B3 |
-| `test_agent_pool_cwd_injection` pins "the framework still does not classify cwd"; update when B3 classifies it | `SKILL-1` B3 |
+| ~~`_check_skill_safety` substring fallback over-blocks (`man mkfs` → CRITICAL)~~ — **fixed** `875d8f95` | `SKILL-1` B3 |
+| The **base** classifier's `mkfs\.` regex is unanchored the same way: `which mkfs.ext4` is CRITICAL and blocked. Not fixed with B3 — the base pattern set is large and loosening its matching could unblock something genuinely dangerous | `TRUST-1` |
+| ~~`test_agent_pool_cwd_injection` pins "the framework still does not classify cwd"~~ — **narrowed to the base classifier, with a companion asserting the skill pass now does** (`875d8f95`) | `SKILL-1` B3 |
 | `pages/Memory.tsx` is an unmounted ChromaDB browser whose Clear hard-deletes; do not mount it as the "about you" surface | `FENCE-1` |
 | The Consolidator's `preferred_entity` rows are last-entity-wins and withheld from the vault; document as machine-work recurrence or retire | `LEDGER-1` |
 
