@@ -1,7 +1,8 @@
 # HANDOFF: Observation Lenses — Review, Counter-Proposal, and Revised Plan
 
 **Date**: 2026-09-04 (rev 1) · **Revised**: 2026-09-05 (rev 2)
-**Status:** DRAFT — CD-1, CD-4, CD-5, CD-6 decided by the founder 2026-09-05 (logged in `DECISIONS.md`); CD-2, CD-3, CD-7, CD-8, CD-9, CD-10 open; branches 1 and 2 (§14) may be cut
+**Status:** DRAFT — rev 2.1 (2026-09-05, reconciled with branch 1 as shipped). Decided (`DECISIONS.md`, 2026-09-05): CD-1, CD-2, CD-3, CD-4, CD-5 (sub-question deferred, research brief opened), CD-6, CD-7, CD-11. Open: CD-8, CD-9, CD-10. Branch 1 landed on `fix/observation-sink`; branch 2 may be cut
+**Rev 2.1 changes**: §2.3 R16–R17 (two rev 2 claims the code corrected); A2's row contract (`title`, `severity`, the occupancy guard); A5 counts `end`; CD-11's noun through §6, §8, §9 C3, §10 D3, §11; B7 as shipped; §13 marks; §14 branch 1 as shipped; §15
 **ROADMAP rows:** Track A → `MIND-1` (`C4-04`) and `STATE-1` (`J2-2`, citable observation ids), with `CFG-1` (`A2-02`) for the store path; B1–B3 → `SKILL-1` (row added 2026-09-05); B4–B7, C1b, C2, C3 → §4 Next (CD-1 decided 2026-09-05; a `LENS-1` row is opened only after C1a has shipped and a week of Noticed sections has been read)
 **Supersedes**: `.handoff/HANDOFF-NERD-SCOPES-DYNAMIC-PERSONALITY-2026-09-04.md` (referred to below as "the original")
 **Verified against**: main `44fc501e`. Line numbers are as of that commit; this tree moves fast, so treat function names as the durable anchor.
@@ -112,7 +113,7 @@ Per ROADMAP rule (1) this document does not say now/next; it maps onto rows.
 | A4 (world rows into the pre-PLANNING block with ids) | `STATE-1` (`J2-2`) | STATE-1 owns the block; A4 is one input to it |
 | A5 (recurrence query) | `MIND-1` substrate | consumed by C1a and C2 |
 | B1–B3 (wire matcher, inject prompt, bind safety) | proposed new row `SKILL-1`; otherwise `KNOW-1` + `TRUST-1` (`C3-14`) | B1 is the DEFECT-1 fix, not knowledge work |
-| B4–B7, C1b, C2, C3 (lens kind, dial, gate, voiced report, remarks, UI) | none today → §4 Next, or a new row `LENS-1` | founder call, §13 CD-1 |
+| B4–B6, C1b, C2, C3 (lens schema and load path, dial, gate, voiced report, remarks, UI) | none today → §4 Next (CD-1 decided); `LENS-1` opens after C1a has shipped and a week of Noticed sections has been read | B7 shipped early on branch 1: the built-in lens and the `kind` field, inert until `active_lens` exists |
 | C0, C1a (report passes the gate at Balanced; deterministic Noticed section) | `ATTN-2` (`C2-10`) | existing open spine item |
 | D9 (user favourites → memory_v2; research ingestion) | `MEM-01` for the writer; deferral otherwise | must be carried or deferred explicitly, never dropped |
 
@@ -202,6 +203,8 @@ two independent readers of the code. Each row names the section it changed.
 | R13 | "A4: split the header — `## Recent Observations`" | `STATE-1` already specifies a deterministic Eyes pre-step with citable observation ids; `state_machine.py:3623-3626` records that plain strings cannot be cited; `timeline_events` rows carry an id. "Observation" already has four live senses. | A4, D3 |
 | R14 | Header: "ready for founder decision"; no row id | ROADMAP rule (4): status from the enum plus a row id. Rev 1 never cited `ROADMAP.md`, `DECISIONS.md`, `MIND-1`, `STATE-1`, `MEM-01`, `C2-10` or `C4-07`. | Header, §1.4, §13 |
 | R15 | Trim list is complete | Original §6 Layers 3–4 (user favourites; research RAG) and §6.1 were cut without a row; the founder's quoted requirement went with them. | §4, D9, §12, CD-5 |
+| R16 | A2 row contract: `event_type`, `source`, `entity_id`, `data` | The contract omitted `title` while A2c ("redact the title") and A4 (`[t{id}] Front door opened 07:41`) both assumed one. Implemented literally, the HA and Frigate mappers wrote rows with no prose — the half of DEFECT-2 that motivated the branch (branch 1 review, finding 2). `title` joined the contract in `5d5c7d0d`; `severity` followed in `b6f6fb50`. | A2 |
+| R17 | A5 counts only `type = new` | Frigate assigns `sub_label` (face, plate) *after* an object is first tracked, so `new` rows group as `front_door:person` and the plan's own example — "that grey van, three times" — is unreachable. One `end` per tracked object dedupes identically and carries the resolved `sub_label`. A5 counts `end` (`DECISIONS.md`, 2026-09-05). | A5, D6 |
 
 ---
 
@@ -544,7 +547,7 @@ whole of the remaining work — more than rev 1 said, still mostly connection.
 │                          ┌─────────────────────────────────┐             │
 │                          │ ACTIVE LENS (standing selection: │             │
 │                          │ BeingConfig.active_lens; a skill │             │
-│                          │ of kind: flavor)                 │             │
+│                          │ of kind: lens, CD-11)            │             │
 │                          │ selection = arithmetic (dial cap)│             │
 │                          │ voice = the file                 │             │
 │                          └───────────────┬─────────────────┘             │
@@ -628,18 +631,35 @@ Requirements:
 
 - **Do not silently drop again.** Log once at startup if no timeline; log the
   500-cap drop with a count, rate-limited.
-- **Row contract.** One row per Frigate message: `event_type="frigate_event"`,
-  `source="frigate"`, `entity_id=f"{camera}:{sub_label or label}"` (the Frigate
-  event id is unique per tracked object and never recurs),
+- **Row contract** (as shipped in branch 1; rev 2 omitted `title` and
+  `severity`, §2.3 R16). One row per Frigate message: `event_type="frigate_event"`,
+  `source="frigate"`, `entity_id=f"{camera}:{sub_label or label}"` (normalised;
+  the Frigate event id is unique per tracked object and never recurs),
+  **`title`** = the sentence the mapper already computes
+  (`describe_detection()`), normalised and redacted at the sink (A2c),
+  **`severity`** from an explicit table in the mapper (`_severity()`: a person at
+  an entry camera at night → `warning`; otherwise `info`), **`timestamp`** = the
+  detection's own `start_time` with receipt time as the fallback,
   `data={type: new|update|end, frigate_event_id, zones, score}`. The
   `_apply_label_emotion` strings ("Person seen at …", "Vehicle at … at night",
   "Package detected at …") are affect only, never a second row — otherwise a
   detection yields two to five rows and A5 counts 6–9 for three sightings.
   HA: `event_type="ha_state_change"`, `source="ha"`, `entity_id=<HA entity_id>`,
-  `data={domain, old_state, new_state, device_class}`; person/device_tracker
-  transitions additionally write `occupancy_change` with
-  `data={"direction": arrival|departure}` — the two shapes `PatternInferrer`
-  and `get_correlations()` already read.
+  **`title`** = the mapper's own sentence, normalised, **`severity`** from its
+  table (alarm triggered, water leak → `critical`; an unlocked entry door →
+  `warning`; otherwise `info`), `data={domain, old_state, new_state, device_class}`;
+  person/device_tracker transitions additionally write `occupancy_change` with
+  `data={"direction": arrival|departure}` — **only when the prior state is
+  known**: HA sends `old_state=None` when it first adds an entity and
+  `unavailable`/`unknown` whenever a Wi-Fi tracker drops off, so three of four
+  realistic transitions into `home` were forged arrivals until that guard
+  (`711e635d`). These are the two shapes `PatternInferrer` and
+  `get_correlations()` already read.
+- **Fail soft at the sink.** The recording step is wrapped so nothing in it can
+  escape into ingestion: a removed entity's null state object raised out of
+  `add_event` and lost the affect with the row (`3d44f1be`); an unwritable data
+  directory must degrade the ledger, never the HA integration that feeds it
+  (`2ceed3b2` — `get_timeline_store()` returns `None`, once, at ERROR).
 - **Fix the affect half while there.** Map `VIGILANCE` to an existing
   category (`ANTICIPATION` or `FEAR`) or add it to Haloysius `EmotionCategory`
   and the mood map; apply at `system_event_mapper.py:194,220`; fix
@@ -745,21 +765,26 @@ the STATE-1 heading within the existing bucket; a cited row resolves to a
 
 ### A5. Recurrence query (new code)
 
-`TimelineStore.count_by_entity(since, until=None, event_type=None, only_new=True)
+`TimelineStore.count_by_entity(since, until=None, event_type=None)
 -> Dict[str, Tuple[int, first_ts, last_ts]]` — `GROUP BY entity_id`, counting
-only `json_extract(data, '$.type') = 'new'` for Frigate rows (requires A2's
-row contract). Plain SQL, no new store. `PatternInferrer` does not cover this
-(§2.3 R4) and must not be scheduled before it has a since-last-run watermark.
+**`end` rows** for Frigate (`json_extract(data, '$.type') = 'end'`): one `end`
+per tracked object dedupes exactly as `new` would, and by then Frigate has
+resolved `sub_label`, so recurrence groups on a recognised identity where one
+exists. Rev 2 said `new`; that made the plan's own example unreachable (§2.3
+R17; `DECISIONS.md` 2026-09-05). Plain SQL, no new store. `PatternInferrer`
+does not cover this (§2.3 R4) and must not be scheduled before it has a
+since-last-run watermark.
 
 **Verification**: three objects each with `new`+`update`+`end` return a count
-of 3 with first/last timestamps.
+of 3 with first/last timestamps; an object whose `sub_label` arrives on
+`update` is counted under the labelled identity.
 
 ---
 
 ## 8. Track B — Wire skills, add the lens kind
 
-**Rows**: B1–B3 → proposed `SKILL-1` (else `KNOW-1` + `TRUST-1` `C3-14`);
-B4–B7 → `LENS-1` or §4 Next (§13 CD-1).
+**Rows**: B1–B3 → `SKILL-1` (row added 2026-09-05); B4–B6 → `LENS-1` or §4
+Next (CD-1 decided: Next, until C1a has shipped); B7 shipped on branch 1.
 **Rationale**: this is the delivery mechanism. B1–B3 are the DEFECT-1 fix and
 are independent of Track A; B4–B7 need §13 CD-2, CD-3, CD-6 and CD-9 first.
 **Decisions it needs first**: CD-6 for B1 (trust of skill directories).
@@ -855,7 +880,7 @@ proposing `run_command` asserts a denied result.
 
 A lens contributes nothing to the prompt when any of the following hold. The
 gate is `suppress_lens(composed, *, intent, approval_pending, open_findings,
-flavor_intensity, proactivity) -> Optional[reason]`, evaluated in the state
+lens_intensity, proactivity) -> Optional[reason]`, evaluated in the state
 machine at the assemble call (`:1745`) — the only place intake, context and
 the finding store meet — on **both** the trigger path and the explicit path
 (`match()` returns `_explicit()` first, so a matcher-side gate is bypassed by
@@ -868,7 +893,7 @@ impossible: `compose()` sees only skills.
 - `intent == "troubleshooting"` or `has_error_indicators` (diagnostic)
 - a per-turn `required_confirmation` flag, set where the confirmation is
   raised (`pending_confirmation` is never set at either prompt-build site)
-- proactivity dial `off`; flavor intensity `off`
+- proactivity dial `off`; lens intensity `off`
 - any open `critical` finding (`FindingStore.list_by_severity`; the gate takes a
   `finding_store` the way `ProactiveGate` does, and `get_agent()` passes one)
 
@@ -886,44 +911,56 @@ impossible: `compose()` sees only skills.
 turn — produces a prompt with no lens block, asserted on the prompt and naming
 the signal, not by inspecting model output.
 
-### B5. `kind: flavor` on the existing format
+### B5. `kind: lens` on the existing format (CD-11)
 
 Add to the `SKILL.md` frontmatter schema:
 
 ```yaml
-kind: flavor            # flavor | ops (default: ops)
+kind: lens              # lens | ops (default: ops)   — shipped on branch 1
 suppress_on: [destructive, diagnostic, incident]   # additive to B4's defaults
 ```
 
 (rev 1's `intensity: 0.6` is dropped: a string dial times a float is undefined
 and nothing would consume the product.)
 
+**Shipped on branch 1 with B7**: the `kind` field on `Skill` (`KINDS = ("ops",
+"lens")`), validated at parse time, threaded through `resolve_extends` (child
+wins); and the parse-time rule that **a lens is voice only** — a `kind: lens`
+file that declares triggers, role/scope, safety, `allowed_tools`, model or
+subagent is refused as a `SkillParseError`, so a user file cannot smuggle an
+ops skill in under a lens's trust. Still B5: `suppress_on`, the
+`active_skills` carve-out below, and the `~/.config/halbert/lenses/` load
+path (CD-11).
+
 Mechanics:
 
 - **Activation is a standing selection, not a match** (§13 CD-2).
   `BeingConfig.active_lens: str = ""`, validated on save against registry names
-  with `kind == "flavor"`, resolved by `SkillRegistry.get()` — the `_explicit()`
+  with `kind == "lens"`, resolved by `SkillRegistry.get()` — the `_explicit()`
   path — and subjected to B4. A lens needs no triggers. The matcher's only
-  change is to exclude `kind: flavor` from topical matching. "At most one lens"
+  change is to exclude `kind: lens` from topical matching. "At most one lens"
   is structural. `/skill <lens>` remains a per-turn explicit override.
 - **A lens never rides `active_skills`.** Carry it as
   `MessageIntake.active_lens: Optional[Skill]`; `compose()`, `_skill_model_tier()`
   and `ContextAssembler._composed_skills()` stay ops-only. Otherwise a lens
   with the parser default `model: chat` pins routing to the chat tier, is
   labelled `[Active Skill: <lens>]`, and folds into budget and retrieval
-  scoping. Flavor skills do not scope retrieval.
-- **Selection is arithmetic** (§13 CD-3): `count_by_entity` top-N by (count,
-  severity, recency), clamped by the dial cap. A machine-readable `observes:`
-  block (event_types, sources, min_severity, windows, max_items) mapping 1:1
-  onto `TimelineStore.query()` is added only when a second lens needs a
-  different selection.
+  scoping. Lenses do not scope retrieval.
+- **Selection is arithmetic and lens-independent** (CD-3, decided):
+  `count_by_entity` top-N by (count, severity, recency), clamped by the dial
+  cap. No `observes:` block and no "what this notices" prose in the file —
+  the model may phrase the selection; it may not choose it or add to it. If a
+  second lens ever needs a different selection, that is a new decision, not a
+  frontmatter field.
 - Thread `kind` and `suppress_on` through `registry.resolve_extends` (child
   wins / tuple union). `kind` is trusted only from operator-owned directories
-  (B1). Lens content is dropped entirely below MEDIUM.
+  (B1) — builtin and `~/.config/halbert/lenses/`. Lens content is dropped
+  entirely below MEDIUM.
 
-### B6. Global flavor intensity, and the active lens
+### B6. The lens dial, and the active lens
 
-Two `BeingConfig` fields — `flavor_intensity: str = "subtle"` and
+Two `BeingConfig` fields — `lens_intensity: str = "subtle"` (rev 2 said
+`flavor_intensity`; CD-11 names the layer, so the field follows it) and
 `active_lens: str = ""` — with the four touch points each: the dataclass field
 and its `VALID_*` set in `validate()`, the `BeingConfigUpdate` pydantic field,
 the mutate branch in `update_being_config`, and the control in
@@ -935,28 +972,26 @@ The dial has a deterministic effect: **Off = 0, Subtle = 1, Flavorful = 3
 selected rows**, clamping the selection. `off` ⇒ zero rows ⇒ no block ⇒ the
 byte-identical check in §15 follows by construction.
 
-### B7. One built-in lens
+### B7. One built-in lens — shipped 2026-09-05 on branch 1
 
-Ship exactly one so the shape is concrete and reviewable, inactive by default
-(`active_lens` empty). Body structure:
+`skills/builtin/understated/SKILL.md`, `kind: lens`, inactive by default
+(`active_lens` empty). 171 words: an opening line that states the contract
+(the rows were chosen before the model saw them — phrase them; do not choose,
+drop or add), *How it says so* (state the observation; one sentence each;
+specific beats clever; dry; plain words), *What it does not do* (no metaphors
+unless asked why; no naming of hardware, software or people for colour; no
+advice or diagnosis — that is a finding's job; nothing when the list is empty),
+and three sentences of register for calibration, of which the first is §4.2's
+own example. No canon list, no analogy bank, no recommendations section, and —
+under CD-3 — no "what this lens notices" section; selection is code.
 
-```markdown
-## How it says so
-- Understated. State the observation; let it carry its own weight.
-- One sentence. Never two.
-- Never during recovery, diagnosis, or a destructive operation.
-
-## What it does not do
-- No metaphors unless the reader asked "why".
-- No name-dropping hardware for flavor.
-```
-
-Note what is absent: no canon list, no analogy bank, no recommendations
-section, and — under CD-3(b) — no "what this lens notices" prose either;
-selection is code. A role-less builtin turns `tests/test_skills_builtin.py:39`
-(`set(builtins) == EXPECTED`) and `:44` (`assert skill.role`) red: add the
-lens to `EXPECTED` and scope the role assertion to `kind == "ops"` in the same
-commit. Order B5 → B7.
+The built-in lives with the built-in skills because there is one loader (D2);
+the user's own lenses load from `~/.config/halbert/lenses/` once B5 lands.
+`tests/test_skills_builtin.py` now carries `EXPECTED_OPS` and `EXPECTED_LENSES`,
+scopes the role/prompt/unique-role assertions to `kind == "ops"`, and asserts
+the lens is voice only (no triggers, role, scope, safety or tools), fits its
+budget (≤ 180 words against invariant 7's 250-token lens cap), contains no
+selection prose, and never matches a topical turn.
 
 ---
 
@@ -995,14 +1030,14 @@ gets its first test.
 
 ### C1b. The lens voice (a model call — only if CD-7 allows)
 
-- `summarizer=None` unless `active_lens` is set **and** `flavor_intensity != "off"`.
+- `summarizer=None` unless `active_lens` is set **and** `lens_intensity != "off"`.
   This is `C4-07`'s opt-in ("report LLM summary opt-in", open, default ratify);
   cite it at the call site. With no lens active the body is byte-identical to
   the template.
 - The summarizer receives **only the Noticed lines**, never findings, proposals
   or config changes. Today `body = summarized` replaces everything while
   severity is computed from findings the model may have dropped. Change the
-  contract (a `flavor_fn` over the Noticed section spliced back in) rather than
+  contract (a `voice_fn` over the Noticed section spliced back in) rather than
   reuse the whole-body rewrite. The lens phrases the selected rows and may not
   add rows (invariant 2).
 - Thread a model handle: `register_proactive_jobs` → `create_autonomous_task(…,
@@ -1033,9 +1068,10 @@ under the one-conversation directive.
 
 New surface, not an extension:
 
-- `/api/skills` list — ops and lenses together, filterable by kind, each with
-  its **source directory** shown. No such route exists today; no frontend
-  file mentions "skill".
+- `/api/skills` list — ops skills and lenses together, filterable by `kind`,
+  each with its **source directory** shown. CD-11: a `kind: lens` entry is a
+  *lens* on every surface, never a *skill*. No such route exists today; no
+  frontend file mentions "skill".
 - Raw markdown read (and edit, if wanted) via `/api/editor/file` GET/POST.
   Every directive must be readable on disk; kept verbatim from the original
   §7.3. State which of the original's create/edit/delete/pin survive (§12).
@@ -1044,8 +1080,8 @@ New surface, not an extension:
   event list view, if built, is a new read route over `TimelineStore.query()`
   plus its own component, named neither "observations" nor bare "timeline";
   the somatic-block stream is rendered nowhere and does not provide it.
-- No `dangerouslySetInnerHTML` for observation titles or skill bodies
-  (`44fc501e`).
+- No `dangerouslySetInnerHTML` for observation titles, skill bodies or lens
+  bodies (`44fc501e`).
 
 ---
 
@@ -1067,10 +1103,12 @@ load-bearing (`canonical_scope_id()`, `knowledge_scope`, `resolve_retrieval_scop
 SourcePrep scope ids). So is **"observation"** — `ctx.observations` (tool
 output), Haloysius `ObservationStore` (`MEM-01`), `STATE-1`'s citable
 observation ids, `A1-11`'s SourcePrep observations — and **"timeline"** —
-`/api/agent/timeline` (the conversation), the somatic stream. If the surface
-stays **Skills** with `kind: flavor`, no new vocabulary is introduced. "Lens"
-is prose in this document, not an identifier; the ledger is the event ledger
-at `continuity/timeline.py`; prompt rows are `[t{id}]`.
+`/api/agent/timeline` (the conversation), the somatic stream. CD-11
+(2026-09-05) settled the noun for the layer: **Lenses** — `kind: lens` in the
+frontmatter, `~/.config/halbert/lenses/` for the user's own, *lens* on every
+surface. Rev 2 kept "lens" as prose only; it is now the identifier, and
+"skill" is reserved for `kind: ops`. The ledger is the event ledger at
+`continuity/timeline.py`; prompt rows are `[t{id}]`.
 
 **D4 — Three stores, chosen by observation shape.** See A3. `StateStore`
 dedups state (correct); `TimelineStore` appends events; Haloysius
@@ -1088,7 +1126,8 @@ key has no skill field).
 
 **D6 — Replace the salience formula with counting — in new code.** Rev 1 said
 `PatternInferrer` + `BehaviorStore` already implement recurrence. They do not
-(§2.3 R4). Recurrence is A5, a windowed count by entity. If a lens lifecycle is
+(§2.3 R4). Recurrence is A5, a windowed count of `end` rows by entity
+(§2.3 R17). If a lens lifecycle is
 ever wanted, use `hit_count`, `last_engaged_at`, `pinned` and two thresholds —
 quantities that can be inspected — rather than six constants of which two are
 undefined.
@@ -1128,6 +1167,8 @@ The founder noted that Claude Code already standardizes on "Skills" for one-shot
 4. **Enthusiasms** / **Interests** (`~/.config/halbert/enthusiasms/`) — *Most plainspoken / restrained*. Zero AI jargon; classic, dignified British sysadmin tone (*"Shared Enthusiasms"*).
 5. **Cognitive Attunements** / **Resonances** (Haloysius internal) — Describes what the persona is attuned to in culture/dialogue, complementing Haloysius's *Realities*, *Beliefs*, and *Worries*.
 
+**Decided 2026-09-05 as CD-11: Lenses** (option 2), because rev 2's reframe made the layer an interpretation of the observation stream rather than a taste bank — the condition this list itself named for preferring Lenses over Affinities. *Affinities* remains the natural word for the user-interest half (D9), if that ever ships.
+
 ---
 
 ## 11. Invariants
@@ -1159,7 +1200,8 @@ Carried forward from the original where sound, with mechanisms attached.
    separate, smaller lens cap (250), truncating with a logged marker. Lens
    content is dropped below MEDIUM.
 8. **Skill text is an instruction source** (new). Only operator-owned locations
-   supply it (builtin, `~/.config/halbert/skills`); the daemon never reads cwd;
+   supply it (builtin, `~/.config/halbert/skills`, `~/.config/halbert/lenses`);
+   the daemon never reads cwd;
    the agent cannot write those locations without approval.
 9. **Observation text is data** (new). Names from devices and detectors are
    normalised and redacted at the sink; nothing from a sensor reaches a prompt
@@ -1200,25 +1242,25 @@ Cut from the original, with reasons.
 Rev 1's five open questions are folded in (Q1/Q2 → CD-2; Q3 → keep 90 days,
 per-type retention deferred until there is data; Q4 → CD-7; Q5 → non-blocking,
 no code is copied from `open-claude-code`). Each row states what it blocks.
-**CD-1, CD-4, CD-5 and CD-6 were decided on 2026-09-05** (recommended option
-in each case; rows in `DECISIONS.md`). CD-5's sub-question — build the
-preference writer and research ingestion now, or defer — is still open;
-the default assumed by work in flight is deferred until C1a ships. The rest
-are needed only before B4+ and C1b.
+**Decided on 2026-09-05** (rows in `DECISIONS.md`): CD-1 (a), CD-2 (a) —
+forced by CD-3, CD-3 (b), CD-4 (a), CD-5 (a) with its sub-question deferred and
+`.handoff/HANDOFF-USER-INTEREST-MEMORY-RESEARCH-2026-09-05.md` opened so it is
+not dropped a third time, CD-6 (a), CD-7 (a), and CD-11 Lenses. **Open**: CD-8
+(gates branch 4), CD-9 (gates B4a, branch 5), CD-10 (gates branch 3).
 
 | # | Decision | Options | Recommendation | Blocks |
 |---|---|---|---|---|
 | **CD-1** | Which rows does this land under, and do lenses get a §3 row now? | (a) Track A → `MIND-1`/`STATE-1`/`CFG-1`; B1–B3 → new `SKILL-1`; B4–B7 + C1b/C2/C3 → §4 Next with a named bullet. (b) Open `LENS-1` now. (c) Attach lenses to `ATTN-2`. | **Decided 2026-09-05: (a).** `SKILL-1` added; `LENS-1` only after C1a has shipped and a week of Noticed sections has been read. | header, §1.4, which branches are cut at all |
-| **CD-2** | How does a lens become active? | (a) Standing `BeingConfig.active_lens` (explicit-lookup path; `kind: flavor` excluded from matching; `/skill` as per-turn override). (b) Per-turn keyword matching with triggers. (c) Matching plus stickiness carried on intake. | **(a)** — a trigger-less lens can never match (`MIN_SCORE`), a triggered one flickers by topic, the morning report has no turn to match, and rev 1's Q2 already presupposes a selection. Collapses the lifecycle to selected-or-not. | B5, B6, B7, B4's explicit path, C1b, D5–D7 |
-| **CD-3** | What does "the lens selects" mean in code? | (a) A machine-readable `observes:` frontmatter block executed by `select_observations()`. (b) Lens-independent arithmetic (recurrence top-N clamped by the dial); the lens is voice only. (c) The model selects from the raw window. | **(b)** for the first lens; add (a) when a second lens needs a different selection. (c) violates invariant 2. | B5 schema, B6 dial semantics, C1a's provider, C2 |
+| **CD-2** | How does a lens become active? | (a) Standing `BeingConfig.active_lens` (explicit-lookup path; `kind: lens` excluded from matching; `/skill` as per-turn override). (b) Per-turn keyword matching with triggers. (c) Matching plus stickiness carried on intake. | **Decided 2026-09-05: (a)**, forced by CD-3 — a voice-only file carries no domains or keywords, so `MIN_SCORE` can never fire; the morning report has no turn to match. Collapses the lifecycle to selected-or-not. | B5, B6, B7, B4's explicit path, C1b, D5–D7 |
+| **CD-3** | What does "the lens selects" mean in code? | (a) A machine-readable `observes:` frontmatter block executed by `select_observations()`. (b) Lens-independent arithmetic (recurrence top-N clamped by the dial); the lens is voice only. (c) The model selects from the raw window. | **Decided 2026-09-05: (b)** — voice only; no `observes:` block, no "what this notices" prose. (c) violates invariant 2. | B5 schema, B6 dial semantics, C1a's provider, C2 |
 | **CD-4** | Where does the timeline write happen? | (a) At ingestion with the event's own timestamp; `populate_cognition` keeps the affect half. (b) At flush inside `populate_cognition` as rev 1 sketched. (c) A heartbeat drain (`C4-02`/`LOOP-01`). | **Decided 2026-09-05: (a).** The only drain is per chat turn behind a silent 500 cap; flush-time rows would carry chat timestamps. (c) stays worthwhile for the affect half but the ledger must not depend on it. | A2, A2b, A3, A5, C1a |
 | **CD-5** | Store ownership, package name, and the user-interest half of the requirement | (a) `TimelineStore` = the Halbert event ledger at `continuity/timeline.py` (`MEM-01` continuity group; named in `ERASURE_LIMITS`); `StateStore` = state; favourites → `memory_v2` via `PersonaMemoryStore` (D9), writer carried or deferred; research ingestion deferred with a reason. (b) Route world events into Haloysius `ObservationStore`. (c) Keep `observations/` and leave favourites/research unaddressed. | **Decided 2026-09-05: (a).** D9 stands; writer and research ingestion: carry-or-defer still open, default deferred until C1a ships. Retention: keep 90 days. | A0, A1, D1/D3/D4/D9, §12 |
 | **CD-6** | Are cwd skill directories trusted, and may a user skill override a builtin by name? | (a) Daemon registry = builtin + `~/.config/halbert/skills`; cwd dirs removed from the daemon path; same-name override refused or WARN + flagged; skill dirs join `SENSITIVE_PATHS`; tilde bug fixed. (b) Keep the four-dir chain as designed. (c) A host-local override dir as a config-declared absolute path only. | **Decided 2026-09-05: (a)**, with (c) available later as the escape hatch. Verified loads of Claude Code skills from cwd; `write_file` into the user skill dir needs no confirmation today. | B1 (hence B2/B3), §11.8 |
-| **CD-7** | May the report summarizer be a model call (`C4-07`: LLM summary opt-in), and under what constraints? | (a) C1a only — deterministic Noticed section; voice deferred. (b) C1b as opt-in: only when a lens is active and intensity ≠ off; input = Noticed lines only; pinned to `secure_model` with `:cloud` rejected by tag; scrub both sides; turn-lock try-acquire; post-check or B4 applied. (c) Whole-body rewrite as rev 1 drafted. | **(a)** first; **(b)** only after `C4-07` is ratified and C0 persistence exists; (c) rejected — it can drop a critical finding under a `critical` label. | the C1 split, D7, §11.2 |
+| **CD-7** | May the report summarizer be a model call (`C4-07`: LLM summary opt-in), and under what constraints? | (a) C1a only — deterministic Noticed section; voice deferred. (b) C1b as opt-in: only when a lens is active and intensity ≠ off; input = Noticed lines only; pinned to `secure_model` with `:cloud` rejected by tag; scrub both sides; turn-lock try-acquire; post-check or B4 applied. (c) Whole-body rewrite as rev 1 drafted. | **Decided 2026-09-05: (a)** first; (b) only after `C4-07` is ratified **and** report persistence exists; (c) rejected — it can drop a critical finding under a `critical` label. | the C1 split, D7, §11.2 |
 | **CD-8** | How does a clean-day report pass the gate at Balanced, and is the lens stripped on critical days? | Gating: (a) default `category_overrides["reports"]="assertive"`; (b) a `morning_report` exemption in the gate unless the dial is `off`; (c) severity from content. Lens on critical days: (i) B4's rule applies to the report; (ii) a verbatim-title post-check; (iii) neither. | Gating **(b)** — it is what `C2-10` and `ATTN-2` already say. Lens **(i)** — simpler and deterministic. | C0, C1a's test, C1b, amending the pending `C2-10` row |
 | **CD-9** | Which signals define "destructive", "incident" and "the turn's subject", and where does the gate run? | (a) B4a now on inputs that exist, at the assemble call; B4b adds `is_destructive`/`is_incident` on `MessageSignals` and the entity∩finding join with a `FindingStore` injected into the gate. (b) Reuse `ToolSafetyFramework.classify` at prompt time. (c) Drop destructive/incident from invariant 1 until a source exists. | **(a)**; B4a ships with the first lens, B4b before C2. (b) is impossible — `classify` runs per tool call after the prompt exists. | B4, B5's `suppress_on`, C2, §11.1 |
 | **CD-10** | Is A4 the world-events input to `STATE-1`'s Eyes block (STATE-1 owns heading and format; rows carry `[t{id}]`), with a heading split inside the existing bucket first? And is the affective half (worries/emotions into the prompt) tasked or deferred? | A4: (a) yes, heading split first, budget line deferred. (b) A separate budgeted source now. (c) Rev 1's `## Recent Observations`. Affect: task it in Track A, or defer explicitly. | A4 **(a)**. Affect: **defer explicitly** (it is `C4-05` territory, not this plan's), but fix the dead VIGILANCE writes in A2 because they are a silent-loss bug. | A4, §15 item 6, `STATE-1`'s status column |
-| **CD-11** | Nomenclature & Taxonomy: What is the canonical name for this layer to avoid collision with Claude Code's procedural "Skills"? | (a) **Affinities** (`~/.config/halbert/affinities/`) — relational, taste-based, natural decay/growth. (b) **Lenses** (`~/.config/halbert/lenses/`) — observational framing over the timeline/world. (c) **Facets** (`~/.config/halbert/facets/`) — multi-sided singular entity. (d) **Enthusiasms** (`~/.config/halbert/enthusiasms/`) — plainspoken, zero jargon. | **(a) Affinities** for companionable taste/interests (D10), or **(b) Lenses** if strictly coupled to observation-stream interpretation. | User-facing terminology, directory names (`~/.config/halbert/...`), docs |
+| **CD-11** | Nomenclature & Taxonomy: What is the canonical name for this layer to avoid collision with Claude Code's procedural "Skills"? | (a) **Affinities** (`~/.config/halbert/affinities/`) — relational, taste-based, natural decay/growth. (b) **Lenses** (`~/.config/halbert/lenses/`) — observational framing over the timeline/world. (c) **Facets** (`~/.config/halbert/facets/`) — multi-sided singular entity. (d) **Enthusiasms** (`~/.config/halbert/enthusiasms/`) — plainspoken, zero jargon. | **Decided 2026-09-05: (b) Lenses** — rev 2's reframe couples the layer to observation-stream interpretation, the condition D10 named. `kind: lens`; `~/.config/halbert/lenses/`. | User-facing terminology, directory names (`~/.config/halbert/...`), docs |
 
 ---
 
@@ -1230,22 +1272,32 @@ original; the four decided rows in `DECISIONS.md` and the `SKILL-1` row plus
 `ROLE-SCOPED-SKILLS-2026-08-27.md` §11/§12 status claims (`DOCS-1`, in branch 2).
 CD-2/3/7/8/9/10 remain open and are needed before B4+ and C1b.
 
-**Branch 1 — `fix/observation-sink` = A0 + A1 (path resolution + shim; move
-optional) + A2 + A2b + A2c.** The smallest slice that produces observable
-end-to-end behaviour; independent of every decision except CD-4/CD-5. Done
-evidence (ROADMAP rule 6): startup log names the timeline path and `stats()`
-is reachable on a sysadmin install with `HALBERT_DATA_DIR` honoured; a synthetic
-Frigate `new person` MQTT message through `handle_event()` yields one
-`timeline_events` row with the detection's own timestamp and no cognition tick
-having run, likewise an HA `state_changed` via `add_event()`; `test_frigate.py:249/288/326`
-rewritten against a temp `TimelineStore`; one test per mapper against a real
-`PersonaCognition` (green only once VIGILANCE is fixed); HA observation-path
-tests; a `cognition_wiring` injection test; the 500-cap drop logged with a
-count; `arch -arm64 .venv/bin/python -m pytest halbert_core/tests/test_frigate.py
-halbert_core/tests/test_ha_phase2.py halbert_core/tests/test_timeline_store.py -q`
-green from the repo root; a RESULTS row citing the commit; `MIND-1`'s status
-column gains "`C4-04` partial: HA/Frigate/system events land in the event
-ledger (`<sha>`)".
+**Branch 1 — `fix/observation-sink` — LANDED on the branch 2026-09-05**
+(`bd8ad7f3` … `b6f6fb50`, plus B7's commit; review
+`.handoff/REVIEW-BRANCH1-OBSERVATION-SINK-2026-09-05.md`; results
+`.handoff/RESULTS-BRANCH1-OBSERVATION-SINK-2026-09-05.md`; full suite 5535
+passed, 14 skipped, run from the worktree against its own source). Shipped:
+**A0** — `get_timeline_store()` in `cognition_wiring.py`, ungated, path via
+`data_dir()`, logged once, injected at all three sites; `get_frigate_event_mapper()`
+accepts MQTT-only; the `app.py` fallback instance is gone; an unwritable data
+dir degrades the ledger, never the HA integration. **A1** — `continuity/timeline.py`
+with a shim at `home/timeline.py`. **A2** — at ingestion with the detection's
+own `start_time`; `title` and `severity` on every row (both missing from rev 2,
+§2.3 R16); the occupancy prior-state guard; the recording step wrapped so
+nothing escapes into ingestion; the 500-cap drop logged with a count; VIGILANCE
+→ ANTICIPATION at all seven sites; `_add_observation` deleted. **A2b** —
+`SystemEventMapper` records before applying. **A2c** — `observation_text.normalise_observation_title()`
+at every sink **and on the worry path**: the first cut fenced the ledger and
+left the prompt open (review finding 1), and the test now asserts on the
+assembled prompt. Also: retention `cleanup(90)` at store construction;
+`ERASURE_LIMITS` names the ledger; `halbert_core/conftest.py` makes a worktree
+test its own code. Two tests written during the branch passed while their
+defect was present and were rewritten — the same class of failure as the
+`MagicMock` cognitions rev 2 flagged. **Still open from branch 1, tasked under
+`MIND-1`**: a periodic retention job; subject-scoped erasure of `occupancy_change`
+rows; DetectorRunner → `add_event` (until it lands, a sysadmin ledger receives
+only VisualWatcher anomalies). Done evidence for the ROADMAP row: `MIND-1`'s
+`C4-04` gains the partial-landing line (done 2026-09-05).
 
 **Branch 2 — `feat/skills-wired` = B1 + B2 + B3 + housekeeping.** Independent
 of branch 1; needs CD-6. Done evidence: a state-machine test asserts
@@ -1276,9 +1328,10 @@ the gating half (persistence lands here or stays open, stated either way).
 
 **Founder gate (CD-1): open `LENS-1` or leave Next.** If opened:
 
-**Branch 5 — `feat/lens-format` = B5 + B6 + B7 + B4a**; needs CD-2, CD-3,
-CD-9. Done evidence: parser/registry tests for `kind`, `active_lens`,
-`resolve_extends`; one built-in lens with `test_skills_builtin` taught kinds;
+**Branch 5 — `feat/lens-format` = B5 + B6 + B4a** (B7 and the `kind` field
+shipped early on branch 1); needs CD-9 (CD-2, CD-3, CD-11 decided). Done
+evidence: parser/registry tests for `suppress_on`, `active_lens`, the
+`~/.config/halbert/lenses/` load path and the `active_skills` carve-out;
 the BeingTab controls persisted through `/api/being`; a troubleshooting or
 `required_confirmation` turn asserts no lens block; a lens-only turn routes by
 complexity exactly as a no-skill turn; intensity `off` ⇒ byte-identical prompt.
@@ -1297,22 +1350,23 @@ lands dozens of commits a day and every line number above will drift.
 
 ## 15. Verification checklist
 
-- [ ] A `TimelineStore` exists at runtime on a sysadmin install (startup log names its path; `stats()` reachable) and honours `HALBERT_DATA_DIR`
-- [ ] An MQTT-delivered Frigate event produces a `timeline_events` row with the detection's own timestamp before any cognition tick; likewise an HA `add_event`
-- [ ] Both mappers have a test against a real `PersonaCognition`; the 500-cap drop is logged with a count; no emotion write fails silently
+- [x] A `TimelineStore` exists at runtime on a sysadmin install (startup log names its path; `stats()` reachable) and honours `HALBERT_DATA_DIR` — branch 1
+- [x] An MQTT-delivered Frigate event produces a `timeline_events` row with the detection's own `start_time`, a `title` and a `severity` before any cognition tick; likewise an HA `add_event`; an occupancy row requires a known prior state — branch 1
+- [x] Both mappers have a test against a real `PersonaCognition`; the 500-cap drop is logged with a count; no emotion write fails silently — branch 1
 - [ ] A synthetic HA lock transition produces a `StateStore` triple via `_record` with a self-naming reason; `decide()` on a stale lock row returns PROBE
-- [ ] `count_by_entity` returns 3 for three objects each with new+update+end
+- [ ] `count_by_entity` returns 3 for three objects each with new+update+end, counting `end` rows; a `sub_label` that arrives on `update` is counted under the labelled identity
 - [ ] World rows render as `[t{id}] …` at both render points, within the existing bucket, and a cited row resolves to a `timeline_events` id
-- [ ] A `friendly_name` containing `\n## System` yields one escaped line and no new heading; a title containing a credential is stored redacted
+- [x] A `friendly_name` containing `\n## System` yields one escaped line and no new heading in the assembled prompt (branch 1, `5d5c7d0d`); a title containing a credential is stored redacted
 - [ ] With a matcher wired, a storage question activates `storage-ops` **and** the tier/budget/retrieval-scope effects are asserted
 - [ ] `composed.prompt` appears in `messages[0]` of the PLANNING call; a skill body over the cap is truncated with a marker
 - [ ] A `SKILL.md` under cwd is not loaded; `write_file` to `~/.config/halbert/skills` requires confirmation
 - [ ] `zpool destroy` is CRITICAL-blocked through the executor in a live turn; `run_command` with `cwd=/boot` requires confirmation under `storage-ops`; the next turn classifies `cat /boot/grub.cfg` at baseline
 - [ ] An `is_destructive` turn — and `explicit=[lens]` on such a turn — contains no lens block (asserted on the prompt, naming the signal); a lens-only turn routes by complexity exactly as a no-skill turn
-- [ ] Flavor intensity `off` ⇒ zero selected rows ⇒ a prompt byte-identical to no-lens
+- [ ] Lens intensity `off` ⇒ zero selected rows ⇒ a prompt byte-identical to no-lens
 - [ ] Morning report: the template contains the Noticed rows with `summarizer=None`; rows survive an empty summarizer; with no lens active the body is byte-identical to the template; a clean-day report publishes at `balanced`; (if B4 applies) a critical-day report has no lens block; the summarizer does not run while a turn holds the lock; the model tag is never `:cloud`
 - [ ] Morning report is not published when proactivity is `off` (fails closed); yesterday's report is readable after a dashboard restart
-- [ ] Every active directive is readable as a file on disk from the UI, with its source directory shown
+- [ ] Every active directive — skill or lens — is readable as a file on disk from the UI, with its source directory shown
+- [x] The one built-in lens parses as `kind: lens`, is voice only, fits its budget, and never matches a topical turn — branch 1
 
 ---
 
