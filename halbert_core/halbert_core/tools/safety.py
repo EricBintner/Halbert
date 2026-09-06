@@ -57,6 +57,35 @@ class SafetyCheckResult:
 THREAD_META_TOOLS = ("new_thread", "recall_thread", "resume_thread")
 
 
+def _command_segments(command: str) -> List[str]:
+    """Each segment of a shell line, normalised to what it actually runs.
+
+    Splits on the separators a shell treats as "start of a new command", then
+    strips leading `sudo`/`doas`/`env` and any VAR=value prefixes, and reduces
+    the executable to its basename. So `sudo /sbin/mkfs.ext4 /dev/sda1` and
+    `mkfs.ext4 /dev/sda1` normalise to the same thing.
+
+    This exists so a blocked-command pattern can be anchored to the head of a
+    segment. Matching it anywhere in the string made `man mkfs`,
+    `which mkfs.ext4` and `grep mkfs /var/log/syslog` CRITICAL and blocked --
+    a classifier that stops you reading the manual teaches people to turn it
+    off.
+    """
+    segments = []
+    for raw in re.split(r"&&|\|\||;|\||\n", command):
+        tokens = raw.strip().split()
+        i = 0
+        while i < len(tokens) and (tokens[i] in ("sudo", "doas", "env")
+                                   or "=" in tokens[i]):
+            i += 1
+        if i >= len(tokens):
+            continue
+        tokens = list(tokens[i:])
+        tokens[0] = tokens[0].rsplit("/", 1)[-1]
+        segments.append(" ".join(tokens))
+    return segments
+
+
 class ToolSafetyFramework:
     """
     Classifies tool operations by risk level.
@@ -333,9 +362,16 @@ class ToolSafetyFramework:
 
         command = str(args.get("command", "") or "").strip()
         path = str(args.get("path", "") or "").strip()
+        # The directory the command runs in is part of what it does:
+        # `rm grub.cfg` with cwd=/boot is the same operation as
+        # `cd /boot && rm grub.cfg`, and only the second was classified.
+        cwd = str(args.get("cwd", "") or "").strip()
+        segments = _command_segments(command) if command else []
 
         for pattern in getattr(safety, "blocked_commands", ()) or ():
-            if command and (fnmatch.fnmatch(command, pattern) or pattern.rstrip("*") in command):
+            prefix = pattern.rstrip("*")
+            anchored = any(seg.startswith(prefix) for seg in segments)
+            if command and (fnmatch.fnmatch(command, pattern) or anchored):
                 logger.warning("BLOCKED by active skill: %s (pattern %s)", command, pattern)
                 return SafetyCheckResult(
                     risk_level=RiskLevel.CRITICAL,
@@ -349,6 +385,8 @@ class ToolSafetyFramework:
 
         for pattern in getattr(safety, "protected_paths", ()) or ():
             hit = (path and (fnmatch.fnmatch(path, pattern) or path.startswith(pattern.rstrip("*"))))
+            if not hit and cwd:
+                hit = fnmatch.fnmatch(cwd, pattern) or cwd.startswith(pattern.rstrip("*"))
             if not hit and command:
                 hit = fnmatch.fnmatch(command, f"*{pattern}*") or pattern.rstrip("/*") in command
             if hit:
