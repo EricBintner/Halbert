@@ -13,6 +13,12 @@
       "runtimeExecutable": "bash",
       "runtimeArgs": ["-c", "cd /Volumes/4TB-BAD/Halbert/halbert_core/halbert_core/dashboard/frontend && HALBERT_API_PORT=64864 npm run dev"],
       "port": 5173
+    },
+    {
+      "name": "marketing-web-v7",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": ["-c", "cd /Volumes/4TB-BAD/Halbert/marketing/web-v7 && npx vite --port 5180 --strictPort"],
+      "port": 5180
     }
   ]
 }
