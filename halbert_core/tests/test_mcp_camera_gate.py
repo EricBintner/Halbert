@@ -312,10 +312,17 @@ class TestTheGateIsWiredIn:
         assert "AAAA" not in str(out)
 
     def test_a_non_camera_tool_passes_through(self, monkeypatch):
-        # Not "keys": mcp_response redacts that field name, which would prove
-        # the egress boundary rather than the gate.
-        out = self._dispatch("get_config_structure", {"sections": ["a", "b"]}, monkeypatch)
+        """Carries a field the gate WOULD strip, so it fails if the tool-name
+        discrimination is lost — a payload the gate leaves alone would pass
+        whether or not the check existed. Not "keys": mcp_response redacts
+        that field name, which would prove the egress boundary instead."""
+        out = self._dispatch(
+            "get_config_structure",
+            {"sections": ["a", "b"], "snapshot": "data:image/jpeg;base64,AAAA"},
+            monkeypatch,
+        )
         assert out["sections"] == ["a", "b"]
+        assert out["snapshot"] == "data:image/jpeg;base64,AAAA"
 
     def test_the_envelope_survives(self, monkeypatch):
         """`content` is itself in _FORBIDDEN_IMAGE_FIELDS, so gating the

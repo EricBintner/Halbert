@@ -268,7 +268,16 @@ class FrigateEventMapper:
         from (``frigate:<camera>``, or "" when the message names none)."""
         state = (payload.get("after") or payload.get("before") or {}) if isinstance(payload, dict) else {}
         camera = str(state.get("camera") or "").strip()
-        source_id = f"frigate:{camera}" if camera else ""
+        # Through the registry, not an f-string. A camera called "Front Door"
+        # slugs to frigate:front_door there; building the id here by hand
+        # meant a camera routed under one id and was handed over under
+        # another, so route_observation missed and the detection fell through
+        # to Halbert — the exact leak this gate exists to prevent.
+        try:
+            from ....vision.sources import frigate_source_id
+            source_id = frigate_source_id(camera)
+        except Exception:
+            source_id = f"frigate:{camera}" if camera else ""
         label = str(state.get("label") or "").strip().lower()
         try:
             from ...continuity.ownership import route_observation

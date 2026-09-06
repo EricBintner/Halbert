@@ -199,6 +199,10 @@ async def _frigate_get_events_handler(args: Dict[str, Any]) -> str:
             limit=args.get("limit", 20),
             in_progress=args.get("in_progress", False),
         )
+        # The camera argument defaults to "all", so the narrowing has to be
+        # applied to what came back rather than to what was asked for.
+        visible = set(_visible_cameras({e.get("camera") for e in events}))
+        events = [e for e in events if e.get("camera") in visible]
         if not events:
             return "No events found matching the criteria."
 
@@ -236,6 +240,25 @@ def _permit_camera(camera: str):
     except SourceDenied as e:
         logger.warning("Frigate camera refused: %s", e)
         return None, f"Not available: {e}"
+
+
+def _visible_cameras(names):
+    """The subset of ``names`` this persona may know about.
+
+    Enumeration is a leak of its own: a guest narrowed to the patio should not
+    learn from a camera list that there is a bedroom camera, what it is called
+    and what it detects. Applied to the listing and the event query, not only
+    to the handlers that return pixels.
+    """
+    from ...vision.sources import SourceDenied, permit_frigate_camera
+    out = []
+    for name in names or []:
+        try:
+            permit_frigate_camera(str(name))
+        except SourceDenied:
+            continue
+        out.append(name)
+    return out
 
 
 async def _frigate_get_snapshot_handler(args: Dict[str, Any]) -> str:
@@ -337,6 +360,11 @@ async def _frigate_list_cameras_handler(args: Dict[str, Any]) -> str:
 
     try:
         cameras = await client.get_cameras()
+        # Filtered, not just the pixels: a guest narrowed to the patio should
+        # not learn from this list that a bedroom camera exists, what it is
+        # called, and what it is set to detect.
+        visible = set(_visible_cameras([c.get("name") for c in cameras]))
+        cameras = [c for c in cameras if c.get("name") in visible]
         if not cameras:
             return "No cameras configured in Frigate."
 

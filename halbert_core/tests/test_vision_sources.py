@@ -189,8 +189,52 @@ class TestResolve:
 
 class TestEnabledCeiling:
     def test_only_enabled_sources_are_the_ceiling(self, monkeypatch):
+        from halbert_core.vision import config as vcfg
+        cfg = vcfg.VisionConfig()
+        cfg.screen_capture.enabled = True
+        cfg.webcam.enabled = True
+        monkeypatch.setattr(vcfg, "load_config", lambda: cfg)
         monkeypatch.setattr(S, "list_sources", lambda **k: [
             S.VisionSource(id="webcam:desk", label="d", kind="webcam", native="0", enabled=True),
             S.VisionSource(id="screen:1", label="s", kind="screen", native="1", enabled=False),
         ])
         assert S.enabled_source_ids() == ["webcam:desk"]
+
+    def test_the_global_switch_is_a_ceiling_the_per_source_flag_cannot_lift(self, monkeypatch):
+        """The two switches are written by different controls and drift the
+        moment either is edited alone; the stricter one wins."""
+        from halbert_core.vision import config as vcfg
+        cfg = vcfg.VisionConfig()
+        cfg.screen_capture.enabled = False
+        cfg.webcam.enabled = True
+        monkeypatch.setattr(vcfg, "load_config", lambda: cfg)
+        monkeypatch.setattr(S, "list_sources", lambda **k: [
+            S.VisionSource(id="screen:1", label="s", kind="screen", native="1", enabled=True),
+            S.VisionSource(id="webcam:0", label="w", kind="webcam", native="0", enabled=True),
+        ])
+        assert S.enabled_source_ids() == ["webcam:0"]
+
+
+class TestNativeIsAnIndex:
+    def test_a_free_text_native_is_refused_at_the_door(self):
+        """Every consumer does int(src.native) outside the try that catches
+        capture errors, so this is a crash rather than a bad picture."""
+        with pytest.raises(S.BadSourceId):
+            S.VisionSource.from_dict({"kind": "webcam", "native": "the good one", "id": "webcam:desk"})
+
+    def test_a_frigate_native_is_a_name_not_an_index(self):
+        src = S.VisionSource.from_dict({"kind": "frigate", "native": "Front Door"})
+        assert src.native == "Front Door"
+
+    def test_a_declared_source_shadows_the_frigate_copy(self, monkeypatch):
+        """_frigate_sources hardcodes enabled=True, so without deduping a
+        camera switched off here is shadowed by an always-enabled copy."""
+        declared = [{"id": "frigate:patio", "kind": "frigate", "native": "patio", "enabled": False}]
+        monkeypatch.setattr(S, "_frigate_sources", lambda: [
+            S.VisionSource(id="frigate:patio", label="Patio", kind="frigate", native="patio", enabled=True)])
+        from halbert_core.vision import config as vcfg
+        cfg = vcfg.VisionConfig()
+        cfg.sources = declared
+        monkeypatch.setattr(vcfg, "load_config", lambda: cfg)
+        got = {s.id: s for s in S.list_sources()}
+        assert got["frigate:patio"].enabled is False

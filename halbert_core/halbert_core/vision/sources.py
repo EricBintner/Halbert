@@ -170,6 +170,17 @@ class VisionSource:
         if kind not in KINDS:
             raise BadSourceId(f"unknown source kind {kind!r}")
         native = str(data.get("native", "")).strip()
+        if kind in (KIND_SCREEN, KIND_WEBCAM):
+            # Every consumer does int(src.native) to drive its device, outside
+            # the try that catches capture errors, so a free-text native is a
+            # crash rather than a bad picture. Checked here, where the value
+            # enters, and not at each of the five call sites.
+            try:
+                int(native)
+            except (TypeError, ValueError):
+                raise BadSourceId(
+                    f"a {kind} source's device must be an index, got {native!r}"
+                )
         sid = str(data.get("id") or "").strip() or source_id(kind, native)
         if not is_source_id(sid):
             raise BadSourceId(f"not a source id: {sid!r}")
@@ -255,7 +266,12 @@ def list_sources(*, include_frigate: bool = True) -> List[VisionSource]:
 
     out = sources_from_config(load_config())
     if include_frigate:
-        out.extend(_frigate_sources())
+        # Declared wins. ``_frigate_sources`` marks everything enabled (it is
+        # reading Frigate's own config, which has no per-camera off switch of
+        # ours), so without this a camera the user switched off here would be
+        # shadowed by a second, always-enabled copy of itself.
+        have = {s.id for s in out}
+        out.extend(s for s in _frigate_sources() if s.id not in have)
     return out
 
 
@@ -287,8 +303,29 @@ def get_source(sid: str) -> VisionSource:
 
 
 def enabled_source_ids() -> List[str]:
-    """The ids the system has switched on. The ceiling a persona narrows from."""
-    return [s.id for s in list_sources() if s.enabled]
+    """The ids the system has switched on. The ceiling a persona narrows from.
+
+    Two switches have to agree, and this is where they are ANDed: the global
+    ``screen_capture.enabled`` / ``webcam.enabled`` in ``vision_config.yml``
+    and the per-source flag. They are written by different controls and drift
+    the moment either is edited alone, so neither is treated as the whole
+    answer — the stricter one wins, which is the only direction that cannot
+    turn a switched-off camera back on.
+    """
+    try:
+        from .config import load_config
+        cfg = load_config()
+        globals_on = {
+            KIND_SCREEN: bool(cfg.screen_capture.enabled),
+            KIND_WEBCAM: bool(cfg.webcam.enabled),
+            KIND_FRIGATE: True,   # Frigate's switch is Frigate's own config
+        }
+    except Exception:
+        globals_on = {}
+    return [
+        s.id for s in list_sources()
+        if s.enabled and globals_on.get(s.kind, True)
+    ]
 
 
 def availability(src: VisionSource) -> bool:
@@ -326,11 +363,7 @@ def persona_scope() -> List[str]:
     does not switch it on (V1).
     """
     enabled = enabled_source_ids()
-    try:
-        from ..config.being_config import load_being_config
-        wanted = list(load_being_config().senses.vision.sources or [])
-    except Exception:
-        wanted = []
+    wanted = _explicit_narrowing()   # raises SourceDenied if unreadable
     if not wanted:
         return enabled
     allowed = set(wanted)
@@ -360,12 +393,34 @@ def _explicit_narrowing() -> List[str]:
     ``persona_scope`` cannot answer this: it returns every enabled source when
     a persona has not narrowed, so "narrowed to nothing in particular" and
     "narrowed to exactly these" come back looking the same.
+
+    Reads the file directly rather than through ``load_being_config``, and the
+    reason matters. That loader validates the whole config and raises on any
+    bad field — including the id-shape check on this very list — so catching
+    its exception and calling the result "no narrowing" would mean **a
+    malformed narrowing widens the scope instead of narrowing it**. A
+    narrowing that cannot be read at all raises, and every caller treats that
+    as a refusal rather than as permission.
     """
+    import yaml  # local: this must work even when being_config cannot load
+
+    from ..utils.platform import get_config_dir
+
+    path = get_config_dir() / "being.yml"
     try:
-        from ..config.being_config import load_being_config
-        return list(load_being_config().senses.vision.sources or [])
-    except Exception:
-        return []
+        if not path.exists():
+            return []
+        with open(path, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+    except Exception as e:
+        raise SourceDenied(f"cannot read this persona's vision scope: {e}") from e
+
+    senses = (data.get("senses") or {}) if isinstance(data, dict) else {}
+    vision = (senses.get("vision") or {}) if isinstance(senses, dict) else {}
+    wanted = vision.get("sources") or [] if isinstance(vision, dict) else []
+    if not isinstance(wanted, list):
+        raise SourceDenied("this persona's vision scope is not a list")
+    return [w for w in wanted if isinstance(w, str) and is_source_id(w)]
 
 
 def permit_frigate_camera(camera: str) -> str:
@@ -391,15 +446,17 @@ def permit_frigate_camera(camera: str) -> str:
     if not sid:
         raise SourceDenied("no camera named")
 
-    narrowing = _explicit_narrowing()
-    if narrowing:
-        if sid not in set(narrowing):
-            raise SourceDenied(
-                f"{sid} is not one of this persona's sources ({', '.join(narrowing)})"
-            )
-        return sid
-
     declared = {s.id for s in list_sources() if s.kind == KIND_FRIGATE}
+    narrowing = _explicit_narrowing()
+
+    if narrowing and sid not in set(narrowing):
+        raise SourceDenied(
+            f"{sid} is not one of this persona's sources ({', '.join(narrowing)})"
+        )
+    # Intersection, never override. A persona naming a camera the machine has
+    # not declared must not thereby declare it — that is V1, and reading the
+    # narrowing first and returning early would have made a persona file able
+    # to widen past the machine's own list.
     if declared and sid not in declared:
         raise SourceDenied(
             f"{sid} is not one of this machine's cameras ({', '.join(sorted(declared))})"
@@ -436,18 +493,23 @@ def resolve_request(value: Any, kind: str, *, scope: Optional[List[str]] = None)
       enabled and in scope like any other.
     """
     if isinstance(value, str) and is_source_id(value):
-        return permit_source(value, scope=scope)
+        src = permit_source(value, scope=scope)
+        _require_kind(src, kind)
+        return src
     if value is None or (isinstance(value, str) and value.strip().lower() == kind):
         src = default_source_for_kind(kind, scope=scope)
         if src is None:
             raise SourceDenied(f"this persona has no {kind} source")
         return src
     if isinstance(value, str) and value.strip().lower() in KINDS:
-        other = value.strip().lower()
-        src = default_source_for_kind(other, scope=scope)
-        if src is None:
-            raise SourceDenied(f"this persona has no {other} source")
-        return src
+        # A bare kind name other than the one asked for. Refused rather than
+        # honoured: the caller is about to do ``int(src.native)`` and drive
+        # its OWN device with that number, so answering "screen" with a
+        # screen source would open camera 1 when the persona was permitted
+        # monitor 1.
+        raise SourceDenied(
+            f"asked for a {kind} source and given {value.strip().lower()!r}"
+        )
 
     # A native index. Look it up in the registry rather than minting an id
     # from it: the whole point of the id/native split is that ``webcam:desk``
@@ -460,6 +522,27 @@ def resolve_request(value: Any, kind: str, *, scope: Optional[List[str]] = None)
         if src.kind == kind and src.native == native:
             return permit_source(src.id, scope=scope)
     raise UnknownSource(f"{kind} {native!r} is not a declared source")
+
+
+def _require_kind(src: VisionSource, kind: str) -> None:
+    """A permission for one kind of device must not open another.
+
+    ``resolve_request`` used to accept any registry id and hand it back, and
+    every caller then coerced ``src.native`` into its own driver index —
+    ``camera_index = int(src.native)``, ``monitor_index = int(src.native)``.
+    So an id the persona *was* allowed became an index into a device class it
+    was not: ``capture_webcam(source="screen:1")`` opened camera 1.
+    """
+    if src.kind != kind:
+        raise SourceDenied(
+            f"{src.id} is a {src.kind} source; this asked for a {kind}"
+        )
+
+
+def kind_of(sid: str) -> str:
+    """The kind a registry id names, from the id alone."""
+    head = str(sid or "").split(":", 1)[0].strip().lower()
+    return head if head in KINDS else ""
 
 
 # ---------------------------------------------------------------------------
@@ -520,12 +603,26 @@ def _resolve_frigate(src: VisionSource) -> bytes:
     """
     import asyncio
 
-    from ..integrations.frigate.frigate_tools import _get_client
+    from ..integrations.frigate.frigate_client import FrigateClient
+    from ..integrations.frigate.frigate_config import load_frigate_config
 
     async def _pull() -> bytes:
-        # The module singleton, so one session and one config are shared with
-        # the Frigate tools rather than a second client per capture.
-        return await _get_client().get_latest_frame(src.native)
+        # Deliberately NOT the module singleton the Frigate tools share.
+        # FrigateClient caches its aiohttp.ClientSession and only rebuilds it
+        # when the session reports itself closed — which closing the loop does
+        # not do. Running a pull on a private loop against the shared client
+        # would leave it holding a session bound to a dead loop, and every
+        # later Frigate call in the process would fail.
+        client = FrigateClient(load_frigate_config())
+        try:
+            return await client.get_latest_frame(src.native)
+        finally:
+            close = getattr(client, "close", None)
+            if close is not None:
+                try:
+                    await close()
+                except Exception:
+                    pass
 
     try:
         try:

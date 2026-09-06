@@ -126,8 +126,22 @@ if FASTAPI_AVAILABLE:
 
 
     def _resolved_sources(cfg):
-        from ...vision.sources import sources_from_config
-        return sources_from_config(cfg)
+        # list_sources, not sources_from_config: the latter reads only the
+        # local declarations, so the settings page and the persona picker
+        # were both built from a list that never contained a frigate:* id —
+        # while permit_frigate_camera authorised against one that did. Any
+        # narrowing at all therefore revoked every Frigate camera, and no UI
+        # could grant one back.
+        from ...vision.sources import list_sources
+        return list_sources()
+
+    def _safe_scope():
+        """This caller's own permitted ids, or none when unreadable."""
+        from ...vision.sources import SourceDenied, persona_scope
+        try:
+            return persona_scope()
+        except SourceDenied:
+            return []
 
     def _source_denied(e):
         """The HTTP surface refuses the same way the tool surface does.
@@ -137,12 +151,14 @@ if FASTAPI_AVAILABLE:
         substituted: a request for a source this persona may not see must not
         come back with a picture of a different one.
         """
-        from ...vision.sources import enabled_source_ids
         return JSONResponse(
             {
                 "error": str(e),
                 "error_type": "source_denied",
-                "available_sources": enabled_source_ids(),
+                # The caller's own scope, not the machine's list: a refusal that
+        # enumerated every enabled source would hand a guest persona the ids
+        # of the sources it was just denied.
+        "available_sources": _safe_scope(),
             },
             status_code=403,
         )

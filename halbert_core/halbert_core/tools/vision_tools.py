@@ -46,6 +46,17 @@ def reset_dedup_for_tests() -> None:
     _last_hash_by_source.clear()
 
 
+from ..vision.sources import SourceDenied, persona_scope
+
+
+def _safe_scope():
+    """This caller's own permitted ids, or none when the scope is unreadable."""
+    try:
+        return persona_scope()
+    except SourceDenied:
+        return []
+
+
 def _denied(e) -> Dict[str, Any]:
     """A refusal the model can act on, and never a different picture.
 
@@ -53,13 +64,52 @@ def _denied(e) -> Dict[str, Any]:
     downgraded to one the caller may use. A silent downgrade would have the
     model describe the wrong room in perfect good faith.
     """
-    from ..vision.sources import enabled_source_ids
     logger.warning("Vision source refused: %s", e)
     return {
         "error": str(e),
         "error_type": "source_denied",
-        "available_sources": enabled_source_ids(),
+        # The caller's own scope, not the machine's list: a refusal that
+        # enumerated every enabled source would hand a guest persona the ids
+        # of the sources it was just denied.
+        "available_sources": _safe_scope(),
     }
+
+
+def _source_errors():
+    """The refusal exceptions, as a tuple for ``except``."""
+    from ..vision.sources import SourceDenied, SourceUnavailable, UnknownSource
+    return (SourceDenied, UnknownSource, SourceUnavailable)
+
+
+def _region_within(src, region) -> bool:
+    """Whether ``region`` lies inside the permitted monitor.
+
+    ``ScreenCapture.capture_region`` hands ``{"top","left","width","height"}``
+    straight to mss, which addresses the whole VIRTUAL DESKTOP — so a region is
+    absolute coordinates spanning every display, and the resolved monitor was
+    being discarded on that branch. A persona permitted monitor 1 could name
+    the pixels of monitor 2 by spelling them as x=3000 instead of monitor=2.
+
+    Returns False when the monitor's geometry cannot be read, because a bound
+    that cannot be checked is not a bound.
+    """
+    try:
+        import mss as _mss
+
+        with _mss.mss() as sct:
+            mon = sct.monitors[int(src.native)]
+    except Exception:
+        return False
+    try:
+        x, y = int(region["x"]), int(region["y"])
+        w, h = int(region["width"]), int(region["height"])
+    except (KeyError, TypeError, ValueError):
+        return False
+    return (
+        x >= mon["left"] and y >= mon["top"]
+        and x + w <= mon["left"] + mon["width"]
+        and y + h <= mon["top"] + mon["height"]
+    )
 
 
 async def capture_screenshot(args: Dict) -> Dict[str, Any]:
@@ -101,6 +151,13 @@ async def capture_screenshot(args: Dict) -> Dict[str, Any]:
     except (_sources.SourceDenied, _sources.UnknownSource) as e:
         return _denied(e)
     monitor = int(src.native)
+    if region and all(k in region for k in ("x", "y", "width", "height")):
+        if not _region_within(src, region):
+            return _denied(
+                _sources.SourceDenied(
+                    f"that region is not inside {src.id}"
+                )
+            )
 
     try:
         from ..vision.screen_capture import ScreenCapture, ScreenCaptureError
@@ -263,6 +320,13 @@ async def capture_and_ocr(args: Dict) -> Dict[str, Any]:
     except (_sources.SourceDenied, _sources.UnknownSource) as e:
         return _denied(e)
     monitor = int(src.native)
+    if region and all(k in region for k in ("x", "y", "width", "height")):
+        if not _region_within(src, region):
+            return _denied(
+                _sources.SourceDenied(
+                    f"that region is not inside {src.id}"
+                )
+            )
     include_image = args.get("include_image", False)
 
     try:
@@ -368,6 +432,26 @@ async def list_windows_tool(args: Dict) -> Dict[str, Any]:
     just that window instead of the full screen — much more efficient
     and avoids capturing sensitive content in other windows.
     """
+    # These return screen pixels (and window titles) exactly as
+    # capture_screenshot does, so they take the same bound. There is no
+    # monitor to name — the frontmost window may be on any display and this
+    # captures by window id — so they resolve ACTIVE_WINDOW_SOURCE_ID, the id
+    # VisualWatcher already publishes under.
+    from ..vision import sources as _sources
+    try:
+        _sources.permit_source(_sources.ACTIVE_WINDOW_SOURCE_ID)
+    except (_sources.SourceDenied, _sources.UnknownSource):
+        # Not declared at all is the common case and must not break a machine
+        # that never declared it; only an explicit narrowing that excludes it
+        # is a refusal.
+        try:
+            narrowing = _sources._explicit_narrowing()
+        except _sources.SourceDenied as e:
+            return _denied(e)
+        if narrowing and _sources.ACTIVE_WINDOW_SOURCE_ID not in narrowing:
+            return _denied(_sources.SourceDenied(
+                f"{_sources.ACTIVE_WINDOW_SOURCE_ID} is not one of this persona's sources"
+            ))
     # This is an enumeration surface: it returns every window's owner app and
     # title, which is a readable summary of what the user is doing. It had no
     # gate at all — not even the global screen-capture switch every other tool
@@ -404,6 +488,26 @@ async def capture_window_tool(args: Dict) -> Dict[str, Any]:
     is more efficient than full screen (fewer pixels, fewer tokens) and
     avoids capturing sensitive content in other windows.
     """
+    # These return screen pixels (and window titles) exactly as
+    # capture_screenshot does, so they take the same bound. There is no
+    # monitor to name — the frontmost window may be on any display and this
+    # captures by window id — so they resolve ACTIVE_WINDOW_SOURCE_ID, the id
+    # VisualWatcher already publishes under.
+    from ..vision import sources as _sources
+    try:
+        _sources.permit_source(_sources.ACTIVE_WINDOW_SOURCE_ID)
+    except (_sources.SourceDenied, _sources.UnknownSource):
+        # Not declared at all is the common case and must not break a machine
+        # that never declared it; only an explicit narrowing that excludes it
+        # is a refusal.
+        try:
+            narrowing = _sources._explicit_narrowing()
+        except _sources.SourceDenied as e:
+            return _denied(e)
+        if narrowing and _sources.ACTIVE_WINDOW_SOURCE_ID not in narrowing:
+            return _denied(_sources.SourceDenied(
+                f"{_sources.ACTIVE_WINDOW_SOURCE_ID} is not one of this persona's sources"
+            ))
     from ..vision.config import is_screen_capture_enabled, load_config
 
     if not is_screen_capture_enabled():
@@ -459,6 +563,26 @@ async def capture_active_window_tool(args: Dict) -> Dict[str, Any]:
     largest window. This is the most efficient way to capture "what
     the user is looking at" without capturing other windows.
     """
+    # These return screen pixels (and window titles) exactly as
+    # capture_screenshot does, so they take the same bound. There is no
+    # monitor to name — the frontmost window may be on any display and this
+    # captures by window id — so they resolve ACTIVE_WINDOW_SOURCE_ID, the id
+    # VisualWatcher already publishes under.
+    from ..vision import sources as _sources
+    try:
+        _sources.permit_source(_sources.ACTIVE_WINDOW_SOURCE_ID)
+    except (_sources.SourceDenied, _sources.UnknownSource):
+        # Not declared at all is the common case and must not break a machine
+        # that never declared it; only an explicit narrowing that excludes it
+        # is a refusal.
+        try:
+            narrowing = _sources._explicit_narrowing()
+        except _sources.SourceDenied as e:
+            return _denied(e)
+        if narrowing and _sources.ACTIVE_WINDOW_SOURCE_ID not in narrowing:
+            return _denied(_sources.SourceDenied(
+                f"{_sources.ACTIVE_WINDOW_SOURCE_ID} is not one of this persona's sources"
+            ))
     from ..vision.config import is_screen_capture_enabled, load_config
 
     if not is_screen_capture_enabled():
@@ -541,8 +665,15 @@ async def _capture_frame_for_cv(source: str) -> str:
 
     from ..vision import sources as _sources
 
-    kind = _sources.KIND_WEBCAM if (source or "webcam") == "webcam" else _sources.KIND_SCREEN
-    src = _sources.resolve_request(source or "webcam", kind)
+    # The kind comes from the id when there is one, so "frigate:patio" is a
+    # request for a Frigate camera rather than a screen request that happens
+    # to name one. resolve_request enforces the kind it is given, which is
+    # what stops a permitted screen id from opening camera 1.
+    asked = source or "webcam"
+    kind = _sources.kind_of(asked) or (
+        _sources.KIND_WEBCAM if asked == "webcam" else _sources.KIND_SCREEN
+    )
+    src = _sources.resolve_request(asked, kind)
 
     if src.kind == _sources.KIND_WEBCAM:
         return _validate_capture_result(await capture_webcam({"source": src.id, "max_dim": 640}))
@@ -577,6 +708,11 @@ async def detect_objects_tool(args: Dict[str, Any]) -> Dict[str, Any]:
         # Capture frame
         try:
             image_b64 = await _capture_frame_for_cv(source)
+        except _source_errors() as e:
+            # A refusal is not a failure. SourceDenied is a PermissionError and
+            # UnknownSource a LookupError, so catching ValueError alone
+            # reported "the persona may not look there" as detection_failed.
+            return _denied(e)
         except ValueError as e:
             return {"error": str(e), "error_type": "capture_failed"}
 
@@ -619,6 +755,11 @@ async def detect_faces_tool(args: Dict[str, Any]) -> Dict[str, Any]:
         # Capture frame
         try:
             image_b64 = await _capture_frame_for_cv(source)
+        except _source_errors() as e:
+            # A refusal is not a failure. SourceDenied is a PermissionError and
+            # UnknownSource a LookupError, so catching ValueError alone
+            # reported "the persona may not look there" as detection_failed.
+            return _denied(e)
         except ValueError as e:
             return {"error": str(e), "error_type": "capture_failed"}
 
@@ -653,6 +794,11 @@ async def detect_motion_tool(args: Dict[str, Any]) -> Dict[str, Any]:
         # Capture first frame
         try:
             img1 = await _capture_frame_for_cv("webcam")
+        except _source_errors() as e:
+            # A refusal is not a failure. SourceDenied is a PermissionError and
+            # UnknownSource a LookupError, so catching ValueError alone
+            # reported "the persona may not look there" as detection_failed.
+            return _denied(e)
         except ValueError as e:
             return {"error": str(e), "error_type": "capture_failed"}
 
@@ -662,6 +808,11 @@ async def detect_motion_tool(args: Dict[str, Any]) -> Dict[str, Any]:
         # Capture second frame
         try:
             img2 = await _capture_frame_for_cv("webcam")
+        except _source_errors() as e:
+            # A refusal is not a failure. SourceDenied is a PermissionError and
+            # UnknownSource a LookupError, so catching ValueError alone
+            # reported "the persona may not look there" as detection_failed.
+            return _denied(e)
         except ValueError as e:
             return {"error": str(e), "error_type": "capture_failed"}
 
@@ -717,7 +868,7 @@ VISION_TOOL_SCHEMAS = {
                 },
                 "monitor": {
                     "type": "integer",
-                    "description": "Monitor index: 0=all monitors, 1=primary, 2+=secondary. Default is the configured monitor.",
+                    "description": "A declared screen source — its index, or its registry id such as 'screen:1'. Only declared, in-scope sources resolve; an index that names none is refused, not substituted.",
                     "default": 1,
                 },
             },
@@ -754,7 +905,7 @@ VISION_TOOL_SCHEMAS = {
                 },
                 "monitor": {
                     "type": "integer",
-                    "description": "Monitor index: 0=all, 1=primary, 2+=secondary.",
+                    "description": "A declared screen source — its index, or its registry id such as 'screen:1'. Only declared, in-scope sources resolve; an index that names none is refused, not substituted.",
                     "default": 1,
                 },
                 "include_image": {
@@ -850,7 +1001,7 @@ VISION_TOOL_SCHEMAS = {
             "properties": {
                 "camera": {
                     "type": "integer",
-                    "description": "Camera index (0=default, 1=second camera)",
+                    "description": "A declared webcam source — its index, or its registry id such as 'webcam:desk'. Omitted uses this persona's default camera. A source this persona is not scoped to is refused, not substituted.",
                     "default": 0,
                 },
                 "quality": {

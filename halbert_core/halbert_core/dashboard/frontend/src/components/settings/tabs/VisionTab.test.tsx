@@ -32,7 +32,7 @@ function defaultVisionConfig() {
     webcam: { enabled: false, camera_index: 0, quality: 85, max_dimension: 768, grayscale: false },
     redaction: { enabled: true, blocklist: ['password', 'secret'] },
     sources: [
-      { id: 'screen:1', label: 'Screen 1', kind: 'screen', native: '1', enabled: true },
+      { id: 'screen:studio', label: 'Studio display', kind: 'screen', native: '2', enabled: true },
       { id: 'webcam:0', label: 'Webcam 0', kind: 'webcam', native: '0', enabled: false },
       { id: 'frigate:patio', label: 'Patio', kind: 'frigate', native: 'patio', enabled: true },
     ],
@@ -161,7 +161,7 @@ describe('VisionTab sources (VIS-1)', () => {
     renderTab()
     await waitFor(() => expect(screen.queryByText(/Loading vision settings/i)).toBeNull())
 
-    expect(screen.getByDisplayValue('Screen 1')).toBeInTheDocument()
+    expect(screen.getByDisplayValue('Studio display')).toBeInTheDocument()
     expect(screen.getByDisplayValue('Patio')).toBeInTheDocument()
     expect(screen.getByText('frigate:patio')).toBeInTheDocument()
   })
@@ -178,7 +178,7 @@ describe('VisionTab sources (VIS-1)', () => {
     // The config key IS the list, so writing one entry would drop the others.
     expect(body.sources).toHaveLength(3)
     expect(body.sources[1]).toMatchObject({ id: 'webcam:0', enabled: true })
-    expect(body.sources[0]).toMatchObject({ id: 'screen:1', enabled: true })
+    expect(body.sources[0]).toMatchObject({ id: 'screen:studio', enabled: true })
   })
 
   it('renames a source without touching its id', async () => {
@@ -186,14 +186,14 @@ describe('VisionTab sources (VIS-1)', () => {
     const { calls } = renderTab()
     await waitFor(() => expect(screen.queryByText(/Loading vision settings/i)).toBeNull())
 
-    const nameField = screen.getByLabelText(/Name for screen:1/i)
+    const nameField = screen.getByLabelText(/Name for screen:studio/i)
     await user.clear(nameField)
-    await user.type(nameField, 'Studio display')
+    await user.type(nameField, 'A different name')
     await user.tab()
 
     const put = calls.find((c) => c.init?.method === 'PUT')
     const body = JSON.parse(put!.init!.body as string)
-    expect(body.sources[0]).toMatchObject({ id: 'screen:1', label: 'Studio display' })
+    expect(body.sources[0]).toMatchObject({ id: 'screen:studio', label: 'A different name' })
   })
 
   it('tests one source through that source, not the configured default', async () => {
@@ -203,7 +203,9 @@ describe('VisionTab sources (VIS-1)', () => {
 
     await user.click(screen.getAllByRole('button', { name: /^Test$/ })[0])
 
-    expect(calls.some((c) => c.url === '/api/vision/screenshot?monitor=1')).toBe(true)
+    // native 2, while the configured default is monitor_index 1 — so this
+    // asserts the source was used and not the fallback the test name rules out.
+    expect(calls.some((c) => c.url === '/api/vision/screenshot?monitor=2')).toBe(true)
   })
 
   it('offers no Test for a Frigate camera, which the NVR owns', async () => {

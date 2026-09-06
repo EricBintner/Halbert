@@ -426,6 +426,24 @@ class TestAudioSourceIds:
 
         assert RtspIngress().source_id == "mic:rtsp:rtsp"
 
+    def test_a_classified_sound_is_labelled_with_the_live_ears(self):
+        """The gate is live only because the ambient loop populates
+        source_ids; the field defaults to empty and an empty list routes every
+        event to Halbert, so this would go quietly dead rather than fail."""
+        from halbert_core.audio.pipeline import AudioPipelineCoordinator
+        from halbert_core.audio.ingress.local_mic import LocalMicIngress
+
+        mic = LocalMicIngress(area_id="study")
+        mic._running = True
+        coord = AudioPipelineCoordinator()
+        coord._ingress_adapters = [mic]
+
+        obs = coord._acoustic_observation(
+            {"class": "glass_break", "confidence": 0.9, "severity": 2})
+        assert obs.source_ids == ["mic:local:study"]
+        assert obs.sound_class == "glass_break"
+        assert obs.anomaly_severity == 2
+
     def test_the_coordinator_lists_only_running_ears(self):
         from halbert_core.audio.pipeline import AudioPipelineCoordinator
         from halbert_core.audio.ingress.local_mic import LocalMicIngress
