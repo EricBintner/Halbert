@@ -512,6 +512,11 @@ into the engine, and not before.
 
 ### 14.4 What to do now
 
+Filed with the engine as
+`/Volumes/4TB-BAD/Haloysius/.handoff/HANDOFF-WARRANT-BY-WHAT-AUTHORITY-2026-09-06.md`
+(indexed in that directory's README, §1c), with three questions for the
+engine and no code requested.
+
 Nothing in code. When the moderator design is written, start it from the
 table in §14.2 and from `persona/guest_tools.py`, `continuity/ownership.py`
 and `prompts/agent_prompts.py::_GUEST_BOUNDARIES` as the worked example,
