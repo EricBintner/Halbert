@@ -363,3 +363,90 @@ change normal mode and fix §1.6, which is a leak today.
 | `obs/audit.py:212` and its callers | §6 — none reachable from a guest turn |
 | `vision/watcher.py:218`, `audio/pipeline.py`, `integrations/frigate/frigate_event_mapper.py:267` | sensor outputs — where the source gate sits |
 | `federation/peers_config.py`, `peer_middleware.py` | the paired-home record the pull channel reads |
+
+---
+
+## 13. Build notes — what landed on `feat/guest-persona` (2026-09-06, second pass)
+
+The founder answered yes to D1–D5 and asked for the hardest pieces to be
+built; the rest is fill-in work (§13.4). Every module below has tests that
+failed before it existed. Full backend suite green with the worktree
+runner at the time of the commit.
+
+### 13.1 Built
+
+| Plan row | Module | Tests |
+|---|---|---|
+| §4.1 one function; P3 fail-closed; §5.2 the map; D1 | `continuity/ownership.py` (`Owner`, `route_write`, `route_observation`, `guest_tag`); `persona/private_sources.py` (`assign`, `release`, `owner_of`, `active`; bound to the guest session, cleared on every ending) | `test_ownership.py` (37) |
+| §4.2 the tick; forward the turn | `agents/state_machine.py` — `_run_cognition_tick` skips while a guest fronts; `_forward_guest_turn` runs from RESPONDING with the real reply and tells the user when the guest will not remember | `test_ownership_wiring.py::TestTheTick` |
+| §4.2 the transcript; I7 | `agents/conversation_sqlite.py` — `append_message` tags rows with the session in normal mode and writes nothing in private mode; `forget_request(request_id)` is the transcript's half of "forget that session" | `::TestMessages` |
+| §4.2 receipts | `agents/threads.py::_record_thread_state` — the session's actor and request id in normal mode; nothing in private mode | `::TestReceipts` |
+| §5.3 the sensor gate, reference wiring | `integrations/frigate/frigate_event_mapper.py::handle_event` — routes by `frigate:<camera>` before the state tracker, the timeline and the cognition queue; a private camera's detection is forwarded to the guest's home; `LIFE_SAFETY_LABELS` (`fire`, `smoke`) always reach Halbert | `::TestFrigateGate` |
+| §4.3, §7 the home, the client, the pull | `persona/guest.py` (`GuestHome`, `GuestSession.home`, `keepalive` renewal at most once per window); `persona/sibling.py` (`SiblingClient`, `persona_payload_from_config`, `forward_turn`, `forward_observation`, `install_from_home`) | `test_sibling_home.py` (24) |
+| §4.3 / D3 / I6 the guest's own recall | `persona/guest_tools.py` — `recall_guest_memory` replaces `recall_memory`; `recall_thread`/`resume_thread` denied; `GUEST_ONLY_TOOLS` run by the executor's `_run_guest_only`; `WRITE_PLANE_TOOLS` pinned against the allowlist at import and in tests | `test_guest_tools.py` (27) |
+| §7, §8 the channel | `dashboard/routes/guest.py` — `offer` accepts `home`; `POST /api/guest/pull` (local only) fetches, wears and announces; `/api/instance/info` reads the session in a worker thread so a keepalive ping never stalls the loop | `test_guest_routes.py` (22) |
+
+### 13.2 What the build found
+
+- **The tick defect is confirmed in a test, not fixed.** Without a guest,
+  the tick fires from REFLECTING with Halbert's observations as the
+  stand-in reply (attunement plan, HB-D1). The forward is therefore not
+  hung on the tick: it runs from RESPONDING only, with the real reply, so
+  no machine facts can reach a guest's home by that route.
+- **H2's memory endpoints are two families.** `memory-v2/memories` (POST,
+  the add) and `memory/search` (POST, the search) sit under
+  `/api/personas/<id>/`; the structured-persona blueprint is a separate
+  store under another prefix. `SiblingClient` uses the former pair; the
+  paths are class attributes so a sibling that differs is one override.
+  H3's list/detail routes match; its search is under its own blueprint and
+  needs that override.
+- **A pulled session is owned by its home.** `offered_by` is
+  `home:<netloc>`, so the same home re-pulling replaces its own session
+  and a different app cannot take it over (the existing conflict rule).
+  The keepalive is `SiblingClient.ping` — a persona fetch — asked at most
+  once per TTL window and bounded by `TRANSPORT_TIMEOUT_S`.
+- **Frigate's life-safety labels are a guess about custom models.** Stock
+  Frigate has no `fire`/`smoke` label; the set exists so that when a model
+  emits one, D1 already holds. Audio's confirmed acoustic anomaly and HA's
+  smoke/CO/gas entities are the real life-safety sources and are still to
+  be wired (§13.4).
+
+### 13.3 Contract additions
+
+```
+POST /api/guest/offer   body.home = {base_url, persona_id, token?, label?}   (optional)
+POST /api/guest/pull    {base_url, persona_id, token?, label?, ttl_seconds?}  local only
+                        → 200 {session (with home, token never shown), dropped}
+                        → 400 bad home/persona · 409 another app fronts · 502 home did not answer
+GET  /api/guest         fronting.home = {base_url, persona_id, label} | null
+```
+
+Memory at the home: one `episodic` memory per turn, content
+`User: … \n<guest>: …` capped at 2000 characters, tags
+`halbert-guest-session`, `<session_id>`, `turn`; observations from a
+private source carry `observation` and the source id instead of `turn`.
+
+### 13.4 Left for the fill-in session, in order
+
+1. **Audio source ids and the acoustic gate.** `audio/pipeline.py` events
+   already carry `source` and `area_id`; name them `mic:local:<n>` /
+   `mic:wyoming:<satellite>` and route at the pipeline output exactly as
+   the Frigate mapper does, with a confirmed acoustic anomaly as life
+   safety. Then the HA mapper for smoke/CO/gas entities.
+2. **VIS-1**, then the same gate at `vision/watcher.py:218`,
+   `zone_watcher` and `ambient_webcam` with `webcam:<n>` / `screen:<n>`.
+3. **Private-sources routes and the picker.** `POST /api/guest/private/assign`
+   and `/release` (local only), the pill's source picker, and the P6
+   statement at the moment the first source is handed over. Not before 1
+   and 2 — a private mode that gates one sense and not another is the
+   leak the design warns about.
+4. **The verb.** "be ⟨name⟩" in chat and on the pill: list matches across
+   paired homes (`SiblingClient.list_personas`) and call `/api/guest/pull`.
+   The peer record needs a home URL and an outbound token; today the pull
+   request carries them.
+5. **The pill shows the home** (`fronting.home.label`) and says when a
+   guest cannot remember (the `thinking` line the turn emits).
+6. **H3.** Point `SiblingClient.PATH_MEMORY_SEARCH` at its blueprint and
+   run the experiment; nothing else is needed.
+7. **A session-erase control**: `forget_request` + `redact_request` under
+   one local-only route, for the normal-mode transcript (D2).

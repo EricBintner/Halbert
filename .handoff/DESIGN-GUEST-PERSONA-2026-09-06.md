@@ -625,3 +625,5 @@ deliberately, so the mock gained the new one — inside the factory, since
 Private mode remains **absent from the UI**, per the §11 sequencing note. No
 toggle exists, nothing claims it, and the §6.2 writer audit is still
 unwritten.
+
+> **Superseded in part (2026-09-06, second pass):** private mode, the memory divide and the pull channel are specified and partly built in `DESIGN-PERSONA-LAYERS-2026-09-06.md` (§13 for what landed). §6 and §12 Q1/Q2 of this document are answered there.
