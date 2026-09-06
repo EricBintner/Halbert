@@ -16,14 +16,14 @@ worse than no guard.
 
 import pathlib
 
-from halbert_core.continuity import timeline
+from halbert_core.obs import logging as _probe
 
 
 def test_submodules_resolve_inside_this_checkout():
     root = pathlib.Path(__file__).resolve().parents[2]
-    resolved = pathlib.Path(timeline.__file__).resolve()
+    resolved = pathlib.Path(_probe.__file__).resolve()
     assert root in resolved.parents, (
-        f"halbert_core.continuity.timeline resolved to {resolved}, outside "
+        f"halbert_core.obs.logging resolved to {resolved}, outside "
         f"this checkout ({root}). The tests are running against another "
         f"tree's source -- see the root conftest.py."
     )
