@@ -1,8 +1,10 @@
 # DESIGN: Vision source registry — naming what Halbert can look through
 
 **Date:** 2026-09-06
-**Status:** design, ready to implement. Two decisions (§5) want a founder
-answer first; neither blocks starting §4 phase A.
+**Status:** **BUILT** on `feat/guest-persona`, 2026-09-06. Both §5 decisions
+answered — D1 with a correction the code forced (see §10), D2 yes. Phases A–E
+are done; §10 records what landed and where the build disagreed with the
+spec.
 **Parent:** `.handoff/DESIGN-GUEST-PERSONA-2026-09-06.md` §5 and §11 phase 6.
 That document scoped this as "standalone, worth building whether or not
 guest personas ship" — this is that spec.
@@ -223,3 +225,86 @@ gated on D2.
 | `config/being_config.py:164` | `SensesVisionConfig` — where `sources` lands |
 | `mcp/camera_gate.py` | written, tested, unwired (R2-OBS-1) — connect it under D2 |
 | `dashboard/frontend/.../VisionTab.tsx:205,257` | the index boxes to replace |
+
+---
+
+## 10. Build notes — what landed (2026-09-06)
+
+Full backend suite green (5832 passed / 14 skipped); frontend 106 files / 984
+tests; `tsc --noEmit` clean.
+
+### 10.1 D1 was answered, and had to be corrected
+
+The recommendation was "probe to offer, persist a declared id". **Offering is
+not available**, and the reason is worth recording so nobody re-proposes it:
+
+- `mss` reports no display identity on macOS. `MSSImplDarwin.monitors()` fills
+  only left/top/width/height, and on a single-display machine the
+  all-monitors entry and the one display come back byte-identical — geometry
+  cannot even tell index 0 from index 1, let alone name them.
+- OpenCV has no device enumeration. `cv2.videoio_registry` exposes backend
+  introspection only; the sole way to discover a camera is to trial-open
+  indices, which is slow and lights the LED once per probe. Doing that to
+  populate a settings page is not how a machine earns trust about its camera.
+
+So sources are **declared** — id, label, kind, native, enabled, in
+`vision_config.yml` — and `availability()` only says whether a declared source
+resolves now. The UI asks the user to name what they have instead of
+pretending to have found it.
+
+### 10.2 What the build found that the spec did not say
+
+- **A Frigate camera may be called "Front Door", and the id grammar has no
+  room for a space.** The id carries the slug and the source keeps the real
+  name as its native; `frigate_source_id()` is exported so the event mapper
+  and the registry cannot drift into naming the same camera two ways.
+- **`str(text or "")` turns camera 0 into the empty string.** 0 is falsy and
+  index 0 is the commonest camera there is.
+- **A native index must be looked up, not minted into an id.** `webcam:desk`
+  may have native `1`, so `camera=1` means *that* source — minting
+  `webcam:1` would raise "no such camera" when the honest answer is "not
+  yours".
+- **`list_windows_tool` had no gate at all** — not even the global screen
+  switch every other tool in its module checks. Window titles and owner apps
+  were listable with screen capture off.
+- **Capture dedup was one hash per capture *type*.** That was the same thing
+  as per-source while one camera was reachable, and stops being it the moment
+  two are: alternating captures report "unchanged" about a frame they never
+  compared against.
+- **The Frigate frame tools were unbounded and guest-allowed.**
+  `frigate_get_latest_frame` and `frigate_get_snapshot` fetch by camera name
+  with no check, and both are on `GUEST_ALLOWED_TOOLS`. Now gated;
+  the snapshot handler resolves the event's camera *before* the pixels,
+  because fetching and then refusing would still have read the camera.
+- **Frigate cannot be bounded by enumeration.** `enabled_cameras` empty means
+  "every camera" and listing the real set needs the NVR to answer. So the
+  bound is an explicit persona narrowing, then the declared set, then — with
+  neither — nothing. That last branch is a real gap, named in the docstring
+  and pinned by a test that asserts the unbounded behaviour.
+
+### 10.3 D2 answered yes, and the MCP gate went with it
+
+`_capture_frame_for_cv` takes a registry id, so `detect_objects` can run
+against a Frigate camera for the first time. On demand only — a continuous
+pull would be a second recorder beside the one the house already has.
+
+`mcp/camera_gate.py` said in its own header that `gate_response()` was not in
+`server.py`'s dispatch and named the condition to wire it under: the moment a
+camera-touching tool becomes reachable. That moment arrived, so it is wired:
+`mcp_response(gate_response(tool_name, handler(args)))`, gate inside, egress
+boundary outside. Its `_tool_frigate_*` handlers remain registered nowhere and
+their per-source gates remain unwritten — now said in the header rather than
+left to be discovered.
+
+### 10.4 Still open
+
+- The `_tool_frigate_*` / `_tool_vision_*` handlers in `camera_gate.py` have
+  no per-source ownership gate; a camera handed to a guest would be projected
+  by name if one were ever registered.
+- **What bounds a *guest's* view.** A guest persona cannot set `senses`, so it
+  inherits the host persona's scope. Whether a guest's view should shrink to
+  the sources handed to it — rather than the whole house it is allowed to see
+  today — is a product decision nobody has taken.
+- `vision/wayland_capture.py` is dead code and `is_wayland()` is consulted by
+  nothing, so a real Wayland session goes down mss's X11 path. Unrelated to
+  VIS-1, found while reading, worth its own row.

@@ -533,6 +533,40 @@ the smoke detector (D1 handles that one). The picker in N4 has to decide
 whether it lists HA entities, and by what rule — per-room, per-domain, or
 an explicit list. Nothing in this change presumes an answer.
 
+### 13.7 The eyes (N2) — the gate, and the three watchers behind no door
+
+`DESIGN-VISION-SOURCE-REGISTRY-2026-09-06.md` §10 has the registry side. What
+matters to *this* document is where the ownership gate ended up, because two
+of the three placements the earlier notes named were wrong.
+
+**VisualWatcher is gated at the top of `_publish_finding`, not at
+`watcher.py:218`** — which §5.3, §13.4 and the Opus handoff all named. Line 218
+is `self.findings.add(finding)`, one of *five* outputs of that method: the
+finding, the proactive event, the vision cache write, the episodic memory row
+and the reflex evaluation. A gate at the store write leaves four running.
+
+**ZoneWatcher needs two gates.** `check_once()` returns events by value and
+never touches `on_event`, so the callback gate does not cover the peek. It also
+gains a `source_id` constructor argument, because a zone knows its own name and
+not which feed it crops — whoever builds the `frame_source` has to say. An
+empty id stays Halbert's, on the same principle the Frigate mapper uses: a
+watcher that cannot say where it looked cannot have been handed over.
+
+**AmbientWebcamMonitor opens `cv2.VideoCapture` directly**, bypassing
+`WebcamCapture`, the vision tools and the routes — so a gate at any of those
+would have left a continuous webcam path running. (It also never checks
+`is_webcam_enabled()`, which means the Vision tab's kill switch does not stop
+it. That is a separate pre-existing bug, untouched here, and worth its own row.)
+
+All three share `vision/gate.py`, deliberately synchronous: every one of these
+call sites builds a fresh event loop inside a daemon thread, so a gate that had
+to be awaited could not be dropped in where the decision belongs.
+
+**The active window gets its own id**, `screen:active_window`. The frontmost
+window may be on any display and the watcher captures it by window id, so
+emitting `screen:<monitor_index>` there would be a claim rather than a fact —
+the same honesty `audio/ingress/base.py` keeps about per-satellite ids.
+
 ---
 
 ## 14. A consideration — the "by what authority" axis, and Halbert as its reference

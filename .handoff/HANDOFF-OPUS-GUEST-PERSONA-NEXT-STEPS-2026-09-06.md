@@ -68,7 +68,13 @@ and nothing of Halbert's; DROP → nothing; HALBERT → as today.
 *Accept:* a test in the shape of `test_ownership_wiring.py::TestFrigateGate`
 for the acoustic path, including the life-safety case.
 
-### N2 — VIS-1, then the local vision gate (2–3 d) — **NEXT**
+### N2 — VIS-1, then the local vision gate — **DONE**
+See `DESIGN-VISION-SOURCE-REGISTRY-2026-09-06.md` §10 and
+`DESIGN-PERSONA-LAYERS-2026-09-06.md` §13.7. Registry, permit_source, the
+tool-argument fix, the three watcher gates, the Frigate tool bound, the MCP
+gate wiring and both halves of the UI. D1 answered with a correction the code
+forced; D2 yes. Original brief:
+
 Build the registry as specified (`vision/sources.py`, `permit_source`,
 `SensesVisionConfig.sources`, the tool-argument fix at `vision_tools.py:137`).
 Then gate `vision/watcher.py:218`, `zone_watcher`, `ambient_webcam` with
@@ -90,7 +96,7 @@ safety (`modality_wiring.LIFE_SAFETY_EVENT_TYPES`); route with
 `life_safety=True` so D1 holds there too. Other HA entities are the house,
 Halbert's in every mode — no source assignment applies to them yet.
 
-### N4 — Private-sources routes, the picker, and the statement (1–2 d)
+### N4 — Private-sources routes, the picker, and the statement (1–2 d) — **NEXT**
 Only after N1–N3. `POST /api/guest/private/assign` and `/release`
 (`require_local_admin`), `GET /api/guest` gains `private_sources`. The pill's
 source picker lists registry ids (VIS-1 + audio). At the first assignment,
