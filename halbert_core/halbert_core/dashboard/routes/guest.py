@@ -48,6 +48,20 @@ _ANNOUNCER_KEY = "dashboard.routes.guest.announce"
 class OfferRequest(BaseModel):
     persona: Dict[str, Any]
     ttl_seconds: float = Field(default=guest.DEFAULT_TTL_SECONDS, ge=1.0, le=guest.MAX_TTL_SECONDS)
+    # Where the guest's words go (design §4.3). Optional: a guest without a
+    # home is a face that does not remember, and the turn says so.
+    home: Optional[Dict[str, Any]] = None
+
+
+class PullRequest(BaseModel):
+    """"Halbert, be Marnie" — the user's side fetches a persona from its home
+    (design §7). The base URL and persona id name the home; the token is
+    what Halbert presents to it."""
+    base_url: str
+    persona_id: str
+    token: str = ""
+    label: str = ""
+    ttl_seconds: float = Field(default=guest.DEFAULT_TTL_SECONDS, ge=1.0, le=guest.MAX_TTL_SECONDS)
 
 
 class HeartbeatRequest(BaseModel):
@@ -138,6 +152,7 @@ async def offer_persona(
     """Lend this machine a persona for a session."""
     try:
         persona, dropped = guest.GuestPersona.from_payload(request.persona)
+        home = guest.GuestHome.from_payload(request.home) if request.home else None
     except guest.GuestValidationError as e:
         raise HTTPException(status_code=400, detail=str(e))
     _ensure_announcer()
@@ -147,6 +162,7 @@ async def offer_persona(
             offered_by=peer.node_id,
             offered_by_name=peer.node_name,
             ttl_seconds=request.ttl_seconds,
+            home=home,
         )
     except guest.GuestConflict as e:
         raise HTTPException(status_code=409, detail=str(e))
@@ -187,6 +203,37 @@ async def withdraw_persona(
 # ---------------------------------------------------------------------------
 # The user's side
 # ---------------------------------------------------------------------------
+
+@router.post("/api/guest/pull", dependencies=[Depends(require_local_admin)])
+async def pull_persona(request: PullRequest) -> Dict[str, Any]:
+    """Fetch a persona from a sibling's home and wear it. The session is
+    kept alive by pinging the home, since nobody there is heartbeating."""
+    from ...persona import sibling
+
+    try:
+        home = guest.GuestHome.from_payload(request.model_dump())
+    except guest.GuestValidationError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    _ensure_announcer()
+    from urllib.parse import urlparse
+    who = home.label or (urlparse(home.base_url).netloc or home.base_url)
+    try:
+        session, dropped = await asyncio.to_thread(
+            sibling.install_from_home,
+            home,
+            offered_by=f"home:{urlparse(home.base_url).netloc}",
+            offered_by_name=who,
+            ttl_seconds=request.ttl_seconds,
+        )
+    except sibling.HomeUnreachable as e:
+        raise HTTPException(status_code=502, detail=f"The persona's home did not answer: {e}")
+    except guest.GuestConflict as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except guest.GuestValidationError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    await get_event_bus().publish(_fronting_event(session))
+    return {"status": "ok", "session": session.to_dict(), "dropped": dropped}
+
 
 @router.post("/api/guest/end", dependencies=[Depends(require_local_admin)])
 async def end_session() -> Dict[str, Any]:

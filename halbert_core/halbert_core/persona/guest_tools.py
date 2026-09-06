@@ -37,11 +37,23 @@ Adding a tool to the allowlist is a code change and a security review.
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, FrozenSet, List
+from typing import Any, Awaitable, Callable, Dict, FrozenSet, List
 
 logger = logging.getLogger(__name__)
 
 HANDBACK_TOOL_NAME = "hand_back_to_halbert"
+RECALL_GUEST_MEMORY_TOOL_NAME = "recall_guest_memory"
+
+# The tools whose handlers put the model's stated ``reason`` into the
+# hash-chained audit log (``obs/audit.py``). Design §6: a guest turn never
+# reaches that log as long as none of these is ever allowed to a guest.
+WRITE_PLANE_TOOLS: FrozenSet[str] = frozenset({
+    "run_command",
+    "write_file",
+    "write_config",
+    "schedule_cron",
+    "terminal_blocks",
+})
 
 HANDBACK_TOOL_SCHEMA: Dict[str, Any] = {
     "name": HANDBACK_TOOL_NAME,
@@ -64,6 +76,65 @@ HANDBACK_TOOL_SCHEMA: Dict[str, Any] = {
     },
 }
 
+RECALL_GUEST_MEMORY_SCHEMA: Dict[str, Any] = {
+    "name": RECALL_GUEST_MEMORY_TOOL_NAME,
+    "description": (
+        "Recall something from your own memory — what you and this user have "
+        "said and done together before. This is your memory at your home, not "
+        "the machine's."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "query": {"type": "string", "description": "What to look for."},
+            "k": {"type": "integer", "description": "How many memories to return (default 5)."},
+        },
+        "required": ["query"],
+    },
+}
+
+
+async def recall_guest_memory(args: Dict[str, Any]) -> str:
+    """The guest reads what it wrote (I6). Never Halbert's memory."""
+    from .guest import current_guest
+    from .sibling import HomeUnreachable, SiblingClient
+
+    session = current_guest()
+    if session is None:
+        return "No guest persona is fronting."
+    who = session.persona.name
+    if session.home is None:
+        return f"{who} has no memory home in this session; there is nothing to recall."
+    query = str((args or {}).get("query") or "").strip()
+    try:
+        k = max(1, min(20, int((args or {}).get("k") or 5)))
+    except (TypeError, ValueError):
+        k = 5
+    try:
+        memories = SiblingClient(session.home).memory_search(query, k=k, strict=True)
+    except HomeUnreachable:
+        return f"{who} could not reach their memory just now."
+    lines = []
+    for m in memories:
+        text = m.get("content") if isinstance(m, dict) else str(m)
+        text = " ".join(str(text or "").split())
+        if text:
+            lines.append(f"- {text}")
+    if not lines:
+        return f"{who} remembers nothing about that."
+    return f"{who} remembers:\n" + "\n".join(lines)
+
+
+# Tools that exist only while a guest fronts. They are not in the executor's
+# registry; the mask appends their schemas and runs their handlers.
+GUEST_ONLY_TOOLS: Dict[str, Dict[str, Any]] = {
+    HANDBACK_TOOL_NAME: HANDBACK_TOOL_SCHEMA,
+    RECALL_GUEST_MEMORY_TOOL_NAME: RECALL_GUEST_MEMORY_SCHEMA,
+}
+GUEST_ONLY_HANDLERS: Dict[str, Callable[[Dict[str, Any]], Awaitable[str]]] = {
+    RECALL_GUEST_MEMORY_TOOL_NAME: recall_guest_memory,
+}
+
 GUEST_ALLOWED_TOOLS: FrozenSet[str] = frozenset({
     # The house
     "ha_get_entity_state",
@@ -78,12 +149,11 @@ GUEST_ALLOWED_TOOLS: FrozenSet[str] = frozenset({
     "detect_motion",
     "detect_objects",
     "detect_faces",
-    # Memory — Halbert mode; private mode is a later phase (§6, Q1)
-    "recall_memory",
-    # One conversation — handled inline in PLANNING, never executed here
+    # Memory — the guest's own, at its home (D3 / I6: nothing of Halbert's)
+    RECALL_GUEST_MEMORY_TOOL_NAME,
+    # One conversation — opening a thread is fine; recalling one is a read
+    # of Halbert's memory and is not
     "new_thread",
-    "recall_thread",
-    "resume_thread",
     # The way home
     HANDBACK_TOOL_NAME,
 })
@@ -110,6 +180,10 @@ GUEST_DENIED_TOOLS: FrozenSet[str] = frozenset({
     "list_windows",
     # Writes to the NVR
     "frigate_review_event",
+    # Halbert's memory — the guest reads what it wrote, nothing else (D3)
+    "recall_memory",
+    "recall_thread",
+    "resume_thread",
     # The world
     "web_search",
     # MCP-surface names, listed so the intent is on record should any of
@@ -144,6 +218,12 @@ def _self_check() -> None:
         raise RuntimeError(
             f"GUEST_ALLOWED_TOOLS and GUEST_DENIED_TOOLS overlap: {overlap}. "
             "A tool cannot be both allowed and denied to a guest."
+        )
+    plane = GUEST_ALLOWED_TOOLS & WRITE_PLANE_TOOLS
+    if plane:
+        raise RuntimeError(
+            f"GUEST_ALLOWED_TOOLS admits the write plane: {plane}. "
+            "A guest turn must never reach the audit chain (design §6)."
         )
 
 

@@ -838,6 +838,22 @@ class SqliteConversationStore:
         """
         if self._conn is None:
             return None
+        # Ownership (design §4.2): while a guest persona fronts, the
+        # transcript is Halbert's in normal mode — tagged with the session so
+        # one ``forget_request()`` erases it — and the guest's in private
+        # mode, in which case no row is written here at all.
+        try:
+            from ..continuity.ownership import Owner, guest_tag, route_write
+            owner = route_write("conversation.message")
+        except Exception:
+            owner = None
+        if owner is not None and owner is not Owner.HALBERT:
+            logger.info("Message not recorded here (%s role=%s): a guest fronts", owner.value, role)
+            return None
+        if owner is Owner.HALBERT:
+            tag = guest_tag()
+            if tag:
+                metadata = {**(metadata or {}), **tag}
         if isinstance(content, str):
             text = content
         else:
@@ -1331,6 +1347,28 @@ class SqliteConversationStore:
             "metadata": _loads(row["metadata"], {}),
             "visible_in_timeline": bool(row["visible_in_timeline"]),
         }
+
+    def forget_request(self, request_id: str) -> int:
+        """Delete every message written under ``request_id`` — the
+        transcript's half of "forget that session" (design §4.2, I7). The
+        ledger's half is ``StateStore.redact_request``. Returns the number of
+        rows removed; a second call returns 0."""
+        if self._conn is None or not request_id:
+            return 0
+        with self._lock, self._conn:
+            ids = [
+                int(r[0]) for r in self._conn.execute(
+                    "SELECT id FROM messages WHERE json_extract(metadata, '$.request_id') = ?",
+                    (request_id,),
+                ).fetchall()
+            ]
+            if not ids:
+                return 0
+            marks = ",".join("?" * len(ids))
+            self._conn.execute(f"DELETE FROM messages_fts WHERE rowid IN ({marks})", ids)
+            self._conn.execute(f"DELETE FROM messages WHERE id IN ({marks})", ids)
+        logger.info("Forgot %d message(s) written under %s", len(ids), request_id)
+        return len(ids)
 
     def list_messages(self, thread_id: str, *, limit: Optional[int] = None) -> List[Dict[str, Any]]:
         """Every row of a thread, oldest-first, with decoded JSON columns."""

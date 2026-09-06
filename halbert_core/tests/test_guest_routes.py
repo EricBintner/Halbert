@@ -26,7 +26,7 @@ from fastapi.testclient import TestClient
 from halbert_core.dashboard.routes import guest as guest_routes
 from halbert_core.federation.peer_middleware import PeerContext, require_peer_auth
 from halbert_core.federation.peers_config import PeerCredential
-from halbert_core.persona import guest
+from halbert_core.persona import guest, sibling
 from halbert_core.proactive.events import get_event_bus, is_user_facing
 
 
@@ -196,3 +196,67 @@ class TestWhatThePillSees:
         assert info["fronting"]["offered_by_name"] == "H2"
         # I4: the machine's own name is still the machine's; the pill shows both.
         assert info["display_name"] != "Marnie"
+
+
+class TestTheHome:
+
+    def test_an_offer_can_name_the_guests_home_and_the_token_is_never_shown(self):
+        client = TestClient(_app(_peer()))
+        body = _offer_body()
+        body["home"] = {"base_url": "http://127.0.0.1:8002/", "persona_id": "marnie-7", "token": "tkn", "label": "H2"}
+        resp = client.post("/api/guest/offer", json=body)
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["session"]["home"] == {"base_url": "http://127.0.0.1:8002", "persona_id": "marnie-7", "label": "H2"}
+        assert "tkn" not in resp.text
+        assert guest.current_guest().home.token == "tkn"
+
+    def test_a_bad_home_is_a_bad_request_and_nothing_fronts(self):
+        client = TestClient(_app(_peer()))
+        body = _offer_body()
+        body["home"] = {"base_url": "ftp://x", "persona_id": "p"}
+        assert client.post("/api/guest/offer", json=body).status_code == 400
+        assert guest.current_guest() is None
+
+
+class TestPull:
+    """"Halbert, be Marnie": the user's side fetches the persona from its home."""
+
+    PERSONA = {"id": "marnie-7", "name": "Marnie", "traits": ["warm"], "directives": ["Keep it short."]}
+
+    def test_pull_fetches_wears_and_announces(self, monkeypatch):
+        calls = []
+
+        def transport(method, url, body, headers):
+            calls.append((method, url))
+            return 200, self.PERSONA
+
+        monkeypatch.setattr(sibling, "default_transport", transport)
+        client = TestClient(_app())
+        resp = client.post("/api/guest/pull", json={"base_url": "http://127.0.0.1:8002", "persona_id": "marnie-7", "label": "H2"})
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["session"]["name"] == "Marnie"
+        assert body["session"]["home"]["persona_id"] == "marnie-7"
+        assert body["dropped"] == []
+        live = guest.current_guest()
+        assert live is not None and live.home is not None and live.keepalive is not None
+        assert calls and calls[0][1].endswith("/api/personas/marnie-7")
+        events = get_event_bus().get_recent()
+        assert events and events[0].data["state"] == "fronting"
+
+    def test_a_dead_home_is_a_bad_gateway_and_nothing_fronts(self, monkeypatch):
+        def dead(method, url, body, headers):
+            raise ConnectionError("down")
+
+        monkeypatch.setattr(sibling, "default_transport", dead)
+        client = TestClient(_app())
+        resp = client.post("/api/guest/pull", json={"base_url": "http://127.0.0.1:8002", "persona_id": "marnie-7"})
+        assert resp.status_code == 502
+        assert guest.current_guest() is None
+
+    def test_pull_while_another_app_fronts_is_a_conflict(self, monkeypatch):
+        monkeypatch.setattr(sibling, "default_transport", lambda m, u, b, h: (200, self.PERSONA))
+        TestClient(_app(_peer("other-app"))).post("/api/guest/offer", json=_offer_body(name="Rex"))
+        resp = TestClient(_app()).post("/api/guest/pull", json={"base_url": "http://127.0.0.1:8002", "persona_id": "marnie-7"})
+        assert resp.status_code == 409
+        assert guest.current_guest().persona.name == "Rex"

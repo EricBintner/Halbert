@@ -825,6 +825,15 @@ class ThreadManager:
                 ACTOR_AGENT, StateStore, default_state_db_path,
             )
             from halbert_core.agents.receipt import _command_lines, _file_lines
+            # Ownership (design §4.2): while a guest fronts, receipts are
+            # Halbert's in normal mode — under the session's actor and
+            # request id, so ``redact_request`` can undo the session — and
+            # are not written in private mode.
+            from halbert_core.continuity.ownership import Owner, guest_tag, route_write
+            if route_write("conversation.receipt") is not Owner.HALBERT:
+                logger.info(f"Thread {thread_id} receipts not recorded: a guest fronts privately")
+                return
+            tag = guest_tag()
             store = StateStore(db_path=str(default_state_db_path()))
             messages = self.store.list_messages(thread_id)
             # Filter out terminal-origin messages
@@ -840,13 +849,14 @@ class ThreadManager:
             # kept one open row and seven zero-duration ones -- and recall
             # rendered them as a chain of changes that never happened. The
             # item is part of the key, so each fact stands on its own.
-            rid = f"threadclose-{thread_id}"
+            rid = tag.get("request_id") or f"threadclose-{thread_id}"
+            actor = tag.get("actor") or ACTOR_AGENT
 
             def _receipt(predicate: str, item: str, why: str) -> None:
                 store.record_state(
                     f"thread:{thread_id}", f"{predicate}:{_receipt_key(item)}",
                     item, "thread_close", thread_id=thread_id, now=now,
-                    reason=why, actor=ACTOR_AGENT, request_id=rid,
+                    reason=why, actor=actor, request_id=rid,
                 )
 
             for cmd in _command_lines(blocks)[-8:]:

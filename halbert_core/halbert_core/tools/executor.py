@@ -385,16 +385,14 @@ class ToolExecutor:
                 {"type": "function", "function": schema}
                 for schema in self.schemas.values()
             ]
-        from ..persona.guest_tools import (
-            HANDBACK_TOOL_SCHEMA,
-            is_tool_allowed_for_guest,
-        )
+        from ..persona.guest_tools import GUEST_ONLY_TOOLS, is_tool_allowed_for_guest
         narrowed = [
             {"type": "function", "function": schema}
             for name, schema in self.schemas.items()
             if is_tool_allowed_for_guest(name)
         ]
-        narrowed.append({"type": "function", "function": dict(HANDBACK_TOOL_SCHEMA)})
+        for schema in GUEST_ONLY_TOOLS.values():
+            narrowed.append({"type": "function", "function": dict(schema)})
         return narrowed
     
     async def execute(
@@ -428,9 +426,15 @@ class ToolExecutor:
         # tool calls, and a model can imitate a call it was not offered.
         guest = self._fronting_guest()
         if guest is not None:
-            from ..persona.guest_tools import HANDBACK_TOOL_NAME, is_tool_allowed_for_guest
+            from ..persona.guest_tools import (
+                GUEST_ONLY_TOOLS,
+                HANDBACK_TOOL_NAME,
+                is_tool_allowed_for_guest,
+            )
             if tool_name == HANDBACK_TOOL_NAME:
                 return self._hand_back(guest, args, session_id, start)
+            if tool_name in GUEST_ONLY_TOOLS:
+                return await self._run_guest_only(tool_name, args, session_id, start)
             if not is_tool_allowed_for_guest(tool_name):
                 who = guest.persona.name
                 logger.info(f"Refused {tool_name}: not available while {who} fronts")
@@ -447,10 +451,10 @@ class ToolExecutor:
                     ),
                     execution_time_ms=0,
                 )
-        elif self._is_handback(tool_name):
+        elif self._is_guest_only(tool_name):
             return ExecutionResult(
                 success=False,
-                error="No guest persona is fronting; nothing to hand back.",
+                error=f"{tool_name} exists only while a guest persona is fronting.",
                 execution_time_ms=0,
             )
 
@@ -592,12 +596,31 @@ class ToolExecutor:
             current_agent_session.reset(session_token)
 
     @staticmethod
-    def _is_handback(tool_name: str) -> bool:
+    def _is_guest_only(tool_name: str) -> bool:
         try:
-            from ..persona.guest_tools import HANDBACK_TOOL_NAME
-            return tool_name == HANDBACK_TOOL_NAME
+            from ..persona.guest_tools import GUEST_ONLY_TOOLS
+            return tool_name in GUEST_ONLY_TOOLS
         except Exception:
             return False
+
+    async def _run_guest_only(self, tool_name: str, args: Dict, session_id: str, start: float) -> ExecutionResult:
+        """A tool that exists only while a guest fronts (the guest's own
+        recall). Runs its handler from ``GUEST_ONLY_HANDLERS``; never the
+        registry."""
+        from ..persona.guest_tools import GUEST_ONLY_HANDLERS
+
+        handler = GUEST_ONLY_HANDLERS.get(tool_name)
+        if handler is None:
+            return ExecutionResult(success=False, error=f"No handler for {tool_name}", execution_time_ms=0)
+        try:
+            result = await handler(args or {})
+        except Exception as e:
+            self._audit(tool_name, args, session_id, success=False, error=str(e))
+            return ExecutionResult(success=False, error=str(e), execution_time_ms=(time.time() - start) * 1000)
+        self._audit(tool_name, args, session_id, success=True)
+        return ExecutionResult(
+            success=True, result=result, execution_time_ms=(time.time() - start) * 1000, risk_level=RiskLevel.SAFE,
+        )
 
     def _hand_back(self, guest, args: Dict, session_id: str, start: float) -> ExecutionResult:
         """The guest hands the conversation back to the machine (design §4).

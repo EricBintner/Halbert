@@ -40,6 +40,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, FrozenSet, List, Mapping, Optional, Tuple
+from urllib.parse import urlparse
 
 logger = logging.getLogger("halbert.persona.guest")
 
@@ -207,6 +208,45 @@ class GuestPersona:
 
 
 # ---------------------------------------------------------------------------
+# The guest's home
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class GuestHome:
+    """Where the guest's own memory lives: a paired sibling's per-persona
+    API (``persona/sibling.py``). The guest's words go there and are
+    recalled from there, never from a namespace on this disk (design §4.3).
+    The token is the credential Halbert presents to the home; it is never
+    rendered."""
+
+    base_url: str
+    persona_id: str
+    token: str = ""
+    label: str = ""
+
+    @classmethod
+    def from_payload(cls, payload: Mapping[str, Any]) -> "GuestHome":
+        if not isinstance(payload, Mapping):
+            raise GuestValidationError("home must be a mapping")
+        url = _one_line(payload.get("base_url"), "home.base_url", 300)
+        parts = urlparse(url) if url else None
+        if not url or parts.scheme not in ("http", "https") or not parts.netloc:
+            raise GuestValidationError("home.base_url must be an http(s) URL")
+        persona_id = _one_line(payload.get("persona_id"), "home.persona_id", 120)
+        if not persona_id:
+            raise GuestValidationError("home.persona_id is required")
+        return cls(
+            base_url=url.rstrip("/"),
+            persona_id=persona_id,
+            token=_one_line(payload.get("token"), "home.token", 512),
+            label=_one_line(payload.get("label"), "home.label", MAX_NAME_CHARS),
+        )
+
+    def to_dict(self) -> Dict[str, str]:
+        return {"base_url": self.base_url, "persona_id": self.persona_id, "label": self.label}
+
+
+# ---------------------------------------------------------------------------
 # The session
 # ---------------------------------------------------------------------------
 
@@ -220,9 +260,15 @@ class GuestSession:
     started_mono: float        # monotonic clock, for deadlines
     ttl_seconds: float
     deadline: float
+    home: Optional[GuestHome] = None
+    # A pulled session has nobody on the other side to heartbeat. When the
+    # deadline passes, this is asked instead — at most once per window —
+    # and a False (or a raise) ends the session as ``home_unreachable``.
+    keepalive: Optional[Callable[[], bool]] = field(default=None, repr=False, compare=False)
     ended_mono: Optional[float] = None
     end_reason: Optional[str] = None
     ended_by: str = ""
+    _renewing: bool = field(default=False, repr=False, compare=False)
 
     def active(self, now: Optional[float] = None) -> bool:
         if self.end_reason is not None:
@@ -240,6 +286,7 @@ class GuestSession:
             "seconds_until_expiry": max(0.0, self.deadline - now),
             "active": self.active(now),
             "end_reason": self.end_reason,
+            "home": self.home.to_dict() if self.home else None,
         }
 
 
@@ -278,12 +325,35 @@ def current_guest(now: Optional[float] = None) -> Optional[GuestSession]:
     """The session fronting right now, or None. A session past its heartbeat
     deadline is ended here, on the read, and announced once."""
     now = _now(now)
+    keep: Optional[Callable[[], bool]] = None
     with _lock:
         session = _session
         if session is None:
             return None
         if session.active(now):
             return session
+        if session.keepalive is not None and not session._renewing:
+            session._renewing = True
+            keep = session.keepalive
+    if keep is not None:
+        # Outside the lock: this may be a network round trip. Bounded by
+        # the transport's timeout and by once-per-window.
+        ok = False
+        try:
+            ok = bool(keep())
+        except Exception as e:
+            logger.info("Guest session %s keepalive failed: %s", session.id, e)
+        with _lock:
+            session._renewing = False
+            if ok and _session is session and session.end_reason is None:
+                session.deadline = now + session.ttl_seconds
+                return session
+            _end_locked(session, "home_unreachable", "", now)
+        _notify(session)
+        return None
+    with _lock:
+        if session.end_reason is not None:
+            return None
         _end_locked(session, "heartbeat_missed", "", now)
     _notify(session)
     return None
@@ -295,11 +365,15 @@ def offer(
     offered_by_name: str = "",
     ttl_seconds: float = DEFAULT_TTL_SECONDS,
     now: Optional[float] = None,
+    home: Optional[GuestHome] = None,
+    keepalive: Optional[Callable[[], bool]] = None,
 ) -> GuestSession:
     """Install ``persona`` as the face for a session.
 
     One face at a time: a live session from another peer refuses the offer
     (``GuestConflict``); the same peer re-offering replaces its own.
+    ``home`` is where the guest's words go; ``keepalive`` replaces the
+    heartbeat for a session Halbert pulled itself.
     """
     if not offered_by:
         raise GuestValidationError("offered_by is required")
@@ -325,6 +399,8 @@ def offer(
             started_mono=now,
             ttl_seconds=ttl,
             deadline=now + ttl,
+            home=home,
+            keepalive=keepalive,
         )
         global _session
         _session = session

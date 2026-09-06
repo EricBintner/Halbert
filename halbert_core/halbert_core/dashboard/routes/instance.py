@@ -79,8 +79,11 @@ async def get_instance_info() -> Dict[str, Any]:
     # display_name stays the machine's own: the guest is a face, not a
     # rename, and mDNS/MCP/peer discovery resolve through the same name.
     try:
+        import asyncio
         from ...persona.guest import current_guest
-        live = current_guest()
+        # In a worker thread: this read may renew a pulled session with a
+        # ping of its home, and that round trip must not stall the loop.
+        live = await asyncio.to_thread(current_guest)
         fronting = live.to_dict() if live else None
     except Exception:
         fronting = None
