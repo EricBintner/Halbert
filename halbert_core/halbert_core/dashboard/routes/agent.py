@@ -220,10 +220,39 @@ def get_agent():
                 endpoint=guide_endpoint,
             )
 
+            # DEFECT-1: the pipeline was constructed without a matcher, so
+            # active_skills was always empty and every downstream consumer
+            # no-opped -- eight written expert skills, matched by nothing.
+            #
+            # daemon_skill_dirs(), never default_skill_dirs(): the latter reads
+            # Path.cwd(), which for the `halbert` console script is whatever
+            # shell the user started it from. Skill text reaches the model as
+            # its own directive, so only operator-owned locations may supply
+            # it (lenses invariant 8, CD-6).
+            skill_matcher = None
+            try:
+                from ...skills.loader import daemon_skill_dirs
+                from ...skills.matcher import SkillMatcher
+                from ...skills.registry import SkillRegistry
+
+                registry = SkillRegistry.from_disk(dirs=daemon_skill_dirs())
+                skill_matcher = SkillMatcher(registry)
+                logger.info(
+                    "Skill matcher wired: %d skill(s) from %s",
+                    len(registry.all()),
+                    ", ".join(str(d) for d in daemon_skill_dirs()),
+                )
+            except Exception as e:
+                # A broken skill file costs the turn its expertise, not its
+                # answer -- matching is additive, and intake already treats a
+                # None matcher as "no skills".
+                logger.warning(f"Skill matcher not available (non-fatal): {e}")
+
             intake_pipeline = IntakePipeline(
                 complexity_router=complexity_router,
                 budget_fn=get_context_budget,
                 model_config=model_config,
+                skill_matcher=skill_matcher,
             )
             logger.info("Intake pipeline wired")
         except Exception as e:
