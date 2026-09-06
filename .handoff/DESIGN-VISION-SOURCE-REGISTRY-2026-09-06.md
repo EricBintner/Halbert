@@ -296,6 +296,56 @@ boundary outside. Its `_tool_frigate_*` handlers remain registered nowhere and
 their per-source gates remain unwritten — now said in the header rather than
 left to be discovered.
 
+### 10.5 What an adversarial review found afterwards
+
+Five dimensions, 104 agents, three refuters per finding; 31 survived
+refutation and were fixed in `a53f88ce`. Recording the shape of them, because
+the pattern is more useful than the list:
+
+**Every one of the four worst was a way past the gate this document is about,
+not a bug in the gate itself.**
+
+- **`region` skipped the source entirely.** `capture_screenshot` resolved and
+  permitted a monitor and then discarded it whenever `region` was present,
+  passing the model's raw coordinates to mss — which addresses the whole
+  virtual desktop. A persona permitted monitor 1 could read monitor 2 by
+  spelling it `x=3000` instead of `monitor=2`. `capture_and_ocr` leaked the
+  same pixels as text.
+- **`resolve_request` ignored the kind it was asked for.** Every caller does
+  `int(src.native)` to drive its own device, so an id the persona *was*
+  allowed became an index into a device class it was not:
+  `capture_webcam(source="screen:1")` opened camera 1.
+- **`permit_frigate_camera` treated the narrowing as an override**, letting a
+  persona file name a camera the machine had not declared — V1 inverted, in
+  the function next door to the one that documents V1.
+- **`persona_scope` failed open.** It caught `load_being_config`'s exception
+  and read the result as "not narrowed" — and that loader raises on a
+  malformed narrowing, so **a bad entry widened the scope instead of
+  narrowing it**. The narrowing is now read straight from `being.yml`, and
+  unreadable is a refusal.
+
+Then: the Frigate mapper still built its id by f-string and drifted from the
+registry's slug; `capture_window` / `capture_active_window` / `list_windows`
+had no source gate; the dashboard's Frigate JPEG routes had none either;
+enumeration (`frigate_get_events`, `frigate_list_cameras`) ran past the
+narrowing; `_resolve_frigate` poisoned the shared client's aiohttp session;
+`int(src.native)` crashed outside every try; refusals returned the machine's
+whole enabled list rather than the caller's scope; a refusal was reported as
+`detection_failed`; and the published schemas advertised an index the handler
+now refuses.
+
+**The lesson worth keeping: a gate is only as good as its narrowest
+enumeration of the paths.** Six of these were paths that existed before the
+change and were simply not on the list — which is the same failure mode §6.2
+of `REVIEW-PRIVATE-MODE` warns about for the writer audit, and an argument for
+that audit being enumerated by test rather than by reading.
+
+**One find is older than this branch and matters on its own:** `POST
+/api/settings/being` has never had a `senses` field, so every senses payload
+the Being tab has ever sent was discarded by Pydantic. The vision-autonomy
+panel rendered, said "Saved", and changed nothing. Fixed here with a merge
+rather than a replace, and three round-trip tests.
+
 ### 10.4 Still open
 
 - The `_tool_frigate_*` / `_tool_vision_*` handlers in `camera_gate.py` have
@@ -305,6 +355,17 @@ left to be discovered.
   inherits the host persona's scope. Whether a guest's view should shrink to
   the sources handed to it — rather than the whole house it is allowed to see
   today — is a product decision nobody has taken.
+- **`enabled_cameras` now doubles as an access-control list.** It is
+  documented as an event-noise filter and was read only by the MQTT
+  subscriber; `permit_frigate_camera` gives it a second meaning with no
+  migration. Called out here rather than silently relied on.
+- **`AmbientWebcamMonitor` never checks `is_webcam_enabled()`**, so the
+  Vision tab's kill switch does not stop it. Pre-existing, untouched, and
+  worth its own row.
+- **A monitor index that names no declared source is now refused**, including
+  `0` ("all monitors") on an install whose configured index was something
+  else. The schemas were corrected to say so; declaring `screen:0` is the
+  way to get it back.
 - `vision/wayland_capture.py` is dead code and `is_wayland()` is consulted by
   nothing, so a real Wayland session goes down mss's X11 path. Unrelated to
   VIS-1, found while reading, worth its own row.
