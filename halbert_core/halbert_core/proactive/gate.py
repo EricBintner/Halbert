@@ -3,8 +3,9 @@
 """
 Proactive gate — decides whether a proactive event should be shown to the user.
 
-Checks the proactivity dial, quiet hours, category overrides, guardrails,
-snooze state, and dismissal state before allowing an event through.
+Checks whether a guest persona is fronting, the proactivity dial, quiet
+hours, category overrides, guardrails, snooze state, and dismissal state
+before allowing an event through.
 
 Phase 7 / T7c.1.
 """
@@ -64,6 +65,15 @@ class ProactiveGate:
         life-safety bypass (B2). Falls back to the local quiet-hours
         check when the engine is not installed.
         """
+        # A guest persona is wearing the machine's face (design §12 Q3).
+        # Halbert keeps observing and keeps writing findings — the store
+        # already holds this one, the gate only decides whether it pushes —
+        # but he does not interrupt in someone else's voice while a costume
+        # is on. Checked first: who is speaking dominates the dial.
+        guest_reason = self._guest_suppresses(event)
+        if guest_reason:
+            return False, guest_reason
+
         # 1. Check proactivity dial — a per-category override wins over the
         #    global dial when one exists for this event's category.
         overrides = getattr(self.config, "category_overrides", None) or {}
@@ -115,6 +125,58 @@ class ProactiveGate:
 
         # 5. All checks passed
         return True, ""
+
+    def _guest_suppresses(self, event: ProactiveEvent) -> str:
+        """Why this event must not interrupt while a guest persona fronts.
+
+        Returns the suppression reason, or ``""`` when the event may pass.
+
+        Four things still pass, and each is deliberate:
+
+        - ``guest_session`` — how the user learns the face went on or came
+          off. These are published straight to the bus today
+          (``dashboard/routes/guest.py``) rather than through this gate; the
+          exemption is here so that routing them through it later cannot
+          silence the very announcement that makes the costume visible (I4).
+        - Life safety (``LIFE_SAFETY_EVENT_TYPES``) — the exception §12 Q3
+          names.
+        - A confirmed acoustic anomaly — this gate already treats those as
+          life safety (see ``_is_wake_worthy_acoustic``).
+        - ``critical`` — deliberately wider than Q3's proposal, which says
+          life safety alone. This file's own precedent is that quiet hours
+          never suppress a critical event (step 2 below), and a costume is a
+          presentation choice, not a safety one: letting a failing disk go
+          unmentioned because a guest is speaking would be a new and worse
+          behaviour than the one quiet hours already refuses. Narrow this to
+          life-safety-only if the founder decides otherwise — it is one
+          condition.
+
+        Fails open. A guest lookup that raises must not silence Halbert.
+        """
+        try:
+            from ..persona.guest import current_guest
+            live = current_guest()
+        except Exception:
+            return ""
+        if live is None:
+            return ""
+
+        if (getattr(event, "type", "") or "") == "guest_session":
+            return ""
+        if event.severity == "critical" or self._is_wake_worthy_acoustic(event):
+            return ""
+        category = getattr(event, "category", None) or ""
+        try:
+            from ..integrations.modality_wiring import is_life_safety_event
+            if is_life_safety_event(category):
+                return ""
+        except Exception:
+            pass
+
+        return (
+            f"a guest persona is fronting ({live.persona.name}) — "
+            "Halbert does not interrupt in someone else's voice"
+        )
 
     def _is_wake_worthy_acoustic(self, event: ProactiveEvent) -> bool:
         """True for a confirmed acoustic anomaly: tagger severity >= 2 (O5).

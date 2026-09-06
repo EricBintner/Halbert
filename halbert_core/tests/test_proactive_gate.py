@@ -301,3 +301,96 @@ class TestFindingState:
         )
         assert allowed is False
         assert "dismissed" in reason
+
+
+class TestGuestFronting:
+    """§12 Q3 — Halbert keeps observing while a guest wears his face, but
+    does not interrupt in someone else's voice."""
+
+    @pytest.fixture(autouse=True)
+    def _no_guest(self):
+        from halbert_core.persona import guest as guest_mod
+        guest_mod.reset_for_tests()
+        yield
+        guest_mod.reset_for_tests()
+
+    @staticmethod
+    def _front(name="Ada"):
+        from halbert_core.persona import guest as guest_mod
+        persona, _ = guest_mod.GuestPersona.from_payload({"name": name})
+        return guest_mod.offer(persona, offered_by="peer-1", offered_by_name="H2")
+
+    def test_no_guest_changes_nothing(self):
+        gate = make_gate(proactivity="assertive")
+        assert gate.should_notify(make_event(severity="info"))[0] is True
+
+    def test_ordinary_event_waits_while_a_guest_fronts(self):
+        self._front()
+        gate = make_gate(proactivity="assertive")
+        allowed, reason = gate.should_notify(make_event(severity="warning"))
+        assert allowed is False
+        assert "guest persona is fronting" in reason
+        assert "Ada" in reason
+
+    def test_the_guest_leaving_restores_the_interrupt(self):
+        from halbert_core.persona import guest as guest_mod
+        self._front()
+        gate = make_gate(proactivity="assertive")
+        assert gate.should_notify(make_event(severity="warning"))[0] is False
+        guest_mod.withdraw(reason="ended_by_user", by="user")
+        assert gate.should_notify(make_event(severity="warning"))[0] is True
+
+    def test_a_lapsed_session_is_not_a_gag(self):
+        """The session is ended on the read, so the next event passes."""
+        import time as _time
+        from halbert_core.persona import guest as guest_mod
+        persona, _ = guest_mod.GuestPersona.from_payload({"name": "Ada"})
+        # Deadline already ten seconds in the past on the real monotonic
+        # clock the gate will read.
+        guest_mod.offer(
+            persona, offered_by="peer-1", ttl_seconds=1.0,
+            now=_time.monotonic() - 11.0,
+        )
+        gate = make_gate(proactivity="assertive")
+        assert gate.should_notify(make_event(severity="warning"))[0] is True
+
+    def test_critical_still_interrupts(self):
+        self._front()
+        gate = make_gate(proactivity="assertive")
+        assert gate.should_notify(make_event(severity="critical"))[0] is True
+
+    def test_life_safety_still_interrupts(self):
+        self._front()
+        gate = make_gate(proactivity="assertive")
+        event = make_event(severity="warning", category="smoke_alarm")
+        assert gate.should_notify(event)[0] is True
+
+    def test_confirmed_acoustic_anomaly_still_interrupts(self):
+        self._front()
+        gate = make_gate(proactivity="assertive")
+        event = ProactiveEvent.create(
+            type="finding", severity="warning", title="Glass", body="b",
+            category="acoustic", data={"anomaly_severity": 2},
+        )
+        assert gate.should_notify(event)[0] is True
+
+    def test_the_face_change_announces_itself(self):
+        """A guest_session event is how the user learns the face went on."""
+        self._front()
+        gate = make_gate(proactivity="assertive")
+        event = ProactiveEvent.create(
+            type="guest_session", severity="info",
+            title="Ada is speaking for Halbert", body="b",
+            data={"state": "fronting"},
+        )
+        assert gate.should_notify(event)[0] is True
+
+    def test_a_broken_guest_lookup_does_not_silence_halbert(self, monkeypatch):
+        import halbert_core.persona.guest as guest_mod
+
+        def boom(*a, **k):
+            raise RuntimeError("no")
+
+        monkeypatch.setattr(guest_mod, "current_guest", boom)
+        gate = make_gate(proactivity="assertive")
+        assert gate.should_notify(make_event(severity="warning"))[0] is True

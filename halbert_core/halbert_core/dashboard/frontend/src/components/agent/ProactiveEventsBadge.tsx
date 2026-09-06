@@ -17,7 +17,7 @@
 
 import { useState, useRef, useEffect } from 'react'
 import { Bell, X, Clock, AlertTriangle, AlertCircle, Info, CheckCircle, Loader2, Wrench } from 'lucide-react'
-import { useBeingEvents, isAcousticEvent, canProposeFix, type BeingEvent } from '../../hooks/useBeingEvents'
+import { useBeingEvents, acousticData as acousticEventData, canProposeFix, type BeingEvent } from '../../hooks/useBeingEvents'
 import { AcousticAnomalyModule, type AcousticAnomalyData } from '../audio'
 
 const SEVERITY_ICONS = {
@@ -172,10 +172,9 @@ function EventRow({
   // the structured payload (sound class, dB, severity tier) the generic row
   // cannot. Snooze/dismiss stay: the module's own buttons are decorative,
   // these two are the real finding actions.
+  const acoustic = acousticEventData(event)
   const acousticData: AcousticAnomalyData | null =
-    isAcousticEvent(event) && event.data
-      ? { ...event.data, finding_id: event.finding_id }
-      : null
+    acoustic ? { ...acoustic, finding_id: event.finding_id } : null
 
   const actionButtons = pending ? (
     <span className="flex items-center gap-1 text-xs text-muted-foreground">

@@ -16,11 +16,17 @@
  *   Singular:    "Halbert @ desk"  (entity name @ body name)
  *   Independent: "Halbert @ desk"  (same format — the mode badge is in the dropdown)
  *
+ * When a guest persona is fronting (persona/guest.py) the pill reads
+ *   "Halbert · as Ada"
+ * and the dropdown says who lent the face and offers to take it off. The
+ * machine's own name never changes — the user must always be able to tell
+ * what is holding the tools (design I4), so both names show, never one.
+ *
  * The connectivity dot is emerald when the local instance is reachable,
  * amber when it's a paired remote, gray when status is unknown.
  */
 import { useState, useEffect, useCallback } from 'react'
-import { Monitor, Home as HomeIcon, ChevronDown, Plus, Check, X, Settings } from 'lucide-react'
+import { Monitor, Home as HomeIcon, ChevronDown, Plus, Check, X, Settings, User } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import {
@@ -34,7 +40,21 @@ import {
 import { setInstanceEndpoint, getInstanceEndpoint, apiUrl } from '@/lib/apiBase'
 import { useNavigate } from 'react-router-dom'
 
+/** The session a guest persona is fronting for — /api/instance/info. */
+export interface FrontingSession {
+  session_id: string
+  name: string
+  offered_by: string
+  offered_by_name: string
+  started_at: string
+  seconds_until_expiry: number
+  active: boolean
+  end_reason: string | null
+}
+
 export interface InstanceInfo {
+  /** Non-null while a borrowed face is on. */
+  fronting?: FrontingSession | null
   persona_id: string
   scene_context: string
   role: 'host' | 'home'
@@ -60,6 +80,9 @@ interface PairedInstance {
 }
 
 const STORAGE_KEY = 'halbert:paired-instances'
+
+/** How often the pill re-reads who is speaking. */
+const GUEST_POLL_MS = 10_000
 
 function loadPairedInstances(): PairedInstance[] {
   try {
@@ -108,6 +131,25 @@ export function PresencePill() {
     refreshInfo(activeEndpoint)
   }, [activeEndpoint, refreshInfo])
 
+  // A guest session begins and ends without the pill asking, and its expiry
+  // is evaluated lazily on the server (persona/guest.current_guest) — so
+  // something has to read. The pill is that reader: polling keeps the face
+  // shown here honest, and is what notices a lapsed heartbeat in the first
+  // place, which is what announces the ending.
+  useEffect(() => {
+    const timer = setInterval(() => { refreshInfo(activeEndpoint) }, GUEST_POLL_MS)
+    return () => clearInterval(timer)
+  }, [activeEndpoint, refreshInfo])
+
+  const handleEndGuest = async () => {
+    try {
+      const res = await fetch(apiUrl('/api/guest/end'), { method: 'POST' })
+      if (res.ok) await refreshInfo(activeEndpoint)
+    } catch {
+      // Non-fatal — the next poll re-reads the truth
+    }
+  }
+
   const handleSwitch = (endpoint: string | null) => {
     setInstanceEndpoint(endpoint)
     setActiveEndpoint(endpoint)
@@ -136,8 +178,23 @@ export function PresencePill() {
   const singular = currentInfo?.singular ?? false
   const isLocal = !activeEndpoint
 
-  // The pill text: "Entity @ body"
-  const pillText = `${entityName} @ ${bodyName}`
+  const fronting = currentInfo?.fronting ?? null
+  const guestName = fronting?.name || ''
+  const lentBy = fronting ? (fronting.offered_by_name || fronting.offered_by) : ''
+
+  // The pill text: "Entity @ body", or "Entity · as Guest" while a borrowed
+  // face is on. The machine's name stays first in both: the costume is
+  // additive, never a rename (I4). The body moves into the dropdown while a
+  // guest fronts so the two names fit.
+  const pillText = fronting
+    ? `${entityName} · as ${guestName}`
+    : `${entityName} @ ${bodyName}`
+
+  const pillTitle = fronting
+    ? `${guestName} is speaking for ${entityName} — ${entityName} keeps his tools, memory and rules`
+    : singular
+      ? `${entityName} — Singular Entity (shared memory across bodies)`
+      : `${entityName} — Independent Node (own memory)`
 
   return (
     <DropdownMenu>
@@ -145,9 +202,7 @@ export function PresencePill() {
         <button
           type="button"
           className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium hover:bg-accent transition-colors"
-          title={singular
-            ? `${entityName} — Singular Entity (shared memory across bodies)`
-            : `${entityName} — Independent Node (own memory)`}
+          title={pillTitle}
         >
           {/* Connectivity dot */}
           <span
@@ -162,6 +217,42 @@ export function PresencePill() {
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="w-72">
+        {/* A borrowed face, while one is on. Named first, because the
+            question it answers — who am I talking to, and what is
+            underneath — is the one the user has when they open this. */}
+        {fronting && (
+          <>
+            <DropdownMenuLabel className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">
+              Guest persona
+            </DropdownMenuLabel>
+            <div className="px-2 pb-2 space-y-1.5">
+              <div className="flex items-center gap-2">
+                <User className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                <div className="min-w-0">
+                  <p className="text-xs font-medium truncate">{guestName}</p>
+                  <p className="text-[10px] text-muted-foreground truncate">
+                    lent by {lentBy}
+                  </p>
+                </div>
+              </div>
+              <p className="text-[10px] text-muted-foreground">
+                {entityName} is underneath — same tools, same memory, same rules.
+              </p>
+              {isLocal && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="w-full h-7 text-xs"
+                  onClick={handleEndGuest}
+                >
+                  End guest session
+                </Button>
+              )}
+            </div>
+            <DropdownMenuSeparator />
+          </>
+        )}
+
         <DropdownMenuLabel className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">
           {singular ? 'Singular Entity — one Halbert, many bodies' : 'Independent Node'}
         </DropdownMenuLabel>
@@ -176,7 +267,7 @@ export function PresencePill() {
             {roleIcon(currentInfo?.role || 'host')}
           </span>
           <div className="flex-1 min-w-0">
-            <p className="text-xs font-medium truncate">{pillText} (Local)</p>
+            <p className="text-xs font-medium truncate">{entityName} @ {bodyName} (Local)</p>
             <p className="text-[10px] text-muted-foreground truncate">
               {currentInfo?.scene_context || 'This machine'}
             </p>

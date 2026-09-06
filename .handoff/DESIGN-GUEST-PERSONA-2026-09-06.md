@@ -529,13 +529,88 @@ the same `fronting` object.
 
 ### 15.4 Left for others, in order
 
-- **Phase 5 UI.** `PresencePill.tsx` reads `display_name`; render
-  `⟨display_name⟩ · as ⟨fronting.name⟩` with an end-session control that
-  calls `POST /api/guest/end`, and show the `guest_session` events in the
-  bell. Private mode stays *absent* from the UI (§11 sequencing note).
-- **Q3.** Halbert's scheduled speech while a guest fronts. Nothing here
-  suppresses it; `modality_wiring.is_life_safety_event` is the exception to
-  build around.
+- ~~**Phase 5 UI.**~~ Done — §15.5.
+- ~~**Q3.**~~ Answered and built — §15.5.
 - **Touch point 3** (15.1 item 5) once the voice builder has a caller.
+  Still blocked: `modality_wiring.get_modality_prompt_builder` has no
+  callers and does not read being.yml even for Halbert. Wiring the voice
+  persona is its own defect; fixing it is where `current_guest()` goes.
 - **Phase 6** vision source registry — standalone, as designed.
 - **Phase 7** private mode — write the §6.2 writer audit first; not before.
+
+---
+
+## 15.5 Phase 5 and Q3 — the second pass (2026-09-06)
+
+Built on the same branch, after §15.1–15.4. Full frontend suite green (106
+files, 976 tests); backend `-k "guest or proactive or gate or persona or
+morning or detector or watcher or instance"` green (676).
+
+### The pill wears both names
+
+`PresencePill.tsx` reads `fronting` off `/api/instance/info` (the object
+§15.1 item 4 put there) and renders `⟨entity⟩ · as ⟨guest⟩` — never the
+guest alone, which is I4 and is the assertion the first new test makes. The
+body name moves into the dropdown while a guest fronts so the two names fit;
+the dropdown gains a "Guest persona" section naming who lent the face, one
+line saying the machine is underneath with its own tools and rules, and an
+**End guest session** button posting `/api/guest/end`.
+
+The end control renders only on the local body. `/api/guest/end` is
+`require_local_admin` by design (§8), so offering it against a paired remote
+would be a button that always fails.
+
+**The pill polls, and that is load-bearing.** `current_guest()` evaluates
+expiry lazily, on the read (§15.1 item 10) — so something has to read, or a
+lapsed session stays on the face and its ending is never announced. A
+10-second poll of the info endpoint makes the pill that reader. It is not
+only a refresh: it is what notices `heartbeat_missed`.
+
+### Q3: Halbert keeps watching, and does not interrupt
+
+Answered in `proactive/gate.py::_guest_suppresses`, consulted first in
+`should_notify`. While a guest fronts, Halbert's proactive events do not
+push at the user.
+
+Nothing is lost by this. `detector_runner` writes the finding to the store
+*before* it consults the gate (`detector_runner.py:155`), so suppression
+means "does not interrupt", never "was not noticed" — which is exactly the
+background-observation half of §1.
+
+Four things still pass, and one of them is wider than §12 Q3 proposed:
+
+| Passes | Why |
+|---|---|
+| `guest_session` | how the user learns the face went on or came off (I4) |
+| life safety | the exception Q3 names |
+| confirmed acoustic anomaly | this gate already treats those as life safety |
+| **`critical`** | **wider than Q3's "life-safety only"** |
+
+The widening is deliberate and is the one call here a founder should
+confirm or reverse. The gate's own precedent is that quiet hours never
+suppress a critical event (step 2 skips `severity == "critical"`), and a
+costume is a presentation choice, not a safety one: letting a failing disk
+go unmentioned because a guest is speaking would be a new behaviour, and a
+worse one than the suppression quiet hours already declines to do. It is a
+single condition in `_guest_suppresses` if the answer is no.
+
+The guest lookup fails open — a raise there must not silence Halbert, and a
+test asserts it.
+
+### Collateral, and why it was necessary
+
+`guest_session` events carry a session in `data`, where acoustic findings
+carry `AcousticAnomalyData`. Widening that field to a union made the two
+existing readers type-errors, which is the union doing its job: both were
+reading `data.anomaly_severity` and `data.sound_class` off a value that is
+no longer always acoustic. Both now narrow through a new
+`acousticData(event)` accessor, symmetric with `guestSessionData(event)`.
+`VoiceMode.test.tsx` mocks that module and re-implements its predicates
+deliberately, so the mock gained the new one — inside the factory, since
+`vi.mock` is hoisted.
+
+### Not done, deliberately
+
+Private mode remains **absent from the UI**, per the §11 sequencing note. No
+toggle exists, nothing claims it, and the §6.2 writer audit is still
+unwritten.
