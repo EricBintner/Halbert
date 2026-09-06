@@ -147,3 +147,25 @@ def test_freshness_horizon_reflects_the_signal_that_set_the_activity():
     lock = build_signals(last_transition=("arrival", _ago(10)),
                          transition_signal_type="smart_lock")
     assert ble.freshness_horizon_s < lock.freshness_horizon_s
+
+
+def test_session_activity_is_carried(monkeypatch):
+    """A-HY-9: the mid-exchange bonus tapers over 60s instead of a 20s cliff,
+    which needs both fields. `streaming/session_manager` already tracks
+    per-session idle seconds, so this costs nothing."""
+    s = build_signals(session_active=True, time_since_last_user_turn_s=12.0)
+    assert s.session_active is True
+    assert s.time_since_last_user_turn_s == pytest.approx(12.0)
+
+
+def test_session_fields_default_to_unknown():
+    s = build_signals()
+    assert s.session_active is None
+    assert s.time_since_last_user_turn_s is None
+
+
+def test_to_engine_only_sends_fields_the_engine_declares():
+    """Defensive against contract drift in either direction: a field we carry
+    that the engine has dropped must not raise on construction."""
+    snapshot = build_signals(idle_seconds=45)
+    assert snapshot.to_engine() is not None

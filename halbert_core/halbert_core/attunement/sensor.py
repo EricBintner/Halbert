@@ -101,6 +101,8 @@ class SituationSnapshot:
     addressed_to_persona: Optional[bool] = None
     calendar_busy: Optional[bool] = None
     is_hands_free: Optional[bool] = None
+    session_active: Optional[bool] = None
+    time_since_last_user_turn_s: Optional[float] = None
     operation_in_progress: Optional[bool] = None
     awaiting_user_confirmation: Optional[bool] = None
     destructive_turn: Optional[bool] = None
@@ -116,12 +118,18 @@ class SituationSnapshot:
         treats as "no sensor registered".
         """
         try:
+            import dataclasses
+
             from haloysius.attunement.types import SituationSignals
         except ImportError:
             return None
-        return SituationSignals(**{
-            **{k: v for k, v in self.__dict__.items()},
-        })
+        # Filtered rather than splatted: the contract may gain or lose a field
+        # between the engine and this adapter, and a mirror that raises on
+        # construction would take the whole proactive path down with it.
+        accepted = {f.name for f in dataclasses.fields(SituationSignals)}
+        return SituationSignals(
+            **{k: v for k, v in self.__dict__.items() if k in accepted}
+        )
 
 
 def _iso(dt: datetime) -> str:
@@ -144,6 +152,8 @@ def build_signals(
     addressed_to_persona: Optional[bool] = None,
     calendar_busy: Optional[bool] = None,
     is_hands_free: Optional[bool] = None,
+    session_active: Optional[bool] = None,
+    time_since_last_user_turn_s: Optional[float] = None,
     area_id: Optional[str] = None,
     now: Optional[datetime] = None,
 ) -> SituationSnapshot:
@@ -225,6 +235,8 @@ def build_signals(
         addressed_to_persona=addressed_to_persona,
         calendar_busy=calendar_busy,
         is_hands_free=is_hands_free,
+        session_active=session_active,
+        time_since_last_user_turn_s=time_since_last_user_turn_s,
         operation_in_progress=(
             operation.operation_in_progress if operation is not None else None
         ),
