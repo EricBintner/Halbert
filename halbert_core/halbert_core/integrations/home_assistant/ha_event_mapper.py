@@ -17,6 +17,7 @@ import threading
 import time
 from typing import Any, Dict, List, Optional
 
+from ...continuity.ownership import Owner
 from ...continuity.timeline import TimelineEvent, TimelineStore
 from ..observation_text import normalise_entity_id, normalise_observation_title
 
@@ -35,6 +36,27 @@ _OCCUPANCY_DOMAINS = ("person", "device_tracker")
 # and A5's recurrence count then reports a person arriving home a dozen times
 # a day.
 _UNKNOWN_STATES = (None, "", "unknown", "unavailable", "none")
+
+#: Home Assistant ``device_class`` values that are life safety. These are the
+#: HA spelling of the engine's ``modality_wiring.LIFE_SAFETY_EVENT_TYPES``:
+#: HA says ``smoke`` where the engine says ``smoke_alarm``, ``moisture`` where
+#: it says ``water_leak``. An entity in this set reaches Halbert however its
+#: room was handed over (D1).
+LIFE_SAFETY_DEVICE_CLASSES = frozenset({
+    "smoke", "gas", "carbon_monoxide", "co", "moisture", "heat",
+})
+
+
+def is_life_safety_entity(event: Any) -> bool:
+    """True when this state change comes from a life-safety sensor.
+
+    Keys on ``device_class`` rather than the entity id: a user is free to
+    name a smoke detector anything, and the device class is what Home
+    Assistant itself asserts about what the thing is.
+    """
+    attributes = (event or {}).get("attributes") or {}
+    device_class = str(attributes.get("device_class") or "").strip().lower()
+    return device_class in LIFE_SAFETY_DEVICE_CLASSES
 
 
 #: Entry-door hints, matched against the entity id. An unlocked shed is not
@@ -174,6 +196,24 @@ class HAEventMapper:
             event: Dict with entity_id, domain, old_state, new_state,
                    attributes, timestamp.
         """
+        # Ownership (design §5.3): an entity the user handed to a guest for a
+        # private session is the guest's — its state changes reach the guest's
+        # home and neither the timeline nor the cognition queue. Life safety
+        # is the exception (D1): the house is not private from its own smoke
+        # alarm, so a smoke, CO, gas or water-leak sensor is Halbert's however
+        # the room was handed over.
+        #
+        # No route can assign an HA entity yet, so today every answer here is
+        # HALBERT and nothing changes. The id is computed rather than
+        # hardcoded so that the day a room's motion sensor can be handed over
+        # with its camera, D1 already holds on this path instead of being
+        # remembered.
+        owner, source_id = self._route(event)
+        if owner is not Owner.HALBERT:
+            if owner is Owner.GUEST:
+                self._forward_to_guest(event, source_id)
+            return
+
         self._record_to_timeline(event)
 
         with self._lock:
@@ -192,6 +232,33 @@ class HAEventMapper:
                     )
                     self._dropped_since_log = 0
                     self._last_drop_log_ts = now
+
+    @staticmethod
+    def _route(event: Dict[str, Any]):
+        """Who this state change belongs to, and the source id it came from
+        (``ha:<entity_id>``, or "" when the event names none)."""
+        entity_id = str((event or {}).get("entity_id") or "").strip()
+        source_id = f"ha:{entity_id}" if entity_id else ""
+        try:
+            from ...continuity.ownership import route_observation
+            return route_observation(
+                source_id, life_safety=is_life_safety_entity(event)
+            ), source_id
+        except Exception:
+            return Owner.HALBERT, source_id
+
+    @staticmethod
+    def _forward_to_guest(event: Dict[str, Any], source_id: str) -> None:
+        try:
+            from ...persona import sibling
+            from ...persona.guest import current_guest
+            session = current_guest()
+            if session is None:
+                return
+            text = normalise_observation_title(describe_state_change(event))
+            sibling.forward_observation(session, f"[{source_id}] {text}", source_id)
+        except Exception as e:
+            logger.debug("Private-entity state change not forwarded: %s", e)
 
     def _record_to_timeline(self, event: Dict[str, Any]) -> None:
         """A2 row contract: one ha_state_change row per event, plus an

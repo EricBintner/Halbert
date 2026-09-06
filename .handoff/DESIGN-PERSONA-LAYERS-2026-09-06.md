@@ -502,6 +502,37 @@ which microphone heard it — so the mixed buffer changes nothing there. Worth
 stating because the same 10-second mixed read feeds ASR, and the reason it
 is not a leak is the ownership rule, not the audio.
 
+### 13.6 The house's own sensors (N3)
+
+Full suite green at 5777 passed / 14 skipped, +5 tests. One flake seen once
+under load (`test_scheduler_executor.py::test_one_time_job_runs_and_records_outcome`),
+green in isolation and on the re-run; nothing this change touches is near it.
+
+`HAEventMapper.add_event` now routes before it writes, the same shape as the
+Frigate mapper and the acoustic bridge, covering both the timeline row and
+the cognition queue. Life safety keys on Home Assistant's own
+`device_class` — `smoke`, `gas`, `carbon_monoxide`, `co`, `moisture`,
+`heat` — and not on the entity name, because a user may call a smoke
+detector anything and the device class is what HA itself asserts the thing
+*is*. `LIFE_SAFETY_DEVICE_CLASSES` is the HA spelling of the engine's
+`modality_wiring.LIFE_SAFETY_EVENT_TYPES`.
+
+**Say plainly what this does today: nothing.** No route can assign an HA
+entity, so every answer is `HALBERT` and the house behaves exactly as
+before. The gate is here so that the day a room's motion sensor can be
+handed over alongside its camera, D1 holds on this path already rather than
+being remembered. The id is computed (`ha:<entity_id>`) rather than
+hardcoded to Halbert for the same reason, and
+`TestHomeAssistantGate::test_a_handed_over_entity_would_go_to_the_guest`
+assigns one directly to prove the wiring is real and not decorative.
+
+**Open, and N4's to answer: which HA entities may be handed over at all.**
+A private study plausibly means its camera, its microphone *and* its motion
+sensor. It does not plausibly mean the thermostat, and it must never mean
+the smoke detector (D1 handles that one). The picker in N4 has to decide
+whether it lists HA entities, and by what rule — per-room, per-domain, or
+an explicit list. Nothing in this change presumes an answer.
+
 ---
 
 ## 14. A consideration — the "by what authority" axis, and Halbert as its reference

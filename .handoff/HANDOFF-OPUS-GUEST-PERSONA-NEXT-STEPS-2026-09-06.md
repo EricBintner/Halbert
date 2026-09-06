@@ -68,7 +68,7 @@ and nothing of Halbert's; DROP → nothing; HALBERT → as today.
 *Accept:* a test in the shape of `test_ownership_wiring.py::TestFrigateGate`
 for the acoustic path, including the life-safety case.
 
-### N2 — VIS-1, then the local vision gate (2–3 d)
+### N2 — VIS-1, then the local vision gate (2–3 d) — **NEXT**
 Build the registry as specified (`vision/sources.py`, `permit_source`,
 `SensesVisionConfig.sources`, the tool-argument fix at `vision_tools.py:137`).
 Then gate `vision/watcher.py:218`, `zone_watcher`, `ambient_webcam` with
@@ -77,7 +77,14 @@ Then gate `vision/watcher.py:218`, `zone_watcher`, `ambient_webcam` with
 and a test that a persona scoped to one source cannot capture another by
 passing a tool argument.
 
-### N3 — The HA mapper for smoke / CO / gas (½ d)
+### N3 — The HA mapper for smoke / CO / gas — **DONE**
+See `DESIGN-PERSONA-LAYERS-2026-09-06.md` §13.6. Built out of order (it is
+independent of N2 and completes life safety on every wired sensor path),
++5 tests, full suite green (5777). It has **no effect today** — no route
+can assign an HA entity — and says so. Life safety keys on HA's
+`device_class`, not the entity name. One question it hands to N4: which HA
+entities may be handed over at all. Original brief:
+
 `ha_event_mapper.py:218,246` write the timeline. Those entities are life
 safety (`modality_wiring.LIFE_SAFETY_EVENT_TYPES`); route with
 `life_safety=True` so D1 holds there too. Other HA entities are the house,

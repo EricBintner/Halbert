@@ -437,3 +437,82 @@ class TestAudioSourceIds:
         coord = AudioPipelineCoordinator()
         coord._ingress_adapters = [running, stopped]
         assert coord.live_source_ids() == ["mic:local:study"]
+
+
+# ---------------------------------------------------------------------------
+# The HA gate (N3) — no entity can be handed over yet, and D1 already holds
+# ---------------------------------------------------------------------------
+
+class TestHomeAssistantGate:
+    """Handoff N3. Every answer here is HALBERT today because no route can
+    assign an HA entity; the gate exists so that when one can, life safety
+    does not have to be remembered."""
+
+    @pytest.fixture
+    def timeline(self, tmp_path):
+        return TimelineStore(db_path=str(tmp_path / "timeline.db"))
+
+    @staticmethod
+    def _event(entity_id="binary_sensor.study_motion", device_class="motion"):
+        return {
+            "entity_id": entity_id,
+            "domain": entity_id.split(".")[0],
+            "old_state": "off",
+            "new_state": "on",
+            "attributes": {"device_class": device_class, "friendly_name": "Study motion"},
+        }
+
+    def test_without_a_guest_the_row_is_written(self, timeline):
+        from halbert_core.integrations.home_assistant.ha_event_mapper import HAEventMapper
+        mapper = HAEventMapper(timeline=timeline)
+        mapper.add_event(self._event())
+        assert timeline.query(event_type="ha_state_change")
+        assert mapper._pending_events
+
+    def test_a_guest_without_private_sources_changes_nothing(self, timeline):
+        from halbert_core.integrations.home_assistant.ha_event_mapper import HAEventMapper
+        _front()
+        mapper = HAEventMapper(timeline=timeline)
+        mapper.add_event(self._event())
+        assert timeline.query(event_type="ha_state_change")
+        assert mapper._pending_events
+
+    def test_a_handed_over_entity_would_go_to_the_guest(self, timeline, monkeypatch):
+        """No route assigns an HA entity today; assigning one directly proves
+        the gate is wired rather than decorative."""
+        from halbert_core.integrations.home_assistant.ha_event_mapper import HAEventMapper
+        transport = _Transport()
+        monkeypatch.setattr(sibling, "default_transport", transport)
+        session = _front()
+        private_sources.assign("ha:binary_sensor.study_motion")
+
+        mapper = HAEventMapper(timeline=timeline)
+        mapper.add_event(self._event())
+
+        assert timeline.query(event_type="ha_state_change") == []
+        assert mapper._pending_events == []
+        posts = [b for m, u, b in transport.calls if m == "POST"]
+        assert len(posts) == 1
+        assert {"observation", "ha:binary_sensor.study_motion", session.id} <= set(posts[0]["tags"])
+
+    def test_a_smoke_sensor_in_a_handed_over_room_still_reaches_halbert(self, timeline, monkeypatch):
+        """D1: the house is not private from its own smoke alarm."""
+        from halbert_core.integrations.home_assistant.ha_event_mapper import HAEventMapper
+        transport = _Transport()
+        monkeypatch.setattr(sibling, "default_transport", transport)
+        _front()
+        private_sources.assign("ha:binary_sensor.study_smoke")
+
+        mapper = HAEventMapper(timeline=timeline)
+        mapper.add_event(self._event("binary_sensor.study_smoke", device_class="smoke"))
+
+        assert timeline.query(event_type="ha_state_change")
+        assert mapper._pending_events
+        assert transport.calls == []
+
+    def test_life_safety_keys_on_the_device_class_not_the_name(self):
+        from halbert_core.integrations.home_assistant.ha_event_mapper import is_life_safety_entity
+        assert is_life_safety_entity(self._event("binary_sensor.hallway", "carbon_monoxide"))
+        assert is_life_safety_entity(self._event("binary_sensor.basement", "moisture"))
+        # A sensor called "smoke" that HA says is a motion sensor is not one.
+        assert not is_life_safety_entity(self._event("binary_sensor.smoke_room", "motion"))
