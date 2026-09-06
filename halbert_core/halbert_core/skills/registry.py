@@ -108,6 +108,7 @@ def resolve_extends(skill: Skill, by_name: Dict[str, Skill],
         allowed_tools=pick("allowed_tools"),
         subagent=pick("subagent"),
         max_turns=pick("max_turns"),
+        kind=pick("kind"),
         prompt=prompt,
         extends=None,
     )
