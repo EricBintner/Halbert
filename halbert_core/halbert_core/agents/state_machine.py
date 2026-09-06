@@ -1557,6 +1557,28 @@ class AgentStateMachine:
             return ""
         return block.strip() if isinstance(block, str) else ""
 
+    def _composed_prompt_block(self) -> str:
+        """The active skills' expertise text, or "" when none matched.
+
+        Reads the same ``active_skills`` the state machine already composes
+        for retrieval scoping. Never raises: a skill that cannot be composed
+        costs the turn its expertise, not its answer -- the rule intake
+        already applies to matching.
+        """
+        try:
+            intake = getattr(self.ctx, "intake", None)
+            matches = getattr(intake, "active_skills", None) if intake else None
+            if not matches:
+                return ""
+            from ..skills.composer import compose_matches
+
+            composed = compose_matches(matches)
+            return (composed.prompt or "") if composed else ""
+        except Exception:
+            logger.warning("composing the skill prompt failed; continuing",
+                           exc_info=True)
+            return ""
+
     def _build_messages(
         self, prompt: str, tail: str = "", response_modality: str = "text",
     ) -> List[Dict[str, Any]]:
@@ -1603,7 +1625,14 @@ class AgentStateMachine:
         is correct — the hint stays adjacent to the query it qualifies.
         """
         identity = self._identity_block(response_modality)
-        content = f"{identity}\n\n{prompt}" if identity else prompt
+        # B2: the matched skills' expertise, between identity and the prompt.
+        # Never PromptBuilder.build_prompt, which is dead on the chat path --
+        # its one live consumer is scheduler/autonomous_tasks. This block is
+        # sent on both LLM calls of a turn, so it is paid for twice; it is
+        # capped in the composer for that reason.
+        skills_block = self._composed_prompt_block()
+        head = "\n\n".join(p for p in (identity, skills_block) if p)
+        content = f"{head}\n\n{prompt}" if head else prompt
         messages: List[Dict[str, Any]] = [{"role": "system", "content": content}]
         if self.ctx.thread_receipt_block:
             messages[0]["content"] += "\n\n" + self.ctx.thread_receipt_block
