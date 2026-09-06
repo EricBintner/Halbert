@@ -428,11 +428,8 @@ private source carry `observation` and the source id instead of `turn`.
 
 ### 13.4 Left for the fill-in session, in order
 
-1. **Audio source ids and the acoustic gate.** `audio/pipeline.py` events
-   already carry `source` and `area_id`; name them `mic:local:<n>` /
-   `mic:wyoming:<satellite>` and route at the pipeline output exactly as
-   the Frigate mapper does, with a confirmed acoustic anomaly as life
-   safety. Then the HA mapper for smoke/CO/gas entities.
+1. ~~**Audio source ids and the acoustic gate.**~~ Done — §13.5. The HA
+   mapper for smoke/CO/gas entities is still open.
 2. **VIS-1**, then the same gate at `vision/watcher.py:218`,
    `zone_watcher` and `ambient_webcam` with `webcam:<n>` / `screen:<n>`.
 3. **Private-sources routes and the picker.** `POST /api/guest/private/assign`
@@ -450,6 +447,60 @@ private source carry `observation` and the source id instead of `turn`.
    run the experiment; nothing else is needed.
 7. **A session-erase control**: `forget_request` + `redact_request` under
    one local-only route, for the normal-mode transcript (D2).
+
+### 13.5 The ears (N1) — what landed, and the one thing it could not honestly do
+
+Full backend suite green at 5772 passed / 14 skipped, +10 tests.
+
+**Every ear names itself.** `AudioIngressAdapter` gained `instance` and a
+`source_id` property rendering `mic:<kind>:<instance>`; all four adapters
+set it on every `AudioChunk`, and `/api/audio/ingress/status` reports it.
+
+The naming is narrower than §13.4 asked for, deliberately. `mic:local:<n>`
+and `mic:wyoming:<satellite>` do not exist to be read: the local mic
+arrives over a socket with no device index, and one Wyoming adapter serves
+**every** satellite that connects to it — as one browser-facing adapter
+serves every dashboard peer. What actually distinguishes one adapter from
+another at this level is its area (`mic:local:study`), or the camera name
+for RTSP (`mic:rtsp:patio`). Per-satellite and per-peer ids would need
+identity carried on the chunk from the connection that produced it, which
+no adapter does today. Nothing pretends otherwise.
+
+**The gate sits at `AcousticAnomalyBridge.handle`** — before the detector,
+findings, the gate and the bus — and mirrors `FrigateEventMapper.handle_event`
+line for line: GUEST forwards to the guest's home and returns nothing of
+Halbert's, DROP returns nothing, HALBERT proceeds as before. Life safety is
+a confirmed anomaly (`anomaly_severity >= 2`), the same threshold
+`ProactiveGate._is_wake_worthy_acoustic` already treats as life safety.
+
+**What the build found: the ring buffer is shared, so a window is not one
+microphone.** `_ingress_to_buffer_loop` writes every adapter's PCM into one
+`AsyncRingBuffer`, and both the ambient window and the speech segment are
+`read_last_seconds` off it. So a one-second acoustic window contains every
+live ear, and `route_observation(single_id)` would have been answering a
+question the buffer cannot support — leaking in whichever direction the
+guess went. Forwarding Halbert's room to the guest's home is bad; recording
+the guest's private room as Halbert is the promise being broken.
+
+So the events name **every live ear** (`AcousticEventObservation.source_ids`,
+from `AudioPipelineCoordinator.live_source_ids()`) and ownership gained
+`route_mixed_observation`: agreeing ears answer exactly as
+`route_observation` does — the common case, one microphone in the house —
+and disagreeing ears **drop the window** rather than assign it. Pinned by
+`TestAcousticGate::test_a_window_mixed_across_owners_is_dropped_not_guessed`.
+
+The real fix is a ring buffer per source, so a window can name its own ear.
+That is a pipeline change, not a gate change, and it is the thing to do
+before anyone relies on private audio in a multi-microphone house — until
+then, that house loses ambient acoustic monitoring for the duration of a
+private session, which is a defensible reading of "Halbert is ignoring you"
+but is a consequence, not a decision anyone made.
+
+**The transcript path deliberately gets no source gate.** A voice turn is
+`conversation.message`, and §4.2 owns the conversation by *mode*, not by
+which microphone heard it — so the mixed buffer changes nothing there. Worth
+stating because the same 10-second mixed read feeds ASR, and the reason it
+is not a leak is the ownership rule, not the audio.
 
 ---
 

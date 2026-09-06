@@ -67,6 +67,11 @@ class AcousticEventObservation:
     anomaly_severity: int = 0     # 0=Info, 1=Warning, 2=Confirm, 3=Critical
     music_track: str = ""         # "Daft Punk - Solar Sailer" if music detected
     source: str = ""
+    #: Every live ingress adapter that could have fed the window this event
+    #: was classified from — the ring buffer is shared, so a window is not
+    #: one microphone's audio. ``continuity.ownership.route_mixed_observation``
+    #: is what reads this.
+    source_ids: List[str] = field(default_factory=list)
     timestamp: float = field(default_factory=time.time)
 
 
@@ -492,6 +497,7 @@ class AudioPipelineCoordinator:
                         is_anomaly=event.get("is_anomaly", False),
                         anomaly_severity=event.get("severity", 0),
                         source="ambient",
+                        source_ids=self.live_source_ids(),
                     )
                     if self.on_acoustic_event:
                         try:
@@ -503,6 +509,24 @@ class AudioPipelineCoordinator:
                 return
             except Exception as e:
                 logger.debug(f"Ambient track error: {e}")
+
+    def live_source_ids(self) -> List[str]:
+        """The ids of the ears currently feeding the ring buffer.
+
+        Every running adapter, because ``_ingress_to_buffer_loop`` mixes them
+        all into one buffer — a window read back cannot be narrowed to the
+        chunk that triggered it.
+        """
+        ids = []
+        for adapter in self._ingress_adapters:
+            try:
+                if adapter.is_running:
+                    sid = getattr(adapter, "source_id", "")
+                    if sid:
+                        ids.append(sid)
+            except Exception:
+                continue
+        return ids
 
     def _energy_below_floor(self, pcm: bytes) -> bool:
         """Check if audio energy is below the configured floor (dB)."""

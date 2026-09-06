@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import logging
 from enum import Enum
-from typing import Dict, FrozenSet, Optional
+from typing import Dict, FrozenSet, Optional, Sequence
 
 logger = logging.getLogger("halbert.continuity.ownership")
 
@@ -121,6 +121,53 @@ def route_observation(source_id: str, *, life_safety: bool = False) -> Owner:
         return owner_of(source_id)
     except Exception:
         return Owner.HALBERT
+
+
+def route_mixed_observation(
+    source_ids: Sequence[str], *, life_safety: bool = False
+) -> Owner:
+    """Where an observation drawn from **several** sources at once goes.
+
+    The audio pipeline mixes every ingress adapter into one ring buffer
+    (``audio/pipeline.py::_ingress_to_buffer_loop`` writes them all to
+    ``self._ring_buffer``), and both the speech segment and the ambient
+    window are ``read_last_seconds`` off that shared buffer. So a one-second
+    acoustic window is not one microphone's audio — it is every live
+    microphone's audio.
+
+    That makes the single-source question unanswerable whenever the live
+    ears disagree about who they belong to, and answering it anyway would
+    leak in whichever direction the guess went: Halbert's room forwarded to
+    the guest's home, or the guest's private room recorded by Halbert. The
+    second is the promise being broken, so an ambiguous window is
+    **dropped**, not assigned.
+
+    When the live sources agree — the common case, one microphone in the
+    house — the answer is exactly ``route_observation``'s and nothing
+    changes. Life safety is Halbert's before any of this is asked (D1).
+
+    The real fix is a ring buffer per source, so a window can name its own
+    ear. Until then this function is the honest reading of what the buffer
+    can support.
+    """
+    if life_safety:
+        return Owner.HALBERT
+    ids = [str(s or "").strip() for s in (source_ids or [])]
+    ids = [i for i in ids if i]
+    if not ids:
+        return Owner.HALBERT
+    if _fronting() is None:
+        return Owner.HALBERT
+
+    owners = {route_observation(i) for i in ids}
+    if len(owners) == 1:
+        return owners.pop()
+
+    logger.info(
+        "Observation mixed across sources with different owners (%s): dropped",
+        ", ".join(sorted(set(ids))),
+    )
+    return Owner.DROP
 
 
 def guest_request_id(session) -> str:

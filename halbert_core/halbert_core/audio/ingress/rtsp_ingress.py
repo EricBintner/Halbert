@@ -51,7 +51,7 @@ class RtspIngress(AudioIngressAdapter):
         rtsp_url: str = "",
         area_id: str = "",
     ):
-        super().__init__(source_type="frigate_rtsp", area_id=area_id)
+        super().__init__(source_type="frigate_rtsp", area_id=area_id, instance=camera_name)
         self._camera_name = camera_name
         self._rtsp_url = rtsp_url
         self._process: Optional[asyncio.subprocess.Process] = None
@@ -112,6 +112,7 @@ class RtspIngress(AudioIngressAdapter):
                     pcm=data,
                     samples=chunk_bytes // 2,
                     source=self.source_type,
+                    source_id=self.source_id,
                     area_id=self.area_id,
                 )
                 try:

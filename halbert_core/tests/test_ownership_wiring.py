@@ -287,3 +287,153 @@ class TestFrigateGate:
         mapper = FrigateEventMapper(timeline=timeline)
         mapper.handle_event(TOPIC_EVENTS, _detection("patio"))
         assert timeline.query(event_type="frigate_event")
+
+
+# ---------------------------------------------------------------------------
+# The acoustic gate (N1) — the reference wiring, applied to the ears
+# ---------------------------------------------------------------------------
+
+class TestAcousticGate:
+    """A microphone handed to a guest is the guest's, and a window the
+    shared ring buffer cannot attribute is dropped rather than guessed.
+
+    ``.handoff/HANDOFF-OPUS-GUEST-PERSONA-NEXT-STEPS-2026-09-06.md`` N1.
+    """
+
+    @staticmethod
+    def _obs(*, sound_class="glass_break", severity=0, source_ids=("mic:local:study",)):
+        from halbert_core.audio.pipeline import AcousticEventObservation
+        return AcousticEventObservation(
+            sound_class=sound_class,
+            confidence=0.9,
+            area_id="study",
+            anomaly_severity=severity,
+            is_anomaly=severity > 0,
+            source="ambient",
+            source_ids=list(source_ids),
+        )
+
+    @staticmethod
+    def _bridge(recorder):
+        from halbert_core.proactive.acoustic_bridge import AcousticAnomalyBridge
+
+        class _Detector:
+            def add_event(self, **kwargs):
+                recorder.append(kwargs)
+
+        class _Runner:
+            acoustic_detector = _Detector()
+
+            async def run_acoustic(self):
+                return []
+
+        b = AcousticAnomalyBridge()
+        b._build_runner = lambda: _Runner()
+        return b
+
+    @pytest.mark.asyncio
+    async def test_without_a_guest_the_detector_sees_it(self):
+        seen = []
+        await self._bridge(seen).handle(self._obs())
+        assert len(seen) == 1
+
+    @pytest.mark.asyncio
+    async def test_a_private_microphone_goes_to_the_guest_not_the_detector(self, monkeypatch):
+        transport = _Transport()
+        monkeypatch.setattr(sibling, "default_transport", transport)
+        session = _front()
+        private_sources.assign("mic:local:study")
+
+        seen = []
+        assert await self._bridge(seen).handle(self._obs()) == []
+        assert seen == []
+
+        posts = [b for m, u, b in transport.calls if m == "POST"]
+        assert len(posts) == 1
+        assert "glass_break" in posts[0]["content"]
+        assert {"observation", "mic:local:study", session.id} <= set(posts[0]["tags"])
+
+    @pytest.mark.asyncio
+    async def test_a_microphone_not_handed_over_stays_halberts(self, monkeypatch):
+        transport = _Transport()
+        monkeypatch.setattr(sibling, "default_transport", transport)
+        _front()
+        private_sources.assign("mic:local:study")
+
+        seen = []
+        await self._bridge(seen).handle(self._obs(source_ids=("mic:rtsp:patio",)))
+        assert len(seen) == 1
+        assert transport.calls == []
+
+    @pytest.mark.asyncio
+    async def test_a_confirmed_anomaly_on_a_private_microphone_still_reaches_halbert(self, monkeypatch):
+        """D1: the house is not private from its own smoke alarm."""
+        transport = _Transport()
+        monkeypatch.setattr(sibling, "default_transport", transport)
+        _front()
+        private_sources.assign("mic:local:study")
+
+        seen = []
+        await self._bridge(seen).handle(self._obs(severity=2))
+        assert len(seen) == 1
+        assert transport.calls == []
+
+    @pytest.mark.asyncio
+    async def test_a_window_mixed_across_owners_is_dropped_not_guessed(self, monkeypatch):
+        """The ring buffer is shared, so this window holds both rooms. Sending
+        it either way leaks; the private way breaks the promise."""
+        transport = _Transport()
+        monkeypatch.setattr(sibling, "default_transport", transport)
+        _front()
+        private_sources.assign("mic:local:study")
+
+        seen = []
+        obs = self._obs(source_ids=("mic:local:study", "mic:rtsp:patio"))
+        assert await self._bridge(seen).handle(obs) == []
+        assert seen == []
+        assert transport.calls == []
+
+    @pytest.mark.asyncio
+    async def test_a_guest_without_private_sources_changes_nothing(self):
+        _front()
+        seen = []
+        await self._bridge(seen).handle(self._obs())
+        assert len(seen) == 1
+
+    @pytest.mark.asyncio
+    async def test_an_event_that_names_no_ear_stays_halberts(self):
+        _front()
+        private_sources.assign("mic:local:study")
+        seen = []
+        await self._bridge(seen).handle(self._obs(source_ids=()))
+        assert len(seen) == 1
+
+
+class TestAudioSourceIds:
+    """Every ear can say which one it is, and says it on every chunk."""
+
+    def test_each_adapter_names_itself(self):
+        from halbert_core.audio.ingress.local_mic import LocalMicIngress
+        from halbert_core.audio.ingress.rtsp_ingress import RtspIngress
+        from halbert_core.audio.ingress.webrtc_ingress import WebRtcIngress
+
+        assert LocalMicIngress(area_id="study").source_id == "mic:local:study"
+        assert RtspIngress(camera_name="patio").source_id == "mic:rtsp:patio"
+        assert WebRtcIngress().source_id == "mic:dashboard:dashboard"
+
+    def test_an_unnamed_adapter_does_not_produce_a_dangling_id(self):
+        from halbert_core.audio.ingress.rtsp_ingress import RtspIngress
+
+        assert RtspIngress().source_id == "mic:rtsp:rtsp"
+
+    def test_the_coordinator_lists_only_running_ears(self):
+        from halbert_core.audio.pipeline import AudioPipelineCoordinator
+        from halbert_core.audio.ingress.local_mic import LocalMicIngress
+
+        running = LocalMicIngress(area_id="study")
+        running._running = True
+        stopped = LocalMicIngress(area_id="kitchen")
+
+        coord = AudioPipelineCoordinator()
+        coord._ingress_adapters = [running, stopped]
+        assert coord.live_source_ids() == ["mic:local:study"]

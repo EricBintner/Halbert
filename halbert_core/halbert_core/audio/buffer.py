@@ -44,6 +44,10 @@ class AudioChunk:
     pcm: bytes          # raw 16-bit mono PCM
     samples: int        # number of samples in this chunk
     source: str = ""    # 'local_mic', 'wyoming_satellite', 'frigate_rtsp', 'dashboard'
+    #: The adapter's registry-shaped id, ``mic:<kind>:<instance>``. ``source``
+    #: says what kind of ear this is; ``source_id`` says which one, which is
+    #: what a private-source assignment names.
+    source_id: str = ""
     area_id: str = ""   # spatial context (room)
     timestamp: float = 0.0
 

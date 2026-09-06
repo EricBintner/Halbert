@@ -49,7 +49,14 @@ arch -arm64 /Volumes/4TB-BAD/Halbert/.venv/bin/python ./wt_pytest.py halbert_cor
 
 ## 3. Next steps, in order, with the acceptance test for each
 
-### N1 — Audio source ids and the acoustic gate (½–1 d)
+### N1 — Audio source ids and the acoustic gate — **DONE**
+See `DESIGN-PERSONA-LAYERS-2026-09-06.md` §13.5. Built, +10 tests, full
+suite green (5772). Two departures from the brief below, both forced by the
+code: the ids are per-adapter (`mic:local:study`, `mic:rtsp:patio`) because
+per-satellite and per-peer identity does not reach the chunk; and the ring
+buffer is shared, so events name every live ear and `route_mixed_observation`
+drops a window whose ears disagree instead of guessing. Original brief:
+
 `audio/pipeline.py` events already carry `source` and `area_id`. Name them
 `mic:local:<device_index>`, `mic:wyoming:<satellite>`, `mic:rtsp:<name>`,
 `mic:webrtc:<peer>` (the ingress adapters in `audio/ingress/` know which

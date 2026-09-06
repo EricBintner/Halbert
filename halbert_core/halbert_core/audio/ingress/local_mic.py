@@ -117,6 +117,7 @@ class LocalMicIngress(AudioIngressAdapter):
                 pcm=data,
                 samples=chunk_bytes // 2,
                 source=self.source_type,
+                source_id=self.source_id,
                 area_id=self.area_id,
             )
             try:
