@@ -292,3 +292,56 @@ class TestRecallGuestMemory:
         result = await executor.execute(RECALL_GUEST_MEMORY_TOOL_NAME, {"query": "garden"}, session_id="s1")
         assert result.success is True
         assert "could not reach" in result.result.lower()
+
+
+class TestTheWindowTools:
+    """The screen-reading tools that are not ``capture_screenshot``.
+
+    These arrived here by way of an adversarial reviewer, who wrote them as a
+    scratch probe while checking whether a narrowed persona could still reach
+    the window surface. They are worth keeping: they pin the denial at all
+    three layers it has to hold at — the list, the schemas the model is
+    offered, and the execute path a model can name a tool on regardless.
+    """
+
+    WINDOW_TOOLS = ("list_windows", "capture_window", "capture_active_window")
+
+    def test_they_are_registered_at_all(self):
+        """Asserting they are denied means nothing if they do not exist."""
+        executor = _every_agent_tool()
+        for tool in self.WINDOW_TOOLS:
+            assert tool in executor.tools, tool
+
+    def test_they_are_denied_to_a_guest(self):
+        for tool in self.WINDOW_TOOLS:
+            assert tool in GUEST_DENIED_TOOLS, tool
+            assert tool not in GUEST_ALLOWED_TOOLS, tool
+            assert not is_tool_allowed_for_guest(tool), tool
+
+    def test_a_guest_is_never_offered_them(self):
+        executor = _every_agent_tool()
+        _front()
+        offered = {s["function"]["name"] for s in executor.get_schemas()}
+        for tool in self.WINDOW_TOOLS:
+            assert tool not in offered, tool
+
+    @pytest.mark.asyncio
+    async def test_a_guest_naming_one_anyway_is_refused(self):
+        """Schema masking hides them from a prompt that never saw them; a
+        guest inherits a conversation whose history holds Halbert's own
+        calls, and a model imitates calls it was not offered."""
+        executor = _every_agent_tool()
+        _front()
+        for tool in self.WINDOW_TOOLS:
+            result = await executor.execute(tool, {"window_id": 1})
+            assert not result.success, tool
+            assert "not available while" in (result.error or ""), (tool, result.error)
+
+    def test_a_guest_cannot_declare_senses_at_all(self):
+        """Vision consent is the machine's to give (VIS-1 narrows, never
+        widens), so `senses` is not among the fields an offer may carry."""
+        persona, dropped = guest.GuestPersona.from_payload(
+            {"name": "Marnie", "senses": {"vision": {"sources": ["frigate:patio"]}}}
+        )
+        assert getattr(persona, "senses", None) in (None, {}, [])
+        assert "senses" in (dropped or []), dropped
