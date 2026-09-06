@@ -33,6 +33,7 @@ import traceback
 from typing import Any, Dict, List, Optional
 
 from .response import mcp_response
+from .camera_gate import gate_response
 
 logger = logging.getLogger(__name__)
 
@@ -1249,7 +1250,25 @@ class MCPServer:
                 # remembered (get_being_config's ha_token leak is what
                 # happens when it is left to the handler). Per-tool wraps
                 # stay as harmless double-redaction.
-                result = mcp_response(handler(tool_args))
+                # Camera data has a second boundary, and it is INSIDE this
+                # one: gate_response strips image fields from a camera query's
+                # payload, then mcp_response redacts the whole thing.
+                #
+                # The order is load-bearing in both directions. The gate must
+                # see the handler's own shape — a dict with a "snapshot" key —
+                # because that is what it knows how to strip; and it must not
+                # see the JSON-RPC envelope, whose "content" key is itself in
+                # _FORBIDDEN_IMAGE_FIELDS, so gating the envelope would delete
+                # the response.
+                #
+                # Wired here because camera_gate.py said, in its own header,
+                # that it was not (R2-OBS-1): the handlers existed and were
+                # tested in isolation, and nothing in production called them.
+                # Its instruction was to wire the gate in rather than add
+                # handlers to TOOL_HANDLERS the moment a camera tool became
+                # reachable — which is now, because Frigate cameras became
+                # real CV sources.
+                result = mcp_response(gate_response(tool_name, handler(tool_args)))
                 return self._success(req_id, {
                     "content": [{"type": "text", "text": json.dumps(result, default=str)}],
                 })
