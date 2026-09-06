@@ -516,3 +516,154 @@ class TestHomeAssistantGate:
         assert is_life_safety_entity(self._event("binary_sensor.basement", "moisture"))
         # A sensor called "smoke" that HA says is a motion sensor is not one.
         assert not is_life_safety_entity(self._event("binary_sensor.smoke_room", "motion"))
+
+
+# ---------------------------------------------------------------------------
+# The vision gate (N2) — three watchers, none of them behind a tool or a route
+# ---------------------------------------------------------------------------
+
+class TestVisionGate:
+    """`.handoff/HANDOFF-OPUS-GUEST-PERSONA-NEXT-STEPS-2026-09-06.md` N2.
+
+    VisualWatcher, ZoneWatcher and AmbientWebcamMonitor each run on their own
+    daemon thread and publish without passing a tool or a route, so each needs
+    its own gate.
+    """
+
+    @staticmethod
+    def _watcher(monkeypatch, store):
+        from halbert_core.vision.watcher import VisualWatcher
+
+        gate = SimpleNamespace(should_notify=lambda e: (True, ""))
+        return VisualWatcher(being_config=BeingConfig(), gate=gate, finding_store=store)
+
+    def test_the_active_window_watcher_holds_its_findings(self, monkeypatch, tmp_path):
+        from halbert_core.findings.store import FindingStore
+        from halbert_core.vision import sources as S
+
+        transport = _Transport()
+        monkeypatch.setattr(sibling, "default_transport", transport)
+        session = _front()
+        private_sources.assign(S.ACTIVE_WINDOW_SOURCE_ID)
+
+        store = FindingStore(db_path=str(tmp_path / "findings.db"))
+        self._watcher(monkeypatch, store)._publish_finding("panic", "kernel panic on tty1", "")
+
+        assert store.list_all() == []
+        posts = [b for m, u, b in transport.calls if m == "POST"]
+        assert len(posts) == 1
+        assert {"observation", S.ACTIVE_WINDOW_SOURCE_ID, session.id} <= set(posts[0]["tags"])
+
+    def test_without_a_guest_the_watcher_records_as_before(self, monkeypatch, tmp_path):
+        from halbert_core.findings.store import FindingStore
+
+        store = FindingStore(db_path=str(tmp_path / "findings.db"))
+        self._watcher(monkeypatch, store)._publish_finding("panic", "kernel panic on tty1", "")
+        assert len(store.list_all()) == 1
+
+    def test_a_zone_on_a_private_camera_does_not_fire_its_callback(self, monkeypatch):
+        from halbert_core.vision.zone_watcher import Zone, ZoneWatcher
+
+        transport = _Transport()
+        monkeypatch.setattr(sibling, "default_transport", transport)
+        _front()
+        private_sources.assign("frigate:patio")
+
+        fired = []
+        zone = Zone(name="gate", x=0, y=0, width=10, height=10)
+        w = ZoneWatcher(
+            zones=[zone], frame_source=lambda: b"frame", on_event=lambda e: fired.append(e),
+            source_id="frigate:patio",
+        )
+        monkeypatch.setattr(zone, "crop", lambda frame: b"crop")
+        w._subtractors[zone.name] = SimpleNamespace(
+            process=lambda c: SimpleNamespace(has_motion=True, motion_ratio=1.0, bounding_boxes=[]))
+
+        w._check_all_zones()
+
+        assert fired == []
+        posts = [b for m, u, b in transport.calls if m == "POST"]
+        assert len(posts) == 1
+        assert "frigate:patio" in set(posts[0]["tags"])
+
+    def test_the_zone_peek_is_gated_too(self, monkeypatch):
+        """check_once returns events BY VALUE and never touches on_event, so
+        the callback gate does not cover it."""
+        from halbert_core.vision.zone_watcher import Zone, ZoneWatcher
+
+        monkeypatch.setattr(sibling, "default_transport", _Transport())
+        _front()
+        private_sources.assign("frigate:patio")
+
+        zone = Zone(name="gate", x=0, y=0, width=10, height=10)
+        w = ZoneWatcher(
+            zones=[zone], frame_source=lambda: b"frame", on_event=lambda e: None,
+            source_id="frigate:patio",
+        )
+        monkeypatch.setattr(zone, "crop", lambda frame: b"crop")
+        w._subtractors[zone.name] = SimpleNamespace(
+            process=lambda c: SimpleNamespace(has_motion=True, motion_ratio=1.0, bounding_boxes=[]))
+        assert w.check_once() == []
+
+    def test_the_zone_peek_still_works_for_halberts_own_camera(self, monkeypatch):
+        from halbert_core.vision.zone_watcher import Zone, ZoneWatcher
+
+        _front()
+        private_sources.assign("frigate:patio")
+
+        zone = Zone(name="gate", x=0, y=0, width=10, height=10)
+        w = ZoneWatcher(
+            zones=[zone], frame_source=lambda: b"frame", on_event=lambda e: None,
+            source_id="frigate:front_door",
+        )
+        monkeypatch.setattr(zone, "crop", lambda frame: b"crop")
+        w._subtractors[zone.name] = SimpleNamespace(
+            process=lambda c: SimpleNamespace(has_motion=True, motion_ratio=1.0, bounding_boxes=[]))
+        assert len(w.check_once()) == 1
+
+    def test_a_watcher_that_cannot_say_where_it_looked_stays_halberts(self, monkeypatch):
+        from halbert_core.vision.zone_watcher import Zone, ZoneWatcher
+
+        _front()
+        private_sources.assign("frigate:patio")
+
+        zone = Zone(name="gate", x=0, y=0, width=10, height=10)
+        w = ZoneWatcher(zones=[zone], frame_source=lambda: b"frame", on_event=lambda e: None)
+        monkeypatch.setattr(zone, "crop", lambda frame: b"crop")
+        w._subtractors[zone.name] = SimpleNamespace(
+            process=lambda c: SimpleNamespace(has_motion=True, motion_ratio=1.0, bounding_boxes=[]))
+        assert len(w.check_once()) == 1
+
+    def test_the_ambient_camera_stops_calling_back(self, monkeypatch):
+        """It opens cv2.VideoCapture directly, so a gate on WebcamCapture or
+        the vision tools would leave it running."""
+        from halbert_core.vision.ambient_webcam import AmbientWebcamMonitor
+
+        transport = _Transport()
+        monkeypatch.setattr(sibling, "default_transport", transport)
+        _front()
+        private_sources.assign("webcam:2")
+
+        fired = []
+        mon = AmbientWebcamMonitor(camera_index=2, on_motion=lambda f, r: fired.append(r))
+        monkeypatch.setattr(mon, "_capture_frame", lambda: b"frame")
+        monkeypatch.setattr(mon, "_subtractor", SimpleNamespace(
+            process=lambda f: SimpleNamespace(has_motion=True, motion_ratio=1.0, bounding_boxes=[])))
+
+        mon._capture_and_check()
+
+        assert fired == []
+        posts = [b for m, u, b in transport.calls if m == "POST"]
+        assert len(posts) == 1
+        assert "webcam:2" in set(posts[0]["tags"])
+
+    def test_without_a_guest_every_watcher_behaves_as_before(self, monkeypatch):
+        from halbert_core.vision.ambient_webcam import AmbientWebcamMonitor
+
+        fired = []
+        mon = AmbientWebcamMonitor(camera_index=2, on_motion=lambda f, r: fired.append(r))
+        monkeypatch.setattr(mon, "_capture_frame", lambda: b"frame")
+        monkeypatch.setattr(mon, "_subtractor", SimpleNamespace(
+            process=lambda f: SimpleNamespace(has_motion=True, motion_ratio=1.0, bounding_boxes=[])))
+        mon._capture_and_check()
+        assert len(fired) == 1

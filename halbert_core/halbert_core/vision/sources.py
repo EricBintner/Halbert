@@ -109,6 +109,34 @@ def frigate_source_id(camera: str) -> str:
     return source_id(KIND_FRIGATE, camera) if camera else ""
 
 
+#: The active window is a source Halbert can watch but cannot name a display
+#: for: the frontmost window may be on any monitor, and ``VisualWatcher``
+#: captures it by window id, never by monitor index. Emitting
+#: ``screen:<monitor_index>`` there would be a *claim*, not a fact — the same
+#: honesty the audio adapters keep about per-satellite ids. So it gets its own
+#: id, which means "whatever display the user is looking at".
+ACTIVE_WINDOW_SOURCE_ID = "screen:active_window"
+
+
+def id_for_native(kind: str, native: Any) -> str:
+    """The declared id for a driver-level index, or a minted one.
+
+    A background watcher knows its OpenCV index, not its id. If the user has
+    declared that camera it gets the name they gave it (so handing over
+    ``webcam:desk`` covers this watcher); if they have not, it still gets a
+    routable id rather than an empty string, which ``route_observation``
+    would read as "cannot say where it looked" and keep for Halbert.
+    """
+    wanted = str(native).strip()
+    try:
+        for src in list_sources():
+            if src.kind == kind and src.native == wanted:
+                return src.id
+    except Exception:
+        pass
+    return source_id(kind, wanted)
+
+
 def is_source_id(value: Any) -> bool:
     return isinstance(value, str) and bool(_SOURCE_ID.match(value))
 

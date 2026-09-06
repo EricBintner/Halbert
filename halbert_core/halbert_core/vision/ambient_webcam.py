@@ -32,6 +32,9 @@ from typing import Any, Callable, Optional
 
 from .motion import BackgroundSubtractor, MotionResult
 
+from .gate import Owner, forward_to_guest as _forward_vision_to_guest, route_vision as _route_vision
+from . import sources as _sources
+
 logger = logging.getLogger("halbert.vision.ambient_webcam")
 
 
@@ -124,6 +127,16 @@ class AmbientWebcamMonitor:
 
         if result.has_motion:
             self._motion_count += 1
+
+            # Ownership: this monitor opens cv2.VideoCapture directly, so a
+            # gate on WebcamCapture or the vision tools would leave it running.
+            sid = _sources.id_for_native(_sources.KIND_WEBCAM, self.camera_index)
+            owner = _route_vision(sid)
+            if owner is not Owner.HALBERT:
+                if owner is Owner.GUEST:
+                    _forward_vision_to_guest("motion on camera", sid)
+                return
+
             try:
                 cb_result = self.on_motion(frame_bytes, result)
                 if asyncio.iscoroutine(cb_result):

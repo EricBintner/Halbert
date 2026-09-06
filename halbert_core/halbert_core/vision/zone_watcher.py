@@ -31,6 +31,8 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from .motion import BackgroundSubtractor, MotionResult
 
+from .gate import Owner, forward_to_guest as _forward_vision_to_guest, route_vision as _route_vision
+
 logger = logging.getLogger("halbert.vision.zone_watcher")
 
 
@@ -120,6 +122,7 @@ class ZoneWatcher:
         frame_source: Callable[[], bytes],
         on_event: Callable[[ZoneEvent], Any],
         interval_seconds: float = 5.0,
+        source_id: str = "",
     ):
         """
         Args:
@@ -127,11 +130,18 @@ class ZoneWatcher:
             frame_source: Callable that returns the current frame as JPEG bytes.
             on_event: Callback for zone motion events. Can be sync or async.
             interval_seconds: Polling interval for frame capture.
+            source_id: The registry id of the camera behind ``frame_source``
+                (``frigate:patio``, ``webcam:desk``). A zone knows its own
+                name but not which feed it is cropping, so whoever builds the
+                frame_source has to say. Empty means unknown, which
+                ``route_observation`` reads as Halbert's — a watcher that
+                cannot say where it looked cannot have been handed over.
         """
         self.zones = {z.name: z for z in zones}
         self.frame_source = frame_source
         self.on_event = on_event
         self.interval = interval_seconds
+        self.source_id = source_id
         self._subtractors: Dict[str, BackgroundSubtractor] = {
             name: BackgroundSubtractor(min_motion_ratio=z.min_motion_ratio)
             for name, z in self.zones.items()
@@ -214,6 +224,15 @@ class ZoneWatcher:
             bounding_boxes=result.bounding_boxes,
         )
 
+        # Ownership: the camera this zone watches may be the guest's.
+        owner = _route_vision(self.source_id)
+        if owner is not Owner.HALBERT:
+            if owner is Owner.GUEST:
+                _forward_vision_to_guest(
+                    f"motion in {name}", self.source_id,
+                )
+            return
+
         try:
             result_cb = self.on_event(event)
             if asyncio.iscoroutine(result_cb):
@@ -251,7 +270,10 @@ class ZoneWatcher:
                     cropped = zone.crop(frame)
                     sub = self._subtractors[name]
                     result = sub.process(cropped)
-                    if result.has_motion:
+                    # check_once returns events BY VALUE and never touches
+                    # on_event, so the gate above does not cover it. A guest's
+                    # camera must not leak through the peek either.
+                    if result.has_motion and _route_vision(self.source_id) is Owner.HALBERT:
                         events.append(ZoneEvent(
                             zone_name=name,
                             timestamp=time.time(),

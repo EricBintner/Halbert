@@ -32,6 +32,9 @@ from ..findings.store import Finding, FindingStore
 from ..proactive.events import ProactiveEvent, get_event_bus
 from ..proactive.gate import ProactiveGate
 
+from .gate import Owner as _Owner, forward_to_guest as _forward_vision_to_guest, route_vision as _route_vision
+from . import sources as _sources
+
 logger = logging.getLogger(__name__)
 
 # Detector name for findings created by the watcher.
@@ -188,6 +191,25 @@ class VisualWatcher:
         self, matched_pattern: str, ocr_text: str, image_b64: str
     ) -> None:
         """Create a Finding and publish a ProactiveEvent."""
+        # Ownership (design §5.3): a screen handed to a guest for a private
+        # session is the guest's. Gated HERE and not at the FindingStore write
+        # below, because this method has five outputs — the finding, the
+        # proactive event, the vision cache, the episodic memory row and the
+        # reflex evaluation — and only the first is a store write. A gate at
+        # the store leaves the other four running.
+        #
+        # Detection still runs: the guest is shown what its own screen did,
+        # which is the point of handing it over. What stops is Halbert
+        # recording it.
+        owner = _route_vision(_sources.ACTIVE_WINDOW_SOURCE_ID)
+        if owner is not _Owner.HALBERT:
+            if owner is _Owner.GUEST:
+                _forward_vision_to_guest(
+                    f"noticed {matched_pattern} on screen",
+                    _sources.ACTIVE_WINDOW_SOURCE_ID,
+                )
+            return
+
         # Truncate OCR text for the finding description
         ocr_excerpt = ocr_text[:500]
 
