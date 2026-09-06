@@ -92,3 +92,34 @@ def test_unfed_rows_are_named_so_the_gap_is_visible():
         "time_since_last_persona_turn_s",
     }
     assert engine_fields - ours == known_gaps
+
+
+def test_our_freshness_default_matches_the_engine_field_default():
+    """§4.5 of the plan: assert against the engine's numbers, never copy them.
+    ``sensor.DEFAULT_FRESHNESS_S`` is the fallback we send when no per-signal
+    horizon applies; if the engine moves its default and we do not, every
+    unfused signal silently ages at a different rate on the two sides."""
+    field = next(
+        f for f in dataclasses.fields(engine_types.SituationSignals)
+        if f.name == "freshness_horizon_s"
+    )
+    assert hb_sensor.DEFAULT_FRESHNESS_S == field.default
+
+
+def test_our_retention_default_matches_the_engine_config():
+    """The store trims outcomes on its own schedule; drifting from
+    ``AttunementConfig.outcome_retention_days`` would mean the engine
+    believing it has 90 days of evidence that we deleted."""
+    from halbert_core.attunement.store import DEFAULT_RETENTION_DAYS
+
+    assert DEFAULT_RETENTION_DAYS == engine_types.AttunementConfig().outcome_retention_days
+
+
+def test_the_policy_constants_are_importable_as_a_table():
+    """Assumption 8 / Halbert non-blocking #11: consumers assert against the
+    engine's constants rather than duplicating them. This is the access path
+    working, so a future receptivity assertion has somewhere to point."""
+    from haloysius.attunement.testing import constants
+
+    table = constants()
+    assert table, "the engine exports no constants table"
