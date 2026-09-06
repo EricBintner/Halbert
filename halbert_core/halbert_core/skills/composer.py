@@ -85,6 +85,37 @@ def _ordered(skills: Sequence[Skill]) -> List[Skill]:
     return [skill for _, skill in indexed]
 
 
+#: Per-skill and total ceilings on expertise text reaching messages[0].
+#:
+#: merge_prompts concatenates every active skill's body unbounded, and the
+#: block is sent on BOTH LLM calls of a turn, so it is paid for twice. The
+#: seam sits outside ContextBudget -- nothing else would stop a long SKILL.md
+#: from crowding out the conversation it is meant to inform.
+#:
+#: Characters, not tokens: this runs before any tokeniser is in scope, and a
+#: character bound that is roughly right beats a token bound that needs a
+#: model handle to compute.
+MAX_SKILL_PROMPT_CHARS = 4000
+MAX_TOTAL_PROMPT_CHARS = 8000
+
+_TRUNCATION_NOTE = "\n[… truncated: skill text over the {limit}-character cap]"
+
+
+def cap_prompt(text: str, *, limit: int = MAX_TOTAL_PROMPT_CHARS) -> str:
+    """Bound `text`, marking the cut rather than making it silently.
+
+    A silently truncated instruction is worse than a dropped one: the model
+    acts on half a rule with no sign the other half existed.
+    """
+    if len(text) <= limit:
+        return text
+    logger.warning(
+        "skill prompt text over the %d-character cap (%d); truncating",
+        limit, len(text),
+    )
+    return text[:limit].rstrip() + _TRUNCATION_NOTE.format(limit=limit)
+
+
 def merge_prompts(skills: Sequence[Skill]) -> str:
     """Concatenate expertise prompts under labelled headers.
 
@@ -96,8 +127,9 @@ def merge_prompts(skills: Sequence[Skill]) -> str:
     for skill in skills:
         if not skill.prompt.strip():
             continue
-        parts.append(f"[Active Skill: {skill.name}]\n{skill.prompt.strip()}")
-    return "\n\n".join(parts)
+        body = cap_prompt(skill.prompt.strip(), limit=MAX_SKILL_PROMPT_CHARS)
+        parts.append(f"[Active Skill: {skill.name}]\n{body}")
+    return cap_prompt("\n\n".join(parts))
 
 
 def merge_safety(skills: Sequence[Skill]) -> SkillSafety:

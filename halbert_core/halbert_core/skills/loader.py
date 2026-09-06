@@ -40,6 +40,26 @@ def default_skill_dirs(cwd: Optional[Path] = None) -> List[Path]:
     ]
 
 
+def daemon_skill_dirs() -> List[Path]:
+    """The locations the running daemon may take instructions from.
+
+    Skill text reaches the model as its own directive (lenses invariant 8), so
+    only operator-owned locations may supply it. ``default_skill_dirs`` reads
+    ``Path.cwd()``, which for the ``halbert`` console script is whatever shell
+    the user happened to start it from and for a debug or HALBERT_REPO_ROOT
+    Tauri build is the repo itself -- verified to load ``.claude/skills`` from
+    the repo, and twelve unrelated Claude Code skills from ``$HOME``.
+
+    ``default_skill_dirs`` keeps the four-location chain for CLI and test
+    callers that genuinely want a project-local skill. The daemon uses this.
+    """
+    return [BUILTIN_DIR, Path.home() / ".config" / "halbert" / "skills"]
+
+
+def _builtin_names() -> set:
+    return {s.name for s in load_skills_from_dir(BUILTIN_DIR)}
+
+
 def _skill_files(directory: Path) -> Iterable[Path]:
     """Yield candidate skill files in *directory*, deterministically ordered."""
     if not directory.is_dir():
@@ -81,8 +101,24 @@ def load_skills(dirs: Optional[Iterable[Path]] = None,
     search = list(dirs) if dirs is not None else default_skill_dirs(cwd)
 
     resolved: Dict[str, Skill] = {}
+    builtin_names = _builtin_names() if BUILTIN_DIR in [Path(d) for d in search] else set()
+
     for directory in search:
+        is_builtin_dir = Path(directory) == BUILTIN_DIR
         for skill in load_skills_from_dir(Path(directory)):
+            if not is_builtin_dir and skill.name in builtin_names:
+                # A same-named file replaced the builtin outright, taking its
+                # declared protected_paths with it -- so a file dropped in the
+                # user directory could quietly disarm storage-ops. Refused
+                # rather than merged: merging two safety declarations has no
+                # obviously correct answer, and the name is the thing the
+                # matcher and /skill address.
+                logger.warning(
+                    "refusing skill %r from %s: the name is a built-in and "
+                    "overriding it would drop its declared safety",
+                    skill.name, skill.source_path,
+                )
+                continue
             if skill.name in resolved:
                 logger.debug(
                     "skill %r from %s overrides %s",

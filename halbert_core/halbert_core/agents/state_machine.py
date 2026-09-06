@@ -514,6 +514,14 @@ class AgentStateMachine:
                 except Exception as e:
                     logger.warning(f"Intake pipeline failed (non-fatal): {e}")
 
+            # B3: bind the active skills' declared safety for this turn.
+            # Installed here, inside the turn-locked block and after intake,
+            # because this is the first point the turn's skills are known;
+            # cleared in the turn's finally, because set_skill_safety is a bare
+            # attribute assignment and nothing else clears it -- a skill left
+            # installed would classify the *next* turn.
+            self._install_skill_safety()
+
             # Phase D: Inject persona cognition if tick is wired
             if self.cognition_tick is not None:
                 try:
@@ -557,6 +565,14 @@ class AgentStateMachine:
                 # from where the machine stopped (spec §4.7, §12).
                 self._end_turn(self._turn_status(session_id))
                 self._settle_turn(session_id)
+                # Skills are per-turn. Not cleared when the turn merely paused
+                # on a confirmation: confirm_action() resumes into the same
+                # turn's context and the rules that classified the pending call
+                # must still be the ones that classify it on resume.
+                if getattr(self, "current_state", None) is not (
+                    AgentState.AWAITING_CONFIRMATION
+                ):
+                    self._clear_skill_safety()
         finally:
             # _begin_turn() runs before the inner try, so a consumer that goes
             # away while it is still yielding (stop button, disconnect) never
@@ -1557,6 +1573,77 @@ class AgentStateMachine:
             return ""
         return block.strip() if isinstance(block, str) else ""
 
+    def _install_skill_safety(self) -> None:
+        """Bind the turn's composed skill safety onto the executor's framework.
+
+        ``self.tools.safety`` and not a fresh framework: that is the instance
+        ToolExecutor classifies against and the one ``RoleGate`` wraps, so both
+        branches of the executor's gate see the same rules. A skill installed
+        anywhere else would read as bound and enforce nothing -- which is what
+        DEFECT-1's third break already was.
+
+        Never raises: a skill whose safety cannot be composed costs the turn
+        its extra rules, not its answer. The base classifier is unaffected,
+        and skill safety only ever raises a risk level (invariant 6).
+        """
+        safety = getattr(getattr(self, "tools", None), "safety", None)
+        if safety is None or not hasattr(safety, "set_skill_safety"):
+            return
+        try:
+            intake = getattr(self.ctx, "intake", None)
+            matches = getattr(intake, "active_skills", None) if intake else None
+            if not matches:
+                safety.set_skill_safety(None)
+                return
+            from ..skills.composer import compose_matches
+
+            composed = compose_matches(matches)
+            safety.set_skill_safety(composed.safety if composed else None)
+            if composed:
+                logger.info(
+                    "Skill safety installed for this turn: %s",
+                    ", ".join(m.name for m in matches),
+                )
+        except Exception:
+            logger.warning("installing skill safety failed; continuing",
+                           exc_info=True)
+            try:
+                safety.set_skill_safety(None)
+            except Exception:
+                pass
+
+    def _clear_skill_safety(self) -> None:
+        """Drop the turn's skill rules. Never raises."""
+        safety = getattr(getattr(self, "tools", None), "safety", None)
+        if safety is None or not hasattr(safety, "set_skill_safety"):
+            return
+        try:
+            safety.set_skill_safety(None)
+        except Exception:
+            logger.warning("clearing skill safety failed", exc_info=True)
+
+    def _composed_prompt_block(self) -> str:
+        """The active skills' expertise text, or "" when none matched.
+
+        Reads the same ``active_skills`` the state machine already composes
+        for retrieval scoping. Never raises: a skill that cannot be composed
+        costs the turn its expertise, not its answer -- the rule intake
+        already applies to matching.
+        """
+        try:
+            intake = getattr(self.ctx, "intake", None)
+            matches = getattr(intake, "active_skills", None) if intake else None
+            if not matches:
+                return ""
+            from ..skills.composer import compose_matches
+
+            composed = compose_matches(matches)
+            return (composed.prompt or "") if composed else ""
+        except Exception:
+            logger.warning("composing the skill prompt failed; continuing",
+                           exc_info=True)
+            return ""
+
     def _build_messages(
         self, prompt: str, tail: str = "", response_modality: str = "text",
     ) -> List[Dict[str, Any]]:
@@ -1603,7 +1690,14 @@ class AgentStateMachine:
         is correct — the hint stays adjacent to the query it qualifies.
         """
         identity = self._identity_block(response_modality)
-        content = f"{identity}\n\n{prompt}" if identity else prompt
+        # B2: the matched skills' expertise, between identity and the prompt.
+        # Never PromptBuilder.build_prompt, which is dead on the chat path --
+        # its one live consumer is scheduler/autonomous_tasks. This block is
+        # sent on both LLM calls of a turn, so it is paid for twice; it is
+        # capped in the composer for that reason.
+        skills_block = self._composed_prompt_block()
+        head = "\n\n".join(p for p in (identity, skills_block) if p)
+        content = f"{head}\n\n{prompt}" if head else prompt
         messages: List[Dict[str, Any]] = [{"role": "system", "content": content}]
         if self.ctx.thread_receipt_block:
             messages[0]["content"] += "\n\n" + self.ctx.thread_receipt_block

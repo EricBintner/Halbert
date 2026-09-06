@@ -31,16 +31,30 @@ def _block_line(command: str, cwd: str) -> str:
 
 
 class TestTheGateDoesNotSeeCwd:
-    def test_a_hostile_cwd_is_still_classified_safe(self):
+    def test_the_base_classifier_still_does_not_classify_cwd(self):
         """Pinned as the reason quoting is load-bearing, not as approval of it.
 
-        If the framework ever does classify cwd, this test should fail and be
-        replaced by one asserting the classification — but the quoting must
-        stay either way: defence in depth, not instead of it.
+        Narrowed by B3: the *skill* pass now reads cwd, so a protected path
+        reached through it is classified (see the companion test below and
+        `test_skills_safety_binding.py`). The base classifier still does not,
+        which is why the quoting stays — defence in depth, not instead of it.
         """
         r = ToolSafetyFramework().classify(
             "run_command", {"command": "ls", "cwd": HOSTILE})
         assert r.risk_level == RiskLevel.SAFE and not r.requires_confirmation
+
+    def test_but_a_skill_protecting_the_path_does_classify_it(self):
+        """B3: `rm grub.cfg` with cwd=/boot used to be MEDIUM with no
+        confirmation while `cd /boot && rm grub.cfg` was HIGH — the same
+        operation, one classified and one not.
+        """
+        from halbert_core.skills.composer import compose
+        from halbert_core.skills.loader import BUILTIN_DIR, load_skills
+
+        f = ToolSafetyFramework()
+        f.set_skill_safety(compose([load_skills([BUILTIN_DIR])["storage-ops"]]).safety)
+        r = f.classify("run_command", {"command": "rm grub.cfg", "cwd": "/boot"})
+        assert r.requires_confirmation
 
 
 class TestTheCommandLineIsSafeAnyway:

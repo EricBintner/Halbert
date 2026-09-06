@@ -13,6 +13,7 @@ from typing import Dict, List, Set, Pattern, Optional
 import fnmatch
 import re
 import logging
+from pathlib import Path
 
 logger = logging.getLogger('halbert.tools.safety')
 
@@ -54,6 +55,35 @@ class SafetyCheckResult:
 # model sees their schemas and the safety framework never treats them as
 # unknown (MEDIUM) tools.
 THREAD_META_TOOLS = ("new_thread", "recall_thread", "resume_thread")
+
+
+def _command_segments(command: str) -> List[str]:
+    """Each segment of a shell line, normalised to what it actually runs.
+
+    Splits on the separators a shell treats as "start of a new command", then
+    strips leading `sudo`/`doas`/`env` and any VAR=value prefixes, and reduces
+    the executable to its basename. So `sudo /sbin/mkfs.ext4 /dev/sda1` and
+    `mkfs.ext4 /dev/sda1` normalise to the same thing.
+
+    This exists so a blocked-command pattern can be anchored to the head of a
+    segment. Matching it anywhere in the string made `man mkfs`,
+    `which mkfs.ext4` and `grep mkfs /var/log/syslog` CRITICAL and blocked --
+    a classifier that stops you reading the manual teaches people to turn it
+    off.
+    """
+    segments = []
+    for raw in re.split(r"&&|\|\||;|\||\n", command):
+        tokens = raw.strip().split()
+        i = 0
+        while i < len(tokens) and (tokens[i] in ("sudo", "doas", "env")
+                                   or "=" in tokens[i]):
+            i += 1
+        if i >= len(tokens):
+            continue
+        tokens = list(tokens[i:])
+        tokens[0] = tokens[0].rsplit("/", 1)[-1]
+        segments.append(" ".join(tokens))
+    return segments
 
 
 class ToolSafetyFramework:
@@ -274,7 +304,19 @@ class ToolSafetyFramework:
         ),
     ]
     
-    # Paths that elevate risk
+    # Paths that elevate risk.
+    #
+    # Expanded at import, not written with a tilde. `_classify_write` compares
+    # with `startswith` and `in` against a real path, and a real path is always
+    # expanded -- so a literal "~/.ssh/" entry matched nothing and read as
+    # protection that was not there. Verified: a write to
+    # $HOME/.config/halbert/skills/evil.md classified MEDIUM with no
+    # confirmation, while the same path written with a tilde was HIGH.
+    #
+    # The skills directories are here because skill text is an instruction
+    # source (lenses invariant 8): once the composed skill prompt reaches
+    # messages[0], a model able to write here once would persist its own
+    # directives across every later restart.
     SENSITIVE_PATHS: Set[str] = {
         "/etc/",
         "/boot/",
@@ -284,9 +326,9 @@ class ToolSafetyFramework:
         "/sys/",
         "/proc/",
         "/dev/",
-        "~/.ssh/",
-        "~/.gnupg/",
-        "~/.config/",
+        str(Path.home() / ".ssh") + "/",
+        str(Path.home() / ".gnupg") + "/",
+        str(Path.home() / ".config") + "/",
     }
     
     def __init__(self, user_overrides: Dict[str, RiskLevel] = None):
@@ -320,9 +362,16 @@ class ToolSafetyFramework:
 
         command = str(args.get("command", "") or "").strip()
         path = str(args.get("path", "") or "").strip()
+        # The directory the command runs in is part of what it does:
+        # `rm grub.cfg` with cwd=/boot is the same operation as
+        # `cd /boot && rm grub.cfg`, and only the second was classified.
+        cwd = str(args.get("cwd", "") or "").strip()
+        segments = _command_segments(command) if command else []
 
         for pattern in getattr(safety, "blocked_commands", ()) or ():
-            if command and (fnmatch.fnmatch(command, pattern) or pattern.rstrip("*") in command):
+            prefix = pattern.rstrip("*")
+            anchored = any(seg.startswith(prefix) for seg in segments)
+            if command and (fnmatch.fnmatch(command, pattern) or anchored):
                 logger.warning("BLOCKED by active skill: %s (pattern %s)", command, pattern)
                 return SafetyCheckResult(
                     risk_level=RiskLevel.CRITICAL,
@@ -336,6 +385,8 @@ class ToolSafetyFramework:
 
         for pattern in getattr(safety, "protected_paths", ()) or ():
             hit = (path and (fnmatch.fnmatch(path, pattern) or path.startswith(pattern.rstrip("*"))))
+            if not hit and cwd:
+                hit = fnmatch.fnmatch(cwd, pattern) or cwd.startswith(pattern.rstrip("*"))
             if not hit and command:
                 hit = fnmatch.fnmatch(command, f"*{pattern}*") or pattern.rstrip("/*") in command
             if hit:
