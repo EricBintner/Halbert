@@ -517,6 +517,13 @@ Filed with the engine as
 (indexed in that directory's README, §1c), with three questions for the
 engine and no code requested.
 
+The second instance has spoken: the debate-moderator consumer's own review
+proposes `Utterance.authority` (its A-DH-1, "speech that is a ruling, not a
+gift"). That flag is the attunement-facing projection of the *mandate* field
+in §14.2; the mapping, in that consumer's terms, is filed beside the engine
+handoff as `HANDOFF-WARRANT-FOR-DEBATEHAUS-2026-09-06.md` and in that
+consumer's own Phase07 documents.
+
 Nothing in code. When the moderator design is written, start it from the
 table in §14.2 and from `persona/guest_tools.py`, `continuity/ownership.py`
 and `prompts/agent_prompts.py::_GUEST_BOUNDARIES` as the worked example,
