@@ -354,6 +354,59 @@ def permit_source(requested_id: str, *, scope: Optional[List[str]] = None) -> Vi
     return src
 
 
+def _explicit_narrowing() -> List[str]:
+    """What the persona actually wrote, before intersection.
+
+    ``persona_scope`` cannot answer this: it returns every enabled source when
+    a persona has not narrowed, so "narrowed to nothing in particular" and
+    "narrowed to exactly these" come back looking the same.
+    """
+    try:
+        from ..config.being_config import load_being_config
+        return list(load_being_config().senses.vision.sources or [])
+    except Exception:
+        return []
+
+
+def permit_frigate_camera(camera: str) -> str:
+    """The source id for a Frigate camera this caller may look at.
+
+    Frigate is the one kind that cannot be bounded by enumeration offline.
+    ``enabled_cameras`` empty means "every camera" (its own config comment says
+    so), and listing the real set needs the NVR to answer — which listing
+    sources must never depend on. So the bound is whatever the caller can
+    actually be held to:
+
+    - a persona that narrowed explicitly is held to its list;
+    - otherwise, if some cameras are declared, the request must name one;
+    - otherwise there is no list to check against, and refusing every camera
+      would break a working install to enforce a bound we cannot express.
+
+    That last branch is a real gap and is named as one rather than papered
+    over: an install with no ``enabled_cameras`` gets no Frigate narrowing
+    until either the user lists their cameras or the persona names the ones it
+    may see.
+    """
+    sid = frigate_source_id(camera)
+    if not sid:
+        raise SourceDenied("no camera named")
+
+    narrowing = _explicit_narrowing()
+    if narrowing:
+        if sid not in set(narrowing):
+            raise SourceDenied(
+                f"{sid} is not one of this persona's sources ({', '.join(narrowing)})"
+            )
+        return sid
+
+    declared = {s.id for s in list_sources() if s.kind == KIND_FRIGATE}
+    if declared and sid not in declared:
+        raise SourceDenied(
+            f"{sid} is not one of this machine's cameras ({', '.join(sorted(declared))})"
+        )
+    return sid
+
+
 def default_source_for_kind(kind: str, *, scope: Optional[List[str]] = None) -> Optional[VisionSource]:
     """The source a caller means by a bare ``"webcam"`` or ``"screen"``.
 

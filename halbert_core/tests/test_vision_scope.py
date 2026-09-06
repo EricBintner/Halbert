@@ -200,3 +200,96 @@ class TestDedup:
         vt._remember_hash(a, "hash1")
         assert vt._is_unchanged(a, "hash1")
         assert not vt._is_unchanged(b, "hash1")
+
+
+class TestFrigateCameras:
+    """Frigate is the one kind that cannot be bounded by enumeration offline —
+    listing the real cameras needs the NVR to answer, and listing sources must
+    never depend on that."""
+
+    def _declared(self, monkeypatch, *names):
+        srcs = [
+            S.VisionSource(id=S.frigate_source_id(n), label=n, kind="frigate", native=n)
+            for n in names
+        ]
+        monkeypatch.setattr(S, "list_sources", lambda **k: list(srcs))
+
+    def test_a_declared_camera_is_permitted(self, monkeypatch):
+        self._declared(monkeypatch, "patio", "front_door")
+        _scope(monkeypatch)
+        assert S.permit_frigate_camera("patio") == "frigate:patio"
+
+    def test_an_undeclared_camera_is_refused_when_some_are_declared(self, monkeypatch):
+        self._declared(monkeypatch, "patio")
+        _scope(monkeypatch)
+        with pytest.raises(S.SourceDenied):
+            S.permit_frigate_camera("bedroom")
+
+    def test_an_explicit_narrowing_wins_over_the_declared_set(self, monkeypatch):
+        self._declared(monkeypatch, "patio", "bedroom")
+        _scope(monkeypatch, "frigate:patio")
+        assert S.permit_frigate_camera("patio") == "frigate:patio"
+        with pytest.raises(S.SourceDenied):
+            S.permit_frigate_camera("bedroom")
+
+    def test_with_nothing_declared_and_no_narrowing_there_is_no_bound(self, monkeypatch):
+        """Named as a gap rather than papered over: an install with no
+        enabled_cameras gets no Frigate narrowing until the user lists their
+        cameras or the persona names the ones it may see."""
+        self._declared(monkeypatch)
+        _scope(monkeypatch)
+        assert S.permit_frigate_camera("anything") == "frigate:anything"
+
+    def test_a_camera_with_a_space_is_permitted_under_its_slug(self, monkeypatch):
+        self._declared(monkeypatch, "Front Door")
+        _scope(monkeypatch)
+        assert S.permit_frigate_camera("Front Door") == "frigate:front_door"
+
+    @pytest.mark.asyncio
+    async def test_the_latest_frame_tool_refuses_before_it_fetches(self, monkeypatch):
+        """A guest could name any camera: the tool argument was the whole of
+        the identity, and both frame tools are on GUEST_ALLOWED_TOOLS."""
+        from halbert_core.integrations.frigate import frigate_tools as ft
+
+        self._declared(monkeypatch, "patio")
+        _scope(monkeypatch)
+
+        fetched = []
+
+        class _Client:
+            config = SimpleNamespace(is_configured=lambda: True)
+
+            async def get_latest_frame(self, camera):
+                fetched.append(camera)
+                return b"jpeg"
+
+        monkeypatch.setattr(ft, "_get_client", lambda: _Client())
+        out = await ft._frigate_get_latest_frame_handler({"camera": "bedroom"})
+        assert "Not available" in out
+        assert fetched == []
+
+    @pytest.mark.asyncio
+    async def test_the_snapshot_tool_resolves_the_camera_before_the_pixels(self, monkeypatch):
+        """Its argument is an event id, so the camera has to be looked up
+        first — refusing after the fetch would still have read the camera."""
+        from halbert_core.integrations.frigate import frigate_tools as ft
+
+        self._declared(monkeypatch, "patio")
+        _scope(monkeypatch)
+
+        snapped = []
+
+        class _Client:
+            config = SimpleNamespace(is_configured=lambda: True)
+
+            async def get_event(self, event_id):
+                return {"id": event_id, "camera": "bedroom"}
+
+            async def get_event_snapshot(self, event_id, crop=False):
+                snapped.append(event_id)
+                return b"jpeg"
+
+        monkeypatch.setattr(ft, "_get_client", lambda: _Client())
+        out = await ft._frigate_get_snapshot_handler({"event_id": "e1"})
+        assert "Not available" in out
+        assert snapped == []
