@@ -19,6 +19,8 @@ import time
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
+from ...continuity.timeline import TimelineEvent, TimelineStore
+from ..observation_text import normalise_entity_id, normalise_observation_title
 from .frigate_mqtt_subscriber import (
     EVENT_TYPE_END,
     EVENT_TYPE_NEW,
@@ -106,6 +108,63 @@ class FrigateStateTracker:
             self._active.clear()
 
 
+#: Same entry-camera test _apply_label_emotion already uses, lifted so the
+#: severity table and the affect cannot disagree about what an entry is.
+_ENTRY_HINTS = ("front", "back", "door", "entry", "garage")
+
+
+def classify_detection_severity(payload: dict, at: float) -> str:
+    """Severity for a detection: info, warning or critical.
+
+    Warning is a person at an entry camera at night -- the case the mapper
+    already treats as its highest worry. Everything else is info: a cat in the
+    garden is not news, and a ledger that says it is would make the dial
+    useless.
+    """
+    state = payload.get("after") or payload.get("before") or {}
+    camera = (state.get("camera") or "").lower()
+    label = state.get("label") or ""
+    hour = datetime.fromtimestamp(at).hour
+    is_night = hour < 6 or hour > 22
+    is_entry = any(h in camera for h in _ENTRY_HINTS)
+    if label == "person" and is_entry and is_night:
+        return "warning"
+    return "info"
+
+
+def describe_detection(payload: dict) -> str:
+    """One line of prose for a Frigate message, for the ledger row's title.
+
+    Deliberately the same wording ``_apply_detection_event`` builds, because
+    the two must not drift: that one runs at flush time and its text goes
+    nowhere, this one runs at ingestion and is what A4 and C1a render.
+
+    Pure and total -- an unrecognised type still describes itself, since a
+    missing title cannot be told apart from a lost one.
+    """
+    event_type = payload.get("type", "")
+    state = payload.get("after") or payload.get("before") or {}
+    camera = state.get("camera", "unknown")
+    label = state.get("label", "unknown")
+    sub_label = state.get("sub_label")
+    zones = state.get("current_zones", []) or []
+
+    zone_str = f" in {', '.join(zones)}" if zones else ""
+    sub_str = f" ({sub_label})" if sub_label else ""
+
+    if event_type == EVENT_TYPE_NEW:
+        return f"Detected {label}{sub_str} at {camera}{zone_str}"
+    if event_type == EVENT_TYPE_UPDATE:
+        before_zones = set((payload.get("before") or {}).get("current_zones", []) or [])
+        new_zones = set(zones) - before_zones
+        if new_zones:
+            return f"{label}{sub_str} entered {', '.join(sorted(new_zones))} at {camera}"
+        return f"{label}{sub_str} still at {camera}{zone_str}"
+    if event_type == EVENT_TYPE_END:
+        return f"{label}{sub_str} left {camera}{zone_str}"
+    return f"{label}{sub_str} at {camera}{zone_str}"
+
+
 class FrigateEventMapper:
     """Maps Frigate MQTT events to PersonaCognition cognitive updates.
 
@@ -123,30 +182,104 @@ class FrigateEventMapper:
     # (U6-BUG-03).
     MAX_PENDING_EVENTS = 500
 
-    def __init__(self, state_tracker: Optional[FrigateStateTracker] = None):
+    # Minimum seconds between "queue over cap" log lines (A2: "do not
+    # silently drop again", but a busy camera would otherwise log every
+    # single insert once the queue is saturated).
+    _DROP_LOG_INTERVAL = 60.0
+
+    # Same rationale for emotion-write failures: a bad emotion name (e.g.
+    # the VIGILANCE/EmotionCategory mismatch this branch fixes) would
+    # otherwise fire a WARNING on every single detection.
+    _EMOTION_LOG_INTERVAL = 60.0
+
+    def __init__(
+        self,
+        state_tracker: Optional[FrigateStateTracker] = None,
+        timeline: Optional[TimelineStore] = None,
+    ):
         self._pending_events: List[Dict[str, Any]] = []
         self._lock = threading.Lock()
         self.state_tracker = state_tracker or FrigateStateTracker()
+        self._timeline = timeline
+        self._dropped_since_log = 0
+        self._last_drop_log_ts = 0.0
+        self._last_emotion_log_ts = 0.0
+        if self._timeline is None:
+            logger.warning(
+                "No TimelineStore configured — Frigate detections will not "
+                "be durably recorded (they still reach cognition this tick)"
+            )
 
     def handle_event(self, topic: str, payload: dict) -> None:
         """Handle an MQTT message from Frigate.
 
-        Called by FrigateMQTTSubscriber. Updates the state tracker and
-        queues the event for cognitive processing.
+        Called by FrigateMQTTSubscriber. Updates the state tracker,
+        records a durable ledger row for a detection event, and queues
+        the event for cognitive processing.
         """
         # Update state tracker first (synchronous, no cognition needed)
         self.state_tracker.on_event(topic, payload)
+
+        now = time.time()
+        if topic == TOPIC_EVENTS:
+            self._record_to_timeline(payload, now)
 
         # Queue for cognitive processing
         with self._lock:
             self._pending_events.append({
                 "topic": topic,
                 "payload": payload,
-                "timestamp": time.time(),
+                "timestamp": now,
             })
             # Cap the queue: drop oldest if over limit (U6-BUG-03).
-            if len(self._pending_events) > self.MAX_PENDING_EVENTS:
-                del self._pending_events[: len(self._pending_events) - self.MAX_PENDING_EVENTS]
+            overflow = len(self._pending_events) - self.MAX_PENDING_EVENTS
+            if overflow > 0:
+                del self._pending_events[:overflow]
+                self._dropped_since_log += overflow
+                if now - self._last_drop_log_ts > self._DROP_LOG_INTERVAL:
+                    logger.warning(
+                        "Frigate pending-event queue over cap (%d); dropped "
+                        "%d oldest event(s) since last log",
+                        self.MAX_PENDING_EVENTS, self._dropped_since_log,
+                    )
+                    self._dropped_since_log = 0
+                    self._last_drop_log_ts = now
+
+    def _record_to_timeline(self, payload: dict, received_at: float) -> None:
+        """A2 row contract: one row per Frigate message, never a second row
+        for the affect strings in ``_apply_label_emotion``.
+
+        The row carries the detection's own ``start_time`` where Frigate sent
+        one, falling back to when we received the message. In steady state the
+        two differ by milliseconds; after an MQTT reconnect the whole backlog
+        would otherwise land at "now", which is exactly the case A5's windows
+        and ``get_correlations()`` exist to read.
+        """
+        if self._timeline is None:
+            return
+        event_type = payload.get("type", "")
+        state = payload.get("after") or payload.get("before") or {}
+        camera = state.get("camera", "unknown")
+        label = state.get("label", "unknown")
+        sub_label = state.get("sub_label")
+        detected_at = state.get("start_time") or received_at
+        try:
+            self._timeline.record(TimelineEvent(
+                timestamp=detected_at,
+                event_type="frigate_event",
+                source="frigate",
+                entity_id=normalise_entity_id(f"{camera}:{sub_label or label}"),
+                severity=classify_detection_severity(payload, detected_at),
+                title=normalise_observation_title(describe_detection(payload)),
+                data={
+                    "type": event_type,
+                    "frigate_event_id": state.get("id", ""),
+                    "zones": state.get("current_zones", []) or [],
+                    "score": state.get("top_score", 0.0) or state.get("score", 0.0),
+                },
+            ))
+        except Exception as e:
+            logger.warning(f"Could not record Frigate event to timeline: {e}")
 
     def populate_cognition(self, cognition) -> None:
         """Flush pending events into PersonaCognition cognitive layers."""
@@ -174,34 +307,23 @@ class FrigateEventMapper:
 
         camera = state.get("camera", "unknown")
         label = state.get("label", "unknown")
-        sub_label = state.get("sub_label")
         zones = state.get("current_zones", []) or []
-        score = state.get("top_score", 0.0) or state.get("score", 0.0)
         event_id = state.get("id", "")
 
-        # Build a human-readable description
-        zone_str = f" in {', '.join(zones)}" if zones else ""
-        sub_str = f" ({sub_label})" if sub_label else ""
-
+        # The prose for this event is built by describe_detection() at
+        # ingestion and lives on the ledger row. This method is affect only.
         if event_type == EVENT_TYPE_NEW:
-            desc = f"Detected {label}{sub_str} at {camera}{zone_str}"
-            self._add_observation(cognition, desc)
             self._apply_label_emotion(cognition, label, camera, zones, event_id)
 
         elif event_type == EVENT_TYPE_UPDATE:
             # Zone changes are significant — entering a new zone
             before = payload.get("before") or {}
             before_zones = set(before.get("current_zones", []) or [])
-            after_zones = set(zones)
-            new_zones = after_zones - before_zones
+            new_zones = set(zones) - before_zones
             if new_zones:
-                desc = f"{label}{sub_str} entered {', '.join(new_zones)} at {camera}"
-                self._add_observation(cognition, desc)
                 self._apply_label_emotion(cognition, label, camera, list(new_zones), event_id)
 
         elif event_type == EVENT_TYPE_END:
-            desc = f"{label}{sub_str} left {camera}{zone_str}"
-            self._add_observation(cognition, desc)
             # Resolve the worry when a person leaves
             if label == "person":
                 self._resolve_worry(cognition, f"person_at_{camera}", "person left")
@@ -220,7 +342,7 @@ class FrigateEventMapper:
                 "security",
                 0.6,
             )
-            self._add_emotion(cognition, "VIGILANCE", 0.5, f"frigate:{camera}")
+            self._add_emotion(cognition, "ANTICIPATION", 0.5, f"frigate:{camera}")
 
     def _apply_label_emotion(
         self, cognition, label: str, camera: str, zones: list, source: str
@@ -245,7 +367,7 @@ class FrigateEventMapper:
                     "security",
                     0.7,
                 )
-                self._add_emotion(cognition, "VIGILANCE", 0.6, source)
+                self._add_emotion(cognition, "ANTICIPATION", 0.6, source)
             elif is_entry:
                 # Person at entry point during the day — moderate
                 self._add_worry(
@@ -255,39 +377,28 @@ class FrigateEventMapper:
                     "security",
                     0.3,
                 )
-                self._add_emotion(cognition, "VIGILANCE", 0.3, source)
+                self._add_emotion(cognition, "ANTICIPATION", 0.3, source)
             else:
                 # Person elsewhere — mild awareness
-                self._add_observation(cognition, f"Person seen at {camera}")
-                self._add_emotion(cognition, "VIGILANCE", 0.15, source)
+                self._add_emotion(cognition, "ANTICIPATION", 0.15, source)
 
         elif label in ("car", "vehicle"):
             if is_night and is_entry:
-                self._add_observation(cognition, f"Vehicle at {camera} at night")
-                self._add_emotion(cognition, "VIGILANCE", 0.2, source)
-            else:
-                self._add_observation(cognition, f"Vehicle at {camera}")
+                self._add_emotion(cognition, "ANTICIPATION", 0.2, source)
 
         elif label in ("dog", "cat", "bird", "squirrel"):
             # Animals are routine — no cognitive effect unless unusual
             pass
 
         elif label == "package":
-            self._add_observation(cognition, f"Package detected at {camera}")
             self._add_emotion(cognition, "JOY", 0.2, source)
-
-    def _add_observation(self, cognition, text: str) -> None:
-        try:
-            if hasattr(cognition, "internal_state"):
-                cognition.internal_state.add_observation(text)
-            elif hasattr(cognition, "observations"):
-                cognition.observations.append(text)
-        except Exception as e:
-            logger.debug(f"Could not add observation: {e}")
 
     def _add_worry(
         self, cognition, content: str, source: str, category: str, intensity: float
     ) -> None:
+        # See HAEventMapper._add_worry: a worry is the one piece of mapper
+        # text that reaches the prompt today, through check_intrusions().
+        content = normalise_observation_title(content)
         try:
             cognition.worries.add_worry(
                 content=content,
@@ -316,4 +427,7 @@ class FrigateEventMapper:
                 source=source,
             )
         except Exception as e:
-            logger.debug(f"Could not add emotion: {e}")
+            now = time.time()
+            if now - self._last_emotion_log_ts > self._EMOTION_LOG_INTERVAL:
+                logger.warning(f"Could not add emotion {emotion_name!r}: {e}")
+                self._last_emotion_log_ts = now

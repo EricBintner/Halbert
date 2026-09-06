@@ -179,7 +179,7 @@ class TestVisualAnomalyEvent:
         intensity = worry_call[1]["intensity"]
         assert intensity == 0.4
 
-    def test_visual_anomaly_adds_vigilance_emotion(self):
+    def test_visual_anomaly_adds_anticipation_emotion(self):
         mapper = self._make_mapper()
         cognition = self._make_mock_cognition()
         mapper._apply_event_to_cognition(cognition, {
@@ -190,9 +190,11 @@ class TestVisualAnomalyEvent:
             "timestamp": 0,
         })
         assert cognition.emotional_state.add_emotion.called
-        # Check VIGILANCE was requested
+        # VIGILANCE isn't in Haloysius's EmotionCategory (Plutchik's wheel);
+        # ANTICIPATION is its high-intensity form (§3.1), and the mapping
+        # needs no cross-repo enum change.
         emotion_call = mapper._emotion.call_args
-        assert emotion_call[0][0] == "VIGILANCE"
+        assert emotion_call[0][0] == "ANTICIPATION"
 
     def test_visual_anomaly_adds_competence_drive(self):
         mapper = self._make_mapper()

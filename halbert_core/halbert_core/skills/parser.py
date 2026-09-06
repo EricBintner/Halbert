@@ -32,6 +32,12 @@ MODEL_TIERS = ("chat", "specialist", "vision")
 
 PRIORITIES = ("low", "normal", "high", "critical")
 
+# CD-11: the flavour layer is Lenses. An `ops` skill carries expertise,
+# triggers, retrieval role and safety; a `lens` carries voice and nothing
+# else (CD-3 — selection is arithmetic and lens-independent), and is chosen
+# by `active_lens`, never by the matcher (CD-2).
+KINDS = ("ops", "lens")
+
 # Scored by the matcher; also the order used to break priority ties.
 PRIORITY_RANK = {"low": 0, "normal": 1, "high": 2, "critical": 3}
 
@@ -133,6 +139,7 @@ class Skill:
     prompt: str = ""
     source_path: Optional[Path] = None
     extends: Optional[str] = None
+    kind: str = "ops"  # ops | lens (KINDS)
 
     @property
     def priority_rank(self) -> int:
@@ -227,6 +234,29 @@ def parse_skill(text: str, *, name: Optional[str] = None,
     allowed = meta.get("allowed_tools")
     allowed_tools = _as_tuple(allowed) if allowed is not None else None
 
+    kind = str(meta.get("kind") or "ops").strip().lower()
+    if kind not in KINDS:
+        raise SkillParseError(f"kind {kind!r} is not one of {KINDS}")
+    if kind == "lens":
+        # A lens is voice only. Anything that could score, scope, route or
+        # bind is refused at the boundary rather than silently ignored, so a
+        # user file cannot smuggle an ops skill in under a lens's trust.
+        carries = []
+        if any((triggers.domains, triggers.keywords, triggers.platform, triggers.intent)):
+            carries.append("triggers")
+        if meta.get("role") or meta.get("scope") or meta.get("knowledge_scope"):
+            carries.append("role/scope")
+        if safety_raw:
+            carries.append("safety")
+        if allowed_tools is not None:
+            carries.append("allowed_tools")
+        if meta.get("model") or meta.get("subagent"):
+            carries.append("model/subagent")
+        if carries:
+            raise SkillParseError(
+                f"a lens is voice only; {skill_name!r} declares {', '.join(carries)}"
+            )
+
     return Skill(
         name=skill_name,
         description=str(meta.get("description") or "").strip(),
@@ -246,6 +276,7 @@ def parse_skill(text: str, *, name: Optional[str] = None,
         prompt=body,
         source_path=source_path,
         extends=(str(meta.get("extends")).strip() if meta.get("extends") else None),
+        kind=kind,
     )
 
 

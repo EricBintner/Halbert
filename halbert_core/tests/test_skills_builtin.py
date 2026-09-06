@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
-"""The six built-in skills, and the routing they produce (Phase 3)."""
+"""The built-in skills, the one built-in lens, and the routing they produce."""
 
 from __future__ import annotations
 
@@ -11,11 +11,15 @@ from halbert_core.skills import SkillMatcher, SkillRegistry
 from halbert_core.skills.composer import compose_matches
 from halbert_core.skills.loader import BUILTIN_DIR, load_skills
 
-EXPECTED = {
+EXPECTED_OPS = {
     "storage-ops", "service-ops", "network-ops",
     "security-ops", "config-ops", "discovery-ops",
     "home-ops", "frigate-ops",
 }
+# CD-11: the flavour layer is Lenses. Exactly one ships built in, inactive
+# until `active_lens` names it (CD-2), and it is voice only (CD-3).
+EXPECTED_LENSES = {"understated"}
+EXPECTED = EXPECTED_OPS | EXPECTED_LENSES
 
 
 @pytest.fixture(scope="module")
@@ -35,12 +39,19 @@ def _route(matcher, message):
 
 # ── The set itself ────────────────────────────────────────────────────
 
-def test_all_six_builtins_parse(builtins):
+def test_all_builtins_parse(builtins):
     assert set(builtins) == EXPECTED
 
 
-def test_every_builtin_declares_a_role_and_a_prompt(builtins):
+def test_kinds_are_as_shipped(builtins):
+    assert {n for n, s in builtins.items() if s.kind == "ops"} == EXPECTED_OPS
+    assert {n for n, s in builtins.items() if s.kind == "lens"} == EXPECTED_LENSES
+
+
+def test_every_ops_skill_declares_a_role_and_a_prompt(builtins):
     for name, skill in builtins.items():
+        if skill.kind != "ops":
+            continue
         assert skill.role, f"{name} has no role to resolve against a scope"
         assert len(skill.prompt) > 200, f"{name} has no substantive expertise"
         assert skill.description, f"{name} has no description"
@@ -48,9 +59,45 @@ def test_every_builtin_declares_a_role_and_a_prompt(builtins):
 
 def test_roles_are_unique_because_the_daemon_requires_it(builtins):
     # SourcePrep enforces one assigned_to_role per project, so two skills
-    # cannot share a role.
-    roles = [s.role for s in builtins.values()]
+    # cannot share a role. A lens has no role: it never scopes retrieval.
+    roles = [s.role for s in builtins.values() if s.kind == "ops"]
     assert len(roles) == len(set(roles))
+
+
+# ── The lens ──────────────────────────────────────────────────────────
+
+def test_the_builtin_lens_is_voice_only(builtins):
+    # CD-3: selection is arithmetic and lens-independent. The file carries
+    # how to say it, never what to look for — so it has nothing the matcher
+    # could score, nothing the composer could bind, and no role.
+    lens = builtins["understated"]
+    assert lens.kind == "lens"
+    assert lens.role is None and lens.scope is None and lens.knowledge_scope is None
+    assert lens.triggers.domains == () and lens.triggers.keywords == ()
+    assert lens.triggers.intent == () and lens.triggers.platform == ()
+    assert lens.safety.protected_paths == () and lens.safety.blocked_commands == ()
+    assert lens.allowed_tools is None
+    assert lens.description
+
+
+def test_the_builtin_lens_fits_its_budget_and_selects_nothing(builtins):
+    # Invariant 7 caps a lens block at 250 tokens; 180 words is comfortably
+    # under it. And a "what this notices" section would hand selection back
+    # to the model, which CD-3 forbids.
+    lens = builtins["understated"]
+    words = lens.prompt.split()
+    assert 40 < len(words) <= 180, len(words)
+    lowered = lens.prompt.lower()
+    for banned in ("notices", "what to look for", "worth remarking"):
+        assert banned not in lowered, banned
+
+
+def test_the_lens_never_matches_a_topical_turn(matcher):
+    # No triggers, so no score; the lens is chosen by `active_lens`, not by
+    # the turn's subject (CD-2).
+    for message in ("why is my zfs pool degraded?", "hello there", "the grey van again"):
+        names, _ = _route(matcher, message)
+        assert "understated" not in names, message
 
 
 def test_builtin_tiers_are_current_slot_names(builtins):

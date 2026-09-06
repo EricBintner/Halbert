@@ -227,6 +227,106 @@ class TestHAEventMapper:
         # No worries or emotions should be added for same-state
         cognition.worries.add_worry.assert_not_called()
 
+    def test_person_arrives_home_against_real_cognition(self):
+        """One test per mapper against a real PersonaCognition (A2)."""
+        pytest.importorskip("haloysius")
+        from haloysius.persona.cognition import PersonaCognition
+        from haloysius.persona.emotional_state import EmotionCategory
+
+        cognition = PersonaCognition(persona_id="test-ha")
+        mapper = HAEventMapper()
+        mapper.add_event({
+            "entity_id": "person.sarah",
+            "domain": "person",
+            "old_state": "not_home",
+            "new_state": "home",
+            "attributes": {"friendly_name": "Sarah"},
+            "timestamp": time.time(),
+        })
+        mapper.populate_cognition(cognition)
+
+        assert cognition.emotional_state.active_emotions
+        assert cognition.emotional_state.active_emotions[0].emotion == EmotionCategory.JOY
+
+
+# --- Observation-path tests (A2): none of the seven populate_cognition ---
+# --- tests above assert anything reaches a durable record. ---------------
+
+class TestHAEventMapperTimeline:
+    def _make_store(self, tmp_path):
+        from halbert_core.continuity.timeline import TimelineStore
+        return TimelineStore(db_path=str(tmp_path / "timeline.db"))
+
+    def test_lock_event_records_ha_state_change_row(self, tmp_path):
+        store = self._make_store(tmp_path)
+        mapper = HAEventMapper(timeline=store)
+        mapper.add_event({
+            "entity_id": "lock.front_door",
+            "domain": "lock",
+            "old_state": "unlocked",
+            "new_state": "locked",
+            "attributes": {"friendly_name": "Front Door"},
+            "timestamp": 1000.0,
+        })
+        rows = store.query(event_type="ha_state_change")
+        assert len(rows) == 1
+        row = rows[0]
+        assert row["source"] == "ha"
+        assert row["entity_id"] == "lock.front_door"
+        assert row["timestamp"] == 1000.0
+        assert row["data"] == {
+            "domain": "lock",
+            "old_state": "unlocked",
+            "new_state": "locked",
+            "device_class": "",
+        }
+        # No occupancy_change row for a non-occupancy domain.
+        assert store.query(event_type="occupancy_change") == []
+
+    def test_person_arrival_also_records_occupancy_change(self, tmp_path):
+        store = self._make_store(tmp_path)
+        mapper = HAEventMapper(timeline=store)
+        mapper.add_event({
+            "entity_id": "person.sarah",
+            "domain": "person",
+            "old_state": "not_home",
+            "new_state": "home",
+            "attributes": {"friendly_name": "Sarah"},
+            "timestamp": 2000.0,
+        })
+        assert len(store.query(event_type="ha_state_change")) == 1
+        occupancy_rows = store.query(event_type="occupancy_change")
+        assert len(occupancy_rows) == 1
+        assert occupancy_rows[0]["entity_id"] == "person.sarah"
+        assert occupancy_rows[0]["data"] == {"direction": "arrival"}
+
+    def test_person_departure_records_departure_direction(self, tmp_path):
+        store = self._make_store(tmp_path)
+        mapper = HAEventMapper(timeline=store)
+        mapper.add_event({
+            "entity_id": "device_tracker.phone",
+            "domain": "device_tracker",
+            "old_state": "home",
+            "new_state": "not_home",
+            "attributes": {},
+            "timestamp": 3000.0,
+        })
+        occupancy_rows = store.query(event_type="occupancy_change")
+        assert len(occupancy_rows) == 1
+        assert occupancy_rows[0]["data"] == {"direction": "departure"}
+
+    def test_no_timeline_configured_does_not_raise(self):
+        mapper = HAEventMapper()  # timeline=None
+        mapper.add_event({
+            "entity_id": "light.test",
+            "domain": "light",
+            "old_state": "off",
+            "new_state": "on",
+            "attributes": {},
+            "timestamp": time.time(),
+        })
+        assert len(mapper._pending_events) == 1
+
 
 # --- Event stream tests (unit-level, no real WebSocket) ---
 

@@ -584,7 +584,8 @@ class AutonomousExecutor:
 
         The file-backed MemoryWriter was removed (audit F1): it wrote entries that
         MemoryRetrieval could never return. Job outcomes live in the scheduler's own
-        store; durable cross-session state belongs in the TemporalStateLedger.
+        store; durable cross-session state belongs in the state ledger
+        (``continuity.state_store.StateStore``, MEM-02).
         """
         logger.info(
             f"Job {result.job_id} outcome: success={result.success} "

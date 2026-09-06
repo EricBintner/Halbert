@@ -99,6 +99,6 @@ cameras:
 
 ### 4. Halbert Cognitive Integration
 - Frigate events stream into Halbert's `PersonaCognition` via MQTT:
-  - Nighttime stranger detection $\rightarrow$ activates `VIGILANCE` and security worry.
+  - Nighttime stranger detection $\rightarrow$ activates `ANTICIPATION` and security worry.
   - Package arrival $\rightarrow$ records autobiographical episodic memory and triggers subtle notification.
   - Hardware sentry $\rightarrow$ monitors homelab rack status LEDs and server bay lights.

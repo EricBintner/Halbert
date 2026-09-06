@@ -5,7 +5,8 @@ Memory for Halbert.
 
 Conversation memory belongs to the thread store (``agents/conversation_sqlite.py``);
 identity and semantic memory belong to Haloysius ``memory_v2``; durable machine state
-belongs to the ``TemporalStateLedger`` (see ``integrations/state_trackers.py``). What
+belongs to the state ledger, ``continuity.state_store.StateStore`` (``MEM-02``; the
+trackers in ``integrations/state_trackers.py`` write to it). What
 remains here is the ChromaDB-backed HybridMemorySystem, which is eval- and browser-only
 (``documentation/design/the-being.md`` §9) and is deliberately not on the agent path.
 

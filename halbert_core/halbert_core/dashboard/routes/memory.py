@@ -9,8 +9,9 @@ here from routes/chat.py as part of the chat endpoint retirement (T4b.1).
 
 The former /stats and /search endpoints sat on the file-backed MemoryRetrieval,
 which was removed 2026-08-26 (audit F1) -- it could never return anything that
-had been written. Machine state is now the TemporalStateLedger; identity and
-semantic memory are Haloysius memory_v2.
+had been written. Machine state is now the state ledger
+(continuity.state_store.StateStore, MEM-02); identity and semantic memory are
+Haloysius memory_v2.
 
 Peer memory endpoints (P2b)
 ---------------------------

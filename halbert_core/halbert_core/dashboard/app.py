@@ -1079,31 +1079,38 @@ def create_app(enable_cors: bool = True) -> FastAPI:
             frigate_cfg = load_frigate_config()
             if frigate_cfg.is_mqtt_configured():
                 from ..integrations.cognition_wiring import get_frigate_event_mapper
-                from ..integrations.frigate.frigate_event_mapper import FrigateEventMapper
                 from ..integrations.frigate.frigate_mqtt_subscriber import FrigateMQTTSubscriber
                 global _frigate_mqtt_subscriber, _frigate_event_mapper
                 # Use the cognition_wiring singleton so the same mapper
-                # is used by both the MQTT subscriber and the composite
-                # event mapper in the agent state machine.
+                # (with its timeline store already injected) is used by
+                # both the MQTT subscriber and the composite event mapper
+                # in the agent state machine. get_frigate_event_mapper()
+                # now checks is_mqtt_configured() too, so an MQTT-only
+                # install (no REST url) still gets this same instance
+                # rather than a bare uninjected fallback.
                 _frigate_event_mapper = get_frigate_event_mapper()
                 if _frigate_event_mapper is None:
-                    _frigate_event_mapper = FrigateEventMapper()
-                _frigate_mqtt_subscriber = FrigateMQTTSubscriber(
-                    config=frigate_cfg,
-                    on_event=_frigate_event_mapper.handle_event,
-                )
-                def start_frigate_mqtt_delayed():
-                    import time, asyncio
-                    time.sleep(6)  # after HA stream
-                    try:
-                        loop = asyncio.new_event_loop()
-                        loop.run_until_complete(_frigate_mqtt_subscriber.start())
-                        loop.run_forever()
-                    except Exception as e:
-                        logger.warning(f"Frigate MQTT start failed: {e}")
-                frigate_starter = threading.Thread(target=start_frigate_mqtt_delayed, daemon=True)
-                frigate_starter.start()
-                logger.info("Frigate MQTT subscriber starting in background...")
+                    logger.warning(
+                        "Frigate MQTT configured but the event mapper could "
+                        "not be created — MQTT subscriber not started"
+                    )
+                else:
+                    _frigate_mqtt_subscriber = FrigateMQTTSubscriber(
+                        config=frigate_cfg,
+                        on_event=_frigate_event_mapper.handle_event,
+                    )
+                    def start_frigate_mqtt_delayed():
+                        import time, asyncio
+                        time.sleep(6)  # after HA stream
+                        try:
+                            loop = asyncio.new_event_loop()
+                            loop.run_until_complete(_frigate_mqtt_subscriber.start())
+                            loop.run_forever()
+                        except Exception as e:
+                            logger.warning(f"Frigate MQTT start failed: {e}")
+                    frigate_starter = threading.Thread(target=start_frigate_mqtt_delayed, daemon=True)
+                    frigate_starter.start()
+                    logger.info("Frigate MQTT subscriber starting in background...")
         except Exception as e:
             logger.warning(f"Frigate MQTT subscriber not started: {e}")
 

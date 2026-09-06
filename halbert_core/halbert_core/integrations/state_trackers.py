@@ -83,7 +83,7 @@ class DiskHealthTracker:
 
     Event-driven: update_from_turn() is a no-op. External code calls
     update_health() when discovery detects disk state changes, then
-    sync_to_ledger() writes to the TemporalStateLedger.
+    sync_to_ledger() writes to the state ledger (continuity.state_store).
     """
 
     def __init__(self, ledger=None, persona_id: str = DEFAULT_PERSONA_ID):
