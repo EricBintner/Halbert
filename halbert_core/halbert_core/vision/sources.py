@@ -70,6 +70,10 @@ class SourceUnavailable(RuntimeError):
     """A declared source did not resolve. Never silently substituted."""
 
 
+class SourceDenied(PermissionError):
+    """The caller may not look through this source."""
+
+
 def slug(text: str) -> str:
     """A native name reduced to something an id may contain.
 
@@ -276,6 +280,105 @@ def availability(src: VisionSource) -> bool:
             return 0 <= int(src.native) < len(sct.monitors)
     except Exception:
         return True
+
+
+# ---------------------------------------------------------------------------
+# Who may look through what
+# ---------------------------------------------------------------------------
+
+def persona_scope() -> List[str]:
+    """The ids the active persona may look through.
+
+    Its declared narrowing (``being.yml senses.vision.sources``) intersected
+    with what the system has enabled. An empty narrowing means *every* enabled
+    source, not none — that is what every persona file written before VIS-1
+    means, and reading it as "none" would blind the machine on upgrade.
+
+    Intersection, never union: naming a source the system has switched off
+    does not switch it on (V1).
+    """
+    enabled = enabled_source_ids()
+    try:
+        from ..config.being_config import load_being_config
+        wanted = list(load_being_config().senses.vision.sources or [])
+    except Exception:
+        wanted = []
+    if not wanted:
+        return enabled
+    allowed = set(wanted)
+    return [sid for sid in enabled if sid in allowed]
+
+
+def permit_source(requested_id: str, *, scope: Optional[List[str]] = None) -> VisionSource:
+    """The source ``requested_id`` names, if this caller may look through it.
+
+    Raises rather than substituting. A denied request that quietly returned an
+    allowed source would be a lie about what was looked at, and the caller —
+    a model, a route, a watcher — would report the wrong room.
+    """
+    allowed = persona_scope() if scope is None else list(scope)
+    src = get_source(requested_id)   # UnknownSource if it is not declared
+    if src.id not in allowed:
+        raise SourceDenied(
+            f"{src.id} is not one of this persona's sources "
+            f"({', '.join(allowed) or 'none'})"
+        )
+    return src
+
+
+def default_source_for_kind(kind: str, *, scope: Optional[List[str]] = None) -> Optional[VisionSource]:
+    """The source a caller means by a bare ``"webcam"`` or ``"screen"``.
+
+    The first enabled, in-scope source of that kind. This is what keeps the
+    old two-value CV argument working: it now means "my webcam", resolved
+    against the persona's scope, rather than "camera index 0" regardless.
+    """
+    allowed = set(persona_scope() if scope is None else scope)
+    for src in list_sources():
+        if src.kind == kind and src.enabled and src.id in allowed:
+            return src
+    return None
+
+
+def resolve_request(value: Any, kind: str, *, scope: Optional[List[str]] = None) -> VisionSource:
+    """Turn what a caller asked for into a permitted source.
+
+    Accepts three spellings, because three already exist in the tree:
+
+    - a registry id (``"frigate:patio"``) — the way forward;
+    - a bare kind (``"webcam"``, ``"screen"``) — what the CV tools pass, now
+      meaning *this persona's* webcam rather than index 0;
+    - a native index (``2``, ``"2"``) — what ``capture_screenshot``'s
+      ``monitor`` argument and the HTTP query params pass. This is the case
+      that closes the hole: the index is no longer a free choice the model
+      makes, it is a *request* for ``screen:2``, which must be declared,
+      enabled and in scope like any other.
+    """
+    if isinstance(value, str) and is_source_id(value):
+        return permit_source(value, scope=scope)
+    if value is None or (isinstance(value, str) and value.strip().lower() == kind):
+        src = default_source_for_kind(kind, scope=scope)
+        if src is None:
+            raise SourceDenied(f"this persona has no {kind} source")
+        return src
+    if isinstance(value, str) and value.strip().lower() in KINDS:
+        other = value.strip().lower()
+        src = default_source_for_kind(other, scope=scope)
+        if src is None:
+            raise SourceDenied(f"this persona has no {other} source")
+        return src
+
+    # A native index. Look it up in the registry rather than minting an id
+    # from it: the whole point of the id/native split is that ``webcam:desk``
+    # may have native "1", so ``camera=1`` means *that* source, not a source
+    # called ``webcam:1``. Minting would raise UnknownSource for a camera that
+    # is declared, and the caller would read that as "no such camera" when the
+    # real answer is "not yours".
+    native = str(value).strip()
+    for src in list_sources():
+        if src.kind == kind and src.native == native:
+            return permit_source(src.id, scope=scope)
+    raise UnknownSource(f"{kind} {native!r} is not a declared source")
 
 
 # ---------------------------------------------------------------------------

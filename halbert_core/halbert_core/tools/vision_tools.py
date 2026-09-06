@@ -21,12 +21,45 @@ logger = logging.getLogger("halbert.tools.vision")
 # Dedup state: module-level because tool handlers are stateless functions.
 # Vision capture is inherently serial (one user, one screen), so a simple
 # last-hash comparison is sufficient — no need for a concurrent map.
-# Separate hashes per capture type so a full-screen capture doesn't
-# suppress a subsequent window capture (or vice versa).
-_last_screenshot_hash: str | None = None
-_last_window_hash: str | None = None
-_last_active_window_hash: str | None = None
-_last_webcam_hash: str | None = None
+#
+# Keyed by SOURCE, not by capture type. Before VIS-1 there was one reachable
+# screen and one reachable camera, so one hash per capture type was the same
+# thing; now that a persona can look through several, alternating between two
+# cameras with a single ``_last_webcam_hash`` makes every other capture report
+# ``unchanged: True`` about a frame it never compared against.
+_last_hash_by_source: Dict[str, str] = {}
+
+
+def _dedup_key(kind: str, source_id: str) -> str:
+    return f"{kind}|{source_id}"
+
+
+def _is_unchanged(key: str, frame_hash: str) -> bool:
+    return _last_hash_by_source.get(key) == frame_hash
+
+
+def _remember_hash(key: str, frame_hash: str) -> None:
+    _last_hash_by_source[key] = frame_hash
+
+
+def reset_dedup_for_tests() -> None:
+    _last_hash_by_source.clear()
+
+
+def _denied(e) -> Dict[str, Any]:
+    """A refusal the model can act on, and never a different picture.
+
+    VIS-1 R3: an out-of-scope source is refused and audited, never quietly
+    downgraded to one the caller may use. A silent downgrade would have the
+    model describe the wrong room in perfect good faith.
+    """
+    from ..vision.sources import enabled_source_ids
+    logger.warning("Vision source refused: %s", e)
+    return {
+        "error": str(e),
+        "error_type": "source_denied",
+        "available_sources": enabled_source_ids(),
+    }
 
 
 async def capture_screenshot(args: Dict) -> Dict[str, Any]:
@@ -57,7 +90,17 @@ async def capture_screenshot(args: Dict) -> Dict[str, Any]:
     region = args.get("region")
     quality = args.get("quality", cfg.screen_capture.quality)
     max_dim = args.get("max_dim", cfg.screen_capture.max_dimension)
-    monitor = args.get("monitor", cfg.screen_capture.monitor_index)
+    # The source is a *request*, not a free choice. Before VIS-1 the config
+    # value was only a default the model could override with any integer, so a
+    # persona scoped to one screen could read another by saying so.
+    from ..vision import sources as _sources
+    try:
+        src = _sources.resolve_request(
+            args.get("source", args.get("monitor")), _sources.KIND_SCREEN,
+        )
+    except (_sources.SourceDenied, _sources.UnknownSource) as e:
+        return _denied(e)
+    monitor = int(src.native)
 
     try:
         from ..vision.screen_capture import ScreenCapture, ScreenCaptureError
@@ -89,15 +132,15 @@ async def capture_screenshot(args: Dict) -> Dict[str, Any]:
         # Dedup: if the screen hasn't changed since the last capture,
         # skip sending the image. The LLM already has it from the
         # previous turn — re-sending wastes ~3000 tokens for nothing.
-        global _last_screenshot_hash
         frame_hash = hashlib.md5(jpeg_bytes).hexdigest()
-        if frame_hash == _last_screenshot_hash:
+        _dkey = _dedup_key("screenshot", src.id)
+        if _is_unchanged(_dkey, frame_hash):
             logger.info("Screenshot dedup: screen unchanged since last capture")
             return {
                 "description": "Screen unchanged since last capture — the previous screenshot is still current.",
                 "unchanged": True,
             }
-        _last_screenshot_hash = frame_hash
+        _remember_hash(_dkey, frame_hash)
 
         base64_img = base64.b64encode(jpeg_bytes).decode("ascii")
         return {"image": base64_img, "description": desc}
@@ -134,7 +177,14 @@ async def capture_webcam(args: Dict) -> Dict[str, Any]:
         }
 
     cfg = load_config()
-    camera_index = args.get("camera", cfg.webcam.camera_index)
+    from ..vision import sources as _sources
+    try:
+        src = _sources.resolve_request(
+            args.get("source", args.get("camera")), _sources.KIND_WEBCAM,
+        )
+    except (_sources.SourceDenied, _sources.UnknownSource) as e:
+        return _denied(e)
+    camera_index = int(src.native)
     quality = args.get("quality", cfg.webcam.quality)
     max_dim = args.get("max_dim", cfg.webcam.max_dimension)
 
@@ -152,15 +202,15 @@ async def capture_webcam(args: Dict) -> Dict[str, Any]:
         # exact-match dedup is less useful than for screenshots. But it
         # catches the case where the camera pointed at the same static
         # scene (e.g. a label on hardware).
-        global _last_webcam_hash
         frame_hash = hashlib.md5(jpeg_bytes).hexdigest()
-        if frame_hash == _last_webcam_hash:
+        _dkey = _dedup_key("webcam", src.id)
+        if _is_unchanged(_dkey, frame_hash):
             logger.info("Webcam dedup: frame unchanged since last capture")
             return {
                 "description": "Webcam frame unchanged since last capture.",
                 "unchanged": True,
             }
-        _last_webcam_hash = frame_hash
+        _remember_hash(_dkey, frame_hash)
 
         base64_img = base64.b64encode(jpeg_bytes).decode("ascii")
         return {"image": base64_img, "description": "Webcam frame captured"}
@@ -203,7 +253,16 @@ async def capture_and_ocr(args: Dict) -> Dict[str, Any]:
     region = args.get("region")
     quality = args.get("quality", cfg.screen_capture.quality)
     max_dim = args.get("max_dim", cfg.screen_capture.max_dimension)
-    monitor = args.get("monitor", cfg.screen_capture.monitor_index)
+    # The OCR path returns text rather than an image, and the text IS the
+    # screen's content — so it needs the same bound as the screenshot.
+    from ..vision import sources as _sources
+    try:
+        src = _sources.resolve_request(
+            args.get("source", args.get("monitor")), _sources.KIND_SCREEN,
+        )
+    except (_sources.SourceDenied, _sources.UnknownSource) as e:
+        return _denied(e)
+    monitor = int(src.native)
     include_image = args.get("include_image", False)
 
     try:
@@ -309,6 +368,17 @@ async def list_windows_tool(args: Dict) -> Dict[str, Any]:
     just that window instead of the full screen — much more efficient
     and avoids capturing sensitive content in other windows.
     """
+    # This is an enumeration surface: it returns every window's owner app and
+    # title, which is a readable summary of what the user is doing. It had no
+    # gate at all — not even the global screen-capture switch every other tool
+    # in this module checks — so titles were listed with screen capture off.
+    from ..vision.config import is_screen_capture_enabled
+
+    if not is_screen_capture_enabled():
+        return {
+            "error": "Screen capture is disabled. The user can enable it in Settings > Vision.",
+            "error_type": "disabled",
+        }
     from ..vision.screen_capture import list_windows
 
     try:
@@ -360,14 +430,14 @@ async def capture_window_tool(args: Dict) -> Dict[str, Any]:
         jpeg_bytes = cap.capture_window(window_id)
 
         # Dedup (per-tool hash so full-screen captures don't suppress window captures)
-        global _last_window_hash
         frame_hash = hashlib.md5(jpeg_bytes).hexdigest()
-        if frame_hash == _last_window_hash:
+        _dkey = _dedup_key("window", str(window_id))
+        if _is_unchanged(_dkey, frame_hash):
             return {
                 "description": "Window unchanged since last capture.",
                 "unchanged": True,
             }
-        _last_window_hash = frame_hash
+        _remember_hash(_dkey, frame_hash)
 
         base64_img = base64.b64encode(jpeg_bytes).decode("ascii")
         return {"image": base64_img, "description": f"Window {window_id} captured"}
@@ -421,14 +491,14 @@ async def capture_active_window_tool(args: Dict) -> Dict[str, Any]:
         jpeg_bytes = cap.capture_window(active["id"])
 
         # Dedup (per-tool hash)
-        global _last_active_window_hash
         frame_hash = hashlib.md5(jpeg_bytes).hexdigest()
-        if frame_hash == _last_active_window_hash:
+        _dkey = _dedup_key("active_window", str(active.get("id", "")))
+        if _is_unchanged(_dkey, frame_hash):
             return {
                 "description": f"Active window ({active['owner']}) unchanged since last capture.",
                 "unchanged": True,
             }
-        _last_active_window_hash = frame_hash
+        _remember_hash(_dkey, frame_hash)
 
         base64_img = base64.b64encode(jpeg_bytes).decode("ascii")
         return {
@@ -459,14 +529,28 @@ def _validate_capture_result(result) -> str:
 
 
 async def _capture_frame_for_cv(source: str) -> str:
-    """Capture a frame from webcam or screen, return base64 string."""
-    if source == "webcam":
-        result = await capture_webcam({"max_dim": 640})
-    elif source == "screen":
-        result = await capture_screenshot({"max_dim": 640})
-    else:
-        raise ValueError(f"Unknown source: {source}. Use 'webcam' or 'screen'.")
-    return _validate_capture_result(result)
+    """One frame from a named source, base64, for the CV tools.
+
+    Was a two-value enum — ``"webcam" | "screen"`` — which is why no Frigate
+    camera could ever be looked at by ``detect_objects``. Now it takes a
+    registry id as well, so ``detect_objects(source="frigate:patio")`` works
+    (design D2), and the two bare words still work but now mean *this
+    persona's* webcam or screen rather than index 0 regardless of scope.
+    """
+    import base64 as _b64
+
+    from ..vision import sources as _sources
+
+    kind = _sources.KIND_WEBCAM if (source or "webcam") == "webcam" else _sources.KIND_SCREEN
+    src = _sources.resolve_request(source or "webcam", kind)
+
+    if src.kind == _sources.KIND_WEBCAM:
+        return _validate_capture_result(await capture_webcam({"source": src.id, "max_dim": 640}))
+    if src.kind == _sources.KIND_SCREEN:
+        return _validate_capture_result(await capture_screenshot({"source": src.id, "max_dim": 640}))
+    # Frigate and anything else the registry can resolve: pull the frame
+    # directly. The permission decision has already been made above.
+    return _b64.b64encode(_sources.resolve_source(src.id, max_dimension=640)).decode("ascii")
 
 
 async def detect_objects_tool(args: Dict[str, Any]) -> Dict[str, Any]:
@@ -798,7 +882,12 @@ VISION_TOOL_SCHEMAS = {
             "properties": {
                 "source": {
                     "type": "string",
-                    "description": "Frame source: 'webcam' (default) or 'screen'",
+                    "description": (
+                        "Which source to look through: a registry id "
+                        "('webcam:desk', 'screen:1', 'frigate:patio'), or "
+                        "'webcam'/'screen' for this persona's default one. "
+                        "A source outside this persona's scope is refused."
+                    ),
                 },
                 "confidence_threshold": {
                     "type": "number",
@@ -819,7 +908,12 @@ VISION_TOOL_SCHEMAS = {
             "properties": {
                 "source": {
                     "type": "string",
-                    "description": "Frame source: 'webcam' (default) or 'screen'",
+                    "description": (
+                        "Which source to look through: a registry id "
+                        "('webcam:desk', 'screen:1', 'frigate:patio'), or "
+                        "'webcam'/'screen' for this persona's default one. "
+                        "A source outside this persona's scope is refused."
+                    ),
                 },
                 "confidence_threshold": {
                     "type": "number",
