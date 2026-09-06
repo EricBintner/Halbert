@@ -31,6 +31,11 @@ function defaultVisionConfig() {
     screen_capture: { enabled: true, quality: 85, max_dimension: 1568, monitor_index: 1, grayscale: false },
     webcam: { enabled: false, camera_index: 0, quality: 85, max_dimension: 768, grayscale: false },
     redaction: { enabled: true, blocklist: ['password', 'secret'] },
+    sources: [
+      { id: 'screen:1', label: 'Screen 1', kind: 'screen', native: '1', enabled: true },
+      { id: 'webcam:0', label: 'Webcam 0', kind: 'webcam', native: '0', enabled: false },
+      { id: 'frigate:patio', label: 'Patio', kind: 'frigate', native: 'patio', enabled: true },
+    ],
   }
 }
 
@@ -52,11 +57,14 @@ function renderTab(initialConfig = defaultVisionConfig()) {
         config = { ...config, redaction: { ...config.redaction, blocklist: value as string[] } }
       } else if (field === 'screen_capture_enabled') {
         config = { ...config, screen_capture: { ...config.screen_capture, enabled: value as boolean } }
+      } else if (field === 'sources') {
+        config = { ...config, sources: value as any[] }
       }
       return jsonResponse({ status: 'ok' })
     }
     if (url === '/api/vision/config') return jsonResponse(config)
-    if (url === '/api/vision/screenshot') return jsonResponse({})
+    if (url.startsWith('/api/vision/screenshot')) return jsonResponse({})
+    if (url.startsWith('/api/vision/webcam')) return jsonResponse({})
     return jsonResponse({ status: 'ok' })
   })
   vi.stubGlobal('fetch', fetchMock)
@@ -145,5 +153,64 @@ describe('VisionTab', () => {
     await waitFor(() => {
       expect(screen.getByText(/Screenshot captured successfully/i)).toBeTruthy()
     })
+  })
+})
+
+describe('VisionTab sources (VIS-1)', () => {
+  it('lists every declared source by the name the user gave it', async () => {
+    renderTab()
+    await waitFor(() => expect(screen.queryByText(/Loading vision settings/i)).toBeNull())
+
+    expect(screen.getByDisplayValue('Screen 1')).toBeInTheDocument()
+    expect(screen.getByDisplayValue('Patio')).toBeInTheDocument()
+    expect(screen.getByText('frigate:patio')).toBeInTheDocument()
+  })
+
+  it('saves the whole list when one source changes, never a partial write', async () => {
+    const user = userEvent.setup()
+    const { calls } = renderTab()
+    await waitFor(() => expect(screen.queryByText(/Loading vision settings/i)).toBeNull())
+
+    await user.click(screen.getByLabelText(/Enable Webcam 0/i))
+
+    const put = calls.find((c) => c.init?.method === 'PUT')
+    const body = JSON.parse(put!.init!.body as string)
+    // The config key IS the list, so writing one entry would drop the others.
+    expect(body.sources).toHaveLength(3)
+    expect(body.sources[1]).toMatchObject({ id: 'webcam:0', enabled: true })
+    expect(body.sources[0]).toMatchObject({ id: 'screen:1', enabled: true })
+  })
+
+  it('renames a source without touching its id', async () => {
+    const user = userEvent.setup()
+    const { calls } = renderTab()
+    await waitFor(() => expect(screen.queryByText(/Loading vision settings/i)).toBeNull())
+
+    const nameField = screen.getByLabelText(/Name for screen:1/i)
+    await user.clear(nameField)
+    await user.type(nameField, 'Studio display')
+    await user.tab()
+
+    const put = calls.find((c) => c.init?.method === 'PUT')
+    const body = JSON.parse(put!.init!.body as string)
+    expect(body.sources[0]).toMatchObject({ id: 'screen:1', label: 'Studio display' })
+  })
+
+  it('tests one source through that source, not the configured default', async () => {
+    const user = userEvent.setup()
+    const { calls } = renderTab()
+    await waitFor(() => expect(screen.queryByText(/Loading vision settings/i)).toBeNull())
+
+    await user.click(screen.getAllByRole('button', { name: /^Test$/ })[0])
+
+    expect(calls.some((c) => c.url === '/api/vision/screenshot?monitor=1')).toBe(true)
+  })
+
+  it('offers no Test for a Frigate camera, which the NVR owns', async () => {
+    renderTab()
+    await waitFor(() => expect(screen.queryByText(/Loading vision settings/i)).toBeNull())
+
+    // screen + webcam, not the Frigate row.
+    expect(screen.getAllByRole('button', { name: /^Test$/ })).toHaveLength(2)
   })
 })

@@ -558,12 +558,17 @@ function BeingSettings() {
 
 function SensesSettings() {
   const [config, setConfig] = useState<any>(null)
+  // Every source the machine has declared (VIS-1). The picker narrows within
+  // this; it can never add to it — a persona naming a source the system
+  // switched off does not switch it on.
+  const [sources, setSources] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
 
   useEffect(() => {
     loadConfig()
+    loadSources()
   }, [])
 
   const loadConfig = async () => {
@@ -577,6 +582,18 @@ function SensesSettings() {
       console.error('Failed to load senses config:', e)
     } finally {
       setLoading(false)
+    }
+  }
+
+  const loadSources = async () => {
+    try {
+      const resp = await fetch(`${API_BASE}/vision/config`)
+      if (resp.ok) {
+        const data = await resp.json()
+        setSources((data.sources || []).filter((s: any) => s.enabled))
+      }
+    } catch (e) {
+      console.error('Failed to load vision sources:', e)
     }
   }
 
@@ -647,6 +664,44 @@ function SensesSettings() {
               onChange={(e) => saveSenses({ enabled: e.target.checked })}
               disabled={saving}
             />
+          </div>
+
+          <div className="space-y-2">
+            <Label>What this persona may look through</Label>
+            <p className="text-xs text-muted-foreground">
+              Nothing selected means every source the machine has enabled — which
+              is what every persona meant before sources had names. Selecting some
+              narrows this persona to those; it can never widen beyond what the
+              Vision tab allows.
+            </p>
+            {sources.length === 0 && (
+              <p className="text-xs text-muted-foreground">
+                No sources are enabled in the Vision tab.
+              </p>
+            )}
+            {sources.map((src: any) => {
+              const chosen: string[] = vision.sources || []
+              const on = chosen.includes(src.id)
+              return (
+                <label key={src.id} className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    aria-label={`Allow ${src.label}`}
+                    checked={on}
+                    onChange={(e) =>
+                      saveSenses({
+                        sources: e.target.checked
+                          ? [...chosen, src.id]
+                          : chosen.filter((id) => id !== src.id),
+                      })
+                    }
+                    disabled={saving}
+                  />
+                  <span>{src.label}</span>
+                  <span className="text-[10px] font-mono text-muted-foreground">{src.id}</span>
+                </label>
+              )
+            })}
           </div>
 
           <div className="flex items-center justify-between">

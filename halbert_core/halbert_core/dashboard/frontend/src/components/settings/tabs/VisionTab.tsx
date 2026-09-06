@@ -13,6 +13,20 @@ import { Eye, Shield } from 'lucide-react'
 // Vision Settings (Phase 5: Privacy gates + Settings UI)
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * A thing Halbert can look through (VIS-1). The `id` is stable and is what a
+ * persona file and a private-source assignment hold; `native` is the monitor
+ * index, camera index or Frigate camera name the driver needs, and may change
+ * under the same id when hardware moves.
+ */
+export interface VisionSource {
+  id: string
+  label: string
+  kind: 'screen' | 'webcam' | 'frigate'
+  native: string
+  enabled: boolean
+}
+
 export function VisionTab() {
   const [config, setConfig] = useState<any>(null)
   const [status, setStatus] = useState<any>(null)
@@ -24,6 +38,7 @@ export function VisionTab() {
   // null means "show the saved config value," matching the
   // defaultValue+onBlur pattern BeingTab uses for its own free-text fields.
   const [blocklistDraft, setBlocklistDraft] = useState<string | null>(null)
+
 
   useEffect(() => {
     loadConfig()
@@ -55,7 +70,15 @@ export function VisionTab() {
     }
   }
 
-  const updateConfig = async (field: string, value: boolean | number | string[]) => {
+  /** Edit one declared source and save the whole list — the config key is
+   * the list, so a partial write would drop the others. */
+  const updateSource = async (index: number, patch: Partial<VisionSource>) => {
+    const current: VisionSource[] = config?.sources ?? []
+    const next = current.map((s, i) => (i === index ? { ...s, ...patch } : s))
+    await updateConfig('sources', next)
+  }
+
+  const updateConfig = async (field: string, value: boolean | number | string[] | VisionSource[]) => {
     setSaving(true)
     try {
       const body: Record<string, any> = {}
@@ -77,6 +100,30 @@ export function VisionTab() {
     } finally {
       setSaving(false)
     }
+  }
+
+  /** Test one declared source. Declaring a source is a claim about hardware
+   * we cannot enumerate, so the way to know it is right is to look through
+   * it — and the refusal a scoped-out source returns is worth seeing here
+   * too, rather than first discovering it mid-conversation. */
+  const testSource = async (src: VisionSource) => {
+    const url =
+      src.kind === 'webcam'
+        ? apiUrl(`/api/vision/webcam?camera=${encodeURIComponent(src.native)}`)
+        : apiUrl(`/api/vision/screenshot?monitor=${encodeURIComponent(src.native)}`)
+    setToast(`Looking through ${src.label}...`)
+    try {
+      const resp = await fetch(url)
+      if (resp.ok) {
+        setToast(`${src.label} works`)
+      } else {
+        const err = await resp.json().catch(() => ({}))
+        setToast(`${src.label}: ${err.error || resp.statusText}`)
+      }
+    } catch (err) {
+      setToast(`${src.label}: ${err}`)
+    }
+    setTimeout(() => setToast(null), 4000)
   }
 
   const testScreenshot = async () => {
@@ -202,19 +249,6 @@ export function VisionTab() {
             />
           </div>
           <div className="flex items-center justify-between">
-            <Label htmlFor="screen-monitor">Monitor index</Label>
-            <Input
-              id="screen-monitor"
-              type="number"
-              min={0}
-              max={9}
-              value={config?.screen_capture?.monitor_index ?? 1}
-              onChange={(e) => updateConfig('screen_capture_monitor_index', parseInt(e.target.value) || 1)}
-              disabled={saving}
-              className="w-20"
-            />
-          </div>
-          <div className="flex items-center justify-between">
             <div>
               <Label htmlFor="screen-gray">Grayscale</Label>
               <p className="text-xs text-muted-foreground">30% smaller JPEGs. Text and UI perfectly readable.</p>
@@ -230,6 +264,74 @@ export function VisionTab() {
           <Button onClick={testScreenshot} disabled={saving || !config?.screen_capture?.enabled} variant="outline" size="sm">
             Test screen capture
           </Button>
+        </CardContent>
+      </Card>
+
+      {/* Sources — VIS-1 */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Sources</CardTitle>
+          <CardDescription>
+            What Halbert can look through, each with a name you choose. The name
+            is what a persona is scoped to, so it keeps meaning the same thing
+            when a camera is replugged and its index moves. A source switched
+            off here cannot be reached by anything — no persona can widen it.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {(config?.sources ?? []).length === 0 && (
+            <p className="text-xs text-muted-foreground">No sources yet.</p>
+          )}
+          {(config?.sources ?? []).map((src: VisionSource, i: number) => (
+            <div key={src.id} className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                aria-label={`Enable ${src.label}`}
+                checked={src.enabled}
+                onChange={(e) => updateSource(i, { enabled: e.target.checked })}
+                disabled={saving}
+              />
+              <Input
+                aria-label={`Name for ${src.id}`}
+                defaultValue={src.label}
+                onBlur={(e) => {
+                  const label = e.target.value.trim()
+                  if (label && label !== src.label) updateSource(i, { label })
+                }}
+                disabled={saving}
+                className="flex-1"
+              />
+              <Input
+                aria-label={`Device for ${src.id}`}
+                defaultValue={src.native}
+                onBlur={(e) => {
+                  const native = e.target.value.trim()
+                  if (native && native !== src.native) updateSource(i, { native })
+                }}
+                disabled={saving || src.kind === 'frigate'}
+                className="w-24"
+              />
+              <span className="text-[10px] font-mono text-muted-foreground w-32 truncate" title={src.id}>
+                {src.id}
+              </span>
+              {src.kind !== 'frigate' && (
+                <Button
+                  onClick={() => testSource(src)}
+                  disabled={saving || !src.enabled}
+                  variant="outline"
+                  size="sm"
+                >
+                  Test
+                </Button>
+              )}
+            </div>
+          ))}
+          <p className="text-[10px] text-muted-foreground">
+            Frigate cameras come from your NVR and are named there. Screens and
+            webcams are listed by index because neither macOS nor OpenCV will
+            tell us what they are called — so give them names that mean
+            something to you.
+          </p>
         </CardContent>
       </Card>
 
@@ -251,19 +353,6 @@ export function VisionTab() {
               checked={config?.webcam?.enabled ?? false}
               onChange={(e) => updateConfig('webcam_enabled', e.target.checked)}
               disabled={saving}
-            />
-          </div>
-          <div className="flex items-center justify-between">
-            <Label htmlFor="webcam-camera">Camera index</Label>
-            <Input
-              id="webcam-camera"
-              type="number"
-              min={0}
-              max={9}
-              value={config?.webcam?.camera_index ?? 0}
-              onChange={(e) => updateConfig('webcam_camera_index', parseInt(e.target.value) || 0)}
-              disabled={saving}
-              className="w-20"
             />
           </div>
           <div className="flex items-center justify-between">
