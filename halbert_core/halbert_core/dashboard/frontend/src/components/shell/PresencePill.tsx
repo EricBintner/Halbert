@@ -52,6 +52,14 @@ export interface FrontingSession {
   end_reason: string | null
 }
 
+/** Something the user can hand to a guest for the rest of its session. */
+export interface PrivateSource {
+  id: string
+  label: string
+  kind: string
+  owner: 'halbert' | 'guest' | 'drop'
+}
+
 export interface InstanceInfo {
   /** Non-null while a borrowed face is on. */
   fronting?: FrontingSession | null
@@ -84,6 +92,10 @@ const STORAGE_KEY = 'halbert:paired-instances'
 /** How often the pill re-reads who is speaking. */
 const GUEST_POLL_MS = 10_000
 
+/** Handing a source over is a local-only control (require_local_admin), so
+ * the picker only renders for the body sitting in front of the user. */
+const isLocalEndpoint = (endpoint: string | null) => !endpoint
+
 function loadPairedInstances(): PairedInstance[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
@@ -106,6 +118,10 @@ export function PresencePill() {
   const [paired, setPaired] = useState<PairedInstance[]>(loadPairedInstances)
   const [activeEndpoint, setActiveEndpoint] = useState<string | null>(getInstanceEndpoint())
   const [showAddForm, setShowAddForm] = useState(false)
+  // What the user could hand over, and what they already have. Loaded only
+  // while a guest fronts — there is nothing to hand over otherwise.
+  const [sources, setSources] = useState<PrivateSource[]>([])
+  const [handedOver, setHandedOver] = useState<Record<string, string>>({})
   const [newLabel, setNewLabel] = useState('')
   const [newEndpoint, setNewEndpoint] = useState('http://localhost:8001')
   const [newRole, setNewRole] = useState<'host' | 'home'>('home')
@@ -140,6 +156,39 @@ export function PresencePill() {
     const timer = setInterval(() => { refreshInfo(activeEndpoint) }, GUEST_POLL_MS)
     return () => clearInterval(timer)
   }, [activeEndpoint, refreshInfo])
+
+
+  const loadPrivateSources = useCallback(async () => {
+    try {
+      const [cat, status] = await Promise.all([
+        fetch(apiUrl('/api/guest/private/sources')),
+        fetch(apiUrl('/api/guest')),
+      ])
+      if (cat.ok) setSources((await cat.json()).sources || [])
+      if (status.ok) setHandedOver((await status.json()).private_sources || {})
+    } catch {
+      // Non-fatal — the pill still shows who is fronting
+    }
+  }, [])
+
+  const handleHandOver = async (src: PrivateSource, give: boolean) => {
+    const path = give ? '/api/guest/private/assign' : '/api/guest/private/release'
+    try {
+      const res = await fetch(apiUrl(path), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ source_id: src.id }),
+      })
+      if (res.ok) setHandedOver((await res.json()).private_sources || {})
+    } catch {
+      // Non-fatal — the next open re-reads the truth
+    }
+  }
+
+  const fronting = currentInfo?.fronting ?? null
+  useEffect(() => {
+    if (fronting && isLocalEndpoint(activeEndpoint)) loadPrivateSources()
+  }, [fronting?.session_id, activeEndpoint, loadPrivateSources])
 
   const handleEndGuest = async () => {
     try {
@@ -178,7 +227,6 @@ export function PresencePill() {
   const singular = currentInfo?.singular ?? false
   const isLocal = !activeEndpoint
 
-  const fronting = currentInfo?.fronting ?? null
   const guestName = fronting?.name || ''
   const lentBy = fronting ? (fronting.offered_by_name || fronting.offered_by) : ''
 
@@ -238,6 +286,34 @@ export function PresencePill() {
               <p className="text-[10px] text-muted-foreground">
                 {entityName} is underneath — same tools, same memory, same rules.
               </p>
+              {isLocal && sources.length > 0 && (
+                <div className="space-y-1 pt-1">
+                  <p className="text-[10px] font-medium">What {guestName} may have</p>
+                  {Object.keys(handedOver).length === 0 && (
+                    /* The private-mode review's P6, in front of the click that
+                       makes it true. A toggle labelled "private" with no stated
+                       scope is a promise the system cannot keep — the cameras,
+                       the microphone and the house sensors do not stop. */
+                    <p className="text-[10px] text-muted-foreground">
+                      Hand one over and {entityName} stops recording what you say
+                      and what it sees. {entityName} keeps recording what the
+                      machine and the rest of the house are doing. Life safety
+                      still reaches {entityName}.
+                    </p>
+                  )}
+                  {sources.map((src) => (
+                    <label key={src.id} className="flex items-center gap-2 text-[11px]">
+                      <input
+                        type="checkbox"
+                        aria-label={`Hand ${src.label} to ${guestName}`}
+                        checked={handedOver[src.id] === 'guest'}
+                        onChange={(e) => handleHandOver(src, e.target.checked)}
+                      />
+                      <span className="truncate">{src.label}</span>
+                    </label>
+                  ))}
+                </div>
+              )}
               {isLocal && (
                 <Button
                   variant="outline"

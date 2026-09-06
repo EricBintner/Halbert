@@ -34,7 +34,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from ...federation.peer_middleware import PeerContext, require_local_admin, require_peer_auth
-from ...persona import guest
+from ...persona import guest, private_sources
 from ...proactive.events import ProactiveEvent, get_event_bus
 
 logger = logging.getLogger("halbert.dashboard.guest")
@@ -66,6 +66,10 @@ class PullRequest(BaseModel):
 
 class HeartbeatRequest(BaseModel):
     session_id: str
+
+
+class PrivateSourceRequest(BaseModel):
+    source_id: str
 
 
 # ---------------------------------------------------------------------------
@@ -245,7 +249,85 @@ async def end_session() -> Dict[str, Any]:
     return {"status": "ok", "session": ended.to_dict()}
 
 
+# ---------------------------------------------------------------------------
+# Private sources — the user's side, and only the user's
+# ---------------------------------------------------------------------------
+
+def _private_event(source_id: str, label: str, first: bool) -> ProactiveEvent:
+    """Announce a handover. The first one carries the statement.
+
+    The private-mode review's P6 asks for that line in the interface at the
+    moment the first source is handed over. The pill shows it before the
+    click; this puts the same words in the bell, so the promise is on the
+    record and not only in a dialog the user dismissed.
+    """
+    own = _own_name()
+    body = (
+        private_sources.statement(label, own)
+        if first
+        else f"{label} is the guest's for the rest of this session."
+    )
+    return ProactiveEvent.create(
+        type=EVENT_TYPE,
+        severity="info",
+        title=f"{label} handed over",
+        body=body,
+        data={"state": "private", "source_id": source_id, "first": first},
+    )
+
+
+@router.post("/api/guest/private/assign", dependencies=[Depends(require_local_admin)])
+async def assign_private_source(request: PrivateSourceRequest) -> Dict[str, Any]:
+    """Hand one source to the fronting guest for the rest of its session.
+
+    Local only, and deliberately not satisfiable by a peer token: the app that
+    lent the persona must not be able to award itself the user's camera.
+    """
+    label = _label_for(request.source_id)
+    first = not private_sources.active()
+    try:
+        private_sources.assign(request.source_id)
+    except private_sources.NoGuestFronting as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except private_sources.BadSourceId as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    await get_event_bus().publish(_private_event(request.source_id, label, first))
+    return {"status": "ok", "private_sources": _private_sources_payload()}
+
+
+@router.post("/api/guest/private/release", dependencies=[Depends(require_local_admin)])
+async def release_private_source(request: PrivateSourceRequest) -> Dict[str, Any]:
+    """Take one source back. The guest keeps fronting."""
+    try:
+        private_sources.release(request.source_id)
+    except private_sources.BadSourceId as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"status": "ok", "private_sources": _private_sources_payload()}
+
+
+@router.get("/api/guest/private/sources", dependencies=[Depends(require_local_admin)])
+async def list_private_sources() -> Dict[str, Any]:
+    """Everything the user could hand over, across the senses, with its owner."""
+    return {"sources": private_sources.catalogue()}
+
+
+def _label_for(source_id: str) -> str:
+    for entry in private_sources.catalogue():
+        if entry["id"] == source_id:
+            return entry["label"]
+    return source_id
+
+
+def _private_sources_payload() -> Dict[str, str]:
+    return {sid: owner.value for sid, owner in private_sources.assigned().items()}
+
+
 @router.get("/api/guest")
-async def guest_status() -> Dict[str, Optional[Dict[str, Any]]]:
+async def guest_status() -> Dict[str, Any]:
     live = guest.current_guest()
-    return {"fronting": live.to_dict() if live else None}
+    return {
+        "fronting": live.to_dict() if live else None,
+        # Present whether or not a guest fronts, so the pill never has to
+        # guess: no guest means no private sources, always.
+        "private_sources": _private_sources_payload() if live else {},
+    }

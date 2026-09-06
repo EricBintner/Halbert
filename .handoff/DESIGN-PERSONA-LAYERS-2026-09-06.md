@@ -567,6 +567,43 @@ window may be on any display and the watcher captures it by window id, so
 emitting `screen:<monitor_index>` there would be a claim rather than a fact —
 the same honesty `audio/ingress/base.py` keeps about per-satellite ids.
 
+### 13.8 Private mode becomes reachable (N4)
+
+Full suite green: backend 5869 passed / 14 skipped, frontend 106 files / 987
+tests, `tsc` clean.
+
+Three routes, all `require_local_admin`: `assign`, `release`, and a catalogue
+of what could be handed over. The catalogue is its own route rather than a
+field on `GET /api/guest`, because the picker needs the sources that are *not*
+handed over as much as the ones that are — and it is one list across the
+senses (vision registry ids from VIS-1, microphone ids from N1, plus
+`screen:active_window`), because the founder's rule is that a private mode
+gating one sense and not another is worse than none.
+
+**The statement ships with the control.** `private_sources.statement()` holds
+the review's P6 wording in one place; the pill renders it above the checkboxes
+*before* the first handover, and the bus carries the same words on the first
+assignment so the promise is on the record rather than in a dialog the user
+dismissed. Once something is handed over the pill stops repeating it — pinned
+by a test, because a statement that never goes away is one people stop reading.
+
+Two things the build settled:
+
+- **The local boundary is the client's address, not a token.** The test drives
+  `_is_local_client` directly. Asserting on a bearer token would have proved
+  nothing: a TestClient always looks local, so the first version of that test
+  passed while the route was wide open to exactly the caller it names.
+- **Private mode is still not a toggle.** There is no "private mode" switch
+  anywhere; there is a list of sources and the act of handing one over.
+  `active()` is derived — private mode is on exactly when at least one source
+  is the guest's — so there is no state that can disagree with the sources.
+
+Still absent, deliberately: every writer-side promise in
+`REVIEW-PRIVATE-MODE-2026-09-06.md` §6.2 beyond the sensor gates. The
+transcript, the tick and the receipts are handled by `continuity/ownership.py`
+(§4.2); the audit chain is D5-deferred; and the enumerated writer audit that
+review asks for is still unwritten.
+
 ---
 
 ## 14. A consideration — the "by what authority" axis, and Halbert as its reference

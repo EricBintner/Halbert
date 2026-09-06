@@ -26,16 +26,18 @@ from fastapi.testclient import TestClient
 from halbert_core.dashboard.routes import guest as guest_routes
 from halbert_core.federation.peer_middleware import PeerContext, require_peer_auth
 from halbert_core.federation.peers_config import PeerCredential
-from halbert_core.persona import guest, sibling
+from halbert_core.persona import guest, private_sources, sibling
 from halbert_core.proactive.events import get_event_bus, is_user_facing
 
 
 @pytest.fixture(autouse=True)
 def _fresh_state():
     guest.reset_for_tests()
+    private_sources.reset_for_tests()
     get_event_bus().clear()
     yield
     guest.reset_for_tests()
+    private_sources.reset_for_tests()
     get_event_bus().clear()
 
 
@@ -177,7 +179,7 @@ class TestWhatThePillSees:
 
     def test_status_route(self):
         client = TestClient(_app(_peer()))
-        assert client.get("/api/guest").json() == {"fronting": None}
+        assert client.get("/api/guest").json() == {"fronting": None, "private_sources": {}}
         client.post("/api/guest/offer", json=_offer_body())
         fronting = client.get("/api/guest").json()["fronting"]
         assert fronting["name"] == "Marnie" and fronting["active"] is True
@@ -260,3 +262,117 @@ class TestPull:
         resp = TestClient(_app()).post("/api/guest/pull", json={"base_url": "http://127.0.0.1:8002", "persona_id": "marnie-7"})
         assert resp.status_code == 409
         assert guest.current_guest().persona.name == "Rex"
+
+
+class TestPrivateSources:
+    """N4. Handing one source to the guest, and being told what that means."""
+
+    @staticmethod
+    def _fronting():
+        client = TestClient(_app(_peer()))
+        client.post("/api/guest/offer", json={"persona": {"name": "Marnie"}, "ttl_seconds": 30})
+        return TestClient(_app())   # the user's side: no peer token
+
+    def test_the_user_can_hand_over_a_source(self):
+        client = self._fronting()
+        resp = client.post("/api/guest/private/assign", json={"source_id": "webcam:desk"})
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["private_sources"] == {"webcam:desk": "guest"}
+        assert private_sources.active() is True
+
+    def test_a_caller_that_is_not_at_this_machine_cannot_hand_over_a_camera(self):
+        """require_local_admin, not require_peer_auth: the app that lent the
+        persona must not be able to award itself the user's camera. The
+        boundary is the client's address, so that is what this drives — a
+        TestClient always looks local, which is exactly why asserting on a
+        bearer token here would have proved nothing."""
+        client = self._fronting()
+        with patch(
+            "halbert_core.federation.peer_middleware._is_local_client",
+            return_value=False,
+        ):
+            resp = client.post("/api/guest/private/assign", json={"source_id": "webcam:desk"})
+        assert resp.status_code == 403, resp.text
+        assert private_sources.active() is False
+
+    def test_releasing_is_local_only_too(self):
+        client = self._fronting()
+        client.post("/api/guest/private/assign", json={"source_id": "webcam:desk"})
+        with patch(
+            "halbert_core.federation.peer_middleware._is_local_client",
+            return_value=False,
+        ):
+            assert client.post(
+                "/api/guest/private/release", json={"source_id": "webcam:desk"}
+            ).status_code == 403
+        assert private_sources.active() is True
+
+    def test_nothing_can_be_handed_over_with_no_guest_fronting(self):
+        client = TestClient(_app())
+        resp = client.post("/api/guest/private/assign", json={"source_id": "webcam:desk"})
+        assert resp.status_code == 409
+        assert private_sources.active() is False
+
+    def test_a_malformed_source_id_is_a_bad_request(self):
+        client = self._fronting()
+        resp = client.post("/api/guest/private/assign", json={"source_id": "not an id"})
+        assert resp.status_code == 400
+
+    def test_the_first_handover_carries_the_statement(self):
+        """The private-mode review's P6: the line has to be in the interface,
+        not only in a design document."""
+        client = self._fronting()
+        client.post("/api/guest/private/assign", json={"source_id": "webcam:desk"})
+
+        said = [e for e in get_event_bus().get_recent() if e.data.get("state") == "private"]
+        assert len(said) == 1
+        assert said[0].data["first"] is True
+        body = said[0].body
+        assert "stops recording what you say" in body
+        assert "keeps recording what the machine and the rest of the house" in body
+        assert "Life safety still reaches" in body
+
+    def test_the_second_handover_does_not_repeat_the_statement(self):
+        client = self._fronting()
+        client.post("/api/guest/private/assign", json={"source_id": "webcam:desk"})
+        client.post("/api/guest/private/assign", json={"source_id": "mic:local:study"})
+
+        said = [e for e in get_event_bus().get_recent() if e.data.get("state") == "private"]
+        assert [e.data["first"] for e in said] == [True, False]
+
+    def test_taking_a_source_back_leaves_the_guest_fronting(self):
+        client = self._fronting()
+        client.post("/api/guest/private/assign", json={"source_id": "webcam:desk"})
+        resp = client.post("/api/guest/private/release", json={"source_id": "webcam:desk"})
+        assert resp.status_code == 200
+        assert resp.json()["private_sources"] == {}
+        assert private_sources.active() is False
+        assert guest.current_guest() is not None
+
+    def test_the_status_route_reports_what_is_handed_over(self):
+        client = self._fronting()
+        client.post("/api/guest/private/assign", json={"source_id": "webcam:desk"})
+        body = client.get("/api/guest").json()
+        assert body["private_sources"] == {"webcam:desk": "guest"}
+
+    def test_with_no_guest_there_are_never_private_sources(self):
+        body = TestClient(_app()).get("/api/guest").json()
+        assert body["fronting"] is None
+        assert body["private_sources"] == {}
+
+    def test_the_catalogue_lists_sources_across_the_senses(self, monkeypatch):
+        """One list, because a private mode that gates one sense and not
+        another is worse than none."""
+        from halbert_core.vision import sources as vs
+
+        monkeypatch.setattr(vs, "list_sources", lambda **k: [
+            vs.VisionSource(id="webcam:desk", label="Desk", kind="webcam", native="0", enabled=True),
+            vs.VisionSource(id="webcam:off", label="Off", kind="webcam", native="1", enabled=False),
+        ])
+        client = self._fronting()
+        client.post("/api/guest/private/assign", json={"source_id": "webcam:desk"})
+
+        entries = {e["id"]: e for e in client.get("/api/guest/private/sources").json()["sources"]}
+        assert entries["webcam:desk"]["owner"] == "guest"
+        assert "webcam:off" not in entries          # disabled is not offerable
+        assert "screen:active_window" in entries    # the watcher's own id is

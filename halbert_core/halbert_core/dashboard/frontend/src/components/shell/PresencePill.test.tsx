@@ -43,13 +43,38 @@ const FRONTING = {
 
 /** Instance info with a guest fronting; POST /api/guest/end answers ok and
  * the next info read has the face off. */
+const CATALOGUE = [
+  { id: 'webcam:desk', label: 'Desk webcam', kind: 'webcam', owner: 'halbert' },
+  { id: 'mic:local:study', label: 'study', kind: 'mic', owner: 'halbert' },
+]
+
 function stubFrontingFetch() {
   let fronting: typeof FRONTING | null = FRONTING
+  let handedOver: Record<string, string> = {}
   const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
-    if (String(url).endsWith('/api/guest/end')) {
+    const path = String(url)
+    if (path.endsWith('/api/guest/end')) {
       expect(init?.method).toBe('POST')
       fronting = null
       return Promise.resolve({ ok: true, json: async () => ({ status: 'ok' }) })
+    }
+    if (path.endsWith('/api/guest/private/sources')) {
+      return Promise.resolve({ ok: true, json: async () => ({ sources: CATALOGUE }) })
+    }
+    if (path.endsWith('/api/guest/private/assign')) {
+      const body = JSON.parse(init!.body as string)
+      handedOver = { ...handedOver, [body.source_id]: 'guest' }
+      return Promise.resolve({ ok: true, json: async () => ({ private_sources: handedOver }) })
+    }
+    if (path.endsWith('/api/guest/private/release')) {
+      const body = JSON.parse(init!.body as string)
+      const next = { ...handedOver }
+      delete next[body.source_id]
+      handedOver = next
+      return Promise.resolve({ ok: true, json: async () => ({ private_sources: handedOver }) })
+    }
+    if (path.endsWith('/api/guest')) {
+      return Promise.resolve({ ok: true, json: async () => ({ fronting, private_sources: handedOver }) })
     }
     return Promise.resolve({ ok: true, json: async () => ({ ...INFO, fronting }) })
   })
@@ -167,6 +192,53 @@ describe('PresencePill', () => {
         ),
       )
       expect(await screen.findByText('Macky @ desk')).toBeInTheDocument()
+    })
+
+    it('says what handing a source over means, before the first one is handed over', async () => {
+      const user = userEvent.setup()
+      stubFrontingFetch()
+      mount()
+      await screen.findByText('Macky · as Ada')
+
+      await user.click(screen.getByRole('button', { name: /Macky/ }))
+
+      // P6: a toggle labelled "private" with no stated scope is a promise the
+      // system cannot keep — the cameras and the house sensors do not stop.
+      const said = await screen.findByText(/stops recording what you say/i)
+      expect(said).toHaveTextContent(/keeps recording what the machine and the rest of the house/i)
+      expect(said).toHaveTextContent(/Life safety still reaches/i)
+    })
+
+    it('hands one source over and stops repeating the statement', async () => {
+      const user = userEvent.setup()
+      const fetchMock = stubFrontingFetch()
+      mount()
+      await screen.findByText('Macky · as Ada')
+      await user.click(screen.getByRole('button', { name: /Macky/ }))
+
+      await user.click(await screen.findByLabelText(/Hand Desk webcam to Ada/i))
+
+      await waitFor(() =>
+        expect(fetchMock).toHaveBeenCalledWith(
+          expect.stringContaining('/api/guest/private/assign'),
+          expect.objectContaining({ method: 'POST' }),
+        ),
+      )
+      await waitFor(() =>
+        expect(screen.queryByText(/stops recording what you say/i)).toBeNull(),
+      )
+    })
+
+    it('offers the microphone alongside the camera', async () => {
+      const user = userEvent.setup()
+      stubFrontingFetch()
+      mount()
+      await screen.findByText('Macky · as Ada')
+      await user.click(screen.getByRole('button', { name: /Macky/ }))
+
+      // One list across the senses: a private mode that gates one and not
+      // another is worse than none.
+      expect(await screen.findByLabelText(/Hand study to Ada/i)).toBeInTheDocument()
     })
   })
 })

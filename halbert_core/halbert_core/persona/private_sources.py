@@ -136,6 +136,68 @@ def clear() -> None:
         _clear_locked("cleared")
 
 
+def catalogue() -> list:
+    """Every source the user could hand over, with the ownership it has now.
+
+    One list across the senses, because the founder's rule is that a private
+    mode which gates one sense and not another is worse than none — so the
+    picker has to be able to show them together and say which are still
+    Halbert's.
+
+    Sources whose subsystem is unavailable are simply absent; this never
+    raises, because a picker that cannot render is a worse failure than a
+    picker missing a camera.
+    """
+    out = []
+    seen = set()
+
+    def add(sid, label, kind):
+        if not sid or sid in seen:
+            return
+        seen.add(sid)
+        out.append({
+            "id": sid,
+            "label": label or sid,
+            "kind": kind,
+            "owner": owner_of(sid).value,
+        })
+
+    try:
+        from ..vision.sources import ACTIVE_WINDOW_SOURCE_ID, list_sources
+        for src in list_sources():
+            if src.enabled:
+                add(src.id, src.label, src.kind)
+        add(ACTIVE_WINDOW_SOURCE_ID, "Whatever screen you are looking at", "screen")
+    except Exception as e:
+        logger.debug("Vision sources unavailable for the picker: %s", e)
+
+    try:
+        from ..dashboard.routes.audio import get_audio_pipeline
+        pipeline = get_audio_pipeline()
+        for adapter in (getattr(pipeline, "_ingress_adapters", None) or []):
+            if getattr(adapter, "is_running", False):
+                add(getattr(adapter, "source_id", ""), getattr(adapter, "area_id", "") or "Microphone", "mic")
+    except Exception as e:
+        logger.debug("Audio sources unavailable for the picker: %s", e)
+
+    return out
+
+
+def statement(label: str, machine: str) -> str:
+    """What the user is told the moment they hand over the first source.
+
+    The private-mode review's P6: the line has to be in the interface, not
+    only in a design document, because a toggle labelled "private" with no
+    stated scope is a promise the system cannot keep — the cameras, the
+    microphone and the house sensors do not stop.
+    """
+    return (
+        f"{machine} stops recording what you say and what {label} sees. "
+        f"It keeps recording what the machine and the rest of the house are "
+        f"doing. Life safety still reaches {machine}."
+    )
+
+
 def reset_for_tests() -> None:
     with _lock:
         _clear_locked("reset")

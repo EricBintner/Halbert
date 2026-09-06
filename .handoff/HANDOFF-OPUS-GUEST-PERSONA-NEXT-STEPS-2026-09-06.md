@@ -96,7 +96,18 @@ safety (`modality_wiring.LIFE_SAFETY_EVENT_TYPES`); route with
 `life_safety=True` so D1 holds there too. Other HA entities are the house,
 Halbert's in every mode — no source assignment applies to them yet.
 
-### N4 — Private-sources routes, the picker, and the statement (1–2 d) — **NEXT**
+### N4 — Private-sources routes, the picker, and the statement — **DONE**
+`POST /api/guest/private/assign` and `/release` plus
+`GET /api/guest/private/sources`, all `require_local_admin`; `GET /api/guest`
+carries `private_sources`. The pill lists what can be handed over — one list
+across the senses — and shows the P6 statement before the first handover, with
+the same words announced on the bus. Two departures worth knowing: the
+catalogue is a new route rather than a field on `GET /api/guest`, because the
+picker needs sources that are *not* handed over as well as the ones that are;
+and the local-only boundary is tested by driving `_is_local_client`, because a
+TestClient always looks local and a bearer-token assertion would have proved
+nothing. Original brief:
+
 Only after N1–N3. `POST /api/guest/private/assign` and `/release`
 (`require_local_admin`), `GET /api/guest` gains `private_sources`. The pill's
 source picker lists registry ids (VIS-1 + audio). At the first assignment,
@@ -106,7 +117,7 @@ of the house are doing; life safety still reaches Halbert."
 *Accept:* route tests in `test_guest_routes.py` style; a frontend test that
 the statement renders before the first source is handed over.
 
-### N5 — The verb: "be ⟨name⟩" (1 d)
+### N5 — The verb: "be ⟨name⟩" (1 d) — **NEXT**
 In chat and on the pill: list matches across paired homes
 (`SiblingClient.list_personas`) and call `POST /api/guest/pull`. The peer
 record needs a home URL and outbound token; today the pull request carries
