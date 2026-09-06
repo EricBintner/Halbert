@@ -535,8 +535,19 @@ the same `fronting` object.
   Still blocked: `modality_wiring.get_modality_prompt_builder` has no
   callers and does not read being.yml even for Halbert. Wiring the voice
   persona is its own defect; fixing it is where `current_guest()` goes.
-- **Phase 6** vision source registry — standalone, as designed.
-- **Phase 7** private mode — write the §6.2 writer audit first; not before.
+- **Phase 6** vision source registry — specified and ready to build:
+  `.handoff/DESIGN-VISION-SOURCE-REGISTRY-2026-09-06.md` (row `VIS-1`). It
+  found one thing §5 did not: the configured camera index is a *default*,
+  not a bound — `vision_tools.py:137` reads it from tool args — so scoping
+  built on the current shape would be decorative.
+- **Phase 7** private mode — first pass of the §6.2 writer audit is written:
+  `.handoff/REVIEW-PRIVATE-MODE-2026-09-06.md`. **Still not implementable.**
+  The ledger split is cleaner than expected (five writers, falling almost
+  exactly along the §6.1 line), but `obs/audit.py` — which §6.2 did not list
+  — is a hash-chained log carrying user-derived text, so I7 (erasability)
+  and its integrity guarantee are in direct conflict. Resolving that is an
+  `EventLog` change in Haloysius. Three founder decisions are open there
+  too.
 
 ---
 
