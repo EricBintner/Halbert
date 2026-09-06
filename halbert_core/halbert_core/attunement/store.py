@@ -25,6 +25,7 @@ frozen dataclasses to it when they are importable.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -84,7 +85,11 @@ class AttunementStore:
             db_path = str(Path(data_subdir("attunement")) / "attunement.db")
         self.db_path = db_path
         self.retention_days = retention_days
-        self._lock = threading.Lock()
+        # Re-entrant: a transaction holds the lock while the typed façade
+        # calls back into load/save, exactly as ``integrity/eventlog.py``
+        # re-enters its own directory lock.
+        self._lock = threading.RLock()
+        self._local = threading.local()
         self._init_db()
 
     # ------------------------------------------------------------------
@@ -121,11 +126,17 @@ class AttunementStore:
             self._write = write
             self._conn: Optional[sqlite3.Connection] = None
             self._owned = False
+            self._in_transaction = False
 
         def __enter__(self) -> sqlite3.Connection:
             if self._write:
                 self._store._lock.acquire()
-            if self._store._conn is not None:
+            active = getattr(self._store._local, "conn", None)
+            if active is not None:
+                # Inside a transaction: use its connection and let it commit.
+                self._conn = active
+                self._in_transaction = True
+            elif self._store._conn is not None:
                 self._conn = self._store._conn
             else:
                 self._conn = self._store._connect()
@@ -134,7 +145,7 @@ class AttunementStore:
 
         def __exit__(self, exc_type, exc, tb) -> None:
             try:
-                if self._conn is not None:
+                if self._conn is not None and not self._in_transaction:
                     if exc_type is None and self._write:
                         self._conn.commit()
                     elif exc_type is not None and self._write:
@@ -219,8 +230,12 @@ class AttunementStore:
                 ),
             )
 
-    def update_reaction(self, attempt_id: str, reaction: str) -> bool:
-        """Attach how the person reacted. False when the attempt is unknown."""
+    def update_reaction(self, attempt_id: str, reaction: Any) -> bool:
+        """Attach how the person reacted. False when the attempt is unknown.
+
+        Accepts the engine's ``Reaction`` or its bare value.
+        """
+        reaction = getattr(reaction, "value", reaction)
         with self._write() as conn:
             row = conn.execute(
                 "SELECT payload FROM outcomes WHERE attempt_id=?", (attempt_id,)
@@ -287,3 +302,82 @@ class AttunementStore:
         with self._write() as conn:
             conn.execute("DELETE FROM subjects WHERE persona_id=?", (persona_id,))
             conn.execute("DELETE FROM outcomes WHERE persona_id=?", (persona_id,))
+
+    # ------------------------------------------------------------------
+    # Transaction (StandingRequestStore.transaction)
+    # ------------------------------------------------------------------
+
+    @contextlib.contextmanager
+    def transaction(self, persona_id: str, subject_id: str):
+        """Serialize a read-modify-write of one subject.
+
+        The Protocol requires this against every other writer, in-process and
+        cross-process. ``BEGIN IMMEDIATE`` takes SQLite's write lock for the
+        body's duration, which covers other processes; the re-entrant lock
+        covers other threads and lets the typed façade call back in.
+
+        ``persona_id`` and ``subject_id`` are part of the signature but not
+        used to narrow the lock: SQLite's write lock is database-wide, and a
+        finer-grained scheme would be a second locking protocol to get wrong.
+        Contention here is a handful of writes a minute.
+        """
+        with self._lock:
+            existing = getattr(self._local, "conn", None)
+            if existing is not None:
+                # Already inside one — re-entering is a no-op, as the engine's
+                # own eventlog treats a nested acquire.
+                yield existing
+                return
+            conn = self._conn if self._conn is not None else self._connect()
+            owned = self._conn is None
+            self._local.conn = conn
+            try:
+                conn.execute("BEGIN IMMEDIATE")
+                yield conn
+                conn.commit()
+            except BaseException:
+                conn.rollback()
+                raise
+            finally:
+                self._local.conn = None
+                if owned:
+                    conn.close()
+
+    # ------------------------------------------------------------------
+    # Typed facade (StandingRequestStore) — engine types in and out
+    # ------------------------------------------------------------------
+
+    def load_subject(self, persona_id: str, subject_id: str) -> Any:
+        from haloysius.attunement.types import SubjectRecord
+
+        from .codec import from_dict
+
+        return from_dict(SubjectRecord, self.load_subject_raw(persona_id, subject_id))
+
+    def save_subject(self, persona_id: str, subject_id: str, record: Any) -> None:
+        from .codec import to_dict
+
+        self.save_subject_raw(persona_id, subject_id, to_dict(record))
+
+    def list_subjects(self, persona_id: str) -> Sequence[str]:
+        with self._read() as conn:
+            rows = conn.execute(
+                "SELECT subject_id FROM subjects WHERE persona_id=?", (persona_id,)
+            ).fetchall()
+        return [r["subject_id"] for r in rows]
+
+    def record_outcome(self, entry: Any) -> None:
+        from .codec import to_dict
+
+        self.record_outcome_raw(to_dict(entry))
+
+    def list_outcomes(self, persona_id: str, subject_id: Optional[str] = None,
+                      limit: int = 500) -> Sequence[Any]:
+        from haloysius.attunement.types import OutcomeEntry
+
+        from .codec import from_dict
+
+        return [
+            from_dict(OutcomeEntry, row)
+            for row in self.list_outcomes_raw(persona_id, subject_id, limit)
+        ]
