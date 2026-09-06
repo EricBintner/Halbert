@@ -247,9 +247,9 @@ intake wiring "optional — left unwired"; `documentation/design/ROLE-SCOPED-SKI
 §11 then marked the matcher wiring "done" and §12 claimed the six skills
 "route correctly today … verified end to end against the live daemon". That
 verification went through a directly-constructed matcher in
-`tests/test_skills_builtin.py`, never the dashboard route. Track B includes a
-housekeeping task to correct those two status claims (`DOCS-1`). ROLE-SCOPED-SKILLS
-§16 remains the design of record for Track B.
+`tests/test_skills_builtin.py`, never the dashboard route. Those status claims
+were corrected in place on 2026-09-05 (`DOCS-1`). ROLE-SCOPED-SKILLS §16 remains
+the design of record for Track B.
 
 Net effect: eight expert skills, matched by nothing, injected nowhere,
 enforcing nothing.
@@ -1269,8 +1269,8 @@ not dropped a third time, CD-6 (a), CD-7 (a), and CD-11 Lenses. **Open**: CD-8
 **Slice 0 (docs, no code).** This revision; the `SUPERSEDED-BY` banner on the
 original; the four decided rows in `DECISIONS.md` and the `SKILL-1` row plus
 §4 bullet in `ROADMAP.md` (done 2026-09-05); correct
-`ROLE-SCOPED-SKILLS-2026-08-27.md` §11/§12 status claims (`DOCS-1`, in branch 2).
-CD-2/3/7/8/9/10 remain open and are needed before B4+ and C1b.
+`ROLE-SCOPED-SKILLS-2026-08-27.md` §11 status claims (done 2026-09-05). The open
+work is listed in `.handoff/TODO-OBSERVATION-LENSES-2026-09-05.md`.
 
 **Branch 1 — `fix/observation-sink` — LANDED on the branch 2026-09-05**
 (`bd8ad7f3` … `b6f6fb50`, plus B7's commit; review
