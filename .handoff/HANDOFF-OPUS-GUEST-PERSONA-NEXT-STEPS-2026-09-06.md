@@ -117,14 +117,34 @@ of the house are doing; life safety still reaches Halbert."
 *Accept:* route tests in `test_guest_routes.py` style; a frontend test that
 the statement renders before the first source is handed over.
 
-### N5 — The verb: "be ⟨name⟩" (1 d) — **NEXT**
+### N5 — The verb: "be ⟨name⟩" — **DONE (routes and pill; the chat half is not)**
+`persona/guest_homes.py` remembers homes in `guest_homes.yml` (0600, token
+never returned by a read), `GET /api/guest/available` lists every persona
+across them, and `POST /api/guest/become` takes a *name*. The pill offers
+"Be ⟨name⟩" when nothing is fronting and shows `fronting.home.label` when
+something is.
+
+Deliberately its own file rather than the peer record the brief suggested: a
+paired peer is another *body* of this entity or a compute lender, and folding
+a sibling app's home into that would mean every paired body implicitly offered
+its personas.
+
+**Not done: saying it in chat.** There is no tool on the agent's surface, so
+"be Marnie" typed into the conversation still does nothing. The route it would
+call exists and is tested; what is missing is the tool definition and the
+decision that goes with it — the tool must be absent from
+`GUEST_ALLOWED_TOOLS`, or a guest could swap itself for another persona, and
+`test_guest_tools.py` pins every registered tool onto one list or the other so
+adding it is a deliberate act. Also not done: the turn's "⟨guest⟩ will not
+remember this turn" line. Original brief:
+
 In chat and on the pill: list matches across paired homes
 (`SiblingClient.list_personas`) and call `POST /api/guest/pull`. The peer
 record needs a home URL and outbound token; today the pull request carries
 them. The pill shows `fronting.home.label` and surfaces the turn's
 "⟨guest⟩ will not remember this turn" line (a `thinking` event).
 
-### N6 — Session erase (½ d)
+### N6 — Session erase (½ d) — **NEXT**
 One local-only route that calls `SqliteConversationStore.forget_request`
 and `StateStore.redact_request` with `guest-session-<id>` (D2's promise).
 

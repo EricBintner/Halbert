@@ -30,7 +30,12 @@ const INFO = {
   singular: true,
 }
 
+const AVAILABLE = [
+  { persona_id: 'marnie-7', name: 'Marnie', home_label: 'H2', base_url: 'http://h2:8002' },
+]
+
 const FRONTING = {
+  home: { base_url: 'http://h2:8002', persona_id: 'marnie-7', label: 'H2' },
   session_id: 's1',
   name: 'Ada',
   offered_by: 'peer-1',
@@ -73,6 +78,13 @@ function stubFrontingFetch() {
       handedOver = next
       return Promise.resolve({ ok: true, json: async () => ({ private_sources: handedOver }) })
     }
+    if (path.endsWith('/api/guest/available')) {
+      return Promise.resolve({ ok: true, json: async () => ({ personas: AVAILABLE }) })
+    }
+    if (path.endsWith('/api/guest/become')) {
+      fronting = FRONTING
+      return Promise.resolve({ ok: true, json: async () => ({ status: 'ok' }) })
+    }
     if (path.endsWith('/api/guest')) {
       return Promise.resolve({ ok: true, json: async () => ({ fronting, private_sources: handedOver }) })
     }
@@ -80,6 +92,25 @@ function stubFrontingFetch() {
   })
   vi.stubGlobal('fetch', fetchMock)
   return fetchMock
+}
+
+function stubIdleWithHomes() {
+  const calls: Array<{ url: string; init?: RequestInit }> = []
+  let fronting: typeof FRONTING | null = null
+  const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+    const path = String(url)
+    calls.push({ url: path, init })
+    if (path.endsWith('/api/guest/available')) {
+      return Promise.resolve({ ok: true, json: async () => ({ personas: AVAILABLE }) })
+    }
+    if (path.endsWith('/api/guest/become')) {
+      fronting = FRONTING
+      return Promise.resolve({ ok: true, json: async () => ({ status: 'ok' }) })
+    }
+    return Promise.resolve({ ok: true, json: async () => ({ ...INFO, fronting }) })
+  })
+  vi.stubGlobal('fetch', fetchMock)
+  return { calls }
 }
 
 function stubInfoFetch() {
@@ -239,6 +270,49 @@ describe('PresencePill', () => {
       // One list across the senses: a private mode that gates one and not
       // another is worse than none.
       expect(await screen.findByLabelText(/Hand study to Ada/i)).toBeInTheDocument()
+    })
+
+    it('names the home the face came from', async () => {
+      const user = userEvent.setup()
+      stubFrontingFetch()
+      mount()
+      await screen.findByText('Macky · as Ada')
+
+      await user.click(screen.getByRole('button', { name: /Macky/ }))
+
+      expect(await screen.findByText(/home: H2/)).toBeInTheDocument()
+    })
+
+    it('offers the faces this machine could wear, and wears one', async () => {
+      const user = userEvent.setup()
+      const { calls } = stubIdleWithHomes()
+      mount()
+      await screen.findByText('Macky @ desk')
+
+      // Asked only when the dropdown opens: this reaches out to every known
+      // home, and the pill should not knock on the neighbours on page load.
+      expect(calls.some((c) => c.url.endsWith('/api/guest/available'))).toBe(false)
+      await user.click(screen.getByRole('button', { name: /Macky/ }))
+
+      await user.click(await screen.findByRole('button', { name: /Be Marnie/ }))
+
+      await waitFor(() =>
+        expect(calls.some((c) => c.url.endsWith('/api/guest/become'))).toBe(true),
+      )
+      const body = JSON.parse(
+        calls.find((c) => c.url.endsWith('/api/guest/become'))!.init!.body as string,
+      )
+      // The name and the home, so a name in two houses is not a guess.
+      expect(body).toEqual({ name: 'Marnie', base_url: 'http://h2:8002' })
+    })
+
+    it('does not offer other faces while one is already on', async () => {
+      const user = userEvent.setup()
+      stubFrontingFetch()
+      mount()
+      await screen.findByText('Macky · as Ada')
+      await user.click(screen.getByRole('button', { name: /Macky/ }))
+      expect(screen.queryByText(/Be someone else/i)).toBeNull()
     })
   })
 })

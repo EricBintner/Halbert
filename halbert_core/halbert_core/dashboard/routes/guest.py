@@ -34,7 +34,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from ...federation.peer_middleware import PeerContext, require_local_admin, require_peer_auth
-from ...persona import guest, private_sources
+from ...persona import guest, guest_homes, private_sources
 from ...proactive.events import ProactiveEvent, get_event_bus
 
 logger = logging.getLogger("halbert.dashboard.guest")
@@ -70,6 +70,19 @@ class HeartbeatRequest(BaseModel):
 
 class PrivateSourceRequest(BaseModel):
     source_id: str
+
+
+class HomeRequest(BaseModel):
+    base_url: str
+    label: str = ""
+    token: str = ""
+
+
+class BecomeRequest(BaseModel):
+    """"Be Marnie" — a name and, when two homes have one, which home."""
+    name: str
+    base_url: str = ""
+    ttl_seconds: float = guest.DEFAULT_TTL_SECONDS
 
 
 # ---------------------------------------------------------------------------
@@ -247,6 +260,91 @@ async def end_session() -> Dict[str, Any]:
     if ended is None:
         return {"status": "idle", "session": None}
     return {"status": "ok", "session": ended.to_dict()}
+
+
+# ---------------------------------------------------------------------------
+# The homes whose personas this machine may wear
+# ---------------------------------------------------------------------------
+
+@router.get("/api/guest/homes", dependencies=[Depends(require_local_admin)])
+async def list_homes() -> Dict[str, Any]:
+    """The homes this machine knows. Tokens are never returned."""
+    return {"homes": [h.to_dict() for h in guest_homes.list_homes()]}
+
+
+@router.post("/api/guest/homes", dependencies=[Depends(require_local_admin)])
+async def add_home(request: HomeRequest) -> Dict[str, Any]:
+    try:
+        record = guest_homes.add_home(request.base_url, request.label, request.token)
+    except guest_homes.BadHome as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"status": "ok", "home": record.to_dict()}
+
+
+@router.delete("/api/guest/homes", dependencies=[Depends(require_local_admin)])
+async def forget_home(base_url: str) -> Dict[str, Any]:
+    try:
+        removed = guest_homes.remove_home(base_url)
+    except guest_homes.BadHome as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"status": "ok" if removed else "unknown"}
+
+
+@router.get("/api/guest/available", dependencies=[Depends(require_local_admin)])
+async def available_personas() -> Dict[str, Any]:
+    """Every persona this machine could wear right now, across every home.
+
+    A home that does not answer is reported, not raised: "be Marnie" should
+    still work when the other house is asleep.
+    """
+    return await asyncio.to_thread(guest_homes.available_personas)
+
+
+@router.post("/api/guest/become", dependencies=[Depends(require_local_admin)])
+async def become(request: BecomeRequest) -> Dict[str, Any]:
+    """Wear the persona with this name, wherever it lives.
+
+    The verb the user actually says. ``/api/guest/pull`` still takes a URL, a
+    persona id and a token, which is a fine thing for a script and a poor
+    thing for a person; this resolves a name against the known homes and
+    keeps the credential on disk where it belongs.
+    """
+    catalogue = await asyncio.to_thread(guest_homes.available_personas)
+    wanted = request.name.strip().lower()
+    matches = [
+        p for p in catalogue["personas"]
+        if p["name"].strip().lower() == wanted
+        and (not request.base_url or p["base_url"] == request.base_url.rstrip("/"))
+    ]
+    if not matches:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"No persona called {request.name!r} in any known home"
+                + (f" (unreachable: {', '.join(u['home'] for u in catalogue['unreachable'])})"
+                   if catalogue["unreachable"] else "")
+            ),
+        )
+    if len(matches) > 1:
+        # Named in two houses. Answering with one of them would be a guess
+        # about which face the user meant.
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"{request.name} lives in more than one home "
+                f"({', '.join(sorted({m['home_label'] for m in matches}))}); say which."
+            ),
+        )
+
+    match = matches[0]
+    record = guest_homes.get_home(match["base_url"])
+    return await pull_persona(PullRequest(
+        base_url=match["base_url"],
+        persona_id=match["persona_id"],
+        token=record.token if record else "",
+        label=match["home_label"],
+        ttl_seconds=request.ttl_seconds,
+    ))
 
 
 # ---------------------------------------------------------------------------

@@ -376,3 +376,106 @@ class TestPrivateSources:
         assert entries["webcam:desk"]["owner"] == "guest"
         assert "webcam:off" not in entries          # disabled is not offerable
         assert "screen:active_window" in entries    # the watcher's own id is
+
+
+class TestTheVerb:
+    """N5. "Be Marnie" — a name, not a URL, a persona id and a token."""
+
+    @pytest.fixture(autouse=True)
+    def _homes(self, tmp_path, monkeypatch):
+        import halbert_core.utils.platform as plat
+        monkeypatch.setattr(plat, "get_config_dir", lambda: tmp_path)
+        yield tmp_path
+
+    @staticmethod
+    def _catalogue(monkeypatch, personas, unreachable=()):
+        from halbert_core.persona import guest_homes
+        monkeypatch.setattr(
+            guest_homes, "available_personas",
+            lambda *a, **k: {"personas": list(personas), "unreachable": list(unreachable)})
+
+    def test_a_home_is_remembered_without_its_token(self):
+        client = TestClient(_app())
+        r = client.post("/api/guest/homes",
+                        json={"base_url": "http://h2.lan:8002", "label": "H2", "token": "secret"})
+        assert r.status_code == 200
+        homes = client.get("/api/guest/homes").json()["homes"]
+        assert homes == [{"base_url": "http://h2.lan:8002", "label": "H2"}]
+        assert "secret" not in str(homes)
+
+    def test_a_home_that_is_not_an_http_url_is_refused(self):
+        client = TestClient(_app())
+        assert client.post("/api/guest/homes", json={"base_url": "h2.lan"}).status_code == 400
+
+    def test_re_adding_a_home_replaces_it_rather_than_duplicating(self):
+        client = TestClient(_app())
+        client.post("/api/guest/homes", json={"base_url": "http://h2.lan:8002", "label": "old"})
+        client.post("/api/guest/homes", json={"base_url": "http://h2.lan:8002/", "label": "new"})
+        homes = client.get("/api/guest/homes").json()["homes"]
+        assert [h["label"] for h in homes] == ["new"]
+
+    def test_being_a_name_wears_it(self, monkeypatch):
+        self._catalogue(monkeypatch, [
+            {"persona_id": "marnie-7", "name": "Marnie", "home_label": "H2",
+             "base_url": "http://h2.lan:8002"},
+        ])
+        monkeypatch.setattr(
+            sibling, "default_transport",
+            lambda method, url, body, headers: (200, {"id": "marnie-7", "name": "Marnie"}))
+
+        resp = TestClient(_app()).post("/api/guest/become", json={"name": "marnie"})
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["session"]["name"] == "Marnie"
+
+    def test_a_name_nobody_has_says_so_and_names_the_homes_that_did_not_answer(self, monkeypatch):
+        self._catalogue(monkeypatch, [], [{"home": "H2", "error": "timeout"}])
+        resp = TestClient(_app()).post("/api/guest/become", json={"name": "Marnie"})
+        assert resp.status_code == 404
+        assert "H2" in resp.json()["detail"]
+
+    def test_a_name_in_two_homes_asks_which_rather_than_guessing(self, monkeypatch):
+        self._catalogue(monkeypatch, [
+            {"persona_id": "a", "name": "Marnie", "home_label": "H2", "base_url": "http://a:1"},
+            {"persona_id": "b", "name": "Marnie", "home_label": "The study", "base_url": "http://b:1"},
+        ])
+        resp = TestClient(_app()).post("/api/guest/become", json={"name": "Marnie"})
+        assert resp.status_code == 409
+        assert "The study" in resp.json()["detail"]
+
+    def test_naming_the_home_settles_it(self, monkeypatch):
+        self._catalogue(monkeypatch, [
+            {"persona_id": "a", "name": "Marnie", "home_label": "H2", "base_url": "http://a:1"},
+            {"persona_id": "b", "name": "Marnie", "home_label": "The study", "base_url": "http://b:1"},
+        ])
+        monkeypatch.setattr(
+            sibling, "default_transport",
+            lambda method, url, body, headers: (200, {"id": "b", "name": "Marnie"}))
+        resp = TestClient(_app()).post(
+            "/api/guest/become", json={"name": "Marnie", "base_url": "http://b:1"})
+        assert resp.status_code == 200, resp.text
+
+    def test_one_sleeping_home_does_not_hide_the_others(self, tmp_path, monkeypatch):
+        """Reported per home, not raised: "be Marnie" should still work when
+        the other house is asleep."""
+        from halbert_core.persona import guest_homes
+
+        guest_homes.add_home("http://awake:1", "Awake", "t1")
+        guest_homes.add_home("http://asleep:1", "Asleep", "t2")
+
+        def transport(method, url, body, headers):
+            if "asleep" in url:
+                raise OSError("connection refused")
+            return 200, {"personas": [{"id": "m", "name": "Marnie"}]}
+
+        out = guest_homes.available_personas(transport)
+        assert [p["name"] for p in out["personas"]] == ["Marnie"]
+        assert [u["home"] for u in out["unreachable"]] == ["Asleep"]
+
+    def test_the_verb_is_local_only(self, monkeypatch):
+        self._catalogue(monkeypatch, [
+            {"persona_id": "a", "name": "Marnie", "home_label": "H2", "base_url": "http://a:1"}])
+        with patch(
+            "halbert_core.federation.peer_middleware._is_local_client", return_value=False,
+        ):
+            resp = TestClient(_app()).post("/api/guest/become", json={"name": "Marnie"})
+        assert resp.status_code == 403

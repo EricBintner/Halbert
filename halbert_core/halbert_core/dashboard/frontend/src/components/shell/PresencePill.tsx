@@ -50,6 +50,8 @@ export interface FrontingSession {
   seconds_until_expiry: number
   active: boolean
   end_reason: string | null
+  /** Where the guest's own memory lives, when it was pulled from a home. */
+  home?: { base_url: string; persona_id: string; label: string } | null
 }
 
 /** Something the user can hand to a guest for the rest of its session. */
@@ -58,6 +60,14 @@ export interface PrivateSource {
   label: string
   kind: string
   owner: 'halbert' | 'guest' | 'drop'
+}
+
+/** A persona this machine could wear, in some home it knows. */
+export interface AvailablePersona {
+  persona_id: string
+  name: string
+  home_label: string
+  base_url: string
 }
 
 export interface InstanceInfo {
@@ -122,6 +132,10 @@ export function PresencePill() {
   // while a guest fronts — there is nothing to hand over otherwise.
   const [sources, setSources] = useState<PrivateSource[]>([])
   const [handedOver, setHandedOver] = useState<Record<string, string>>({})
+  // Faces this machine could wear. Loaded when the dropdown opens rather than
+  // on mount: it reaches out to every known home, and the pill should not
+  // knock on the neighbours every time the page loads.
+  const [available, setAvailable] = useState<AvailablePersona[] | null>(null)
   const [newLabel, setNewLabel] = useState('')
   const [newEndpoint, setNewEndpoint] = useState('http://localhost:8001')
   const [newRole, setNewRole] = useState<'host' | 'home'>('home')
@@ -190,6 +204,28 @@ export function PresencePill() {
     if (fronting && isLocalEndpoint(activeEndpoint)) loadPrivateSources()
   }, [fronting?.session_id, activeEndpoint, loadPrivateSources])
 
+  const loadAvailable = useCallback(async () => {
+    try {
+      const res = await fetch(apiUrl('/api/guest/available'))
+      if (res.ok) setAvailable((await res.json()).personas || [])
+    } catch {
+      setAvailable([])
+    }
+  }, [])
+
+  const handleBecome = async (persona: AvailablePersona) => {
+    try {
+      const res = await fetch(apiUrl('/api/guest/become'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: persona.name, base_url: persona.base_url }),
+      })
+      if (res.ok) await refreshInfo(activeEndpoint)
+    } catch {
+      // Non-fatal — the next poll re-reads who is fronting
+    }
+  }
+
   const handleEndGuest = async () => {
     try {
       const res = await fetch(apiUrl('/api/guest/end'), { method: 'POST' })
@@ -245,7 +281,11 @@ export function PresencePill() {
       : `${entityName} — Independent Node (own memory)`
 
   return (
-    <DropdownMenu>
+    <DropdownMenu
+      onOpenChange={(open) => {
+        if (open && !fronting && isLocal && available === null) loadAvailable()
+      }}
+    >
       <DropdownMenuTrigger asChild>
         <button
           type="button"
@@ -280,6 +320,7 @@ export function PresencePill() {
                   <p className="text-xs font-medium truncate">{guestName}</p>
                   <p className="text-[10px] text-muted-foreground truncate">
                     lent by {lentBy}
+                    {fronting.home?.label ? ` · home: ${fronting.home.label}` : ''}
                   </p>
                 </div>
               </div>
@@ -324,6 +365,39 @@ export function PresencePill() {
                   End guest session
                 </Button>
               )}
+            </div>
+            <DropdownMenuSeparator />
+          </>
+        )}
+
+        {!fronting && isLocal && (
+          <>
+            <DropdownMenuLabel className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">
+              Be someone else
+            </DropdownMenuLabel>
+            <div className="px-2 pb-2 space-y-1">
+              {available === null && (
+                <p className="text-[10px] text-muted-foreground">Asking the homes...</p>
+              )}
+              {available?.length === 0 && (
+                <p className="text-[10px] text-muted-foreground">
+                  No homes known yet.
+                </p>
+              )}
+              {(available ?? []).map((p) => (
+                <button
+                  key={`${p.base_url}:${p.persona_id}`}
+                  type="button"
+                  onClick={() => handleBecome(p)}
+                  className="flex w-full items-center gap-2 rounded px-1 py-0.5 text-left text-xs hover:bg-accent"
+                >
+                  <User className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                  <span className="truncate">Be {p.name}</span>
+                  <span className="ml-auto text-[10px] text-muted-foreground truncate">
+                    {p.home_label}
+                  </span>
+                </button>
+              ))}
             </div>
             <DropdownMenuSeparator />
           </>
