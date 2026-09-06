@@ -479,3 +479,92 @@ class TestTheVerb:
         ):
             resp = TestClient(_app()).post("/api/guest/become", json={"name": "Marnie"})
         assert resp.status_code == 403
+
+
+def _thread(store, thread_id):
+    from halbert_core.agents.conversation import Conversation
+
+    store.save(Conversation(conversation_id=thread_id, title="thread"))
+
+
+class TestForgetSession:
+    """N6. D2 keeps the transcript in normal mode and tags it so one call can
+    take it back out; the tag is worth nothing unless something calls this."""
+
+    @pytest.fixture
+    def stores(self, tmp_path, monkeypatch):
+        from halbert_core.agents import conversation_sqlite as cs
+        from halbert_core.continuity import state_store as ss
+
+        conv = cs.SqliteConversationStore(db_path=str(tmp_path / "conv.db"))
+        ledger = ss.StateStore(db_path=str(tmp_path / "state.db"))
+        monkeypatch.setattr(cs, "SqliteConversationStore", lambda *a, **k: conv)
+        monkeypatch.setattr(ss, "StateStore", lambda *a, **k: ledger)
+        return conv, ledger
+
+    def _front(self):
+        TestClient(_app(_peer())).post(
+            "/api/guest/offer", json={"persona": {"name": "Marnie"}, "ttl_seconds": 30})
+        return guest.current_guest()
+
+    def test_the_transcript_and_the_ledger_are_both_cleared(self, stores):
+        from halbert_core.continuity.ownership import guest_request_id
+        from halbert_core.continuity.state_store import ACTOR_AGENT
+
+        conv, ledger = stores
+        session = self._front()
+        rid = guest_request_id(session)
+
+        _thread(conv, "t1")
+        # No metadata passed: append_message applies the guest tag itself
+        # while a guest fronts, which is the mechanism D2 relies on.
+        conv.append_message("t1", "user", "the thing that was said")
+        ledger.record_state("thread:t1", "ran_command:x", "ls",
+                            "thread_close", reason="the thing that was said",
+                            actor=ACTOR_AGENT, request_id=rid)
+
+        resp = TestClient(_app()).post("/api/guest/forget", json={})
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["request_id"] == rid
+        assert body["messages_removed"] == 1
+        assert body["ledger_rows_redacted"] >= 1
+
+        assert conv.forget_request(rid) == 0            # nothing left to remove
+        # The words go; the fact and its timeline stay. What was true and when
+        # is not the thing being forgotten.
+        current = ledger.why("thread:t1", "ran_command:x").to_dict()["current"]
+        assert current["reason"] == "unrecorded"
+        assert current["object"] == "ls"
+
+    def test_a_session_that_has_ended_can_still_be_forgotten(self, stores):
+        """The session most worth forgetting is usually one that has ended."""
+        conv, _ = stores
+        session = self._front()
+        guest.withdraw(reason="ended_by_user", by="user")
+
+        resp = TestClient(_app()).post(
+            "/api/guest/forget", json={"session_id": session.id})
+        assert resp.status_code == 200
+        assert resp.json()["session_id"] == session.id
+
+    def test_forgetting_nothing_in_particular_with_no_guest_asks_which(self, stores):
+        resp = TestClient(_app()).post("/api/guest/forget", json={})
+        assert resp.status_code == 409
+
+    def test_forgetting_is_local_only(self, stores):
+        self._front()
+        with patch(
+            "halbert_core.federation.peer_middleware._is_local_client", return_value=False,
+        ):
+            assert TestClient(_app()).post("/api/guest/forget", json={}).status_code == 403
+
+    def test_a_second_call_removes_nothing_more(self, stores):
+        conv, _ = stores
+        self._front()
+        _thread(conv, "t1")
+        conv.append_message("t1", "user", "x")
+
+        client = TestClient(_app())
+        assert client.post("/api/guest/forget", json={}).json()["messages_removed"] == 1
+        assert client.post("/api/guest/forget", json={}).json()["messages_removed"] == 0

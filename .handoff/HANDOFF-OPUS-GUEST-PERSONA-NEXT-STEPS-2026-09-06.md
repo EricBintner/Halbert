@@ -144,11 +144,18 @@ record needs a home URL and outbound token; today the pull request carries
 them. The pill shows `fronting.home.label` and surfaces the turn's
 "⟨guest⟩ will not remember this turn" line (a `thinking` event).
 
-### N6 — Session erase (½ d) — **NEXT**
+### N6 — Session erase — **DONE**
+`POST /api/guest/forget` (local only), both halves: `forget_request` deletes
+the transcript rows and `redact_request` replaces the stated reasons with
+UNRECORDED, leaving the facts and their timeline intact — what was true and
+when is not the thing being forgotten, and deleting those rows would make the
+history lie. It does not require a guest to be fronting, because the session
+most worth forgetting is usually one that has ended. Original brief:
+
 One local-only route that calls `SqliteConversationStore.forget_request`
 and `StateStore.redact_request` with `guest-session-<id>` (D2's promise).
 
-### N7 — H3 (½ d)
+### N7 — H3 (½ d) — **NEXT**
 Override `SiblingClient.PATH_MEMORY_SEARCH` for the historical-minds app's
 blueprint prefix; run the experiment; nothing else.
 

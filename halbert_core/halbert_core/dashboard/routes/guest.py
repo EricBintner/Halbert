@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from types import SimpleNamespace
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -418,6 +419,70 @@ def _label_for(source_id: str) -> str:
 
 def _private_sources_payload() -> Dict[str, str]:
     return {sid: owner.value for sid, owner in private_sources.assigned().items()}
+
+
+class ForgetRequest(BaseModel):
+    """Which session to forget. Omitted means the one fronting now."""
+    session_id: str = ""
+
+
+@router.post("/api/guest/forget", dependencies=[Depends(require_local_admin)])
+async def forget_session(request: ForgetRequest) -> Dict[str, Any]:
+    """Erase what a guest session left in Halbert's own stores.
+
+    D2's promise made good. In normal mode the transcript is Halbert's, kept
+    and tagged with ``guest-session-<id>`` so that one call can take it back
+    out again — that tag is worth nothing unless something calls this.
+
+    Two halves, and missing either leaves the words on disk: the transcript
+    (``forget_request`` deletes the messages) and the ledger
+    (``redact_request`` replaces the stated reasons with UNRECORDED, leaving
+    the facts and their timeline intact — what was true and when is not the
+    thing being forgotten, and deleting those rows would make the history
+    lie).
+
+    Local only, and it does not require a guest to be fronting: the session
+    most worth forgetting is usually one that has ended.
+    """
+    session_id = request.session_id.strip()
+    if not session_id:
+        live = guest.current_guest()
+        if live is None:
+            raise HTTPException(
+                status_code=409,
+                detail="No guest is fronting; say which session to forget.",
+            )
+        session_id = live.id
+
+    from ...continuity.ownership import guest_request_id
+
+    request_id = guest_request_id(SimpleNamespace(id=session_id))
+    messages = 0
+    receipts = 0
+
+    try:
+        from ...agents.conversation_sqlite import SqliteConversationStore
+        messages = SqliteConversationStore().forget_request(request_id)
+    except Exception as e:
+        logger.warning("Transcript not erased for %s: %s", request_id, e)
+
+    try:
+        from ...continuity.state_store import ACTOR_USER, StateStore
+        receipts = StateStore().redact_request(request_id, actor=ACTOR_USER)
+    except Exception as e:
+        logger.warning("Ledger not redacted for %s: %s", request_id, e)
+
+    logger.info(
+        "Forgot guest session %s: %d message(s), %d ledger row(s)",
+        session_id, messages, receipts,
+    )
+    return {
+        "status": "ok",
+        "session_id": session_id,
+        "request_id": request_id,
+        "messages_removed": messages,
+        "ledger_rows_redacted": receipts,
+    }
 
 
 @router.get("/api/guest")
