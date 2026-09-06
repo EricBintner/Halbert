@@ -73,7 +73,20 @@ async def get_instance_info() -> Dict[str, Any]:
     entity_role = resolve_entity_role()
     singular = entity_role != "independent"
 
+    # A guest persona fronting for a session (persona/guest.py). The pill
+    # renders both names — "<display_name> · as <fronting.name>" — because
+    # the user must always be able to tell what is holding the tools (I4).
+    # display_name stays the machine's own: the guest is a face, not a
+    # rename, and mDNS/MCP/peer discovery resolve through the same name.
+    try:
+        from ...persona.guest import current_guest
+        live = current_guest()
+        fronting = live.to_dict() if live else None
+    except Exception:
+        fronting = None
+
     return {
+        "fronting": fronting,
         "persona_id": persona_id,
         "scene_context": scene_context,
         "role": role,

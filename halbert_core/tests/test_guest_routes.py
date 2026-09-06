@@ -1,0 +1,198 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
+"""The channel a paired app hands a persona over — design §8, option 2.
+
+Not the MCP surface: ``mcp/server.py`` is a standalone stdio/HTTP process,
+so a process-local guest offered there would never reach the agent. These
+routes live in the dashboard process that owns the agent singleton, and
+reuse the pairing token (``require_peer_auth``) for the app's side and the
+local-admin boundary for the user's side.
+
+Every ending — withdrawn, handed back, ended by the user, heartbeat missed —
+is announced on the proactive event bus so the bell and the conversation
+see the face change (§7). The Presence Pill reads ``fronting`` from
+``/api/instance/info`` (I4).
+"""
+from __future__ import annotations
+
+import asyncio
+import os
+from unittest.mock import patch
+
+import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+from halbert_core.dashboard.routes import guest as guest_routes
+from halbert_core.federation.peer_middleware import PeerContext, require_peer_auth
+from halbert_core.federation.peers_config import PeerCredential
+from halbert_core.persona import guest
+from halbert_core.proactive.events import get_event_bus, is_user_facing
+
+
+@pytest.fixture(autouse=True)
+def _fresh_state():
+    guest.reset_for_tests()
+    get_event_bus().clear()
+    yield
+    guest.reset_for_tests()
+    get_event_bus().clear()
+
+
+def _peer(node_id="h2-node", name="H2"):
+    cred = PeerCredential(
+        node_id=node_id, node_name=name, role="body",
+        token_hash="sha256:stub", paired_at="2026-01-01T00:00:00Z",
+    )
+    return PeerContext(node_id=node_id, node_name=name, role="body", capabilities=[], credential=cred)
+
+
+def _app(peer=None):
+    app = FastAPI()
+    app.include_router(guest_routes.router)
+    if peer is not None:
+        app.dependency_overrides[require_peer_auth] = lambda: peer
+    return app
+
+
+def _offer_body(**extra):
+    persona = {"name": "Marnie", "tone_descriptors": ["warm"], "directives": ["Keep it short."]}
+    persona.update(extra)
+    return {"persona": persona, "ttl_seconds": 30}
+
+
+class TestOffer:
+
+    def test_a_paired_app_can_offer_a_persona(self):
+        client = TestClient(_app(_peer()))
+        resp = client.post("/api/guest/offer", json=_offer_body())
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["session"]["name"] == "Marnie"
+        assert body["session"]["offered_by"] == "h2-node"
+        assert body["dropped"] == []
+        live = guest.current_guest()
+        assert live is not None and live.offered_by == "h2-node"
+
+    def test_fields_that_are_not_the_guests_are_dropped_and_reported(self):
+        client = TestClient(_app(_peer()))
+        resp = client.post("/api/guest/offer", json=_offer_body(autonomy_level="act", ha_token="x"))
+        assert resp.status_code == 200
+        assert resp.json()["dropped"] == ["autonomy_level", "ha_token"]
+
+    def test_without_a_pairing_token_the_offer_is_refused(self):
+        client = TestClient(_app())
+        resp = client.post("/api/guest/offer", json=_offer_body())
+        assert resp.status_code == 401
+
+    def test_a_persona_without_a_name_is_a_bad_request(self):
+        client = TestClient(_app(_peer()))
+        resp = client.post("/api/guest/offer", json={"persona": {"tone_descriptors": ["warm"]}})
+        assert resp.status_code == 400
+        assert guest.current_guest() is None
+
+    def test_a_second_app_cannot_take_over(self):
+        TestClient(_app(_peer("h2-node"))).post("/api/guest/offer", json=_offer_body())
+        resp = TestClient(_app(_peer("other-app", "Other"))).post("/api/guest/offer", json=_offer_body(name="Rex"))
+        assert resp.status_code == 409
+        assert guest.current_guest().persona.name == "Marnie"
+
+    def test_the_offer_is_announced(self):
+        TestClient(_app(_peer())).post("/api/guest/offer", json=_offer_body())
+        events = get_event_bus().get_recent()
+        assert len(events) == 1
+        event = events[0]
+        assert event.type == "guest_session"
+        assert is_user_facing(event)
+        assert event.data["state"] == "fronting"
+        assert "Marnie" in event.title
+
+
+class TestLifetime:
+
+    def _offered(self):
+        client = TestClient(_app(_peer()))
+        session_id = client.post("/api/guest/offer", json=_offer_body()).json()["session"]["session_id"]
+        return client, session_id
+
+    def test_heartbeat_keeps_the_session_alive(self):
+        client, session_id = self._offered()
+        resp = client.post("/api/guest/heartbeat", json={"session_id": session_id})
+        assert resp.status_code == 200
+        assert resp.json()["session"]["active"] is True
+
+    def test_heartbeat_for_an_unknown_session_is_404(self):
+        client, _ = self._offered()
+        assert client.post("/api/guest/heartbeat", json={"session_id": "nope"}).status_code == 404
+
+    def test_heartbeat_from_another_app_is_403(self):
+        _, session_id = self._offered()
+        other = TestClient(_app(_peer("other-app")))
+        assert other.post("/api/guest/heartbeat", json={"session_id": session_id}).status_code == 403
+
+    def test_the_app_can_withdraw_and_it_is_announced(self):
+        client, _ = self._offered()
+        resp = client.post("/api/guest/withdraw")
+        assert resp.status_code == 200
+        assert resp.json()["session"]["end_reason"] == "withdrawn"
+        assert guest.current_guest() is None
+        ended = [e for e in get_event_bus().get_recent() if e.data.get("state") == "ended"]
+        assert len(ended) == 1 and ended[0].data["reason"] == "withdrawn"
+
+    def test_another_app_cannot_withdraw_a_session_it_did_not_offer(self):
+        self._offered()
+        other = TestClient(_app(_peer("other-app")))
+        assert other.post("/api/guest/withdraw").status_code == 403
+        assert guest.current_guest() is not None
+
+    def test_withdraw_when_idle_is_idle(self):
+        client = TestClient(_app(_peer()))
+        resp = client.post("/api/guest/withdraw")
+        assert resp.status_code == 200 and resp.json()["status"] == "idle"
+
+    def test_the_user_can_end_it_from_this_machine(self):
+        self._offered()
+        client = TestClient(_app())   # no peer token: the user's side
+        resp = client.post("/api/guest/end")
+        assert resp.status_code == 200
+        assert resp.json()["session"]["end_reason"] == "ended_by_user"
+        assert guest.current_guest() is None
+
+    def test_a_missed_heartbeat_is_announced_when_noticed(self):
+        client = TestClient(_app(_peer()))
+        client.post("/api/guest/offer", json={"persona": {"name": "Marnie"}, "ttl_seconds": 1})
+        session = guest.current_guest()
+        assert guest.current_guest(now=session.deadline + 1) is None
+        ended = [e for e in get_event_bus().get_recent() if e.data.get("state") == "ended"]
+        assert len(ended) == 1 and ended[0].data["reason"] == "heartbeat_missed"
+
+    def test_a_handback_from_the_tool_is_announced_too(self):
+        self._offered()
+        guest.handback()
+        ended = [e for e in get_event_bus().get_recent() if e.data.get("state") == "ended"]
+        assert len(ended) == 1 and ended[0].data["reason"] == "handback"
+
+
+class TestWhatThePillSees:
+
+    def test_status_route(self):
+        client = TestClient(_app(_peer()))
+        assert client.get("/api/guest").json() == {"fronting": None}
+        client.post("/api/guest/offer", json=_offer_body())
+        fronting = client.get("/api/guest").json()["fronting"]
+        assert fronting["name"] == "Marnie" and fronting["active"] is True
+
+    def test_instance_info_carries_the_guest(self, tmp_path):
+        from halbert_core.dashboard.routes.instance import get_instance_info
+
+        env = {"HALBERT_PERSONA_ID": "halbert", "HALBERT_CONFIG_DIR": str(tmp_path)}
+        with patch.dict(os.environ, env, clear=False):
+            info = asyncio.run(get_instance_info())
+            assert info["fronting"] is None
+            persona, _ = guest.GuestPersona.from_payload({"name": "Marnie"})
+            guest.offer(persona, offered_by="h2-node", offered_by_name="H2")
+            info = asyncio.run(get_instance_info())
+        assert info["fronting"]["name"] == "Marnie"
+        assert info["fronting"]["offered_by_name"] == "H2"
+        # I4: the machine's own name is still the machine's; the pill shows both.
+        assert info["display_name"] != "Marnie"

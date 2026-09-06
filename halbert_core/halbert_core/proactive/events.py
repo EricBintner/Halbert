@@ -89,6 +89,7 @@ USER_FACING_EVENT_TYPES = frozenset({
     "reflex_fired",
     "reflex_escalate",
     "reflex_command_proposed",
+    "guest_session",   # a borrowed face put on or taken off (persona/guest.py)
 })
 
 
