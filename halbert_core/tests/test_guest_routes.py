@@ -400,7 +400,7 @@ class TestTheVerb:
                         json={"base_url": "http://h2.lan:8002", "label": "H2", "token": "secret"})
         assert r.status_code == 200
         homes = client.get("/api/guest/homes").json()["homes"]
-        assert homes == [{"base_url": "http://h2.lan:8002", "label": "H2"}]
+        assert homes == [{"base_url": "http://h2.lan:8002", "label": "H2", "profile": "default"}]
         assert "secret" not in str(homes)
 
     def test_a_home_that_is_not_an_http_url_is_refused(self):
@@ -568,3 +568,63 @@ class TestForgetSession:
         client = TestClient(_app())
         assert client.post("/api/guest/forget", json={}).json()["messages_removed"] == 1
         assert client.post("/api/guest/forget", json={}).json()["messages_removed"] == 0
+
+
+class TestHomeProfiles:
+    """N7. The engine is the same in every sibling; only the mount differs, so
+    a home records which shape its house speaks rather than getting a second
+    client."""
+
+    @pytest.fixture(autouse=True)
+    def _homes(self, tmp_path, monkeypatch):
+        import halbert_core.utils.platform as plat
+        monkeypatch.setattr(plat, "get_config_dir", lambda: tmp_path)
+
+    def test_a_home_behind_a_prefix_asks_the_prefixed_paths(self):
+        from halbert_core.persona.guest import GuestHome
+        from halbert_core.persona.sibling import SiblingClient
+
+        seen = []
+
+        def transport(method, url, body, headers):
+            seen.append(url)
+            return 200, {"results": []}
+
+        home = GuestHome(base_url="http://h3:8003", persona_id="franklin")
+        SiblingClient(home, transport, profile="h3").memory_search("kites")
+        assert seen == ["http://h3:8003/api/blueprint/personas/franklin/memory/search"]
+
+    def test_the_default_profile_is_unchanged(self):
+        from halbert_core.persona.guest import GuestHome
+        from halbert_core.persona.sibling import SiblingClient
+
+        seen = []
+
+        def transport(method, url, body, headers):
+            seen.append(url)
+            return 200, {"results": []}
+
+        home = GuestHome(base_url="http://h2:8002", persona_id="marnie-7")
+        SiblingClient(home, transport).memory_search("kites")
+        assert seen == ["http://h2:8002/api/personas/marnie-7/memory/search"]
+
+    def test_one_prefixed_home_does_not_move_another_homes_paths(self):
+        """Per-instance, not class-level: the paths used to be class
+        attributes, and assigning to them would have moved every home."""
+        from halbert_core.persona.guest import GuestHome
+        from halbert_core.persona.sibling import SiblingClient
+
+        SiblingClient(GuestHome(base_url="http://h3:1", persona_id="x"), profile="h3")
+        assert SiblingClient.PATH_MEMORY_SEARCH == "/api/personas/{pid}/memory/search"
+
+    def test_an_unknown_profile_is_refused_when_the_home_is_remembered(self):
+        client = TestClient(_app())
+        resp = client.post("/api/guest/homes",
+                           json={"base_url": "http://h3:8003", "profile": "nonsense"})
+        assert resp.status_code == 400
+
+    def test_the_profile_survives_the_round_trip(self):
+        client = TestClient(_app())
+        client.post("/api/guest/homes",
+                    json={"base_url": "http://h3:8003", "label": "H3", "profile": "h3"})
+        assert client.get("/api/guest/homes").json()["homes"][0]["profile"] == "h3"

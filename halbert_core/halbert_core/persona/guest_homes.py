@@ -42,9 +42,12 @@ class GuestHomeRecord:
     base_url: str
     label: str
     token: str = ""
+    #: Which API shape this house speaks (``persona/sibling.API_PROFILES``).
+    #: The engine is the same in every sibling; only the mount differs.
+    profile: str = "default"
 
     def to_dict(self, *, with_token: bool = False) -> Dict[str, Any]:
-        out = {"base_url": self.base_url, "label": self.label}
+        out = {"base_url": self.base_url, "label": self.label, "profile": self.profile}
         if with_token:
             out["token"] = self.token
         return out
@@ -88,6 +91,7 @@ def list_homes(*, with_tokens: bool = False) -> List[GuestHomeRecord]:
             base_url=url,
             label=str(entry.get("label") or urlparse(url).netloc),
             token=str(entry.get("token") or "") if with_tokens else "",
+            profile=str(entry.get("profile") or "default"),
         ))
     return out
 
@@ -104,13 +108,19 @@ def get_home(base_url: str) -> Optional[GuestHomeRecord]:
     return None
 
 
-def add_home(base_url: str, label: str = "", token: str = "") -> GuestHomeRecord:
-    """Remember a home. Re-adding the same URL replaces its label and token."""
+def add_home(base_url: str, label: str = "", token: str = "",
+             profile: str = "default") -> GuestHomeRecord:
+    """Remember a home. Re-adding the same URL replaces what it says."""
+    from .sibling import API_PROFILES
+
     url = _normalise(base_url)
+    if profile not in API_PROFILES:
+        raise BadHome(f"unknown home profile {profile!r} (have: {', '.join(API_PROFILES)})")
     record = GuestHomeRecord(
         base_url=url,
         label=str(label or "").strip() or urlparse(url).netloc,
         token=str(token or ""),
+        profile=profile,
     )
     others = [h for h in list_homes(with_tokens=True) if h.base_url != url]
     _save(others + [record])
@@ -161,7 +171,7 @@ def available_personas(transport: Any = None) -> Dict[str, Any]:
         home = GuestHome(base_url=record.base_url, persona_id="", token=record.token,
                          label=record.label)
         try:
-            found = SiblingClient(home, transport).list_personas()
+            found = SiblingClient(home, transport, profile=record.profile).list_personas()
         except Exception as e:
             unreachable.append({"home": record.label, "error": str(e)})
             continue

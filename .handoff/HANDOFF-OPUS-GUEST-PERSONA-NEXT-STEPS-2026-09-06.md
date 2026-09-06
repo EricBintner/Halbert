@@ -155,7 +155,19 @@ most worth forgetting is usually one that has ended. Original brief:
 One local-only route that calls `SqliteConversationStore.forget_request`
 and `StateStore.redact_request` with `guest-session-<id>` (D2's promise).
 
-### N7 — H3 (½ d) — **NEXT**
+### N7 — H3 — **MECHANISM DONE, EXPERIMENT NOT RUN**
+`sibling.API_PROFILES` is a table of mounts — "default" and "h3" — and a home
+records which shape its house speaks. The paths became per-instance rather
+than class attributes, because assigning to `SiblingClient.PATH_MEMORY_SEARCH`
+(what the brief literally said) would have moved every home's paths, not just
+the prefixed one; a test pins that.
+
+**The experiment is not run and cannot be from here**: it needs a live H3 to
+answer, and the `h3` prefix in the table is a guess from the brief's wording
+("the historical-minds app's blueprint prefix") rather than a path anyone has
+seen respond. Point it at a real instance, correct the table if it is wrong,
+and the rest is already wired. Original brief:
+
 Override `SiblingClient.PATH_MEMORY_SEARCH` for the historical-minds app's
 blueprint prefix; run the experiment; nothing else.
 

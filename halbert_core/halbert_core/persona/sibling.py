@@ -64,15 +64,57 @@ def default_transport(
     return resp.status_code, data
 
 
-class SiblingClient:
-    PATH_LIST = "/api/personas"
-    PATH_PERSONA = "/api/personas/{pid}"
-    PATH_MEMORY_ADD = "/api/personas/{pid}/memory-v2/memories"
-    PATH_MEMORY_SEARCH = "/api/personas/{pid}/memory/search"
+#: Where a home keeps its personas and their memory. H2 mounts these at the
+#: root; H3 mounts the same engine behind a blueprint prefix, and its memory
+#: search sits under that prefix rather than beside the persona. The shapes
+#: are the same because the engine is the same — only the mount differs, so
+#: this is a table of prefixes and not a second client.
+API_PROFILES: Dict[str, Dict[str, str]] = {
+    "default": {
+        "list": "/api/personas",
+        "persona": "/api/personas/{pid}",
+        "memory_add": "/api/personas/{pid}/memory-v2/memories",
+        "memory_search": "/api/personas/{pid}/memory/search",
+    },
+    # The historical-minds app (H3). Named by role, not by product.
+    "h3": {
+        "list": "/api/blueprint/personas",
+        "persona": "/api/blueprint/personas/{pid}",
+        "memory_add": "/api/blueprint/personas/{pid}/memory-v2/memories",
+        "memory_search": "/api/blueprint/personas/{pid}/memory/search",
+    },
+}
 
-    def __init__(self, home: GuestHome, transport: Optional[Transport] = None):
+DEFAULT_PROFILE = "default"
+
+
+class SiblingClient:
+    # Kept as class attributes: they were the interface before profiles
+    # existed, and code (and tests) that reach for SiblingClient.PATH_LIST
+    # should keep working.
+    PATH_LIST = API_PROFILES[DEFAULT_PROFILE]["list"]
+    PATH_PERSONA = API_PROFILES[DEFAULT_PROFILE]["persona"]
+    PATH_MEMORY_ADD = API_PROFILES[DEFAULT_PROFILE]["memory_add"]
+    PATH_MEMORY_SEARCH = API_PROFILES[DEFAULT_PROFILE]["memory_search"]
+
+    def __init__(
+        self,
+        home: GuestHome,
+        transport: Optional[Transport] = None,
+        profile: str = "",
+    ):
         self.home = home
         self._transport = transport or default_transport
+        paths = API_PROFILES.get(
+            (profile or getattr(home, "profile", "") or DEFAULT_PROFILE),
+            API_PROFILES[DEFAULT_PROFILE],
+        )
+        # Per-instance, shadowing the class attributes above, so one home
+        # behind a prefix cannot move another home's paths.
+        self.PATH_LIST = paths["list"]
+        self.PATH_PERSONA = paths["persona"]
+        self.PATH_MEMORY_ADD = paths["memory_add"]
+        self.PATH_MEMORY_SEARCH = paths["memory_search"]
 
     def _headers(self) -> Dict[str, str]:
         headers = {"Accept": "application/json"}

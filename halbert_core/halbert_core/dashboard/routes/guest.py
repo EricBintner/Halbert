@@ -77,6 +77,8 @@ class HomeRequest(BaseModel):
     base_url: str
     label: str = ""
     token: str = ""
+    #: Which API shape this house speaks — "default" or "h3".
+    profile: str = "default"
 
 
 class BecomeRequest(BaseModel):
@@ -276,7 +278,9 @@ async def list_homes() -> Dict[str, Any]:
 @router.post("/api/guest/homes", dependencies=[Depends(require_local_admin)])
 async def add_home(request: HomeRequest) -> Dict[str, Any]:
     try:
-        record = guest_homes.add_home(request.base_url, request.label, request.token)
+        record = guest_homes.add_home(
+            request.base_url, request.label, request.token, request.profile,
+        )
     except guest_homes.BadHome as e:
         raise HTTPException(status_code=400, detail=str(e))
     return {"status": "ok", "home": record.to_dict()}
