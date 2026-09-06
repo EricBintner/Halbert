@@ -450,3 +450,70 @@ private source carry `observation` and the source id instead of `turn`.
    run the experiment; nothing else is needed.
 7. **A session-erase control**: `forget_request` + `redact_request` under
    one local-only route, for the normal-mode transcript (D2).
+
+---
+
+## 14. A consideration — the "by what authority" axis, and Halbert as its reference
+
+**Status:** consideration only, nothing to build here. Recorded so the
+engine-side design starts from what already exists.
+
+The founder raised (2026-09-06) that a debate-moderator consumer of
+Haloysius may need a "by what authority" axis: a moderator that cuts a
+speaker off must be able to say by whose rule, not its own preference.
+The question is whether that axis is the one this document already
+enforces with Halbert as the authority. It is, and Halbert is the better
+first instance, because its authority is the most concrete kind there is: a
+physical machine with tools, and rules written in code.
+
+### 14.1 Three senses of the word already in use — keep them apart
+
+| Sense | Where it lives today | Meaning |
+|---|---|---|
+| Who may *direct* the persona | Halbert `tools/role_gate.py` speaker roles; attunement `DirectiveContext.subject_confidence` and the `max_scope_entity_wide` role hook | the speaker's standing over the persona's actions and standing requests |
+| Whose *rules bind* the voice | this document (I8, the tool mask, `ownership.py`, the BOUNDARIES block); engine `GovernancePolicy.authorize_action(action, args, context)` | the holder of the rules is not the one speaking |
+| Which *store is truth* | `DECISIONS.md` MEM-03, the engine's memory handoffs ("a projection with no authority") | data authority |
+
+And `haloysius.persona.values.MoralFoundation.AUTHORITY` is a fourth thing
+— a personality trait — that must not be conflated with any of these. If
+the engine lifts the axis, give it a name that is none of the above.
+**Suggested: `Warrant`.** A warrant names who holds the rules, who speaks,
+what the speaker may do on the holder's behalf, how the speaker hands
+over what is not theirs, and the rule it cites when it acts.
+
+### 14.2 The guest persona is already a warrant, spelled out by hand
+
+| Warrant field | Halbert's guest layer | A debate moderator |
+|---|---|---|
+| holder | the machine, by its own name | the format's rules plus the host |
+| voice | the guest persona | the moderator persona |
+| mandate (tighten-only) | `GUEST_ALLOWED_TOOLS`, the write plane pinned out | floor, time, warnings; never the verdict |
+| record | `ownership.route_write` — whose store the words go to | the platform's transcript, not the moderator's memory |
+| hand-over | `hand_back_to_halbert`; "system work is the machine's side of the house" | "that is the host's call" |
+| citation | the ledger's `reason`: "a deterministic rule that names itself" (`obs/audit.py`, `state_store.record_state`) | the rule id the cut-off cites |
+| rendering | `_GUEST_BOUNDARIES` — said *after* the persona's own text (I8) | the moderator's rules block, said after the persona text |
+
+Every row on Halbert's side exists and is tested. The moderator column is
+the second instance; two instances is the right moment to lift a concept
+into the engine, and not before.
+
+### 14.3 Where it would plug in, if lifted
+
+- `GovernancePolicy.authorize_action(..., context)` — `context` gains the
+  warrant (holder, voice, mandate). Halbert's permissive policy would
+  finally have something to say there; today its real gates sit outside
+  the seam in `ToolSafetyFramework`, `RoleGate` and the autonomy gate.
+- A prompt block, rendered last, the way `[ATTUNEMENT]` is rendered: who
+  holds, who speaks, what the voice may do, how to hand over. Halbert's
+  BOUNDARIES text is the hand-written draft of it.
+- `DirectiveContext` gains the speaker's standing explicitly, so a
+  moderator weighs "stop" from the host differently from "stop" from a
+  participant — the same distinction `RoleGate` makes for tool risk.
+
+### 14.4 What to do now
+
+Nothing in code. When the moderator design is written, start it from the
+table in §14.2 and from `persona/guest_tools.py`, `continuity/ownership.py`
+and `prompts/agent_prompts.py::_GUEST_BOUNDARIES` as the worked example,
+rather than from a blank page — and name the engine type so it cannot be
+mistaken for a trait or a store.
