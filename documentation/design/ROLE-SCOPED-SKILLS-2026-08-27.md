@@ -1013,6 +1013,18 @@ low disk space and activates the cleanup skill before the user asks.
 
 ## 11. Implementation Phases
 
+> **Status correction 2026-09-05.** The "done" marks below describe the code
+> units, and every one of them exists and is tested. What they do not say is
+> that **no production path constructs a `SkillMatcher`**: `dashboard/routes/agent.py`
+> builds `IntakePipeline` without one, `ComposedSkills.prompt` has no consumer,
+> `set_skill_safety()` is called only from tests, and `allowed_tools` /
+> `knowledge_scope` are read nowhere outside `skills/`. Phase 3's "verified end
+> to end against the live daemon" was verified through a matcher the test
+> harness constructed directly. So on a shipped install no skill activates,
+> nothing is injected, and nothing is enforced. The wiring is `ROADMAP.md`
+> row `SKILL-1` (`.handoff/HANDOFF-OBSERVATION-LENSES-2026-09-04.md` §3.1 and
+> §8 B1–B3). The rows below are annotated where they overclaimed.
+>
 > **Resequenced 2026-08-27.** Two changes from the original plan. A Phase 0
 > was added for corrections the later phases silently assumed were already
 > true. And the original Phase 2/3 split — which shipped the `safety:` block
@@ -1043,7 +1055,7 @@ having to land atomically with a SourcePrep rebuild.
 | `skills/loader.py` — 4 dirs, both layouts, malformed files skipped not fatal | **done** | new |
 | `skills/registry.py` — registry, aliases, `extends` flattening | **done** | new |
 | `skills/matcher.py` — signals → skills; resolves platform itself (§16.7) | **done** | new |
-| Wire matcher into `intake/pipeline.py` (optional, additive) | **done** | modified |
+| Wire matcher into `intake/pipeline.py` (optional, additive) | **seam only** — `IntakePipeline(skill_matcher=…)` accepts one; the route never passes one (`SKILL-1` B1) | modified |
 | Tests | **done** (29 pass) | `tests/test_skills.py` |
 
 **Deliverable:** Skills load and match against intake signals. No retrieval,
@@ -1071,13 +1083,14 @@ Decisions taken during implementation:
 | `skills/composer.py` — merge prompts, pick scope, intersect safety, max-appetite budget | **done** | new |
 | `context/assembler.py` — accept `active_skills`; reallocate within `ContextBudget` total | **done** | modified |
 | `context/adapters.py` — scope/role from active skills, heuristic as fallback | **done** | modified |
-| Skill safety compiled into `ToolSafetyFramework.classify()` (§7.3) | **done** | modified |
+| Skill safety compiled into `ToolSafetyFramework.classify()` (§7.3) | **compiled, never bound** — `set_skill_safety()` has no production caller (`SKILL-1` B3) | modified |
 | Model tier from active skills — in `intake/pipeline.py`, not `model/client.py` | **done** | modified |
 | Tests | **done** (30 pass) | `tests/test_skills_composer.py` |
 
 **Deliverable:** Active skills shape retrieval scope, context budget, model
 selection, **and enforced safety** — in one step, through the existing
-`ToolExecutor` → `ApprovalEngine` chain.
+`ToolExecutor` → `ApprovalEngine` chain. *(2026-09-05: true once a matcher is
+wired and safety is bound per turn; neither happens in production today.)*
 
 Decisions taken during implementation:
 
@@ -1109,8 +1122,11 @@ Decisions taken during implementation:
 | Assign roles to the three shipped `*_admin` scopes | **blocked** — see below | — |
 | Path-mask migration: role scopes from staged copies to masks (§16.9) | **blocked** — see below | `roles.py`, template |
 
-**Deliverable (met):** Halbert ships with 6 domain skills that route correctly
-today. Verified end to end against the live daemon: *"what's my sshd_config
+**Deliverable (met in the test harness, not in production — 2026-09-05):**
+Halbert ships with 6 domain skills that route correctly *when a matcher is
+constructed*, which `tests/test_skills_builtin.py` does and the dashboard route
+does not. The walkthrough below was run through that harness against the live
+daemon, never through a chat turn: *"what's my sshd_config
 PermitRootLogin set to?"* activates `security-ops` + `config-ops`, leads with
 `security-ops` (critical priority), requests the `security-ops` role, finds no
 scope carrying it, falls back to `host`, and returns this machine's real
