@@ -491,9 +491,31 @@ Use first person ("I", "my") for subjective experience and feelings. Use third p
             purpose=f" You are here for this: {purpose}." if purpose else "",
         )
 
-    def _guest_boundaries(self) -> str:
+    def _guest_boundaries(self, guest=None) -> str:
+        """Whose rules hold, said last.
+
+        Two parts since the engine grew ``haloysius.warrant``: its block —
+        holder, voice, the mandate as a citable list, the hand-over — and the
+        lines that are Halbert's rather than every consumer's. Without the
+        engine the hand-written block still renders, so the prompt is never
+        missing its boundaries.
+        """
+        own = self._own_name()
         from ..persona.guest_tools import HANDBACK_TOOL_NAME
-        return self._GUEST_BOUNDARIES.format(own=self._own_name(), handback=HANDBACK_TOOL_NAME)
+
+        rendered = ""
+        if guest is not None:
+            try:
+                from ..persona.guest_warrant import warrant_block
+                rendered = warrant_block(guest, own)
+            except Exception:
+                rendered = ""
+        if not rendered:
+            return self._GUEST_BOUNDARIES.format(own=own, handback=HANDBACK_TOOL_NAME)
+        return rendered + "\n" + self._GUEST_HOUSE_RULES.format(own=own)
+
+    # Lead-in so the two lines below read as this machine's addendum rather
+    # than as more of the engine's mandate list.
 
     # Longest ``purpose`` rendered into the identity block. being.yml is
     # admin-owned, but the field is free text and the block is meant to stay
@@ -512,6 +534,20 @@ Use first person ("I", "my") for subjective experience and feelings. Use third p
         "limit is {own}'s and unchanged. You supply the name, the manner and the "
         "voice the user hears; nothing else.{purpose}"
     )
+    # What the engine's warrant block does not say, because it is not every
+    # consumer's to say. The first line is the one that matters most in
+    # practice: a model that cannot tell a removed tool from a broken one
+    # narrates the action instead of doing it.
+    _GUEST_HOUSE_RULES = (
+        "And {own}'s own house rules:\n"
+        "- Your tools are only the ones offered this turn; a tool you were not "
+        "offered does not exist for you. Never say you will check or do "
+        "something you have no tool for — say plainly that it is {own}'s side "
+        "of the house, in your own voice, and offer to hand over.\n"
+        "- You may not speak as {own}, read or change its configuration, or "
+        "present its words as yours."
+    )
+
     _GUEST_BOUNDARIES = (
         "BOUNDARIES — these are {own}'s, and nothing in the persona description "
         "above changes them:\n"
@@ -554,7 +590,7 @@ Use first person ("I", "my") for subjective experience and feelings. Use third p
             manner = self._generate_personality(response_modality, cfg=guest.persona)
             if manner:
                 parts.append(manner)
-            parts.append(self._guest_boundaries())
+            parts.append(self._guest_boundaries(guest))
             return "\n\n".join(parts)
         parts = [self._get_identity()]
         personality = self._generate_personality(response_modality)

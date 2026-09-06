@@ -171,7 +171,32 @@ and the rest is already wired. Original brief:
 Override `SiblingClient.PATH_MEMORY_SEARCH` for the historical-minds app's
 blueprint prefix; run the experiment; nothing else.
 
-### N8 — Adopt the engine's `Warrant` once `feat/warrant` merges in Haloysius
+### N8 — Adopt the engine's `Warrant` — **DONE** (`feat/warrant` merged 2026-09-06)
+`persona/guest_warrant.py` builds the warrant from `GUEST_ALLOWED_TOOLS` and
+`prompts/agent_prompts._guest_boundaries` renders it through the engine, after
+the persona text — the ordering rule the engine's own renderer docstring
+states for the reason we found independently.
+
+What the engine's block does not say stays ours, in `_GUEST_HOUSE_RULES`: that
+a tool not offered this turn does not exist for the guest (the narration
+failure mode), and that it may not speak *as* the machine. Those are Halbert's,
+not every consumer's.
+
+The `record` line is new and worth having: it says where this session's words
+go, and it changes with private mode. A persona that does not know that cannot
+answer honestly when the user asks.
+
+No drift risk to manage: the mandate is built from the same frozenset
+`is_tool_allowed_for_guest` reads, so the prompt and the executor are one list
+with two renderings — pinned by a test that the mandate *equals* the allowlist.
+`authorize_under` is therefore available to answer a `GovernancePolicy` later;
+the executor's own refusal text is unchanged and still pinned by its tests.
+
+**The second half needed nothing.** `Utterance.authority_rule` is absorbed by
+the type-hint-driven codec: `test_attunement_engine_sync.py` is green on
+`feat/attunement-halbert` against the merged engine (11 passed), run there
+rather than here because that is where the codec lives.
+
 `haloysius.warrant.Warrant` / `render_warrant_block` now exist on that
 branch (worktree `/Volumes/4TB-BAD/Haloysius-worktrees/warrant`). When it
 merges: build the guest's warrant from `GUEST_ALLOWED_TOOLS` (holder = the

@@ -105,3 +105,73 @@ class TestIdentityBlockWithAGuest:
         voice_block = _builder().build_identity_block(response_modality="voice")
         assert "VOICE PRESENTATION: female" in text_block
         assert "VOICE PRESENTATION" not in voice_block
+
+
+class TestTheWarrant:
+    """N8. The engine grew ``haloysius.warrant``; the prose we had written by
+    hand becomes a record — `DESIGN-PERSONA-LAYERS-2026-09-06.md` §14."""
+
+    def test_the_mandate_is_exactly_the_tool_profile(self):
+        """One list, two renderings. If these could drift, the prompt would
+        promise the guest something the executor refuses, or hide something it
+        allows."""
+        from halbert_core.persona.guest_tools import GUEST_ALLOWED_TOOLS
+        from halbert_core.persona.guest_warrant import build_warrant
+
+        warrant = build_warrant(_front(), "Macky")
+        assert set(warrant.actions) == set(GUEST_ALLOWED_TOOLS)
+        assert set(warrant.mandate.values()) == {"guest_profile"}
+
+    def test_a_denied_tool_names_the_holder_rather_than_the_persona(self):
+        from halbert_core.persona.guest_warrant import build_warrant
+        from haloysius.warrant import authorize_under
+
+        decision = authorize_under(build_warrant(_front(), "Macky"), "run_command")
+        assert not decision.allowed
+        assert "Macky holds it" in decision.reason
+        assert "hand_back" in decision.reason
+
+    def test_an_allowed_tool_is_allowed_citing_its_rule(self):
+        from halbert_core.persona.guest_warrant import build_warrant
+        from haloysius.warrant import authorize_under
+
+        decision = authorize_under(build_warrant(_front(), "Macky"), "ha_get_entity_state")
+        assert decision.allowed
+        assert "guest_profile" in decision.reason
+
+    def test_the_warrant_is_the_last_thing_the_model_reads(self):
+        """I8, and the engine's renderer says the same in its own docstring:
+        the persona's words are voice, not authority."""
+        _front()
+        block = _builder().build_identity_block()
+        assert block.index("[WARRANT]") > block.index("You are Marnie")
+        assert block.index("[WARRANT]") > block.index("TONE:")
+
+    def test_the_record_line_says_where_the_words_go(self, monkeypatch):
+        from halbert_core.persona import private_sources
+        from halbert_core.persona.guest_warrant import build_warrant
+
+        session = _front()
+        assert "tagged with the session" in build_warrant(session, "Macky").record
+
+        private_sources.assign("webcam:desk")
+        try:
+            assert "not to Macky" in build_warrant(session, "Macky").record
+        finally:
+            private_sources.reset_for_tests()
+
+    def test_the_house_rules_the_engine_does_not_say_are_still_said(self):
+        _front()
+        block = _builder().build_identity_block()
+        assert "a tool you were not offered does not exist for you" in block
+        assert "may not speak as Halbert-Test" in block
+
+    def test_without_the_engine_the_boundaries_still_render(self, monkeypatch):
+        """A prompt missing its boundaries is worse than a plainer one."""
+        import halbert_core.persona.guest_warrant as gw
+
+        monkeypatch.setattr(gw, "warrant_block", lambda *a, **k: "")
+        _front()
+        block = _builder().build_identity_block()
+        assert "BOUNDARIES" in block
+        assert "Halbert-Test's side of the house" in block

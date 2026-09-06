@@ -663,6 +663,28 @@ into the engine, and not before.
   moderator weighs "stop" from the host differently from "stop" from a
   participant — the same distinction `RoleGate` makes for tool risk.
 
+### 14.5 Done — the warrant is the engine's now (2026-09-06)
+
+`haloysius.warrant` merged, and §14.2's "already a warrant, spelled out by
+hand" is now a warrant spelled out as data. `persona/guest_warrant.py` builds
+it from `GUEST_ALLOWED_TOOLS`; the identity block renders the engine's version
+after the persona's text.
+
+Three things the change bought that the hand-written prose could not:
+
+- **The mandate is data.** `authorize_under(warrant, tool)` can answer a
+  `GovernancePolicy.authorize_action` with a citing decision, so the object
+  that tells the model what it may do can become the object that enforces it.
+- **The refusal cites the holder.** "run_command is not Marnie's to do: Macky
+  holds it" rather than something that sounds like the persona's own
+  reticence.
+- **The record line.** Where this session's words go, said in the prompt and
+  changing with private mode — a persona that does not know that cannot answer
+  honestly when asked.
+
+The ordering rule survived contact: the engine's renderer docstring says the
+block goes after the persona's text, for the reason §14.2 gave independently.
+
 ### 14.4 What to do now
 
 Filed with the engine as
