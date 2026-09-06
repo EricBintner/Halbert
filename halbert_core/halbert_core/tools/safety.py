@@ -13,6 +13,7 @@ from typing import Dict, List, Set, Pattern, Optional
 import fnmatch
 import re
 import logging
+from pathlib import Path
 
 logger = logging.getLogger('halbert.tools.safety')
 
@@ -274,7 +275,19 @@ class ToolSafetyFramework:
         ),
     ]
     
-    # Paths that elevate risk
+    # Paths that elevate risk.
+    #
+    # Expanded at import, not written with a tilde. `_classify_write` compares
+    # with `startswith` and `in` against a real path, and a real path is always
+    # expanded -- so a literal "~/.ssh/" entry matched nothing and read as
+    # protection that was not there. Verified: a write to
+    # $HOME/.config/halbert/skills/evil.md classified MEDIUM with no
+    # confirmation, while the same path written with a tilde was HIGH.
+    #
+    # The skills directories are here because skill text is an instruction
+    # source (lenses invariant 8): once the composed skill prompt reaches
+    # messages[0], a model able to write here once would persist its own
+    # directives across every later restart.
     SENSITIVE_PATHS: Set[str] = {
         "/etc/",
         "/boot/",
@@ -284,9 +297,9 @@ class ToolSafetyFramework:
         "/sys/",
         "/proc/",
         "/dev/",
-        "~/.ssh/",
-        "~/.gnupg/",
-        "~/.config/",
+        str(Path.home() / ".ssh") + "/",
+        str(Path.home() / ".gnupg") + "/",
+        str(Path.home() / ".config") + "/",
     }
     
     def __init__(self, user_overrides: Dict[str, RiskLevel] = None):
