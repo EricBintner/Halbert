@@ -1,0 +1,21 @@
+[package]
+name = "halbert-ffi"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "PyO3 bridge exposing halbert Rust crates to the Python agent"
+
+[dependencies]
+halbert-mqtt = { path = "../halbert-mqtt" }
+halbert-telemetry = { path = "../halbert-telemetry" }
+halbert-snapshots = { path = "../halbert-snapshots" }
+halbert-sandbox = { path = "../halbert-sandbox" }
+pyo3 = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[lib]
+name = "halbert_rs"
+crate-type = ["cdylib"]
