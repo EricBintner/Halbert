@@ -52,6 +52,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+import sys
 import threading
 import time
 from contextlib import contextmanager
@@ -314,6 +315,13 @@ class StateStore:
             # Costs a little write throughput; a ledger that leaks the words
             # it was asked to forget is not worth the speed.
             conn.execute("PRAGMA secure_delete=ON")
+            # Darwin durability (Hermes hermes_state_wal.py:93-111): Apple's
+            # fsync(2) guarantees neither ordering nor platter landing, and a
+            # shutdown was observed corrupting "durable" checkpoints. Platform
+            # truth, not preference -- not config-gated.
+            if sys.platform == "darwin":
+                conn.execute("PRAGMA checkpoint_fullfsync=1")
+                conn.execute("PRAGMA synchronous=FULL")
         conn.row_factory = sqlite3.Row
         self._conn = conn
         # BEGIN IMMEDIATE, so two processes opening the same new-schema file

@@ -18,6 +18,7 @@ import json
 import logging
 import re
 import sqlite3
+import sys
 import threading
 import time
 from pathlib import Path
@@ -320,6 +321,16 @@ class SqliteConversationStore:
                 cur.execute("PRAGMA journal_mode=WAL")
             except Exception as e:
                 logger.warning(f"PRAGMA journal_mode=WAL failed, continuing without WAL: {e}")
+            # Darwin durability (Hermes hermes_state_wal.py:93-111): Apple's
+            # fsync(2) guarantees neither ordering nor platter landing, and a
+            # shutdown was observed corrupting "durable" checkpoints. Platform
+            # truth, not preference -- not config-gated.
+            if sys.platform == "darwin":
+                try:
+                    cur.execute("PRAGMA checkpoint_fullfsync=1")
+                    cur.execute("PRAGMA synchronous=FULL")
+                except Exception as e:
+                    logger.warning(f"durability PRAGMAs failed, continuing: {e}")
             # Serialize schema creation/migration across concurrent openers of
             # the same database file. BEGIN IMMEDIATE claims the write lock
             # up front (busy_timeout above governs how long a racing opener
