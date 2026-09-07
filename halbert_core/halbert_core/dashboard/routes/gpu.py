@@ -35,6 +35,7 @@ from ...tools.gpu_tools import (
     run_command,
     set_gpu_role,
 )
+from ...tools.accelerator_tools import get_accelerator_info
 
 logger = logging.getLogger("halbert.gpu")
 router = APIRouter(prefix="/gpu", tags=["gpu"])
@@ -227,6 +228,15 @@ if FASTAPI_AVAILABLE:
         if output:
             return {"available": True, "output": output}
         return {"available": False, "output": None}
+
+    @router.get("/accelerators")
+    async def get_accelerators() -> Dict[str, Any]:
+        """Get AI accelerator hardware information (TPUs, NPUs, ANEs)."""
+        try:
+            return get_accelerator_info()
+        except Exception as e:
+            logger.error(f"Failed to get accelerator info: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
 
 
     @router.put("/role/{pci_id}")
