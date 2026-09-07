@@ -113,6 +113,8 @@ class DiscoveryEngine:
         from .scanners.security import SecurityScanner
         from .scanners.sharing import SharingScanner
         from .scanners.apps import FlatpakScanner, SnapScanner, AppImageScanner
+        from .scanners.gpu import GpuScanner
+        from .scanners.ai_accelerator import AiAcceleratorScanner
 
         self.register_scanner(BackupScanner())
         self.register_scanner(ServiceScanner())
@@ -124,6 +126,9 @@ class DiscoveryEngine:
         self.register_scanner(FlatpakScanner())
         self.register_scanner(SnapScanner())
         self.register_scanner(AppImageScanner())
+        # GPU-1: Universal GPU + AI accelerator scanners
+        self.register_scanner(GpuScanner())
+        self.register_scanner(AiAcceleratorScanner())
 
     def _register_macos_scanners(self):
         """Register macOS-specific scanners."""
@@ -133,6 +138,8 @@ class DiscoveryEngine:
             TimeMachineScanner, HomebrewAppScanner, MacAppStoreScanner,
             MacSharingScanner,
         )
+        from .scanners.gpu import GpuScanner
+        from .scanners.ai_accelerator import AiAcceleratorScanner
 
         self.register_scanner(LaunchdScanner())       # SERVICE
         self.register_scanner(MacStorageScanner())     # STORAGE
@@ -144,6 +151,9 @@ class DiscoveryEngine:
         self.register_scanner(MacAppStoreScanner())    # PACKAGE (App Store)
         self.register_scanner(MacThermalScanner())     # HARDWARE
         self.register_scanner(MacSharingScanner())     # SHARING
+        # GPU-1: Universal GPU + AI accelerator scanners
+        self.register_scanner(GpuScanner())            # GPU
+        self.register_scanner(AiAcceleratorScanner())  # AI_ACCELERATOR
     
     # ─────────────────────────────────────────────────────────────
     # Scanner Management

@@ -42,6 +42,7 @@ class DiscoveryType(str, Enum):
     STORAGE = "storage"                           # 09
     HARDWARE = "hardware"                         # 10
     GPU = "gpu"                                   # 11, 12
+    AI_ACCELERATOR = "ai_accelerator"             # TPU, NPU, ANE
     TASK = "task"                                 # 13
     CONTAINER = "container"                       # 14
     POWER = "power"                               # 15

@@ -68,11 +68,15 @@ from .scheduled import ScheduledScanner
 # Phase 26: App scanners
 from .apps import FlatpakScanner, SnapScanner, AppImageScanner
 
+# GPU-1: Universal GPU + AI accelerator scanners
+from .gpu import GpuScanner
+from .ai_accelerator import AiAcceleratorScanner
+
 __all__ = [
     'BaseScanner',
     # Core
     'BackupScanner',
-    'ServiceScanner', 
+    'ServiceScanner',
     'StorageScanner',
     'NetworkScanner',
     'SecurityScanner',
@@ -104,4 +108,7 @@ __all__ = [
     'FlatpakScanner',
     'SnapScanner',
     'AppImageScanner',
+    # GPU-1: Universal GPU + AI accelerators
+    'GpuScanner',
+    'AiAcceleratorScanner',
 ]
