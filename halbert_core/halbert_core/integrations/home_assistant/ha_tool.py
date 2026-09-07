@@ -129,7 +129,8 @@ async def _ha_call_service_handler(args: Dict[str, Any]) -> str:
     gate = _get_autonomy_gate()
     if gate is None:
         return "Autonomy gate not available — cannot execute HA commands safely."
-    decision = gate.evaluate(domain, entity_id, service)
+    # SEC-9: the model supplies `data`, and HA acts on the entity_id inside it.
+    decision = gate.evaluate_call(domain, entity_id, service, data)
     if not decision.allowed:
         return f"Blocked: {decision.reason}"
     if decision.requires_proposal:

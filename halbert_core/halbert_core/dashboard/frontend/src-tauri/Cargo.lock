@@ -4821,6 +4821,7 @@ dependencies = [
  "core-foundation",
  "core-graphics",
  "cpal",
+ "getrandom 0.2.16",
  "image",
  "objc2 0.6.3",
  "objc2-app-kit",

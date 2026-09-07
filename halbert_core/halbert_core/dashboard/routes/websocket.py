@@ -36,6 +36,7 @@ import json
 import logging
 
 from ...streaming.session_manager import get_terminal_manager
+from ..auth import reject_websocket, websocket_authenticated
 
 router = APIRouter()
 logger = logging.getLogger('halbert.dashboard.websocket')
@@ -52,6 +53,13 @@ async def websocket_endpoint(websocket: WebSocket):
     - job_update: Job status changed
     - decision: New LLM decision made
     """
+    # SEC-1: this channel broadcasts system status, approval requests and agent
+    # decisions. Unauthenticated it was a live feed of the machine to any page
+    # the owner had open (F125).
+    if not await websocket_authenticated(websocket):
+        await reject_websocket(websocket)
+        return
+
     # Get connection manager from app state
     manager = websocket.app.state.ws_manager
 
@@ -71,6 +79,14 @@ async def websocket_endpoint(websocket: WebSocket):
 @router.websocket("/ws/terminal/{session_id}")
 async def terminal_websocket(websocket: WebSocket, session_id: str):
     """Bidirectional WebSocket bridge to a PTY session (B1f)."""
+    # SEC-1: a handshake is not covered by CORS, so before this check any web
+    # page the owner visited could open a PTY bridge and write raw stdin into a
+    # live shell (F18, F125). Checked before the session lookup so an
+    # unauthenticated caller cannot probe which session ids exist.
+    if not await websocket_authenticated(websocket):
+        await reject_websocket(websocket)
+        return
+
     manager = get_terminal_manager()
     session = manager.get(session_id)
     if session is None:
@@ -154,6 +170,13 @@ async def audio_stream_endpoint(websocket: WebSocket):
     error code lets the frontend retry harmlessly when the audio pipeline
     is disabled or still booting — audio is an optional capability.
     """
+    # SEC-1: unauthenticated, this transcribed ten seconds of live microphone
+    # for any web page that opened it, and fanned every household transcript
+    # back out to every connected socket (F17, F97, F126).
+    if not await websocket_authenticated(websocket):
+        await reject_websocket(websocket)
+        return
+
     await websocket.accept()
     coordinator = getattr(websocket.app.state, "audio_coordinator", None)
     ingress = None
@@ -180,6 +203,10 @@ async def tts_egress_endpoint(websocket: WebSocket, session_id: str = ""):
     barge-in control frame: it fires the session's barge-in token (aborting
     in-flight synthesis) and answers with ``{"type": "cancelled"}``.
     """
+    if not await websocket_authenticated(websocket):
+        await reject_websocket(websocket)
+        return
+
     await websocket.accept()
     if not session_id:
         await websocket.close(code=4400, reason="session_id required")
