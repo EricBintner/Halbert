@@ -789,6 +789,20 @@ Use first person ("I", "my") for subjective experience and feelings. Use third p
                 "your own for a change the ledger did not record.",
                 "",
             ])
+            parts.extend([
+                "## Collapsing a pipeline into one script",
+                "For 3+ tool calls with logic between them — filtering or "
+                "reducing large outputs before they enter context, branching, "
+                "loops — call `execute_code` once instead of calling tools "
+                "turn after turn. Prefer normal tool calls for 1–2 calls.",
+                "Inside the script, tools are `halbert_tools.<name>(**kwargs)` "
+                "and they return dicts, not JSON strings. Only the script's "
+                "stdout comes back (capped, with a spill-file pointer to the "
+                "rest), so print a compact final summary. Refused or failed "
+                "tool calls return `{'error': ...}` dicts the script can "
+                "branch on.",
+                "",
+            ])
 
         if plan:
             parts.append("## Current Plan")

@@ -487,6 +487,23 @@ class ToolSafetyFramework:
                 requires_confirmation=False,
                 reason="Read-only terminal block fetch"
             )
+        elif tool_name == "execute_code":
+            # In-process Python, so its own power is that of any code this
+            # process runs (F-1(a) accepted that honestly). What keeps it at
+            # MEDIUM — audited, visible, no confirmation — is that its tool
+            # work is NOT a bypass: stub calls dispatch through execute()
+            # with the full per-call pipeline, the stub surface is read-only
+            # by default, and the script text passes the deterministic
+            # subprocess/os.system gate first.
+            return SafetyCheckResult(
+                risk_level=RiskLevel.MEDIUM,
+                allowed=True,
+                requires_confirmation=False,
+                reason=(
+                    "In-process script run; tool calls inside it go through "
+                    "the standard per-call policy pipeline"
+                ),
+            )
         elif tool_name in THREAD_META_TOOLS:
             return SafetyCheckResult(
                 risk_level=RiskLevel.SAFE,

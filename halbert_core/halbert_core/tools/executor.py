@@ -13,6 +13,7 @@ import os
 import time
 import logging
 import uuid
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Dict, Any, Optional, Callable, List, TYPE_CHECKING
 
@@ -26,6 +27,16 @@ if TYPE_CHECKING:
     from .base import BaseTool
 
 logger = logging.getLogger('halbert.tools.executor')
+
+#: The verified speaker role of the turn whose tool call is running.
+#: Same pattern as ``current_agent_session``: handlers take only their args
+#: dict, so the role rides in a ContextVar instead of a parameter. The
+#: execute_code handler reads it so tool calls dispatched from inside a
+#: script inherit the same RoleGate caps as the interactive turn — never
+#: looser, which a re-defaulted role would be.
+current_speaker_role: ContextVar[Optional[str]] = ContextVar(
+    "halbert_current_speaker_role", default=None
+)
 
 
 @dataclass
@@ -315,6 +326,15 @@ class ToolExecutor:
             },
         )
 
+        # execute_code: the one-turn script pipeline (Packet 06). Registered
+        # unconditionally like recall_memory — the deterministic script-text
+        # gate, the read-only default stub set and the guest denylist carry
+        # the policy, and a tool the model cannot see is a tool it does not
+        # have to be talked out of only for the owner's turns.
+        from .execute_code import register_execute_code
+
+        register_execute_code(self)
+
     async def _meta_tool_inline(self, args: Dict) -> str:
         """Stub for the thread meta-tools; the state machine handles them."""
         return "handled inline"
@@ -549,6 +569,7 @@ class ToolExecutor:
         # the handler (notably _run_command) can therefore publish terminal
         # lifecycle events to the right SSE stream. See streaming/terminal_bridge.
         session_token = current_agent_session.set(session_id)
+        role_token = current_speaker_role.set(speaker_role)
         try:
             handler = self.tools[tool_name]
 
@@ -606,6 +627,7 @@ class ToolExecutor:
             )
 
         finally:
+            current_speaker_role.reset(role_token)
             current_agent_session.reset(session_token)
 
     @staticmethod

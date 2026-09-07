@@ -190,6 +190,12 @@ GUEST_DENIED_TOOLS: FrozenSet[str] = frozenset({
     # its own session into another persona's face without the user asking —
     # and the user would learn of it from the pill, if they were looking.
     "become_persona",
+    # The script pipeline (Packet 06): a guest runs no scripts, period.
+    # Collapsing tool pipelines is the machine's own way of working; a
+    # guest's read-only house/view needs never need it, and the floor is
+    # pinned in tests/tools/test_execute_code.py at every layer: never
+    # offered, refused if named, absent from any script's stub set.
+    "execute_code",
     # MCP-surface names, listed so the intent is on record should any of
     # them ever be registered as agent tools
     "get_being_config",
