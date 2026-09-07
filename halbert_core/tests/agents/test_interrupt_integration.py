@@ -165,6 +165,70 @@ class TestStop:
         assert agent.current_state == AgentState.IDLE
 
 
+class TestStopCompletionRace:
+    """B3: a stop issued as the turn completes produces "stopped" or
+    "turn completed, stop declined" — never both, never a retry."""
+
+    @pytest.mark.asyncio
+    async def test_stop_at_the_finalize_edge_declines(self):
+        # The exact sliver: the generator is suspended on its session_ended
+        # yield. The turn has finalized (the answer committed, the finalize
+        # stamp taken) but has not settled (lock held, session still
+        # registered) — the interleaving a concurrent stop actually hits.
+        agent = _agent(_SlowLLM(delay=0))
+        events = []
+        async with aclosing(agent.process("hello", session_id="edge")) as stream:
+            async for e in stream:
+                events.append(e)
+                if e.type == "session_ended":
+                    break
+        types = [e.type for e in events]
+        assert "response_complete" in types             # the turn delivered
+        assert agent.request_stop("edge") == "turn completed, stop declined"
+        assert agent.cancelled == {}                    # and never fired the flag
+        assert agent.current_state == AgentState.IDLE   # the aclose settled it
+        assert not agent._turn_in_flight()
+
+    @pytest.mark.asyncio
+    async def test_stop_during_response_stream_cuts_before_the_commit(self):
+        agent = _agent(_SlowLLM(delay=0.05))
+        events = []
+        outcome = None
+        async for e in agent.process("hello", session_id="midstream"):
+            events.append(e)
+            if e.type == "response_chunk" and outcome is None:
+                outcome = agent.request_stop("midstream")
+        assert outcome == "stopped"
+        types = [e.type for e in events]
+        assert "cancelled" in types
+        assert "response_complete" not in types
+        assert types.count("session_started") == 1      # never a retry
+        assert agent.current_state == AgentState.IDLE
+
+    @pytest.mark.asyncio
+    async def test_the_race_lands_on_exactly_one_outcome(self):
+        # A sweep across delays: wherever the stop lands, exactly one of
+        # the two outcomes holds, with its matching event stream.
+        for i in range(6):
+            agent = _agent(_SlowLLM(delay=0.02))
+            task = asyncio.ensure_future(
+                _collect(agent.process("hello", session_id="race"))
+            )
+            await asyncio.sleep(0.02 * i)
+            outcome = agent.request_stop("race")
+            events = await asyncio.wait_for(task, timeout=5)
+            types = [e.type for e in events]
+            assert outcome in ("stopped", "turn completed, stop declined")
+            if outcome == "stopped":
+                assert "cancelled" in types
+                assert "response_complete" not in types
+            else:
+                assert "response_complete" in types
+                assert "cancelled" not in types
+            assert types.count("session_started") == 1  # never a retry
+            assert agent.current_state == AgentState.IDLE
+
+
 class TestSteer:
     @pytest.mark.asyncio
     async def test_steer_applies_to_the_last_tool_result_at_the_boundary(self):
