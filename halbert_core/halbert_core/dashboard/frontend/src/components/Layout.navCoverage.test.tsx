@@ -18,6 +18,7 @@ import { navSections } from './Layout'
 
 /** Routes that are deliberately not in the rail, with the reason why. */
 const ROUTES_WITHOUT_RAIL_ENTRY: Record<string, string> = {
+  '/': 'the landing page — the EntityNodeBlock node button IS the entry point (no separate Dashboard nav item)',
   '/security': 'legacy path, redirects to /findings',
   '/settings': 'overtakes the shell; the top-bar gear is the only entry point',
   '/voice': 'a mode entered via the top-bar voice button / deep link, not a nav tab',

@@ -32,6 +32,7 @@ the Desktop applies ``mcp_response()`` again as defense-in-depth (C5).
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, status
@@ -98,9 +99,42 @@ class InspectResponse(BaseModel):
 # Endpoints
 # ---------------------------------------------------------------------------
 
+#: A peer counts as online if this node has authenticated traffic from it
+#: within this window. ``peer_middleware`` touches ``last_seen`` on every
+#: authenticated peer request, so the badge reflects recent contact. Same
+#: 5-minute window and derived-presence idiom as the rail's node buttons
+#: (HANDOFF-NODE-LIST-RAIL-DESIGN §5R.1 Q3).
+FLEET_ONLINE_WINDOW = timedelta(minutes=5)
+
+
+def _recently_seen(last_seen: Optional[str]) -> bool:
+    """Derive online from ``last_seen`` freshness.
+
+    Not a live probe: a real probe (FleetProxy → the peer's MCP server) is
+    blocked on federation-9.4 — the outbound peer-token custody design has
+    not landed (M14 keeps only token hashes, and ``get_fleet_proxy()``
+    returns None for exactly this reason), so there is no credential this
+    node could present to a remote dashboard API. Until that design lands,
+    ``last_seen`` is the honest signal; a hardcoded ``online=False`` made
+    every node lie Offline.
+    """
+    if not last_seen:
+        return False
+    try:
+        seen = datetime.fromisoformat(last_seen.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if seen.tzinfo is None:
+        seen = seen.replace(tzinfo=timezone.utc)
+    return datetime.now(timezone.utc) - seen <= FLEET_ONLINE_WINDOW
+
+
 @router.get("/api/fleet/nodes", response_model=List[FleetNodeStatus])
 async def list_fleet_nodes() -> List[FleetNodeStatus]:
     """List all paired satellite nodes with their current status.
+
+    Online is derived from ``last_seen`` (see ``_recently_seen``) — a live
+    probe is blocked on the federation-9.4 outbound-token custody design.
 
     TODO(federation-9.9): For each paired peer:
     1. Construct a FleetProxy
@@ -117,7 +151,7 @@ async def list_fleet_nodes() -> List[FleetNodeStatus]:
             node_name=peer.node_name,
             role=peer.role,
             endpoint=peer.endpoint,
-            online=False,  # TODO(federation-9.9): probe via FleetProxy
+            online=_recently_seen(peer.last_seen),
             last_seen=peer.last_seen,
             capabilities=peer.capabilities,
         ))

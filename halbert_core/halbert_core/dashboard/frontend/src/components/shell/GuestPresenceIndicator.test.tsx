@@ -1,19 +1,26 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 /**
- * PresencePill — the top-bar identity indicator.
+ * GuestPresenceIndicator — the top bar's guest-persona half of the old
+ * PresencePill (§5R.3 N1).
  *
- * The pill's own info fetch must go through the resolved API base: a bare
- * relative URL resolves against tauri://localhost in the packaged app and
- * the pill shows the fallback body name regardless of the backend. And a
- * body switch persists, so the pill that mounts after the reload reports
- * the switched-to body as active (W1-02 / W4-03).
+ * The rail's EntityNodeBlock owns node navigation now; this component owns
+ * the one thing the rail deliberately does not: who is speaking when that
+ * someone is not the machine. It renders NOTHING while no guest fronts —
+ * the top bar stays exactly as §6.2 enumerates it — and appears on its own
+ * the moment a face goes on, because it polls /api/instance/info and a
+ * session can begin without it asking (chat's become tool, another home
+ * lending a face, a pull from Settings).
+ *
+ * The old pill's node-switching tests (W1-02 / W4-03) live with the rail
+ * now; the ones here are the fronting behaviours the pill already had,
+ * plus the two the split adds: idle means invisible, and node switching is
+ * gone from this surface entirely.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { MemoryRouter } from 'react-router-dom'
-import { PresencePill } from './PresencePill'
+import { GuestPresenceIndicator } from './GuestPresenceIndicator'
 import { setInstanceEndpoint } from '@/lib/apiBase'
 
 const INFO = {
@@ -29,10 +36,6 @@ const INFO = {
   body_name: 'desk',
   singular: true,
 }
-
-const AVAILABLE = [
-  { persona_id: 'marnie-7', name: 'Marnie', home_label: 'H2', base_url: 'http://h2:8002' },
-]
 
 const FRONTING = {
   home: { base_url: 'http://h2:8002', persona_id: 'marnie-7', label: 'H2' },
@@ -87,13 +90,6 @@ function stubFrontingFetch() {
       handedOver = next
       return Promise.resolve({ ok: true, json: async () => ({ private_sources: handedOver }) })
     }
-    if (path.endsWith('/api/guest/available')) {
-      return Promise.resolve({ ok: true, json: async () => ({ personas: AVAILABLE }) })
-    }
-    if (path.endsWith('/api/guest/become')) {
-      fronting = FRONTING
-      return Promise.resolve({ ok: true, json: async () => ({ status: 'ok' }) })
-    }
     if (path.endsWith('/api/guest')) {
       return Promise.resolve({ ok: true, json: async () => ({ fronting, private_sources: handedOver }) })
     }
@@ -103,57 +99,19 @@ function stubFrontingFetch() {
   return fetchMock
 }
 
-function stubIdleWithHomes() {
-  const calls: Array<{ url: string; init?: RequestInit }> = []
-  let fronting: typeof FRONTING | null = null
-  const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
-    const path = String(url)
-    calls.push({ url: path, init })
-    if (path.endsWith('/api/guest/available')) {
-      return Promise.resolve({ ok: true, json: async () => ({ personas: AVAILABLE }) })
-    }
-    if (path.endsWith('/api/guest/become')) {
-      fronting = FRONTING
-      return Promise.resolve({ ok: true, json: async () => ({ status: 'ok' }) })
-    }
-    return Promise.resolve({ ok: true, json: async () => ({ ...INFO, fronting }) })
-  })
-  vi.stubGlobal('fetch', fetchMock)
-  return { calls }
-}
-
-function stubInfoFetch() {
+function stubIdleFetch() {
   const fetchMock = vi.fn().mockImplementation(() =>
-    Promise.resolve({
-      ok: true,
-      json: async () => ({
-        persona_id: 'p',
-        scene_context: 'desk',
-        role: 'host',
-        variant: 'workstation',
-        display_name: 'Macky',
-        port: 8000,
-        features: { home: false, gpu: false, development: false, wyoming_port: 0 },
-        data_dir: '',
-        config_dir: '',
-        body_name: 'desk',
-        singular: true,
-      }),
-    }),
+    Promise.resolve({ ok: true, json: async () => ({ ...INFO, fronting: null }) }),
   )
   vi.stubGlobal('fetch', fetchMock)
   return fetchMock
 }
 
 function mount() {
-  return render(
-    <MemoryRouter>
-      <PresencePill />
-    </MemoryRouter>,
-  )
+  return render(<GuestPresenceIndicator />)
 }
 
-describe('PresencePill', () => {
+describe('GuestPresenceIndicator', () => {
   beforeEach(() => {
     localStorage.clear()
     setInstanceEndpoint(null)
@@ -166,26 +124,36 @@ describe('PresencePill', () => {
     localStorage.clear()
   })
 
-  it('fetches the local body through the resolved API base (Tauri webview)', async () => {
+  it('reads who is fronting through the resolved API base (Tauri webview)', async () => {
     window.__HALBERT_API_BASE__ = 'http://127.0.0.1:8042'
-    const fetchMock = stubInfoFetch()
+    const fetchMock = stubIdleFetch()
     mount()
 
     await waitFor(() =>
       expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:8042/api/instance/info'),
     )
-    expect(await screen.findByText('Macky @ desk')).toBeInTheDocument()
   })
 
-  it('fetches the switched-to body after a reload', async () => {
-    // The switch happened on the previous page load; the override outlived it.
-    setInstanceEndpoint('http://x:8001')
-    const fetchMock = stubInfoFetch()
-    mount()
+  it('renders nothing while no guest fronts', async () => {
+    const fetchMock = stubIdleFetch()
+    const { container } = mount()
 
     await waitFor(() =>
-      expect(fetchMock).toHaveBeenCalledWith('http://x:8001/api/instance/info'),
+      expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/api/instance/info')),
     )
+    // Idle means invisible: no identity text (the rail owns that), no
+    // empty trigger, nothing at all.
+    expect(container.innerHTML).toBe('')
+  })
+
+  it('carries none of the old pill\'s node-switching UI', async () => {
+    stubFrontingFetch()
+    mount()
+    await screen.findByText('Macky · as Ada')
+
+    expect(screen.queryByText(/Link Another Device/i)).toBeNull()
+    expect(screen.queryByText(/Manage Linked Devices/i)).toBeNull()
+    expect(screen.queryByText(/Independent Node|Singular Entity/i)).toBeNull()
   })
 
   describe('a guest persona fronting', () => {
@@ -196,12 +164,6 @@ describe('PresencePill', () => {
       // I4: the machine's own name stays, so the user can tell what is
       // holding the tools. "Ada" alone would be the failure.
       expect(await screen.findByText('Macky · as Ada')).toBeInTheDocument()
-    })
-
-    it('reads Macky @ desk again once the face is off', async () => {
-      stubInfoFetch()
-      mount()
-      expect(await screen.findByText('Macky @ desk')).toBeInTheDocument()
     })
 
     it('names who lent the face and offers to take it off', async () => {
@@ -216,7 +178,7 @@ describe('PresencePill', () => {
       expect(screen.getByRole('button', { name: /end guest session/i })).toBeInTheDocument()
     })
 
-    it('ending the session takes the face off', async () => {
+    it('ending the session takes the face off — and the indicator with it', async () => {
       const user = userEvent.setup()
       const fetchMock = stubFrontingFetch()
       mount()
@@ -231,7 +193,8 @@ describe('PresencePill', () => {
           expect.objectContaining({ method: 'POST' }),
         ),
       )
-      expect(await screen.findByText('Macky @ desk')).toBeInTheDocument()
+      // No guest, no indicator: the top bar returns to §6.2's inventory.
+      await waitFor(() => expect(screen.queryByText(/Macky · as Ada/)).toBeNull())
     })
 
     it('says what handing a source over means, before the first one is handed over', async () => {
@@ -247,7 +210,7 @@ describe('PresencePill', () => {
       const said = await screen.findByText(/stops recording what you say/i)
       expect(said).toHaveTextContent(/keeps recording what the machine and the rest of the house/i)
       expect(said).toHaveTextContent(/Life safety still reaches/i)
-      // Server-written and scoped to a source, not the pill's own copy:
+      // Server-written and scoped to a source, not the component's own copy:
       // handing over the desk webcam does not stop the patio camera.
       expect(said).toHaveTextContent(/what Desk webcam sees/i)
     })
@@ -295,36 +258,21 @@ describe('PresencePill', () => {
       expect(await screen.findByText(/home: H2/)).toBeInTheDocument()
     })
 
-    it('offers the faces this machine could wear, and wears one', async () => {
+    it('keeps hand-over and end-session to the local machine', async () => {
+      // Handing a source over is require_local_admin, and so is ending the
+      // session from here: pointed at another node, the face is shown (the
+      // transparency guarantee follows the view) but the controls are not.
       const user = userEvent.setup()
-      const { calls } = stubIdleWithHomes()
-      mount()
-      await screen.findByText('Macky @ desk')
-
-      // Asked only when the dropdown opens: this reaches out to every known
-      // home, and the pill should not knock on the neighbours on page load.
-      expect(calls.some((c) => c.url.endsWith('/api/guest/available'))).toBe(false)
-      await user.click(screen.getByRole('button', { name: /Macky/ }))
-
-      await user.click(await screen.findByRole('button', { name: /Be Marnie/ }))
-
-      await waitFor(() =>
-        expect(calls.some((c) => c.url.endsWith('/api/guest/become'))).toBe(true),
-      )
-      const body = JSON.parse(
-        calls.find((c) => c.url.endsWith('/api/guest/become'))!.init!.body as string,
-      )
-      // The name and the home, so a name in two houses is not a guess.
-      expect(body).toEqual({ name: 'Marnie', base_url: 'http://h2:8002' })
-    })
-
-    it('does not offer other faces while one is already on', async () => {
-      const user = userEvent.setup()
+      setInstanceEndpoint('http://x:8001')
       stubFrontingFetch()
       mount()
       await screen.findByText('Macky · as Ada')
+
       await user.click(screen.getByRole('button', { name: /Macky/ }))
-      expect(screen.queryByText(/Be someone else/i)).toBeNull()
+      await screen.findByText(/lent by the study tablet/)
+
+      expect(screen.queryByRole('button', { name: /end guest session/i })).toBeNull()
+      expect(screen.queryByLabelText(/Hand Desk webcam to Ada/i)).toBeNull()
     })
   })
 })

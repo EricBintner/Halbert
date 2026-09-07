@@ -71,7 +71,7 @@ export function ComputePeerCard() {
     try {
       setProbe(await probeComputePeer(address.trim(), token.trim()))
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Peer probe failed')
+      setError(err instanceof Error ? err.message : 'Node probe failed')
     } finally {
       setTesting(false)
     }
@@ -87,7 +87,7 @@ export function ComputePeerCard() {
       setError(null)
       setToken('')
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Linking the compute peer failed')
+      setError(err instanceof Error ? err.message : 'Linking the compute node failed')
     } finally {
       setLinking(false)
     }
@@ -101,11 +101,11 @@ export function ComputePeerCard() {
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <Network className="h-5 w-5" />
-          Compute Peer
+          Compute Node
         </CardTitle>
         <CardDescription>
           This node runs no model of its own. Language-model work is served by the
-          compute peer, and its own model configuration governs which model
+          compute node, and its own model configuration governs which model
           answers — change it there, not here.
         </CardDescription>
       </CardHeader>
@@ -121,17 +121,17 @@ export function ComputePeerCard() {
                 Linked to <span className="font-mono">{link.url}</span>
               </p>
               <p className="text-xs text-muted-foreground">
-                Chat and specialist turns both resolve to this peer
+                Chat and specialist turns both resolve to this node
                 {link.slots.chat_model && link.slots.specialist_model
                   ? '. '
                   : ' — re-link to refresh the slots. '}
-                The compute peer&apos;s own model picker governs which model serves them.
+                The compute node&apos;s own model picker governs which model serves them.
               </p>
             </div>
           </div>
         ) : (
           <p className="text-sm text-muted-foreground">
-            No compute peer linked yet. Enter the compute peer&apos;s address and
+            No compute node linked yet. Enter the compute node&apos;s address and
             pair this node with it.
           </p>
         )}
@@ -147,7 +147,7 @@ export function ComputePeerCard() {
 
         <div className="space-y-3">
           <div className="space-y-2">
-            <Label htmlFor="compute-peer-address">Compute peer address</Label>
+            <Label htmlFor="compute-peer-address">Compute node address</Label>
             <Input
               id="compute-peer-address"
               value={address}
@@ -157,7 +157,7 @@ export function ComputePeerCard() {
               autoComplete="off"
             />
             <p className="text-xs text-muted-foreground">
-              Hostname and port of the compute peer&apos;s dashboard — hostname:port,
+              Hostname and port of the compute node&apos;s dashboard — hostname:port,
               peer://host:port, or an http(s):// address all work.
             </p>
           </div>
@@ -169,7 +169,7 @@ export function ComputePeerCard() {
               type="password"
               value={token}
               onChange={(e) => setToken(e.target.value)}
-              placeholder="Bearer token from the compute peer's pairing"
+              placeholder="Bearer token from the compute node's pairing"
               autoComplete="off"
             />
             <p className="text-xs text-muted-foreground">
@@ -183,7 +183,7 @@ export function ComputePeerCard() {
               {testing ? 'Testing…' : 'Test Connection'}
             </Button>
             <Button onClick={() => void handleLink()} disabled={!canSubmit}>
-              {linking ? 'Linking…' : 'Use This Peer'}
+              {linking ? 'Linking…' : 'Use This Node'}
             </Button>
           </div>
         </div>
@@ -208,16 +208,16 @@ export function ComputePeerCard() {
               )}
               <div className="space-y-1">
                 <p className="font-medium">
-                  {probe.ok ? 'Peer reachable.' : 'Peer unreachable.'} {probe.message}
+                  {probe.ok ? 'Node reachable.' : 'Node unreachable.'} {probe.message}
                 </p>
                 {probe.ok && probe.models.length > 0 ? (
                   <p className="text-xs text-muted-foreground">
-                    The compute peer serves:{' '}
+                    The compute node serves:{' '}
                     <span className="font-mono">{probe.models.join(', ')}</span>
                   </p>
                 ) : probe.ok ? (
                   <p className="text-xs text-muted-foreground">
-                    The compute peer advertises no specific model list — its own
+                    The compute node advertises no specific model list — its own
                     configuration governs which model answers.
                   </p>
                 ) : null}

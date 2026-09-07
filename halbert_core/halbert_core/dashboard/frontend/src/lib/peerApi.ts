@@ -10,10 +10,12 @@
  *      API calls. This is the same token the MCP HTTP/SSE transport
  *      would use (Phase 4b).
  *
- * C2 — Extends Instance Switcher: The discovered peers and paired
- *      peers APIs feed the InstanceSwitch dropdown (already exists in
- *      shell/PresencePill.tsx). This module provides the typed
- *      fetchers; InstanceSwitch consumes them.
+ * C2 — The discovered peers and paired peers APIs feed the surfaces
+ *      that list nodes: the rail's EntityNodeBlock, the pairing modal,
+ *      and the fleet view. This module provides the typed fetchers;
+ *      those components consume them. (They used to feed the old
+ *      InstanceSwitch dropdown in the top-bar pill; the pill's split
+ *      retired it.)
  *
  * C5 — Fleet inspection via MCP proxy: The inspectNode() function
  *      calls POST /api/fleet/{nodeId}/inspect which proxies an MCP

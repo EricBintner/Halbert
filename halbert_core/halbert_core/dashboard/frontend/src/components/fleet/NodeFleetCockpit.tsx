@@ -6,8 +6,9 @@
  * Implements findings C2 and §11.2 from the federated multi-node review.
  *
  * C2 — This is the "Fleet Cockpit" from Pillar 4 of the handoff, but it
- *      is NOT a new "Node Switcher." The node switching UI is the
- *      existing PresencePill.tsx (Phase 7). This component is the
+ *      is NOT a new "Node Switcher." The node switching UI is the rail's
+ *      EntityNodeBlock (the top-bar pill that used to hold it was split
+ *      away). This component is the
  *      fleet *monitoring* view — a grid of satellite status cards
  *      showing CPU, RAM, temperature, uptime, and active services.
  *
@@ -28,7 +29,7 @@
  * - No emojis (per global rules) — uses lucide-react icons
  * - Auto-refreshes every 15 seconds
  * - Graceful degradation: if no peers are paired, shows an empty state
- *   with a "Pair a Satellite" CTA that opens PeerPairingModal
+ *   with a "Link a node" CTA that opens PeerPairingModal
  */
 
 import * as React from 'react'
@@ -117,7 +118,7 @@ export function NodeFleetCockpit() {
       <div className="flex flex-col items-center justify-center py-20 gap-4">
         <Server className="h-12 w-12 text-muted-foreground/50" />
         <div className="text-center space-y-1">
-          <h3 className="text-sm font-medium">No other bodies yet</h3>
+          <h3 className="text-sm font-medium">No other nodes yet</h3>
           <p className="text-xs text-muted-foreground max-w-sm">
             Link a Raspberry Pi, homelab server, or laptop to watch its
             health, stream its logs, and offload compute to this machine's
@@ -126,7 +127,7 @@ export function NodeFleetCockpit() {
         </div>
         <Button size="sm" onClick={() => setShowPairingModal(true)}>
           <Plus className="h-4 w-4 mr-1" />
-          Link a body
+          Link a node
         </Button>
         {showPairingModal && (
           <PeerPairingModal onClose={() => setShowPairingModal(false)} onPaired={refresh} />
@@ -140,7 +141,7 @@ export function NodeFleetCockpit() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <h2 className="text-sm font-semibold">Fleet Cockpit</h2>
+          <h2 className="text-sm font-semibold">Linked Nodes</h2>
           <Badge variant="secondary" className="text-[10px]">
             {nodes.filter(n => n.online).length}/{nodes.length} online
           </Badge>
@@ -151,7 +152,7 @@ export function NodeFleetCockpit() {
           </Button>
           <Button size="sm" variant="outline" onClick={() => setShowPairingModal(true)}>
             <Plus className="h-3.5 w-3.5 mr-1" />
-            Pair
+            Link a node
           </Button>
         </div>
       </div>
@@ -163,7 +164,7 @@ export function NodeFleetCockpit() {
         </div>
       )}
 
-      {/* One card per body */}
+      {/* One card per node */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
         {nodes.map((node) => (
           <FleetNodeCard
@@ -333,7 +334,7 @@ function NodeInspectDrawer({
       <div className="p-4 space-y-3">
         <p className="text-xs text-muted-foreground">
           Remote inspection via MCP proxy (C5). The Desktop connects as an
-          MCP client of this satellite's MCP server.
+          MCP client of this node's MCP server.
         </p>
         <div className="space-y-2">
           <div className="text-[10px] text-muted-foreground uppercase tracking-wider">

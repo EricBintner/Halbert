@@ -144,11 +144,11 @@ describe('DevicesTab', () => {
     expect(screen.queryByText('Join the canonical host?')).toBeNull()
   })
 
-  it('editing the body name sends PUT /api/devices/body-name', async () => {
+  it('editing the machine name sends PUT /api/devices/body-name', async () => {
     const user = userEvent.setup()
     const { calls } = renderTab(devicesState())
     await screen.findByText(/Link First Device/i)
-    const input = screen.getByLabelText('Body Name')
+    const input = screen.getByLabelText('Machine Name')
     await user.clear(input)
     await user.type(input, 'desk')
     await user.click(screen.getByRole('button', { name: 'Save' }))
@@ -156,12 +156,12 @@ describe('DevicesTab', () => {
     expect(JSON.parse(String(put?.init?.body))).toEqual({ body_name: 'desk' })
   })
 
-  it('a suggestion chip fills the body name input', async () => {
+  it('a suggestion chip fills the machine name input', async () => {
     const user = userEvent.setup()
     renderTab(devicesState())
     await screen.findByText(/Link First Device/i)
     await user.click(screen.getByRole('button', { name: 'kitchen' }))
-    expect((screen.getByLabelText('Body Name') as HTMLInputElement).value).toBe('kitchen')
+    expect((screen.getByLabelText('Machine Name') as HTMLInputElement).value).toBe('kitchen')
   })
 
   it('Add Device opens the pairing modal (P7c, reused as-is)', async () => {

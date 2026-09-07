@@ -94,7 +94,7 @@ describe('ratified vocabulary', () => {
   it('both surfaces that name the mode agree on the name', () => {
     const surfaces = [
       './components/settings/devices/EntityIdentityCard.tsx',
-      './components/shell/PresencePill.tsx',
+      './components/shell/EntityNodeBlock.tsx',
     ]
     for (const rel of surfaces) {
       const text = SOURCES[rel]

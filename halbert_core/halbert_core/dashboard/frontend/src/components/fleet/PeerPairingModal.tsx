@@ -9,10 +9,12 @@
  *      The modal calls POST /api/peers/pair → gets a PIN → the user
  *      confirms → POST /api/peers/verify → gets a bearer token.
  *
- * C2 — This modal is opened from the PresencePill dropdown's "Link"
- *      button and from the NodeFleetCockpit's empty state. It does NOT
- *      replace PresencePill — it's a child dialog that feeds paired
- *      peers back into the switcher.
+ * C2 — This modal is opened from the NodeFleetCockpit's empty state and
+ *      from Settings → Devices' "Link Device" button. It is a child
+ *      dialog that feeds paired peers back into the surfaces that list
+ *      them — the rail's EntityNodeBlock and the fleet view. (It used to
+ *      open from the PresencePill dropdown too; the pill's split retired
+ *      that door along with its hand-maintained paired list.)
  *
  * H9 — mDNS discovery is LAN-only. Discovered peers appear in the list
  *      only if zeroconf is installed and both nodes are on the same LAN.
@@ -57,7 +59,7 @@ export function PeerPairingModal({ onClose, onPaired }: PeerPairingModalProps) {
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-sm">
             <Radio className="h-4 w-4" />
-            Pair Halbert Peer
+            Link a Node
           </DialogTitle>
         </DialogHeader>
 
@@ -108,7 +110,7 @@ function DiscoveredPeersList({ onClose, onPaired }: { onClose: () => void; onPai
       <div className="text-xs text-muted-foreground py-4 text-center space-y-1">
         <p>mDNS discovery unavailable</p>
         <p className="text-[10px]">
-          Install zeroconf on the backend or use Manual pairing for Tailscale peers.
+          Install zeroconf on the backend or use Manual pairing for Tailscale nodes.
         </p>
       </div>
     )
@@ -117,9 +119,9 @@ function DiscoveredPeersList({ onClose, onPaired }: { onClose: () => void; onPai
   if (peers.length === 0) {
     return (
       <div className="text-xs text-muted-foreground py-6 text-center space-y-1">
-        <p>No Halbert peers discovered on this LAN</p>
+        <p>No Halbert nodes discovered on this LAN</p>
         <p className="text-[10px]">
-          Ensure the peer is running and on the same network.
+          Ensure the node is running and on the same network.
           For Tailscale, use Manual pairing.
         </p>
       </div>
@@ -164,9 +166,10 @@ function ManualPairingForm({ onClose, onPaired: _onPaired }: { onClose: () => vo
       // it here. For now, this is a scaffold — the actual flow needs
       // the PIN entry step.
       //
-      // For the Instance Switcher's existing "Add Instance" flow (which
-      // just stores the endpoint without pairing), see PresencePill.tsx.
-      // This form is for the full pairing flow with token exchange.
+      // (The old top-bar pill had a lighter "Add Instance" flow that just
+      // stored an endpoint without pairing; it was retired with the pill's
+      // split — pairing is the only door now.) This form is for the full
+      // pairing flow with token exchange.
       throw new Error('Manual pairing flow — TODO(federation-9.1)')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Manual pairing failed')
@@ -179,7 +182,7 @@ function ManualPairingForm({ onClose, onPaired: _onPaired }: { onClose: () => vo
     <form onSubmit={handleSubmit} className="space-y-3">
       <div className="space-y-1">
         <label className="text-[10px] text-muted-foreground uppercase tracking-wider">
-          Peer Node ID
+          Node ID
         </label>
         <Input
           value={nodeId}
@@ -190,7 +193,7 @@ function ManualPairingForm({ onClose, onPaired: _onPaired }: { onClose: () => vo
       </div>
       <div className="space-y-1">
         <label className="text-[10px] text-muted-foreground uppercase tracking-wider">
-          Peer Endpoint (URL)
+          Node Endpoint (URL)
         </label>
         <Input
           value={endpoint}
@@ -199,7 +202,7 @@ function ManualPairingForm({ onClose, onPaired: _onPaired }: { onClose: () => vo
           className="h-8 text-xs font-mono"
         />
         <p className="text-[9px] text-muted-foreground">
-          For Tailscale peers, use the Tailscale hostname or IP.
+          For Tailscale nodes, use the Tailscale hostname or IP.
           mDNS does not cross Tailscale tunnels.
         </p>
       </div>

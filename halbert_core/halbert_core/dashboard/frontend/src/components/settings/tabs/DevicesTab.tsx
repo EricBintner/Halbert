@@ -27,6 +27,7 @@ import { listDevices, removeDevice } from '@/lib/peerApi'
 import type { DevicesState, DeviceInfo } from '@/lib/peerApi'
 import { EntityIdentityCard } from '@/components/settings/devices/EntityIdentityCard'
 import { DeviceCard } from '@/components/settings/devices/DeviceCard'
+import { PersonaHomesCard } from '@/components/settings/devices/PersonaHomesCard'
 import { PeerPairingModal } from '@/components/fleet/PeerPairingModal'
 
 export function DevicesTab() {
@@ -102,9 +103,9 @@ export function DevicesTab() {
               <MonitorSmartphone className="h-10 w-10 mx-auto text-muted-foreground" aria-hidden="true" />
               <p className="text-sm text-muted-foreground max-w-md mx-auto">
                 Halbert can be one entity across many machines — a desk
-                body, a kitchen speaker, an always-on home server — sharing
-                one memory and one conversation. Pair the first one to
-                begin.
+                workstation, a kitchen speaker, an always-on home server —
+                sharing one memory and one conversation. Pair the first one
+                to begin.
               </p>
               <Button onClick={() => setShowPairing(true)} aria-label="Link first device">
                 <Plus className="h-4 w-4 mr-1.5" />
@@ -154,6 +155,11 @@ export function DevicesTab() {
           </ul>
         </Collapsible>
       )}
+
+      {/* Guest personas (§5R.3 N1): "Be someone else" lives here now, not in
+          the top bar. Not a primary feature — until a persona home is
+          connected, this renders a single muted line and nothing more. */}
+      <PersonaHomesCard />
 
       {/* P7c: the existing pairing flow, reused as-is (review §3). */}
       {showPairing && (

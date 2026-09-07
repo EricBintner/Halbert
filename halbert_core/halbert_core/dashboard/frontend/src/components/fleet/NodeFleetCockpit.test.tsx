@@ -2,7 +2,7 @@
 // Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 /**
  * NodeFleetCockpit tests (FE-15 audit cleanup) — covers the fleet grid
- * built from listFleetNodes(): the empty "Link a body" state, node
+ * built from listFleetNodes(): the empty "Link a node" state, node
  * cards (status badge, vitals, capabilities, footer endpoint), the 15s
  * auto-refresh poll (REFRESH_INTERVAL_MS), a fetch failure surfaced as a
  * banner, and the dual-action Inspect/Switch affordances (§11.2).
@@ -74,15 +74,15 @@ const OFFLINE_NODE: FleetNodeStatus = {
 }
 
 describe('NodeFleetCockpit', () => {
-  it('renders the empty state with a Link a body CTA and opens the pairing modal', async () => {
+  it('renders the empty state with a Link a node CTA and opens the pairing modal', async () => {
     const user = userEvent.setup()
     listFleetNodesMock.mockResolvedValue([])
     render(<NodeFleetCockpit />)
 
-    expect(await screen.findByText('No other bodies yet')).toBeTruthy()
+    expect(await screen.findByText('No other nodes yet')).toBeTruthy()
     expect(screen.getByText(/link a raspberry pi, homelab server, or laptop/i)).toBeTruthy()
 
-    await user.click(screen.getByRole('button', { name: /link a body/i }))
+    await user.click(screen.getByRole('button', { name: /link a node/i }))
     expect(await screen.findByText('Mock Peer Pairing Modal')).toBeTruthy()
   })
 
@@ -114,7 +114,7 @@ describe('NodeFleetCockpit', () => {
     render(<NodeFleetCockpit />)
 
     expect(await screen.findByText('Fleet nodes failed: 500')).toBeTruthy()
-    expect(screen.getByText('Fleet Cockpit')).toBeTruthy()
+    expect(screen.getByText('Linked Nodes')).toBeTruthy()
     expect(screen.getByText('0/0 online')).toBeTruthy()
   })
 
@@ -125,7 +125,7 @@ describe('NodeFleetCockpit', () => {
     await screen.findByText('kitchen-pi')
     expect(listFleetNodesMock).toHaveBeenCalledTimes(1)
 
-    const headerRow = screen.getByRole('heading', { name: 'Fleet Cockpit' })
+    const headerRow = screen.getByRole('heading', { name: 'Linked Nodes' })
       .parentElement!.parentElement!
     const [refreshButton] = within(headerRow).getAllByRole('button')
     await user.click(refreshButton)
@@ -192,14 +192,14 @@ describe('NodeFleetCockpit', () => {
     expect(screen.queryByText(/remote inspection via mcp proxy/i)).toBeNull()
   })
 
-  it('the header Pair button opens the pairing modal, and onPaired triggers a refresh', async () => {
+  it('the header Link a node button opens the pairing modal, and onPaired triggers a refresh', async () => {
     const user = userEvent.setup()
     listFleetNodesMock.mockResolvedValue([ONLINE_NODE])
     render(<NodeFleetCockpit />)
     await screen.findByText('kitchen-pi')
     expect(listFleetNodesMock).toHaveBeenCalledTimes(1)
 
-    await user.click(screen.getByRole('button', { name: 'Pair' }))
+    await user.click(screen.getByRole('button', { name: 'Link a node' }))
     expect(await screen.findByText('Mock Peer Pairing Modal')).toBeTruthy()
 
     await user.click(screen.getByRole('button', { name: 'mock pairing complete' }))

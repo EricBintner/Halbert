@@ -36,7 +36,6 @@ import {
   Shield,
   Settings as SettingsIcon,
   Terminal,
-  MonitorSmartphone,
   Loader2,
   ScanSearch,
   AudioLines,
@@ -54,7 +53,9 @@ import { Badge } from '@/components/ui/badge'
 import { ConfigEditor } from './ConfigEditor'
 import { HalbertMark, NavRail, type NavRailSection } from '@halbert/design-system'
 import { PanelToggle } from './shell/PanelToggle'
-import { PresencePill, type InstanceInfo } from './shell/PresencePill'
+import { GuestPresenceIndicator } from './shell/GuestPresenceIndicator'
+import type { InstanceInfo } from '@/lib/instanceInfo'
+import { EntityNodeBlock } from './shell/EntityNodeBlock'
 import { AggregateStatusLight } from './agent/AggregateStatusLight'
 import { useTasks } from '@/hooks/useTasks'
 import { AcousticAuraIndicator, VoiceHudSummonButton } from '@/components/audio'
@@ -63,66 +64,63 @@ import { useShellMode } from '@/contexts/ShellModeContext'
 import { askHost, runOnHost, configWithHost } from '@/lib/hostConversation'
 import { apiUrl } from '@/lib/apiBase'
 import { getPendingApprovals } from '@/lib/tauri'
+import { routeAllowed, safeRouteAfterSwitch, type InstanceFeatures } from '@/lib/routeCapabilities'
+import { listDevices } from '@/lib/peerApi'
 
 type NavItem = { id: string; label: string; icon: typeof LayoutDashboard }
 type NavSection = { label: string; items: NavItem[] }
 
 /**
- * The rail carries four domains (shell redesign, Section 9.3):
+ * The rail carries two groups (HANDOFF-NODE-LIST-RAIL-DESIGN §5R, revised
+ * design §3):
  *
- *   Overview              the dashboard and the spatial home view
- *   Findings & Approvals  what the agent surfaced — findings and proposals
- *                         that need human attention
- *   System                the sysadmin surface — services, storage, backups,
- *                         terminal
- *   Workloads             things running on the machine that aren't core
- *                         system services — containers, GPU, apps, network,
- *                         sharing, development
+ *   Shared        things shared across all nodes in the entity — home
+ *                 automation (same HA data on every machine) and shared
+ *                 compute (the linked-machines health grid, only when 2+
+ *                 nodes are linked).
+ *
+ *   Machine Tools everything per-machine — terminal, storage, services,
+ *                 containers, GPU, network, backups, apps, sharing,
+ *                 development, findings, approvals. No section header:
+ *                 these are all "tools for this machine."
+ *
+ * The entity name and node buttons live in the NavRail header
+ * (EntityNodeBlock), not in a section. The node button IS the landing page
+ * — clicking it navigates to `/`. There is no separate "Dashboard" or
+ * "Overview" nav item.
  *
  * Sections with a single visible item render without a header label — the
- * item stands alone as a top-level nav entry (adaptive headers, 9.4).
+ * item stands alone as a top-level nav entry (adaptive headers).
  *
  * Settings is never a rail item: the Settings page renders in the center
  * panel, and the top-bar gear is the entry point.
  */
-const SYSTEM = 'System'
 
 /** Exported for the nav-coverage test (R08-01/NAV-01): every routed page in
  * App.tsx must have an entry point somewhere in this rail. */
 export const navSections: NavSection[] = [
   {
-    label: 'Overview',
+    label: '',
     items: [
-      { id: '/', label: 'Dashboard', icon: LayoutDashboard },
       { id: '/home', label: 'Home', icon: HomeIcon },
+      { id: '/compute', label: 'Shared Compute', icon: Server },
     ],
   },
   {
-    label: 'Findings & Approvals',
-    items: [
-      { id: '/findings', label: 'Findings', icon: Shield },
-      { id: '/approvals', label: 'Approvals', icon: CheckCircle },
-    ],
-  },
-  {
-    label: SYSTEM,
+    label: '',
     items: [
       { id: '/services', label: 'Services', icon: Server },
       { id: '/storage', label: 'Storage', icon: HardDrive },
       { id: '/backups', label: 'Backups', icon: Archive },
       { id: '/terminal', label: 'Terminal', icon: Terminal },
-      { id: '/bodies', label: 'Bodies', icon: MonitorSmartphone },
-    ],
-  },
-  {
-    label: 'Workloads',
-    items: [
       { id: '/containers', label: 'Containers', icon: Container },
       { id: '/gpu', label: 'GPU', icon: Cpu },
       { id: '/apps', label: 'Apps', icon: Package },
       { id: '/network', label: 'Network', icon: Wifi },
       { id: '/sharing', label: 'Sharing', icon: Share2 },
       { id: '/development', label: 'Development', icon: Code2 },
+      { id: '/findings', label: 'Findings', icon: Shield },
+      { id: '/approvals', label: 'Approvals', icon: CheckCircle },
     ],
   },
 ]
@@ -189,6 +187,11 @@ export function Layout({ children }: { children: React.ReactNode }) {
   // Multi-instance: current instance info for sidebar filtering
   const [instanceInfo, setInstanceInfo] = useState<InstanceInfo | null>(null)
 
+  // Linked-node count for the Shared Compute gate (§6.1 item 4): /api/devices
+  // with revoked and endpoint-less records excluded — the same list the rail's
+  // EntityNodeBlock renders.
+  const [linkedNodeCount, setLinkedNodeCount] = useState<number | null>(null)
+
   // Pending-approvals count for the top-bar badge (R08-01/NAV-01).
   const [pendingApprovalsCount, setPendingApprovalsCount] = useState(0)
 
@@ -206,6 +209,21 @@ export function Layout({ children }: { children: React.ReactNode }) {
       }
     }
     fetchInfo()
+  }, [])
+
+  // The Shared Compute item appears only once a second linked node exists
+  // (revised design §3.1 principle 5). Null until /api/devices answers —
+  // show it, then hide it, matching the capability filter's "a flicker of
+  // an item that later hides beats a nav that starts empty" rule.
+  useEffect(() => {
+    let cancelled = false
+    listDevices()
+      .then((state) => {
+        if (cancelled) return
+        setLinkedNodeCount(state.devices.filter((d) => !d.revoked && d.endpoint).length)
+      })
+      .catch(() => { /* Non-fatal — the item stays until devices respond */ })
+    return () => { cancelled = true }
   }, [])
 
   // Poll pending approvals for the top-bar badge — same 5s cadence as the
@@ -228,25 +246,38 @@ export function Layout({ children }: { children: React.ReactNode }) {
     }
   }, [])
 
-  // Filter nav sections based on the connected instance. Home hides when the
-  // instance lacks the home feature. The whole System domain hides on a paired
-  // 'home' instance: its services, storage, backups, and terminal belong to a
-  // machine the user does not administer from here. Workloads' dev-oriented
-  // pages (Containers, GPU, Development) hide when the instance lacks the
-  // development feature.
+  // Filter nav items by the active node's capabilities using the shared
+  // route→capability table (§5R.3 N5). The old filter collapsed GPU, Containers,
+  // and Development all onto features.development and blanket-hid System on
+  // home-role nodes. The revised design (§3.1) says a home server shows
+  // "whatever limited IT tools exist," so gating is capability-only via the
+  // fine-grained features.gpu / features.home / features.development flags.
+  const features: InstanceFeatures | null = instanceInfo
+    ? { home: instanceInfo.features.home, gpu: instanceInfo.features.gpu, development: instanceInfo.features.development }
+    : null
+
+  const showSharedCompute = linkedNodeCount === null || linkedNodeCount > 0
+
   const filteredSections = navSections
-    .filter((section) => section.label !== SYSTEM || instanceInfo?.role !== 'home')
     .map((section) => ({
       ...section,
-      items: section.items.filter((item) => {
-        if (!instanceInfo) return true
-        if (item.id === '/home' && !instanceInfo.features.home) return false
-        if ((item.id === '/gpu' || item.id === '/development' || item.id === '/containers')
-            && !instanceInfo.features.development) return false
-        return true
-      }),
+      items: section.items.filter((item) =>
+        routeAllowed(item.id, features)
+        && (item.id !== '/compute' || showSharedCompute)),
     }))
     .filter((section) => section.items.length > 0)
+
+  // Post-reload route fallback (§5R.3 N5, §6.5): after switching nodes the page
+  // reloads pointed at the new machine. If the current route is not supported
+  // there (e.g. /gpu on a GPU-less node), land on / instead of a broken page.
+  // Runs once after instance info loads — the reload puts us back in mount, so
+  // this is the first chance to check.
+  useEffect(() => {
+    if (!instanceInfo) return
+    if (!routeAllowed(location.pathname, features)) {
+      navigate(safeRouteAfterSwitch(location.pathname, features))
+    }
+  }, [instanceInfo]) // eslint-disable-line react-hooks/exhaustive-deps -- features derived from instanceInfo; location/navigate stable
 
   /** Settings is not a dashboard tab — it overtakes the shell. The gear in the
    * top bar is the only entry point, so the rail never shows a Settings item. */
@@ -536,7 +567,11 @@ export function Layout({ children }: { children: React.ReactNode }) {
            * window to summon). */}
           <VoiceHudSummonButton />
 
-          <PresencePill />
+          {/* Who is speaking when it is not the machine (§5R.3 N1): the
+           * guest-persona half of the old pill, kept in the top bar. Node
+           * switching is the rail's job now (EntityNodeBlock), so this
+           * renders nothing at all until a guest fronts. */}
+          <GuestPresenceIndicator />
 
           {/* TERM-1's last row: with the tasks column in the right panel, a
               long-running command is visible only while that panel is open.
@@ -644,6 +679,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
               sections={filteredSections as NavRailSection[]}
               activeId={location.pathname}
               onSelect={handleNavSelect}
+              header={<EntityNodeBlock />}
             />
 
             {/* Center panel — the active page / Settings. Hidden when the

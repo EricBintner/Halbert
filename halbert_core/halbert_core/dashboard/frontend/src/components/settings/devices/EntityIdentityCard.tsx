@@ -1,14 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 /**
- * This-device identity: body name, entity mode, canonical host — the
+ * This-device identity: machine name (`body_name` in the API), entity mode,
+ * canonical host — the
  * Settings → Devices page's first card (G12 / P7b, design review §15).
  *
  * Binding decisions implemented here:
  * - Q2: a ConfirmDialog when switching Independent → Singular (not for
  *   the reverse) — the dialog names what changes: shared consciousness,
  *   offline resiliency, reversibility.
- * - Q3: hybrid body-name input — free text with quick-select suggestion
+ * - Q3: hybrid machine-name input — free text with quick-select suggestion
  *   chips, validated as a lowercase slug.
  * - Q5: canonical host as a simple base-URL input, with an Advanced
  *   disclosure for explicit per-service URLs and the masked peer token
@@ -29,7 +30,7 @@ import {
 } from '@/lib/peerApi'
 import type { DevicesState } from '@/lib/peerApi'
 
-/** Quick-select body names (design review Q3) — chips fill the input. */
+/** Quick-select machine names (design review Q3) — chips fill the input. */
 const BODY_NAME_SUGGESTIONS = [
   'workstation', 'desk', 'living room', 'kitchen', 'laptop', 'server rack',
 ]
@@ -71,9 +72,9 @@ export function EntityIdentityCard({ state, onRefresh }: EntityIdentityCardProps
       await putBodyName(slug)
       setBodyName(slug)
       await onRefresh()
-      showToast('Body name saved', 'success')
+      showToast('Machine name saved', 'success')
     } catch (e) {
-      showToast(`Could not save body name: ${String(e)}`, 'error')
+      showToast(`Could not save machine name: ${String(e)}`, 'error')
     } finally {
       setSavingBodyName(false)
     }
@@ -94,8 +95,8 @@ export function EntityIdentityCard({ state, onRefresh }: EntityIdentityCardProps
       await onRefresh()
       showToast(
         mode === 'singular'
-          ? 'This body now shares the canonical host\'s memory and conversations'
-          : 'This body now keeps its own memory and conversations',
+          ? 'This machine now shares the canonical host\'s memory and conversations'
+          : 'This machine now keeps its own memory and conversations',
         'success',
       )
     } catch (e) {
@@ -111,25 +112,25 @@ export function EntityIdentityCard({ state, onRefresh }: EntityIdentityCardProps
     try {
       await setDevicePeerToken(peerToken.trim())
       setPeerToken('')
-      showToast(peerToken.trim() ? 'Peer token stored' : 'Peer token cleared', 'success')
+      showToast(peerToken.trim() ? 'Node token stored' : 'Node token cleared', 'success')
     } catch (e) {
-      showToast(`Could not store peer token: ${String(e)}`, 'error')
+      showToast(`Could not store node token: ${String(e)}`, 'error')
     }
   }
 
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-sm">This Body</CardTitle>
+        <CardTitle className="text-sm">This Machine</CardTitle>
         <CardDescription>
-          Which body Halbert is speaking from here, and whether this body
-          shares the one autobiography or keeps its own.
+          Which machine Halbert is speaking from here, and whether this
+          machine shares the one autobiography or keeps its own.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-5">
-        {/* Body name (Q3: hybrid input with suggestion chips) */}
+        {/* Machine name (Q3: hybrid input with suggestion chips) */}
         <div className="space-y-2">
-          <Label htmlFor="body-name">Body Name</Label>
+          <Label htmlFor="body-name">Machine Name</Label>
           <div className="flex gap-2">
             <Input
               id="body-name"
@@ -151,7 +152,7 @@ export function EntityIdentityCard({ state, onRefresh }: EntityIdentityCardProps
               Lowercase letters, digits, dashes and spaces only.
             </p>
           )}
-          <div className="flex flex-wrap gap-1.5 pt-1" aria-label="Suggested body names">
+          <div className="flex flex-wrap gap-1.5 pt-1" aria-label="Suggested machine names">
             {BODY_NAME_SUGGESTIONS.map((name) => (
               <button
                 key={name}
@@ -182,7 +183,7 @@ export function EntityIdentityCard({ state, onRefresh }: EntityIdentityCardProps
               <span className="text-sm font-medium">Singular Entity</span>
               <span className="block text-xs text-muted-foreground pt-0.5">
                 Shares consciousness, memory and conversations with the
-                canonical host — one Halbert, many bodies.
+                canonical host — one Halbert, many machines.
               </span>
             </button>
             <button
@@ -206,7 +207,7 @@ export function EntityIdentityCard({ state, onRefresh }: EntityIdentityCardProps
                   on two mounted screens. */}
               <span className="text-sm font-medium">Independent Node</span>
               <span className="block text-xs text-muted-foreground pt-0.5">
-                This body keeps its own memory and conversations.
+                This machine keeps its own memory and conversations.
               </span>
             </button>
           </div>
@@ -236,7 +237,7 @@ export function EntityIdentityCard({ state, onRefresh }: EntityIdentityCardProps
 
         {/* Advanced disclosure (Q5 + Q4): explicit URLs + masked peer token */}
         <Collapsible
-          title="Advanced (Explicit Endpoints & Peer Token)"
+          title="Advanced (Explicit Endpoints & Node Token)"
           defaultOpen={false}
         >
           <div className="space-y-3 pt-1">
@@ -257,7 +258,7 @@ export function EntityIdentityCard({ state, onRefresh }: EntityIdentityCardProps
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="peer-token">Bearer Token / Peer Secret</Label>
+              <Label htmlFor="peer-token">Bearer Token / Node Secret</Label>
               <div className="flex gap-2">
                 <Input
                   id="peer-token"
@@ -278,7 +279,7 @@ export function EntityIdentityCard({ state, onRefresh }: EntityIdentityCardProps
                 </Button>
               </div>
               <p className="text-xs text-muted-foreground">
-                The credential this body presents to the canonical host.
+                The credential this machine presents to the canonical host.
                 Normally captured during pairing; this is the manual path
                 for rotation or headless setup.
               </p>
@@ -295,8 +296,8 @@ export function EntityIdentityCard({ state, onRefresh }: EntityIdentityCardProps
           applyMode('singular')
         }}
         title="Join the canonical host?"
-        description="This body will share its memory and conversations with the canonical host: one Halbert, many bodies."
-        warning="If the canonical host is unreachable, this body falls back to its own local memory until it returns. You can revert to Independent at any time."
+        description="This machine will share its memory and conversations with the canonical host: one Halbert, many machines."
+        warning="If the canonical host is unreachable, this machine falls back to its own local memory until it returns. You can revert to Independent at any time."
         confirmText="Share Consciousness"
       />
       <Toast

@@ -5,11 +5,11 @@
  *
  * Implements finding C2 from the federated multi-node review.
  *
- * C2 — Extends the Instance Switcher (Phase 7), does not replace it.
- *      This hook feeds discovered peers into the existing InstanceSwitch
- *      dropdown (shell/PresencePill.tsx). Discovered peers appear
- *      alongside manually-paired instances, with an "mDNS" badge to
- *      distinguish them from "Manual" entries.
+ * C2 — This hook feeds discovered peers into the pairing modal's list
+ *      (PeerPairingModal), alongside manually-entered entries, with an
+ *      "mDNS" badge to distinguish them from "Manual" ones. (It used to
+ *      feed the old InstanceSwitch dropdown; that went with the top-bar
+ *      pill's split — the rail's EntityNodeBlock lists paired nodes now.)
  *
  * The hook polls GET /api/peers/discovered every 10 seconds. mDNS
  * discovery is LAN-only (finding H9) — Tailscale peers use manual

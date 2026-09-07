@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 /**
- * The mode names are ratified; the noun for a machine is "body".
+ * The mode names are ratified; the noun for a machine is "machine" or
+ * "node" (founder ruling 2026-09-07 — HANDOFF-NODE-LIST-RAIL-DESIGN §5R.1
+ * Q8; retired terms are guarded repo-wide).
  *
  * Two different rules, and conflating them is how this screen came to
  * contradict the other one.
@@ -56,11 +58,12 @@ describe('EntityIdentityCard vocabulary', () => {
     expect(container.textContent).not.toMatch(/Independent Body/i)
   })
 
-  it('calls the machine a body', () => {
+  it('calls the machine a machine, never a body', () => {
     const { container } = render(
       <EntityIdentityCard state={STATE} onRefresh={() => {}} />
     )
-    // The description under the mode, and the label for the device name.
-    expect(container.textContent).toMatch(/this body keeps its own memory/i)
+    // The description under the mode, and the label for the machine name.
+    expect(container.textContent).toMatch(/this machine keeps its own memory/i)
+    expect(container.textContent).not.toMatch(/\bbody\b/i)
   })
 })
