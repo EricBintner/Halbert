@@ -569,6 +569,41 @@ class TestForgetSession:
         assert client.post("/api/guest/forget", json={}).json()["messages_removed"] == 1
         assert client.post("/api/guest/forget", json={}).json()["messages_removed"] == 0
 
+    def test_forget_also_takes_the_title_and_the_receipt(self, stores):
+        """The transcript is not the only copy. The thread title is the first
+        sixty characters of what the user said, and the stored receipt is a
+        searchable summary of it — neither reached by forget_request."""
+        conv, _ = stores
+        self._front()
+        _thread(conv, "t1")
+        conv.append_message("t1", "user", "the thing that was said")
+        conv.upsert_receipt("t1", "the thing that was said", "a summary of it")
+
+        resp = TestClient(_app()).post("/api/guest/forget", json={})
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["threads_blanked"] == 1
+
+        thread = conv.get_thread("t1")
+        assert thread is not None                    # the thread stays
+        assert "the thing that was said" not in (thread.get("title") or "")
+        assert (thread.get("receipt") or "") == ""
+
+    def test_a_half_done_erasure_does_not_report_success(self, stores, monkeypatch):
+        """"ok" on a partial erase is the worst possible answer: the user
+        believes the words are gone and stops looking."""
+        from halbert_core.continuity import state_store as ss
+
+        self._front()
+
+        class _Broken:
+            def redact_request(self, *a, **k):
+                raise RuntimeError("database is locked")
+
+        monkeypatch.setattr(ss, "StateStore", lambda *a, **k: _Broken())
+        resp = TestClient(_app()).post("/api/guest/forget", json={})
+        assert resp.status_code == 500
+        assert "ledger" in resp.json()["detail"]
+
 
 class TestHomeProfiles:
     """N7. The engine is the same in every sibling; only the mount differs, so

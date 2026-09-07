@@ -685,3 +685,83 @@ class TestVisionGate:
             process=lambda f: SimpleNamespace(has_motion=True, motion_ratio=1.0, bounding_boxes=[])))
         mon._capture_and_check()
         assert len(fired) == 1
+
+
+# ---------------------------------------------------------------------------
+# What the audit found: four leaks that were green
+# ---------------------------------------------------------------------------
+
+class TestTheLeaksTheAuditFound:
+    """Each of these was shipped, tested and passing. They are here in the
+    shape that would have caught them."""
+
+    def test_a_camera_whose_name_needs_slugging_routes_under_the_registry_id(self, tmp_path):
+        """The gate built its own id with an f-string while the registry
+        slugged, so every camera whose name was not already a lowercase slug
+        routed under an id nobody could assign. The existing test only ever
+        used "front_door", which slugs to itself."""
+        from halbert_core.vision.sources import frigate_source_id
+
+        for camera in ("Front Door", "Patio", "Back Yard / Gate"):
+            _, sid = FrigateEventMapper._route(TOPIC_EVENTS, _detection(camera))
+            assert sid == frigate_source_id(camera), camera
+
+    def test_a_private_camera_named_with_a_space_is_actually_handed_over(self, tmp_path, monkeypatch):
+        transport = _Transport()
+        monkeypatch.setattr(sibling, "default_transport", transport)
+        _front()
+        private_sources.assign("frigate:front_door")
+
+        timeline = TimelineStore(db_path=str(tmp_path / "t.db"))
+        FrigateEventMapper(timeline=timeline).handle_event(TOPIC_EVENTS, _detection("Front Door"))
+
+        assert timeline.query(event_type="frigate_event") == []
+        assert [b for m, u, b in transport.calls if m == "POST"]
+
+    @pytest.mark.asyncio
+    async def test_a_guest_cannot_reach_the_screen_through_the_detectors(self):
+        """detect_objects is allowed to a guest and took a free `source`;
+        _capture_frame_for_cv then called capture_screenshot as a plain
+        function, so the mask in ToolExecutor.execute never ran."""
+        from halbert_core.tools.vision_tools import _capture_frame_for_cv
+        from halbert_core.vision.sources import SourceDenied
+
+        _front()
+        for named in ("screen", "screen:1", "screen:active_window"):
+            with pytest.raises(SourceDenied):
+                await _capture_frame_for_cv(named)
+
+    def test_the_automatic_captures_stop_while_a_guest_fronts(self):
+        """PLANNING auto-capture and the diagnostic capture call vision_tools
+        directly, so neither passes the tool mask — a borrowed persona was
+        handed the active window and its OCR without asking for a tool."""
+        machine = AgentStateMachine.__new__(AgentStateMachine)
+        assert machine._screen_is_the_machines_own() is False
+        _front()
+        assert machine._screen_is_the_machines_own() is True
+
+    def test_private_words_do_not_become_a_thread_title(self):
+        """The provisional title is the first sixty characters of what the
+        user said, in a column forget_request does not reach."""
+        from halbert_core.agents import threads as threads_mod
+
+        assert threads_mod._conversation_is_halberts() is True
+        _front()
+        private_sources.assign("webcam:desk")
+        assert threads_mod._conversation_is_halberts() is False
+
+    def test_the_peer_store_does_not_ship_a_private_turn(self, monkeypatch):
+        """The local store asks ownership before writing a row; this one sent
+        the row to the canonical host and asked nothing."""
+        from halbert_core.agents.peer_conversation_store import PeerConversationStore
+
+        store = PeerConversationStore.__new__(PeerConversationStore)
+        called = []
+        monkeypatch.setattr(
+            store, "_invoke", lambda *a, **k: called.append(a) or 1, raising=False)
+
+        assert store.append_message("t1", "user", "hello") == 1
+        _front()
+        private_sources.assign("webcam:desk")
+        assert store.append_message("t1", "user", "in confidence") is None
+        assert len(called) == 1

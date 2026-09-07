@@ -673,6 +673,23 @@ async def _capture_frame_for_cv(source: str) -> str:
     kind = _sources.kind_of(asked) or (
         _sources.KIND_WEBCAM if asked == "webcam" else _sources.KIND_SCREEN
     )
+
+    # The guest mask lives in ToolExecutor.execute, and this path calls
+    # capture_screenshot as a plain function — so a guest, which IS allowed
+    # detect_objects, could name source="screen" and read the workstation
+    # screen that capture_screenshot itself is denied for. The mask has to be
+    # asked here too, because this is a second door into the same room.
+    if kind == _sources.KIND_SCREEN or asked == _sources.ACTIVE_WINDOW_SOURCE_ID:
+        try:
+            from ..persona.guest import current_guest
+            from ..persona.guest_tools import is_tool_allowed_for_guest
+            if current_guest() is not None and not is_tool_allowed_for_guest("capture_screenshot"):
+                raise _sources.SourceDenied(
+                    "the screen is the machine's own; it is not yours to look at"
+                )
+        except ImportError:
+            pass
+
     src = _sources.resolve_request(asked, kind)
 
     if src.kind == _sources.KIND_WEBCAM:
@@ -1035,9 +1052,10 @@ VISION_TOOL_SCHEMAS = {
                     "type": "string",
                     "description": (
                         "Which source to look through: a registry id "
-                        "('webcam:desk', 'screen:1', 'frigate:patio'), or "
-                        "'webcam'/'screen' for this persona's default one. "
-                        "A source outside this persona's scope is refused."
+                        "('webcam:desk', 'frigate:patio'), or 'webcam' for "
+                        "this persona's default camera. A source outside this "
+                        "persona's scope is refused, and a borrowed persona "
+                        "may not name the screen at all."
                     ),
                 },
                 "confidence_threshold": {

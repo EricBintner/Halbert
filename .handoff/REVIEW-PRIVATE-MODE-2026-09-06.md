@@ -1,9 +1,17 @@
 # REVIEW: Private mode — the writer audit, and the one thing that cannot forget
 
 **Date:** 2026-09-06
-**Status:** **review only. Not implementable.** Three decisions (§5) and one
-engine-level change in Haloysius (§4) block a spec, let alone code. Private
-mode stays absent from the UI meanwhile — see §7.
+**Status:** ~~review only, not implementable~~ **superseded in part, 2026-09-07.**
+All three §5 decisions were taken (D3 = Q1, D4 = Q2, D5 = the engine change
+deferred), and private mode is built and reachable: `persona/private_sources.py`,
+`continuity/ownership.py::route_observation`, three `require_local_admin`
+routes in `dashboard/routes/guest.py`, and the pill's picker with the P6
+statement. §7's "stays absent from the UI" is no longer true and is marked
+where it stands. What survives unchanged is §4 — the audit chain — and §6's
+requirements, which is why this document is still worth reading.
+
+**Two of its own claims were wrong, and both mattered — corrected in §2.3 and
+§4.**
 **Parent:** `.handoff/DESIGN-GUEST-PERSONA-2026-09-06.md` §6 and §11 phase 7.
 That document says the writer audit must be written before Phase 7 is
 sized. This is the first pass of it.
@@ -64,7 +72,7 @@ produced its input.
 | `continuity/provenance.py`, `continuity/consolidation.py` | derive from whatever produced them; follow their source |
 | `somatic/store.py` | self-management cycles; holds ids only, models stay in `findings/`/`approval/`. Wired into `state_machine` but optional (`None` = no-ops) |
 | `vision/cache.py` | anomaly screenshots on disk; episodic memory stores the URI, not the image. Its retention is 7-day TTL / 500MB — not a privacy control |
-| `audio/storage/speaker_store.py` | one table, `speaker_profiles`. **No production caller today** (`SpeakerStore(` and `update_centroid` have none outside the module). The adaptive `update_centroid` path would refine a voiceprint from whatever speech reaches it — put it on this list *before* it is wired, not after |
+| `audio/storage/speaker_store.py` | **Corrected 2026-09-07.** The class is `SpeakerProfileStore`, so the grep this row rested on could never have matched, and the conclusion drawn from it was wrong. It has **six** production call sites — `audio/pipeline.py:429` (every voice turn, inside `_process_speech_segment`, which is exactly the path a handed-over microphone feeds), `audio/speech/speaker_id.py:117`, `integrations/voice_auth_gate.py:154`, and three in `dashboard/routes/audio.py`. Only `update_centroid` is genuinely uncalled. So this is **not** a "classify it before it is wired" row: it is wired, on the private path, and belongs in §2.2 |
 
 ### 2.4 What the audit changed about the design's estimate
 
@@ -113,10 +121,20 @@ looking for it.
 > why this happened — a human utterance from the causing turn, a
 > deterministic rule that names itself, or `state_store.UNRECORDED`
 
-In practice the model supplies it per tool call
-(`tools/executor.py:935` — `args.get("reason")`, defaulting to
-`UNRECORDED`), so it is user-derived text: a paraphrase of what the person
-asked for.
+**Corrected 2026-09-07, and it narrows this blocker considerably.**
+`args.get("reason")` is not the generic tool path — it is inside `_write_file`
+(`tools/executor.py`), one of the five `WRITE_PLANE_TOOLS`. The generic path is
+`ToolExecutor._audit`, which does nothing unless `audit_fn` is set, and the
+agent's executor is built without one (`dashboard/routes/agent.py`). So an
+ordinary tool call writes **nothing** to the hash chain today.
+
+What remains true, and is why §4 still stands: the write-plane tools *do*
+carry the reason into the chain, and `WRITE_PLANE_TOOLS` is asserted disjoint
+from `GUEST_ALLOWED_TOOLS` (`persona/guest_tools.py`) precisely so a guest turn
+never reaches it. The blocker is therefore narrower than this section
+originally said — it binds the day a guest is allowed a write-plane tool, or
+the day `audit_fn` is wired on the agent path — but it is not gone, and the
+disjointness assertion is what is holding it.
 
 Consequences:
 
@@ -211,7 +229,12 @@ annoying.
 
 ---
 
-## 7. What holds until this is answered
+## 7. What held until this was answered — superseded 2026-09-07
+
+~~Private mode stays **absent from the UI**.~~ It was, until N1–N4 gated every
+wired sensor path (audio, vision, Frigate, Home Assistant) and the routes and
+picker landed. The reason it *stayed* absent that long is the argument below,
+which is still the right one and is why the order was sensors first:
 
 Private mode stays **absent from the UI**. No toggle exists, nothing claims
 it, and the guest persona ships without it (guest-persona §11 sequencing

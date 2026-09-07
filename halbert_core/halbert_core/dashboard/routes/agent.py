@@ -135,14 +135,14 @@ def get_agent():
         if is_screen_capture_enabled() or is_webcam_enabled():
             tool_executor.register_vision_tools()
 
-        # "Be ⟨name⟩" (N5), registered only when this machine actually knows
-        # somewhere to fetch a face from. Offering the verb with no homes
-        # would put a tool in front of the model whose only possible answer
-        # is that there is nobody to be.
+        # "Be ⟨name⟩" (N5). Registered unconditionally: the executor is a
+        # process-global singleton built once, so gating on "are there homes
+        # yet" froze the answer at first construction — add the first home
+        # and the verb stayed missing until a restart. The tool answers "no
+        # homes are known yet" for itself, which is the honest version of the
+        # same thing and does not go stale.
         try:
-            from ...persona.guest_homes import list_homes
-            if list_homes():
-                tool_executor.register_become_tool()
+            tool_executor.register_become_tool()
         except Exception as e:
             logger.warning(f"Become tool not registered: {e}")
 

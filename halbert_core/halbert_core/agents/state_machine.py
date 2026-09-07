@@ -533,7 +533,16 @@ class AgentStateMachine:
             # Track active session
             self.active_sessions[session_id] = self.ctx
 
-            logger.info(f"Starting agent processing: session={session_id}, query={query[:100]}")
+            # Not the query. This line put the first hundred characters of
+            # whatever the user said into the log on every turn, private mode
+            # and all — a copy of the words in a file the erase path does not
+            # reach and the ownership layer never sees. Length is enough to
+            # debug a turn; the words are in the transcript when they are
+            # Halbert's to keep.
+            logger.info(
+                "Starting agent processing: session=%s, query_chars=%d",
+                session_id, len(query or ""),
+            )
 
             yield StreamEvent.session_started(session_id, request_id)
 
@@ -1869,6 +1878,25 @@ class AgentStateMachine:
         diagnostic_tools = {"run_command", "execute_command", "shell", "bash"}
         return tool_name in diagnostic_tools
 
+    def _screen_is_the_machines_own(self) -> bool:
+        """True when a guest fronts and the screen is not the guest's to see.
+
+        The two automatic captures below reach ``vision_tools`` directly, so
+        neither passes ``ToolExecutor.execute`` and neither is covered by the
+        guest tool mask — a borrowed persona would be handed the active
+        window and its OCR without ever asking for a tool. The mask's own
+        list is the authority: if ``capture_active_window`` is denied to a
+        guest, so is taking one on its behalf.
+        """
+        try:
+            from ..persona.guest import current_guest
+            from ..persona.guest_tools import is_tool_allowed_for_guest
+        except Exception:
+            return False
+        if current_guest() is None:
+            return False
+        return not is_tool_allowed_for_guest("capture_active_window")
+
     async def _handle_planning(self) -> AsyncIterator[StreamEvent]:
         """
         PLANNING state: Analyze query, create plan, decide next action.
@@ -1882,7 +1910,8 @@ class AgentStateMachine:
         # enable (vision_config.yml) and the persona-level capture_on_intent
         # consent (being.yml senses.vision.capture_on_intent).
         if (self.ctx.intake and getattr(self.ctx.intake, 'has_vision_request', False)
-                and not self.ctx.images):
+                and not self.ctx.images
+                and not self._screen_is_the_machines_own()):
             try:
                 from ..vision.config import is_screen_capture_enabled
                 if is_screen_capture_enabled():
@@ -2902,7 +2931,7 @@ class AgentStateMachine:
                 # Only fires for command-execution tools, not search/read.
                 # OCR text only (no image) to avoid routing the turn
                 # through the more expensive vision model.
-                if self._should_diagnostic_capture(tool_name):
+                if self._should_diagnostic_capture(tool_name) and not self._screen_is_the_machines_own():
                     try:
                         from ..tools.vision_tools import capture_and_ocr
                         screen = await capture_and_ocr({"include_image": False})

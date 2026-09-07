@@ -60,6 +60,11 @@ export interface PrivateSource {
   label: string
   kind: string
   owner: 'halbert' | 'guest' | 'drop'
+  /** What handing THIS source over means, written by the server. The pill
+   * used to carry its own copy of this sentence and the two had already
+   * drifted — ours said "what it sees" with no source named, which reads as
+   * every camera. One author, scoped to the source. */
+  statement: string
 }
 
 /** A persona this machine could wear, in some home it knows. */
@@ -178,10 +183,14 @@ export function PresencePill() {
         fetch(apiUrl('/api/guest/private/sources')),
         fetch(apiUrl('/api/guest')),
       ])
-      if (cat.ok) setSources((await cat.json()).sources || [])
-      if (status.ok) setHandedOver((await status.json()).private_sources || {})
+      setSources(cat.ok ? (await cat.json()).sources || [] : [])
+      // Cleared on failure, not left standing. A stale tick beside a source
+      // name says "this is handed over" about a session that may have ended,
+      // which is the one thing this control must never say wrongly.
+      setHandedOver(status.ok ? (await status.json()).private_sources || {} : {})
     } catch {
-      // Non-fatal — the pill still shows who is fronting
+      setSources([])
+      setHandedOver({})
     }
   }, [])
 
@@ -201,7 +210,14 @@ export function PresencePill() {
 
   const fronting = currentInfo?.fronting ?? null
   useEffect(() => {
-    if (fronting && isLocalEndpoint(activeEndpoint)) loadPrivateSources()
+    if (fronting && isLocalEndpoint(activeEndpoint)) {
+      loadPrivateSources()
+    } else {
+      // No guest, or a body that is not this one: nothing is handed over, and
+      // the ticks must not outlive the session they described.
+      setSources([])
+      setHandedOver({})
+    }
   }, [fronting?.session_id, activeEndpoint, loadPrivateSources])
 
   const loadAvailable = useCallback(async () => {
@@ -330,20 +346,24 @@ export function PresencePill() {
               {isLocal && sources.length > 0 && (
                 <div className="space-y-1 pt-1">
                   <p className="text-[10px] font-medium">What {guestName} may have</p>
-                  {Object.keys(handedOver).length === 0 && (
+                  {Object.keys(handedOver).length === 0 && sources[0] && (
                     /* The private-mode review's P6, in front of the click that
                        makes it true. A toggle labelled "private" with no stated
                        scope is a promise the system cannot keep — the cameras,
-                       the microphone and the house sensors do not stop. */
+                       the microphone and the house sensors do not stop.
+                       Server-written, and each row's own sentence is on its
+                       tooltip, because handing over the desk webcam does not
+                       stop the patio camera. */
                     <p className="text-[10px] text-muted-foreground">
-                      Hand one over and {entityName} stops recording what you say
-                      and what it sees. {entityName} keeps recording what the
-                      machine and the rest of the house are doing. Life safety
-                      still reaches {entityName}.
+                      {sources[0].statement}
                     </p>
                   )}
                   {sources.map((src) => (
-                    <label key={src.id} className="flex items-center gap-2 text-[11px]">
+                    <label
+                  key={src.id}
+                  title={src.statement}
+                  className="flex items-center gap-2 text-[11px]"
+                >
                       <input
                         type="checkbox"
                         aria-label={`Hand ${src.label} to ${guestName}`}

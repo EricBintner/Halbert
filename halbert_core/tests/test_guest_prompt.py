@@ -156,7 +156,18 @@ class TestTheWarrant:
 
         private_sources.assign("webcam:desk")
         try:
-            assert "not to Macky" in build_warrant(session, "Macky").record
+            # An OFFERED persona has no home, so "they go to your home" would
+            # be untrue — the words go nowhere at all.
+            assert "not recorded" in build_warrant(session, "Macky").record
+
+            homed = guest.GuestSession(
+                id=session.id, persona=session.persona,
+                offered_by=session.offered_by, offered_by_name=session.offered_by_name,
+                started_at=session.started_at, started_mono=session.started_mono,
+                ttl_seconds=session.ttl_seconds, deadline=session.deadline,
+                home=guest.GuestHome(base_url="http://h2:1", persona_id="m", label="H2"),
+            )
+            assert "go to H2" in build_warrant(homed, "Macky").record
         finally:
             private_sources.reset_for_tests()
 

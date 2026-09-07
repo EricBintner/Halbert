@@ -56,6 +56,7 @@ def _every_agent_tool() -> ToolExecutor:
     executor = ToolExecutor(web_search=True)
     executor.register_system_tools()
     executor.register_vision_tools()
+    executor.register_become_tool()
     register_ha_tools(executor)
 
     class _Configured:
@@ -464,9 +465,88 @@ class TestTheBecomeTool:
         assert "did not answer" in said
         assert guest.current_guest() is None
 
-    def test_it_is_not_registered_when_no_home_is_known(self):
-        """Offering the verb with no homes puts a tool in front of the model
-        whose only possible answer is that there is nobody to be."""
+    def test_it_is_registered_unconditionally(self):
+        """It used to be gated on "are there homes yet", decided once on a
+        process-global executor — so adding the first home left the verb
+        missing until a restart. The tool answers for itself instead."""
+        from halbert_core.persona.become_tool import BECOME_TOOL_NAME
         from halbert_core.persona.guest_homes import list_homes
 
-        assert list_homes() == []
+        assert list_homes() == []          # no homes...
+        assert BECOME_TOOL_NAME in self._executor().tools   # ...and still offered
+
+    @pytest.mark.asyncio
+    async def test_it_uses_the_stored_token_rather_than_asking_for_one(self, tmp_path):
+        """Every other test here stubs the catalogue, so get_home returns None
+        and the token branch never runs. This drives the real registry."""
+        from halbert_core.persona import guest_homes
+        from halbert_core.persona.become_tool import become_persona
+
+        guest_homes.add_home("http://h2:8002", "H2", "the-secret")
+        seen = []
+
+        def transport(method, url, body, headers):
+            seen.append(headers.get("Authorization"))
+            if url.endswith("/api/personas"):
+                return 200, {"personas": [{"id": "marnie-7", "name": "Marnie"}]}
+            return 200, {"id": "marnie-7", "name": "Marnie"}
+
+        sibling.default_transport, original = transport, sibling.default_transport
+        try:
+            said = await become_persona({"name": "Marnie"})
+        finally:
+            sibling.default_transport = original
+
+        assert "Marnie is now speaking" in said
+        assert seen and all(h == "Bearer the-secret" for h in seen), seen
+
+    @pytest.mark.asyncio
+    async def test_a_home_can_be_named_by_its_label(self, monkeypatch):
+        """The listing shows a home by its label, so a caller answering with
+        what it read could never match a base-URL-only comparison — the only
+        way out of an ambiguous name was a URL nothing had shown them."""
+        from halbert_core.persona import guest_homes
+        from halbert_core.persona.become_tool import become_persona
+
+        monkeypatch.setattr(guest_homes, "available_personas", lambda *a, **k: {
+            "personas": [
+                {"persona_id": "a", "name": "Marnie", "home_label": "H2", "base_url": "http://a:1"},
+                {"persona_id": "b", "name": "Marnie", "home_label": "The study", "base_url": "http://b:1"},
+            ],
+            "unreachable": [],
+        })
+        monkeypatch.setattr(
+            sibling, "default_transport",
+            lambda m, u, b, h: (200, {"id": "b", "name": "Marnie"}))
+
+        said = await become_persona({"name": "Marnie", "home": "The study"})
+        assert "Marnie is now speaking" in said
+
+    @pytest.mark.asyncio
+    async def test_wearing_a_face_by_saying_so_announces_it(self, monkeypatch):
+        """The route announces; before this the chat verb did not, so a face
+        went on with nothing on the bell — and the end-of-session observer,
+        installed by the same call, was never registered either."""
+        from halbert_core.persona import guest_homes
+        from halbert_core.persona.become_tool import become_persona
+        from halbert_core.proactive.events import get_event_bus
+
+        get_event_bus().clear()
+        monkeypatch.setattr(guest_homes, "available_personas", lambda *a, **k: {
+            "personas": [{"persona_id": "m", "name": "Marnie", "home_label": "H2",
+                          "base_url": "http://h2:1"}],
+            "unreachable": [],
+        })
+        monkeypatch.setattr(
+            sibling, "default_transport",
+            lambda m, u, b, h: (200, {"id": "m", "name": "Marnie"}))
+
+        await become_persona({"name": "Marnie"})
+        assert [e.data["state"] for e in get_event_bus().get_recent()] == ["fronting"]
+
+        guest.withdraw(reason="ended_by_user", by="user")
+        # The ending observer is sync and schedules its publish on the running
+        # loop, so it lands on the next tick rather than inside withdraw().
+        import asyncio as _asyncio
+        await _asyncio.sleep(0)
+        assert [e.data["state"] for e in get_event_bus().get_recent()] == ["fronting", "ended"]

@@ -1348,6 +1348,56 @@ class SqliteConversationStore:
             "visible_in_timeline": bool(row["visible_in_timeline"]),
         }
 
+    def threads_for_request(self, request_id: str) -> List[str]:
+        """The threads that hold a message written under ``request_id``.
+
+        ``forget_request`` deletes the rows; the thread's *title* and its
+        stored *receipt* are two more copies of the same words in columns it
+        does not touch, and the caller needs to know which threads to blank.
+        Call this BEFORE forgetting — afterwards there is nothing to join on.
+        """
+        if self._conn is None or not request_id:
+            return []
+        try:
+            with self._lock:
+                return [
+                    str(r[0]) for r in self._conn.execute(
+                        "SELECT DISTINCT conversation_id FROM messages "
+                        "WHERE json_extract(metadata, '$.request_id') = ?",
+                        (request_id,),
+                    ).fetchall()
+                ]
+        except Exception as e:
+            logger.warning(f"threads_for_request failed for {request_id}: {e}")
+            return []
+
+    def blank_thread_words(self, thread_id: str, title: str = "Forgotten session") -> bool:
+        """Replace a thread's title and drop its stored receipt.
+
+        The thread and its timeline stay — that a conversation happened is not
+        the thing being forgotten — but the words it was titled and summarised
+        with go, along with their FTS rows.
+        """
+        if self._conn is None or not thread_id:
+            return False
+        try:
+            with self._lock, self._conn:
+                # The receipt is a COLUMN on conversations, not a table of
+                # its own; only its search index is separate.
+                self._conn.execute(
+                    "UPDATE conversations SET title = ?, title_source = 'forgotten', "
+                    "receipt = '' WHERE id = ?", (title, thread_id),
+                )
+                try:
+                    self._conn.execute(
+                        "DELETE FROM receipts_fts WHERE thread_id = ?", (thread_id,))
+                except Exception:
+                    pass
+            return True
+        except Exception as e:
+            logger.warning(f"blank_thread_words failed for {thread_id}: {e}")
+            return False
+
     def forget_request(self, request_id: str) -> int:
         """Delete every message written under ``request_id`` — the
         transcript's half of "forget that session" (design §4.2, I7). The

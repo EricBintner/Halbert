@@ -346,6 +346,25 @@ the Being tab has ever sent was discarded by Pydantic. The vision-autonomy
 panel rendered, said "Saved", and changed nothing. Fixed here with a merge
 rather than a replace, and three round-trip tests.
 
+### 10.6 What the branch audit found afterwards (2026-09-07)
+
+Three of this document's own invariants did not hold, and the fix for one had
+never executed:
+
+- **V3, "the id is the contract".** `frigate_event_mapper` imported
+  `frigate_source_id` from four packages up — beyond the top level — and the
+  bare `except` beneath it swallowed the ImportError, so the unslugged
+  fallback ran on every message. Any camera whose name was not already a
+  lowercase slug routed under an id the picker could not offer.
+- **I1, tighten only.** `detect_objects` and `detect_faces` are allowed to a
+  guest and took a free `source`; the CV path called `capture_screenshot` as a
+  plain function, so the guest mask never ran. The schema advertised it.
+- **V2, no silent substitution.** `capture_full` clamped an out-of-range
+  monitor index to 0, which in mss is the union of every display.
+
+All fixed in `b02bc04d`, each with a regression test in the shape that would
+have caught it.
+
 ### 10.4 Still open
 
 - The `_tool_frigate_*` / `_tool_vision_*` handlers in `camera_gate.py` have

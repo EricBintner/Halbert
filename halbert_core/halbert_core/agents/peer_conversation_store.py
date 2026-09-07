@@ -282,6 +282,24 @@ class PeerConversationStore:
         timestamp: Optional[float] = None,
         visible_in_timeline: bool = True,
     ) -> Optional[int]:
+        # The local store asks ownership before it writes a row
+        # (``conversation_sqlite.append_message``); this one sends the row to
+        # the canonical host instead, over the peer link, and asked nothing.
+        # In private mode that shipped the guest's conversation to another
+        # machine — further than the disk this branch was written to keep it
+        # off. Same question, same answer, before the request is made.
+        try:
+            from ..continuity.ownership import Owner, route_write
+            owner = route_write("conversation.message")
+        except Exception:
+            owner = None
+        if owner is not None and owner is not Owner.HALBERT:
+            logger.info(
+                "Message not forwarded to the canonical host (%s role=%s): a guest fronts",
+                owner.value, role,
+            )
+            return None
+
         return self._invoke("append_message", [thread_id, role, content], {
             "origin": origin, "turn_id": turn_id, "session_id": session_id,
             "status": status, "blocks": blocks,
