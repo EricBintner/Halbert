@@ -98,7 +98,17 @@ EXECUTE_CODE_SCHEMA: Dict = {
     "name": TOOL_NAME,
     "description": (
         "Run one short Python script that calls Halbert tools via the "
-        "`halbert_tools` module; only the script's stdout is returned."
+        "`halbert_tools` module (e.g. `halbert_tools.recall_memory(query=...)`) "
+        "to collapse a multi-step pipeline into a single tool call. "
+        "Use for 3+ tool calls with logic between them: filtering/reducing large "
+        "outputs before they enter context, branching, or loops. "
+        "Prefer normal tool calls for 1-2 calls. "
+        "Tool functions take keyword arguments and return dicts (do not "
+        "json.loads() them); only stdout is returned, capped at 50KiB head + "
+        "50KiB tail with a spill-file pointer to the full output. Tool calls "
+        "inside the script go through the same policy pipeline as interactive "
+        "calls, so a refused call returns an {'error': ...} dict the script "
+        "can branch on. print() a compact summary as the script's last step."
     ),
     "parameters": {
         "type": "object",
