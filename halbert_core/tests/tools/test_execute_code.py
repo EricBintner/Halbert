@@ -228,25 +228,15 @@ class TestGuestFloor:
 # Write-plane deferral (behind the PACKET-02 lattice)
 # ---------------------------------------------------------------------------
 
-def _lattice_merged() -> bool:
-    try:
-        import halbert_core.persona.policy  # noqa: F401
-        return True
-    except ImportError:
-        return False
-
-
-@pytest.mark.skipif(
-    not _lattice_merged(),
-    reason=(
-        "PACKET-02 lattice (persona/policy.py) is not merged yet; write-plane "
-        "stubs stay deferred behind its guest-floor test, per the packet's own "
-        "instruction"
-    ),
-)
+# The PACKET-02 lattice (persona/policy.py, persona/admission.py,
+# persona/claims.py) is merged on this branch, so the deferral it gates is
+# now asserted unconditionally: an owner script still cannot reach the
+# write plane. If this test fails because the lattice is missing, that is
+# a real regression — the skipif that used to guard it was retired when
+# wave 1 merged the lattice in.
 class TestWritePlaneStubsDeferredBehindLattice:
-    """Once the lattice is merged this class stops skipping: the per-call
-    write-plane gate it provides is what lets write-plane stubs into scripts."""
+    """The per-call write-plane gate the lattice provides is what keeps
+    write-plane stubs out of scripts; this class asserts it holds."""
 
     async def test_owner_script_cannot_reach_write_plane(self):
         executor = _executor()
