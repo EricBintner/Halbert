@@ -296,16 +296,22 @@ def get_agent():
         except Exception as e:
             logger.warning(f"Could not register Frigate tools (non-fatal): {e}")
 
-        # GPU tools — detection uses lspci/nvidia-smi, Linux-only. On other
-        # platforms the tools would only ever answer "unsupported", so the
-        # model is not offered them.
-        import platform as _platform
-        if _platform.system() == "Linux":
-            try:
-                from ...tools.gpu_tools import register_gpu_tools
-                register_gpu_tools(tool_executor)
-            except Exception as e:
-                logger.warning(f"Could not register GPU tools (non-fatal): {e}")
+        # GPU tools — probe dispatcher handles all platforms (Linux NVIDIA/AMD,
+        # macOS Apple Silicon, future Windows). The probes themselves return
+        # structured availability info; no platform gate needed here.
+        try:
+            from ...tools.gpu_tools import register_gpu_tools
+            register_gpu_tools(tool_executor)
+        except Exception as e:
+            logger.warning(f"Could not register GPU tools (non-fatal): {e}")
+
+        # AI accelerator tools — TPU/NPU/ANE detection (Coral, Hailo, MemryX,
+        # Intel NPU, AMD NPU, Apple ANE). Probes degrade gracefully per platform.
+        try:
+            from ...tools.accelerator_tools import register_accelerator_tools
+            register_accelerator_tools(tool_executor)
+        except Exception as e:
+            logger.warning(f"Could not register accelerator tools (non-fatal): {e}")
         _agent_instance = AgentStateMachine(
             llm_client=llm_client,
             tool_executor=tool_executor,
