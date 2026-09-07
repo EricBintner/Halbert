@@ -303,6 +303,50 @@ class TimelineStore:
         finally:
             conn.close()
 
+    #: Row kinds that are *about a person* rather than about the machine.
+    #: An occupancy row is someone's arrival or departure; the state row that
+    #: produced it names the same entity. A disk-health event names no person
+    #: and is machine-state history, so subject erasure does not touch it.
+    PERSON_SCOPED_EVENT_TYPES = ("occupancy_change", "ha_state_change")
+
+    def forget_subject(self, entity_id: str) -> int:
+        """Erase the rows this ledger holds *about* one entity.
+
+        ``timeline_events`` has no ``request_id``, so ``forget_request``
+        cannot reach it the way it reaches the change ledger. The entity id is
+        what a person can actually point at -- "forget where I have been" --
+        so subject is the key erasure uses here.
+
+        Returns the number of rows removed, and the count is the report: a
+        caller that says "forgotten" without one is the failure mode
+        ``ERASURE_LIMITS`` exists to prevent. Secure-deletes and checkpoints
+        afterwards so the old text is not left in the file, matching what the
+        change ledger already promises.
+        """
+        if not entity_id:
+            return 0
+        placeholders = ",".join("?" for _ in self.PERSON_SCOPED_EVENT_TYPES)
+        with self._lock:
+            conn = sqlite3.connect(self.db_path)
+            try:
+                conn.execute("PRAGMA secure_delete = ON")
+                cur = conn.execute(
+                    f"""DELETE FROM timeline_events
+                        WHERE entity_id = ?
+                          AND event_type IN ({placeholders})""",
+                    (entity_id, *self.PERSON_SCOPED_EVENT_TYPES),
+                )
+                removed = cur.rowcount or 0
+                conn.commit()
+                if removed:
+                    conn.execute("VACUUM")
+            finally:
+                conn.close()
+        logger.info(
+            "Timeline: erased %d row(s) for subject %s", removed, entity_id
+        )
+        return removed
+
     def cleanup(self, max_age_days: int = 90) -> int:
         """Delete events older than max_age_days.
 

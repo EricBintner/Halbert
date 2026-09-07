@@ -1013,17 +1013,31 @@ low disk space and activates the cleanup skill before the user asks.
 
 ## 11. Implementation Phases
 
-> **Status correction 2026-09-05.** The "done" marks below describe the code
-> units, and every one of them exists and is tested. What they do not say is
-> that **no production path constructs a `SkillMatcher`**: `dashboard/routes/agent.py`
-> builds `IntakePipeline` without one, `ComposedSkills.prompt` has no consumer,
-> `set_skill_safety()` is called only from tests, and `allowed_tools` /
-> `knowledge_scope` are read nowhere outside `skills/`. Phase 3's "verified end
-> to end against the live daemon" was verified through a matcher the test
-> harness constructed directly. So on a shipped install no skill activates,
-> nothing is injected, and nothing is enforced. The wiring is `ROADMAP.md`
-> row `SKILL-1` (`.handoff/HANDOFF-OBSERVATION-LENSES-2026-09-04.md` §3.1 and
-> §8 B1–B3). The rows below are annotated where they overclaimed.
+> **Wired 2026-09-06 (`SKILL-1`, merged `3efd3145`).** The correction below
+> stood from 2026-09-05 until B1–B3 landed; it is kept because the rows further
+> down are annotated against it, and because how a "verified end to end" claim
+> came to be false is worth remembering.
+>
+> What is true now: `dashboard/routes/agent.py` constructs a `SkillMatcher`
+> over `daemon_skill_dirs()` and passes it to `IntakePipeline`;
+> `ComposedSkills.prompt` reaches `messages[0]` through
+> `AgentStateMachine._build_messages`, capped per skill and in total; and
+> `set_skill_safety()` is installed on the executor's framework after intake
+> and cleared in the turn's `finally`. `allowed_tools` is still read nowhere
+> outside `skills/` — tool-allowlist binding remains deferred to `TRUST-1`
+> (`C3-14`) and is the one clause of the original claim still outstanding.
+>
+> The original correction, for the record:
+>
+> > The "done" marks below describe the code units, and every one of them
+> > exists and is tested. What they do not say is that **no production path
+> > constructs a `SkillMatcher`**: `dashboard/routes/agent.py` builds
+> > `IntakePipeline` without one, `ComposedSkills.prompt` has no consumer,
+> > `set_skill_safety()` is called only from tests, and `allowed_tools` /
+> > `knowledge_scope` are read nowhere outside `skills/`. Phase 3's "verified
+> > end to end against the live daemon" was verified through a matcher the
+> > test harness constructed directly. So on a shipped install no skill
+> > activates, nothing is injected, and nothing is enforced.
 >
 > **Resequenced 2026-08-27.** Two changes from the original plan. A Phase 0
 > was added for corrections the later phases silently assumed were already
@@ -1122,11 +1136,13 @@ Decisions taken during implementation:
 | Assign roles to the three shipped `*_admin` scopes | **blocked** — see below | — |
 | Path-mask migration: role scopes from staged copies to masks (§16.9) | **blocked** — see below | `roles.py`, template |
 
-**Deliverable (met in the test harness, not in production — 2026-09-05):**
-Halbert ships with 6 domain skills that route correctly *when a matcher is
-constructed*, which `tests/test_skills_builtin.py` does and the dashboard route
-does not. The walkthrough below was run through that harness against the live
-daemon, never through a chat turn: *"what's my sshd_config
+**Deliverable (met in production — 2026-09-06, `SKILL-1`, `3efd3145`):**
+Halbert ships with 8 domain skills that route correctly. Until B1 landed this
+read "met in the test harness, not in production": a matcher had to be
+constructed for any of it to happen, which `tests/test_skills_builtin.py` did
+and the dashboard route did not, so the walkthrough below had only ever been
+run through that harness and never through a chat turn. The route constructs
+one now, over `daemon_skill_dirs()`. The walkthrough: *"what's my sshd_config
 PermitRootLogin set to?"* activates `security-ops` + `config-ops`, leads with
 `security-ops` (critical priority), requests the `security-ops` role, finds no
 scope carrying it, falls back to `host`, and returns this machine's real
