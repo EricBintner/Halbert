@@ -11,9 +11,14 @@
 > worktree-isolation conftest · retention pruning at construction · `ERASURE_LIMITS`
 > naming the ledger · severity at the sink · `title` in the row contract.
 >
-> **Still open, in dependency order:** the founder calls in §1 (`CD-8`, `CD-9`,
-> `CD-10`, `C4-07`, `C2-03`, `RQ-1..9`) → branch 3 (A3/A4/A5) → branch 4 (C0/C1a)
-> → the `CD-1` gate → branches 5 and 6 → §8 and §9.
+> **2026-09-06/07 update.** `CD-8`, `CD-9` and `CD-10` are decided
+> (`DECISIONS.md`), so **branches 3, 4 and 5 are unblocked**. `C4-07` and
+> `C2-03` are still unratified and gate only branch 6 and C2. §11's two egress
+> leaks are closed (`841697cf`), as are subject-scoped occupancy erasure, the
+> daily retention job and `DOCS-1`.
+>
+> **Still open, in dependency order:** branch 3 (A3/A4/A5) → branch 4 (C0/C1a)
+> → the `CD-1` gate → branches 5 and 6 → §8 and §9. `RQ-1..9` gate §9 only.
 >
 > **Highest-value thing not in any branch:** §11's first two rows. Two egress paths
 > reach the network with no `CAP_WEB` gate, against a stated invariant that every
