@@ -155,6 +155,53 @@ def _save(homes: List[GuestHomeRecord]) -> None:
         raise
 
 
+class Ambiguous(LookupError):
+    """A name that lives in more than one home. Which one is the user's to say."""
+
+    def __init__(self, name: str, homes: List[str]):
+        self.name = name
+        self.homes = homes
+        super().__init__(
+            f"{name} lives in more than one home ({', '.join(sorted(homes))}); say which."
+        )
+
+
+class NoSuchPersona(LookupError):
+    """Nobody by that name, in any home that answered."""
+
+    def __init__(self, name: str, unreachable: List[str]):
+        self.name = name
+        self.unreachable = unreachable
+        detail = f"No persona called {name!r} in any known home"
+        if unreachable:
+            detail += f" (unreachable: {', '.join(unreachable)})"
+        super().__init__(detail)
+
+
+def resolve_persona(name: str, base_url: str = "", transport: Any = None) -> Dict[str, Any]:
+    """The one persona ``name`` refers to, or a refusal that says why.
+
+    Shared by the route and the agent tool deliberately: two callers resolving
+    a name two ways is how "be Marnie" starts meaning different faces
+    depending on where you said it.
+
+    Answering with one of several matches would be a guess about whose face
+    the user meant, so an ambiguous name raises rather than picking.
+    """
+    catalogue = available_personas(transport)
+    wanted = " ".join(str(name or "").split()).lower()
+    matches = [
+        p for p in catalogue["personas"]
+        if p["name"].strip().lower() == wanted
+        and (not base_url or p["base_url"] == str(base_url).rstrip("/"))
+    ]
+    if not matches:
+        raise NoSuchPersona(name, [u["home"] for u in catalogue["unreachable"]])
+    if len(matches) > 1:
+        raise Ambiguous(name, [m["home_label"] for m in matches])
+    return matches[0]
+
+
 def available_personas(transport: Any = None) -> Dict[str, Any]:
     """Every persona this machine could wear, across every known home.
 

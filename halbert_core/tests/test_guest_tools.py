@@ -345,3 +345,128 @@ class TestTheWindowTools:
         )
         assert getattr(persona, "senses", None) in (None, {}, [])
         assert "senses" in (dropped or []), dropped
+
+
+class TestTheBecomeTool:
+    """N5's chat half. "Be Marnie" said in the conversation rather than
+    clicked in the pill — and denied to a guest, which is the whole safety
+    story: a guest that could call it would walk out of its own session into
+    another persona's face without the user asking."""
+
+    @pytest.fixture(autouse=True)
+    def _homes(self, tmp_path, monkeypatch):
+        import halbert_core.utils.platform as plat
+        monkeypatch.setattr(plat, "get_config_dir", lambda: tmp_path)
+
+    @staticmethod
+    def _executor():
+        executor = ToolExecutor(web_search=True)
+        executor.register_become_tool()
+        return executor
+
+    def test_it_is_denied_to_a_guest(self):
+        from halbert_core.persona.become_tool import BECOME_TOOL_NAME
+
+        assert BECOME_TOOL_NAME in GUEST_DENIED_TOOLS
+        assert BECOME_TOOL_NAME not in GUEST_ALLOWED_TOOLS
+        assert not is_tool_allowed_for_guest(BECOME_TOOL_NAME)
+
+    def test_a_guest_is_never_offered_it(self):
+        from halbert_core.persona.become_tool import BECOME_TOOL_NAME
+
+        executor = self._executor()
+        _front()
+        offered = {s["function"]["name"] for s in executor.get_schemas()}
+        assert BECOME_TOOL_NAME not in offered
+
+    @pytest.mark.asyncio
+    async def test_a_guest_naming_it_anyway_is_refused(self):
+        from halbert_core.persona.become_tool import BECOME_TOOL_NAME
+
+        executor = self._executor()
+        _front()
+        result = await executor.execute(BECOME_TOOL_NAME, {"name": "Someone"})
+        assert not result.success
+        assert "not available while" in (result.error or "")
+
+    @pytest.mark.asyncio
+    async def test_with_no_homes_it_says_there_is_nobody_to_be(self):
+        from halbert_core.persona.become_tool import become_persona
+
+        assert "No homes are known" in await become_persona({})
+
+    @pytest.mark.asyncio
+    async def test_with_no_name_it_lists_who_is_available(self, monkeypatch):
+        from halbert_core.persona import guest_homes
+        from halbert_core.persona.become_tool import become_persona
+
+        monkeypatch.setattr(guest_homes, "available_personas", lambda *a, **k: {
+            "personas": [{"persona_id": "m", "name": "Marnie", "home_label": "H2",
+                          "base_url": "http://h2:1"}],
+            "unreachable": [{"home": "The study", "error": "timeout"}],
+        })
+        said = await become_persona({})
+        assert "Marnie" in said and "H2" in said
+        assert "The study did not answer" in said
+
+    @pytest.mark.asyncio
+    async def test_a_name_in_two_homes_asks_which(self, monkeypatch):
+        from halbert_core.persona import guest_homes
+        from halbert_core.persona.become_tool import become_persona
+
+        monkeypatch.setattr(guest_homes, "available_personas", lambda *a, **k: {
+            "personas": [
+                {"persona_id": "a", "name": "Marnie", "home_label": "H2", "base_url": "http://a:1"},
+                {"persona_id": "b", "name": "Marnie", "home_label": "The study", "base_url": "http://b:1"},
+            ],
+            "unreachable": [],
+        })
+        said = await become_persona({"name": "Marnie"})
+        assert "more than one home" in said
+        assert guest.current_guest() is None
+
+    @pytest.mark.asyncio
+    async def test_being_someone_wears_them_and_says_what_stayed(self, monkeypatch):
+        from halbert_core.persona import guest_homes
+        from halbert_core.persona.become_tool import become_persona
+
+        monkeypatch.setattr(guest_homes, "available_personas", lambda *a, **k: {
+            "personas": [{"persona_id": "marnie-7", "name": "Marnie", "home_label": "H2",
+                          "base_url": "http://h2:8002"}],
+            "unreachable": [],
+        })
+        monkeypatch.setattr(
+            sibling, "default_transport",
+            lambda method, url, body, headers: (200, {"id": "marnie-7", "name": "Marnie"}))
+
+        said = await become_persona({"name": "marnie"})
+        assert "Marnie is now speaking" in said
+        assert "still this machine's" in said
+        live = guest.current_guest()
+        assert live is not None and live.persona.name == "Marnie"
+
+    @pytest.mark.asyncio
+    async def test_a_home_that_does_not_answer_is_said_plainly(self, monkeypatch):
+        from halbert_core.persona import guest_homes
+        from halbert_core.persona.become_tool import become_persona
+
+        monkeypatch.setattr(guest_homes, "available_personas", lambda *a, **k: {
+            "personas": [{"persona_id": "m", "name": "Marnie", "home_label": "H2",
+                          "base_url": "http://h2:1"}],
+            "unreachable": [],
+        })
+
+        def dead(method, url, body, headers):
+            raise OSError("connection refused")
+
+        monkeypatch.setattr(sibling, "default_transport", dead)
+        said = await become_persona({"name": "Marnie"})
+        assert "did not answer" in said
+        assert guest.current_guest() is None
+
+    def test_it_is_not_registered_when_no_home_is_known(self):
+        """Offering the verb with no homes puts a tool in front of the model
+        whose only possible answer is that there is nobody to be."""
+        from halbert_core.persona.guest_homes import list_homes
+
+        assert list_homes() == []

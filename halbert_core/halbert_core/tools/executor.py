@@ -1049,6 +1049,20 @@ class ToolExecutor:
             if handler:
                 self.register(name, handler, schema)
 
+    def register_become_tool(self):
+        """Register "be ⟨name⟩" (N5).
+
+        Its own registrar rather than a line in another, because whether this
+        machine may wear a face from somewhere else is a decision an operator
+        should be able to see taken, not a side effect of registering system
+        tools.
+        """
+        from ..persona.become_tool import (
+            BECOME_TOOL_NAME, BECOME_TOOL_SCHEMA, become_persona,
+        )
+
+        self.register(BECOME_TOOL_NAME, become_persona, BECOME_TOOL_SCHEMA)
+
     def register_vision_tools(self):
         """Register vision capture tools (screen, webcam).
 
