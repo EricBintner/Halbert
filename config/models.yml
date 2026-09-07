@@ -42,6 +42,15 @@ llm_config:
     endpoint_id: ep_local_ollama
     model: ""
 
+  # Optional. Internal side tasks (summarization, titling, future TTS
+  # summarization) resolve a small model on their own; pin one here only if
+  # you want to choose it yourself. Leave empty and nothing changes — side
+  # tasks use the chat model.
+  utility_model:
+    enabled: false
+    endpoint_id: ep_local_ollama
+    model: ""
+
 # Compression system (Phase 72 port from LinuxBrain)
 # 3-tier: LinguaCompressor (178MB neural) -> SemanticCompressor (rule-based) -> Noop
 compression:
