@@ -4,6 +4,7 @@
 import pytest
 from halbert_core.persona.policy import (
     SecurityLevel, AskPolicy, min_security, max_ask, PolicyPair, merge_policies,
+    GUEST_WRITE_PLANE_FLOOR,
 )
 
 def test_security_order_and_min():
@@ -33,3 +34,15 @@ def test_merge_empty_is_deny_and_ask():
     merged = merge_policies([])
     assert merged.security is SecurityLevel.DENY
     assert merged.ask is AskPolicy.ALWAYS
+
+
+from halbert_core.persona import guest_tools  # noqa: E402
+
+
+def test_guest_floor_agrees_with_existing_allowlist():
+    """The lattice's guest write-plane floor must agree with guest_tools' self-checked invariant:
+    GUEST_ALLOWED_TOOLS ∩ WRITE_PLANE_TOOLS = ∅. Lattice is a projection of the allowlist,
+    not a second authority."""
+    assert not (set(guest_tools.GUEST_ALLOWED_TOOLS) & set(guest_tools.WRITE_PLANE_TOOLS))
+    # and the floor the lattice would assign to those tools is DENY
+    assert GUEST_WRITE_PLANE_FLOOR.security is SecurityLevel.DENY
