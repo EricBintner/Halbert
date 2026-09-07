@@ -186,8 +186,8 @@ or the product boundary: `com.apple.security.temporary-exception.*`,
 `com.apple.security.inherit` for privileged helpers, and any Full Disk Access
 equivalent.
 
-`src-tauri/tauri.conf.json` currently sets `macOS.entitlements: null` and a single
-`ai.halbert.dashboard` identifier for all targets. Both need per-channel values
+`src-tauri/tauri.conf.json` currently sets `macOS.entitlements: null` and the dev
+identifier `ai.halbert.dev` for all targets. Both need per-channel values
 before submission — see §7.
 
 ---
@@ -261,13 +261,13 @@ of them is blocked on the founder decision.
    administration features, the licensing analysis, the entitlements and the product
    differentiation all have to be redone.
 
-4. **Bundle identifiers reconciled** (`FDR-03`): `ai.halbert.home` (App Store),
-   `ai.halbert.pro` (direct DMG), `ai.halbert.dashboard` (dev, internal and Linux —
-   matching the already-published flatpak app-id rather than renaming it).
-   **Not yet applied:** `config/platforms.yml` still says `ai.halbert.macos.*`, and
-   `scripts/build-macos.sh` still has no per-channel identifier or entitlements
-   injection. Per-channel entitlements files (§4.3) do not exist yet. That is the
-   `DIST-1` work.
+4. **Bundle identifiers reconciled** (`SEC-D10`, superseding `FDR-03`):
+   `config/platforms.yml` is canonical — `ai.halbert.macos.free` (App Store),
+   `ai.halbert.macos.pro` (direct DMG), `ai.halbert.linux` (Linux packages),
+   `ai.halbert.dev` (dev builds).
+   **Not yet applied:** `scripts/build-macos.sh` still has no per-channel identifier
+   or entitlements injection, and per-channel entitlements files (§4.3) do not
+   exist yet. That is the `DIST-1` work.
 
 ### Still open
 
