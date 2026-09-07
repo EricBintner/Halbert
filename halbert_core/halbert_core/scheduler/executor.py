@@ -21,9 +21,11 @@ Research: https://betterstack.com/community/guides/scaling-python/apscheduler-sc
 """
 
 from __future__ import annotations
+import json
 import logging
 import os
 import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
@@ -40,6 +42,8 @@ except ImportError:
 
 from .job import Job
 from .engine import SchedulerEngine
+from .restart_budget import RestartBudget, RestartDecision
+from .run_receipts import RunReceiptStore
 from ..utils.retry import exponential_backoff_retry, STANDARD_TASK_POLICY
 from ..utils.paths import data_subdir
 from ..obs.tracing import trace_call
@@ -148,6 +152,27 @@ class AutonomousExecutor:
         self.enable_guardrails = enable_guardrails
         self.timezone = timezone
         self.scheduler_engine = SchedulerEngine()
+
+        # Packet 03 B1: pre-execution run receipts (JSON-backed, atomic
+        # fsync — deliberately not SQLite, matching the SchedulerEngine
+        # convention) and the sliding-window restart budget that bounds boot
+        # re-runs of interrupted jobs. The receipts are a *pre-execution
+        # marker*, not the outcome ledger that was deliberately removed
+        # (audit F1) — keep them minimal or the same objection returns.
+        # The lock serializes receipt writes across the worker pool: the
+        # store's whole-file flush is not safe under concurrent mutations.
+        self._receipts_lock = threading.Lock()
+        self.receipts = RunReceiptStore(
+            os.path.join(data_subdir("scheduler"), "receipts.json")
+        )
+        self.restart_budget = RestartBudget()
+        self._restart_ledger_path = os.path.join(
+            data_subdir("scheduler"), "restarts.json"
+        )
+        self._restart_ledger = self._load_restart_ledger()
+        #: Jobs whose boot recovery found an interrupted receipt; they get
+        #: one budget-checked re-run when their callable re-registers.
+        self._boot_recovery_pending: set = set()
         
         # Initialize guardrails (Phase 3 M6)
         if self.enable_guardrails:
@@ -212,14 +237,152 @@ class AutonomousExecutor:
         )
     
     def start(self):
-        """Start the scheduler (non-blocking)."""
+        """Start the scheduler (non-blocking).
+
+        Packet 03 B1: before any job is (re-)registered, receipts left
+        ``running`` by a dead owner are marked ``interrupted``. The jobs
+        they name go into ``_boot_recovery_pending`` and get one bounded,
+        restart-budget-checked re-run when their callable re-registers
+        (jobs are re-registered at every boot; see the C4-01 module note).
+        """
         if self._running:
             logger.warning("Scheduler already running")
             return
-        
+
+        self._recover_receipts_on_boot()
         self.scheduler.start()
         self._running = True
         logger.info("Autonomous scheduler started")
+
+    # -- packet 03 B1: boot recovery ---------------------------------------
+
+    def _recover_receipts_on_boot(self) -> None:
+        """Interrupt dead-owner running receipts; queue one re-run per job."""
+        try:
+            recovered = self.receipts.recover_on_boot()
+        except Exception as e:
+            logger.warning(f"Boot receipt recovery failed (non-fatal): {e}")
+            return
+        if not recovered:
+            return
+        pending = set()
+        for rid in recovered:
+            job_id = self.receipts.receipt(rid).get("job_id")
+            if job_id:
+                pending.add(job_id)
+        self._boot_recovery_pending = pending
+        logger.info(
+            f"Boot recovery: {len(recovered)} interrupted receipt(s), "
+            f"re-run queued for {sorted(pending)}"
+        )
+
+    def _load_restart_ledger(self) -> Dict[str, List[float]]:
+        """Per-job restart epochs, surviving reboots (crash-loop across
+        boots is the case the budget exists for). Malformed entries are
+        dropped loudly-by-omission; the ledger is bookkeeping, not truth."""
+        try:
+            with open(self._restart_ledger_path, "r", encoding="utf-8") as f:
+                raw = json.load(f)
+        except (OSError, ValueError):
+            return {}
+        if not isinstance(raw, dict):
+            return {}
+        ledger: Dict[str, List[float]] = {}
+        for job_id, stamps in raw.items():
+            if isinstance(stamps, list):
+                ledger[job_id] = [
+                    float(t) for t in stamps if isinstance(t, (int, float))
+                ]
+        return ledger
+
+    def _persist_restart_ledger(self) -> None:
+        """Write the ledger, pruning entries outside the budget window."""
+        now = time.time()
+        window = self.restart_budget.window_s
+        pruned = {
+            job_id: [t for t in stamps if now - t <= window]
+            for job_id, stamps in self._restart_ledger.items()
+        }
+        pruned = {job_id: stamps for job_id, stamps in pruned.items() if stamps}
+        self._restart_ledger = pruned
+        tmp = f"{self._restart_ledger_path}.{os.getpid()}.tmp"
+        try:
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(pruned, f)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, self._restart_ledger_path)
+        except BaseException:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
+
+    def _maybe_arm_boot_recovery(
+        self,
+        job_id: str,
+        task_func: Callable,
+        max_retries: int,
+        timeout_s: int,
+    ) -> None:
+        """Arm the boot re-run for a just-registered job that had an
+        interrupted receipt, if the restart budget allows it.
+
+        Bounded: a job leaves the pending set on its first registration this
+        boot (one re-run per boot), and the sliding window over the durable
+        ledger is what stops a crash-looping job from re-running forever.
+        On BLOCK the executor logs a structured ``restart_budget_exhausted``
+        line and holds in safe-mode instead of looping.
+        """
+        if job_id not in self._boot_recovery_pending:
+            return
+        self._boot_recovery_pending.discard(job_id)
+        if max_retries <= 0:
+            logger.info(
+                f"Boot re-run skipped for {job_id}: job has no retry budget"
+            )
+            return
+        now = time.time()
+        restarts = self._restart_ledger.get(job_id, [])
+        decision = self.restart_budget.evaluate(restarts, now)
+        if decision is not RestartDecision.ALLOW:
+            recent = [
+                t for t in restarts if now - t <= self.restart_budget.window_s
+            ]
+            logger.error(
+                "restart_budget_exhausted job_id=%s restarts_in_window=%d "
+                "max_per_hour=%d window_s=%g decision=%s",
+                job_id,
+                len(recent),
+                self.restart_budget.max_per_hour,
+                self.restart_budget.window_s,
+                decision.value,
+            )
+            # Hold in safe-mode rather than loop: the budget being spent is
+            # the crash-loop signal, so the next restart attempt must come
+            # from a human decision, not from the next boot.
+            if self.guardrail_enforcer is not None:
+                self.guardrail_enforcer.enter_safe_mode(
+                    "restart_budget_exhausted: job "
+                    f"{job_id} blocked from a {len(recent) + 1}th restart "
+                    f"within {self.restart_budget.window_s:g}s"
+                )
+            return
+        self._restart_ledger.setdefault(job_id, []).append(now)
+        self._persist_restart_ledger()
+        recovery_id = f"{job_id}:recovery"
+        self.schedule_one_time(
+            job_id=recovery_id,
+            task_func=task_func,
+            run_at=datetime.now(timezone.utc),
+            max_retries=max_retries,
+            timeout_s=timeout_s,
+        )
+        logger.info(
+            f"Boot recovery: one bounded re-run armed for {job_id} "
+            f"as one-time job {recovery_id}"
+        )
     
     def stop(self, wait: bool = True):
         """
@@ -303,7 +466,10 @@ class AutonomousExecutor:
             name=description or job_id,
             replace_existing=True
         )
-        
+
+        # Packet 03 B1: a job whose previous boot's run was interrupted
+        # gets one budget-checked re-run now that its callable is back.
+        self._maybe_arm_boot_recovery(job_id, task_func, max_retries, timeout_s)
         logger.info(
             f"Scheduled cron job: {job_id} with expr: {cron_expr}, "
             f"retries: {max_retries}, timeout: {timeout_s}s"
@@ -351,7 +517,11 @@ class AutonomousExecutor:
             id=job_id,
             replace_existing=True
         )
-        
+
+        # Packet 03 B1: one-time jobs participate in boot recovery too (a
+        # re-armed recovery run is itself a one-time job).
+        self._maybe_arm_boot_recovery(job_id, task_func, max_retries, timeout_s)
+
         logger.info(f"Scheduled one-time job: {job_id} at {run_at}")
         return job_id
     
@@ -464,7 +634,7 @@ class AutonomousExecutor:
             
             # Update job state
             self.scheduler_engine.update_job_state(job_id, 'running')
-            
+
             # Phase 3 M6: Start budget tracking
             budget_tracker = None
             if self.enable_guardrails and self.guardrail_enforcer:
@@ -472,7 +642,17 @@ class AutonomousExecutor:
                     self.guardrail_enforcer.config["budgets"]
                 )
                 budget_tracker.start()
-            
+
+            # Packet 03 B1: persist the 'started' receipt BEFORE the task
+            # callable runs — the marker must be on disk before any side
+            # effect begins, so a crash mid-run is distinguishable at the
+            # next boot (recover_on_boot interrupts dead-owner markers).
+            # Locked across the worker pool: the store flushes whole-file.
+            with self._receipts_lock:
+                receipt_id = self.receipts.mark_started(
+                    job_id, owner_pid=os.getpid()
+                )
+
             try:
                 # Execute task under the timeout. SIGALRM is main-thread
                 # only and APScheduler runs jobs on its worker pool, so the
@@ -514,7 +694,9 @@ class AutonomousExecutor:
                 
                 # Update job state
                 self.scheduler_engine.update_job_state(job_id, 'completed')
-                
+
+                self._finish_receipt(receipt_id, 'ok')
+
                 return result
             
             except Exception as e:
@@ -562,11 +744,28 @@ class AutonomousExecutor:
                 self.scheduler_engine.update_job_state(
                     job_id, 'failed', error=str(e)
                 )
-                
+
+                self._finish_receipt(receipt_id, 'error', error=str(e))
+
                 raise
         
         return wrapped
-    
+
+    def _finish_receipt(
+        self, receipt_id: str, status: str, error: Optional[str] = None
+    ) -> None:
+        """Record the terminal receipt status. Never raises: a bookkeeping
+        failure must not turn a completed job into a failed one — the next
+        boot's recover_on_boot treats the stale running marker
+        conservatively (interrupted, one budgeted re-run)."""
+        try:
+            with self._receipts_lock:
+                self.receipts.mark_finished(receipt_id, status, error=error)
+        except Exception as e:
+            logger.warning(
+                f"Failed to record receipt {receipt_id} as {status}: {e}"
+            )
+
     def _on_retry(self, job_id: str, attempt: int, exc: Exception, delay: float):
         """Callback for retry attempts."""
         logger.warning(
