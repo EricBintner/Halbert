@@ -186,6 +186,10 @@ GUEST_DENIED_TOOLS: FrozenSet[str] = frozenset({
     "resume_thread",
     # The world
     "web_search",
+    # Becoming someone else. A guest that could call this would walk out of
+    # its own session into another persona's face without the user asking —
+    # and the user would learn of it from the pill, if they were looking.
+    "become_persona",
     # MCP-surface names, listed so the intent is on record should any of
     # them ever be registered as agent tools
     "get_being_config",

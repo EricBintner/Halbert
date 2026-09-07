@@ -314,34 +314,14 @@ async def become(request: BecomeRequest) -> Dict[str, Any]:
     thing for a person; this resolves a name against the known homes and
     keeps the credential on disk where it belongs.
     """
-    catalogue = await asyncio.to_thread(guest_homes.available_personas)
-    wanted = request.name.strip().lower()
-    matches = [
-        p for p in catalogue["personas"]
-        if p["name"].strip().lower() == wanted
-        and (not request.base_url or p["base_url"] == request.base_url.rstrip("/"))
-    ]
-    if not matches:
-        raise HTTPException(
-            status_code=404,
-            detail=(
-                f"No persona called {request.name!r} in any known home"
-                + (f" (unreachable: {', '.join(u['home'] for u in catalogue['unreachable'])})"
-                   if catalogue["unreachable"] else "")
-            ),
+    try:
+        match = await asyncio.to_thread(
+            guest_homes.resolve_persona, request.name, request.base_url,
         )
-    if len(matches) > 1:
-        # Named in two houses. Answering with one of them would be a guess
-        # about which face the user meant.
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                f"{request.name} lives in more than one home "
-                f"({', '.join(sorted({m['home_label'] for m in matches}))}); say which."
-            ),
-        )
-
-    match = matches[0]
+    except guest_homes.Ambiguous as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except guest_homes.NoSuchPersona as e:
+        raise HTTPException(status_code=404, detail=str(e))
     record = guest_homes.get_home(match["base_url"])
     return await pull_persona(PullRequest(
         base_url=match["base_url"],
