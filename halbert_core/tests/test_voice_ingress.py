@@ -58,6 +58,17 @@ class _FakeAgent:
 
         return gen()
 
+    def handle_midturn_arrival(self, session_id, text):
+        # Merge seam (wave 2, 07-B over 04-A2): the route now routes every
+        # arrival through the interrupt algebra before process(). This fake
+        # has no turn in flight, so it mirrors the real state machine's
+        # idle branch exactly: NORMAL_TURN decision, events None -- the
+        # caller falls through to an ordinary turn and the voice fields
+        # below still reach process() untouched.
+        from halbert_core.agents.steering import decide_midturn
+
+        return decide_midturn(turn_active=False, is_command=False, text=text), None
+
 
 @pytest.fixture
 def fake_agent():
