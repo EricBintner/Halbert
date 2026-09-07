@@ -105,6 +105,7 @@ def temp_config_env(tmp_path, monkeypatch):
         "ExecStart=/usr/bin/myapp\n"
         "Port=2222\n"
         "Password=hunter2\n"
+        "Token=p@ss w/rd\n"
         "Enabled=true\n"
     )
     manifest = tmp_path / "manifest.yml"
@@ -173,5 +174,61 @@ def test_non_ack_paths_do_not_register(temp_config_env):
 
 # ---------------------------------------------------------------------------
 # A3 integration: the MCP response boundary consults the registry
-# (added in the A3 commit; kept out of the A2 commit)
 # ---------------------------------------------------------------------------
+
+
+def test_mcp_response_redacts_registered_value_raw_and_encoded(temp_config_env):
+    """A tool-result string carrying an egress-acked value (raw and
+    URL-encoded) is fully redacted through mcp_response().
+
+    Both notes are shapes the pattern passes deliberately leave alone (no
+    key<sep>value, no keyword directive) — their redaction can only come
+    from the registry pass, which is what this test pins. The URL-encoded
+    form registers only because registration stores quote(value) too:
+    quote("hunter2") is identical to the raw form, so the special-char
+    value is the one that proves encoded coverage.
+    """
+    import urllib.parse
+
+    from halbert_core.config.queries import get_config_value
+    from halbert_core.mcp.response import mcp_response
+
+    # Register via the real ack path.
+    acked = get_config_value(
+        temp_config_env, "Password", secret_tier="cloud_ok_acknowledged"
+    )
+    acked_token = get_config_value(
+        temp_config_env, "Token", secret_tier="cloud_ok_acknowledged"
+    )
+    assert acked["_egress_ack"] is True
+    assert acked_token["_egress_ack"] is True
+
+    encoded = urllib.parse.quote("p@ss w/rd")
+    assert encoded == "p%40ss%20w/rd"  # genuinely distinct from the raw form
+    payload = {
+        "results": [
+            {"path": "/tmp/elsewhere.conf", "note": "the value hunter2 is set"},
+            {"path": "/tmp/url.conf", "note": f"token {encoded} embedded"},
+        ]
+    }
+    out = mcp_response(payload)
+    assert "hunter2" not in out["results"][0]["note"]
+    assert "p@ss w/rd" not in str(out) and encoded not in out["results"][1]["note"]
+    assert out["results"][0]["note"] == f"the value {REDACTION_PLACEHOLDER} is set"
+    assert out["results"][1]["note"] == f"token {REDACTION_PLACEHOLDER} embedded"
+
+
+def test_egress_acked_value_still_crosses_raw_in_its_own_payload(temp_config_env):
+    """The escape's contract holds with the registry in place: the acked
+    dict's own ``value`` field crosses raw (deliberate egress, EGRESS_ACK_FIELD
+    semantics unchanged), and the marker is dropped. The registry protects
+    every OTHER path, never the one that was acked."""
+    from halbert_core.config.queries import get_config_value
+    from halbert_core.mcp.response import mcp_response
+
+    acked = get_config_value(
+        temp_config_env, "Password", secret_tier="cloud_ok_acknowledged"
+    )
+    out = mcp_response(acked)
+    assert out["value"] == "hunter2"
+    assert "_egress_ack" not in out

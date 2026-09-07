@@ -90,6 +90,7 @@ from __future__ import annotations
 from typing import Any
 
 from ..ingestion.redaction import _is_secret_key, redact_text
+from ..ingestion.redaction_registry import get_global_registry
 from ..config.security_constants import EGRESS_ACK_FIELD
 
 _SECRET_MARKER = "<secret>"
@@ -110,10 +111,21 @@ _MCP_FIELD_NAMES = frozenset({
 def _redact_value(value: Any) -> Any:
     """Recursively redact every string in a nested structure.
 
+    Two passes on strings, in this order: ``redact_text()`` (key-shape and
+    pattern redaction) first, then the secret variant registry (exact-value,
+    so it is safe after key-based redaction). The registry holds the
+    encoded forms of values that were deliberately egressed through the
+    acknowledged path — see ``ingestion.redaction_registry``.
+
+    Note the acked ``value`` field in ``_redact_dict`` deliberately does NOT
+    reach this branch (it is passed through raw) — the registry protects
+    every other path, never the one that was acked.
+
     Returns a new structure; the input is not mutated.
     """
     if isinstance(value, str):
-        return redact_text(value)
+        redacted = redact_text(value)
+        return get_global_registry().redact_text(redacted)
     if isinstance(value, dict):
         return _redact_dict(value)
     if isinstance(value, list):
