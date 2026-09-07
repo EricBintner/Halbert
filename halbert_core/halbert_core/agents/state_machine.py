@@ -789,6 +789,9 @@ class AgentStateMachine:
         for the window twice would be both slower and inconsistent between
         the two halves of one turn.
         """
+        # The Eyes rows are read once per turn (A4); this is where a turn
+        # starts, so it is where the previous turn's cache stops being true.
+        self._reset_world_observations()
         tm = self.ctx.thread_manager
         if tm is None:
             return
@@ -1622,6 +1625,76 @@ class AgentStateMachine:
         except Exception:
             logger.warning("clearing skill safety failed", exc_info=True)
 
+    #: How many ledger rows the Eyes block carries, and how far back it looks.
+    #: An idle day is thousands of rows, so this is a cap, not a window: the
+    #: block is grounding -- what has just happened around this machine -- not
+    #: a log, and a model handed two hundred lines reads none of them.
+    WORLD_OBSERVATION_LIMIT = 12
+    WORLD_OBSERVATION_HOURS = 24
+
+    def _reset_world_observations(self) -> None:
+        """Drop the turn's cached Eyes rows, so the next turn re-reads."""
+        self._world_obs_cache = None
+
+    def _world_observations(self) -> List[str]:
+        """Recent event-ledger rows as citable prompt lines (A4).
+
+        Computed once per turn and cached. PLANNING and RESPONDING both ask
+        for this, and an event landing between them would otherwise let the
+        model plan against a world that had changed by the time it answered,
+        with nothing to tell it that had happened. Stale-within-a-turn is the
+        correct trade: the turn is the unit the model reasons over.
+
+        Grounding is unconditional: this is not lens-selected and not gated on
+        the proactivity dial. What Halbert has just seen around it is context
+        for answering, the same way vitals are -- the lens selects *remarks*,
+        which is a different thing (CD-3).
+
+        Ordered newest first and capped. Never raises: a ledger that cannot be
+        read costs the turn its grounding, not its answer -- the same posture
+        get_timeline_store() already takes.
+        """
+        cached = getattr(self, "_world_obs_cache", None)
+        if cached is not None:
+            return cached
+        try:
+            from ..integrations.cognition_wiring import get_timeline_store
+            from ..continuity.timeline import as_prompt_line
+
+            store = get_timeline_store()
+            if store is None:
+                self._world_obs_cache = []
+                return []
+            since = time.time() - self.WORLD_OBSERVATION_HOURS * 3600
+            # Over-fetch, because deduplication below removes rows: a person
+            # arriving writes both the state change and the occupancy event,
+            # with the same title by design, and rendering both reads as two
+            # arrivals.
+            rows = store.query(since=since, limit=self.WORLD_OBSERVATION_LIMIT * 3)
+
+            lines: List[str] = []
+            seen: set = set()
+            for row in rows:
+                # Keyed on (title, second) rather than title alone: the same
+                # thing happening twice an hour apart is two facts, and
+                # collapsing those would hide the recurrence the ledger exists
+                # to record. Only rows describing one moment collapse.
+                key = ((row.get("title") or "").strip().lower(),
+                       int(row.get("timestamp") or 0))
+                if key in seen:
+                    continue
+                seen.add(key)
+                lines.append(as_prompt_line(row))
+                if len(lines) >= self.WORLD_OBSERVATION_LIMIT:
+                    break
+            self._world_obs_cache = lines
+            return lines
+        except Exception:
+            logger.warning("reading the event ledger for the Eyes block failed; "
+                           "continuing without grounding", exc_info=True)
+            self._world_obs_cache = []
+            return []
+
     def _composed_prompt_block(self) -> str:
         """The active skills' expertise text, or "" when none matched.
 
@@ -1837,6 +1910,7 @@ class AgentStateMachine:
             assembled = await self.context.assemble(
                 query=self.ctx.user_query,
                 observations=self.ctx.observations,
+                world_observations=self._world_observations(),
                 intake=self.ctx.intake,
                 session_id=self.ctx.session_id,
                 retrieval_scope=self.ctx.retrieval_scope,
@@ -3092,6 +3166,7 @@ class AgentStateMachine:
                 query=self.ctx.user_query,
                 context=self.ctx.retrieved_context,
                 observations=self.ctx.observations,
+                world_observations=self._world_observations(),
                 tools_supported=getattr(self.llm, "tools_supported", None),
                 response_modality=response_modality,
             )
