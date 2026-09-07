@@ -96,6 +96,8 @@ interface SharingItem {
     remote?: string
     source?: string
     label?: string
+    // macOS sharing services
+    service_id?: string
     // Config file
     config_path?: string
   }
@@ -111,9 +113,10 @@ function groupByShareType(items: SharingItem[]) {
     'taildrive': [],
     'tailscale-peer': [],
     'wireguard-peer': [],
+    'macos-service': [],
     'cloud': [],
   }
-  
+
   for (const item of items) {
     const type = item.data.share_type
     if (type === 'nfs-mount') groups['nfs-mount'].push(item)
@@ -123,6 +126,7 @@ function groupByShareType(items: SharingItem[]) {
     else if (type === 'taildrive' || type === 'taildrive-mount') groups['taildrive'].push(item)
     else if (type === 'tailscale-peer') groups['tailscale-peer'].push(item)
     else if (type === 'wireguard-peer') groups['wireguard-peer'].push(item)
+    else if (type === 'macos-service') groups['macos-service'].push(item)
     else groups['cloud'].push(item)
   }
   
@@ -244,17 +248,20 @@ export function Sharing() {
   const exportCount = groups['nfs-export'].length + groups['smb-export'].length
   const vpnPeerCount = groups['tailscale-peer'].length + groups['wireguard-peer'].length
   const cloudCount = groups['cloud'].length
+  const macosServiceCount = groups['macos-service'].length
 
   const getIcon = (item: SharingItem) => {
     const type = item.data.share_type
-    if (type === 'nfs-mount' || type === 'smb-mount') 
+    if (type === 'nfs-mount' || type === 'smb-mount')
       return <HardDrive className="h-5 w-5 text-info" />
-    if (type === 'nfs-export' || type === 'smb-export') 
+    if (type === 'nfs-export' || type === 'smb-export')
       return <Share2 className="h-5 w-5 text-success" />
-    if (type === 'tailscale-peer') 
+    if (type === 'tailscale-peer')
       return <Globe className="h-5 w-5 text-purple-500" />
-    if (type === 'wireguard-peer') 
+    if (type === 'wireguard-peer')
       return <Shield className="h-5 w-5 text-warning" />
+    if (type === 'macos-service')
+      return <Share2 className="h-5 w-5 text-info" />
     return <Cloud className="h-5 w-5 text-info" />
   }
 
@@ -280,7 +287,7 @@ export function Sharing() {
       />
 
       {/* Summary Cards */}
-      <div className="grid gap-4 md:grid-cols-4">
+      <div className="grid gap-4 md:grid-cols-4 lg:grid-cols-5">
         <Card>
           <CardContent className="pt-6">
             <div className="flex items-center gap-4">
@@ -294,7 +301,7 @@ export function Sharing() {
             </div>
           </CardContent>
         </Card>
-        
+
         <Card>
           <CardContent className="pt-6">
             <div className="flex items-center gap-4">
@@ -308,7 +315,7 @@ export function Sharing() {
             </div>
           </CardContent>
         </Card>
-        
+
         <Card>
           <CardContent className="pt-6">
             <div className="flex items-center gap-4">
@@ -322,7 +329,7 @@ export function Sharing() {
             </div>
           </CardContent>
         </Card>
-        
+
         <Card>
           <CardContent className="pt-6">
             <div className="flex items-center gap-4">
@@ -336,6 +343,22 @@ export function Sharing() {
             </div>
           </CardContent>
         </Card>
+
+        {macosServiceCount > 0 && (
+          <Card>
+            <CardContent className="pt-6">
+              <div className="flex items-center gap-4">
+                <div className="p-3 bg-info/10 rounded-lg">
+                  <Share2 className="h-6 w-6 text-info" />
+                </div>
+                <div>
+                  <p className="text-2xl font-bold">{macosServiceCount}</p>
+                  <p className="text-sm text-muted-foreground">macOS Services</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
       </div>
 
       {/* Network Mounts */}
@@ -794,6 +817,61 @@ export function Sharing() {
             </Card>
           ))}
         </div>
+      )}
+
+      {/* macOS Sharing Services */}
+      {groups['macos-service'].length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Share2 className="h-5 w-5 text-info" />
+              macOS Sharing Services
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-3">
+              {groups['macos-service'].map((item) => (
+                <div
+                  key={item.id}
+                  className="flex items-center justify-between p-3 rounded-lg border hover:bg-accent/50 cursor-pointer transition-colors"
+                  onClick={() => setSelectedItem(item)}
+                >
+                  <div className="flex items-center gap-3">
+                    {getIcon(item)}
+                    <div>
+                      <p className="font-medium text-sm">{item.title}</p>
+                      <p className="text-xs text-muted-foreground">{item.description}</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Badge
+                      className={cn(
+                        item.data.active && 'bg-success',
+                        !item.data.active && 'bg-slate-500',
+                      )}
+                    >
+                      {item.status}
+                    </Badge>
+                    <SystemItemActions
+                      item={{
+                        name: item.title,
+                        type: 'sharing',
+                        id: `sharing/${item.id}`,
+                        description: item.description,
+                        context: `macOS Sharing Service: ${item.title}\nService: ${item.data.service_id}\nStatus: ${item.data.active ? 'Active' : 'Available'}`,
+                        data: item.data,
+                      }}
+                      variant="icon"
+                      size="sm"
+                      showChat={false}
+                    />
+                    <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
       )}
 
       {/* Cloud Mounts */}

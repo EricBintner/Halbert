@@ -291,3 +291,136 @@ class MacSharingScanner(SharingScanner):
             ))
 
         return discoveries
+
+    # ─────────────────────────────────────────────────────────────
+    # Cloud mounts — macOS overrides (macFUSE/osxfuse, not Linux fuse.*)
+    # ─────────────────────────────────────────────────────────────
+
+    def _scan_rclone_mounts(self) -> List[Discovery]:
+        """Scan for rclone FUSE mounts on macOS.
+
+        macOS uses macFUSE/osxfuse, not Linux's fuse.rclone.
+        We check mount output for rclone-related osxfuse entries.
+        """
+        discoveries = []
+
+        # Check for rclone mount processes
+        code, stdout, _ = self.run_command(['pgrep', '-a', 'rclone'])
+        if code != 0 or 'mount' not in stdout:
+            return discoveries
+
+        # On macOS, rclone mounts show up in `mount` output with osxfuse
+        code, mount_out, _ = self.run_command(['mount'])
+        if code != 0:
+            return discoveries
+
+        for line in mount_out.splitlines():
+            if 'rclone' not in line.lower() and 'osxfuse' not in line.lower():
+                continue
+            # macOS mount format: rclone:remote on /mount/point (osxfuse, ...)
+            m = re.match(r'(\S+) on (\S+) \(([^)]+)\)', line)
+            if not m:
+                continue
+
+            source = m.group(1)
+            mount_point = m.group(2)
+
+            if ':' in source:
+                remote = source.split(':')[0]
+            else:
+                remote = source
+
+            is_connected = Path(mount_point).is_dir()
+
+            discovery_id = make_discovery_id(
+                DiscoveryType.SHARING, f"rclone-{mount_point}"
+            )
+
+            discoveries.append(Discovery(
+                id=discovery_id,
+                type=DiscoveryType.SHARING,
+                name=f"rclone-{mount_point.replace('/', '-')}",
+                title=mount_point,
+                description=f"rclone mount: {remote}",
+                severity=DiscoverySeverity.SUCCESS if is_connected else DiscoverySeverity.WARNING,
+                status='Mounted' if is_connected else 'Disconnected',
+                data={
+                    'share_type': 'rclone-mount',
+                    'remote': remote,
+                    'source': source,
+                    'mount_point': mount_point,
+                    'connected': is_connected,
+                },
+                icon='cloud',
+            ))
+
+        return discoveries
+
+    def _scan_fuse_mounts(self) -> List[Discovery]:
+        """Scan for other FUSE cloud mounts on macOS (sshfs, etc.).
+
+        macOS uses macFUSE/osxfuse filesystem type, not Linux fuse.sshfs etc.
+        """
+        discoveries = []
+
+        # macOS FUSE type labels
+        fuse_labels = {
+            'sshfs': ('SSHFS', 'server'),
+            's3fs': ('S3', 'cloud'),
+            'gcsfuse': ('GCS', 'cloud'),
+            'google-drive': ('Google Drive', 'cloud'),
+            'rclone': ('rclone', 'cloud'),
+        }
+
+        code, stdout, _ = self.run_command(['mount'])
+        if code != 0:
+            return discoveries
+
+        for line in stdout.splitlines():
+            if 'osxfuse' not in line.lower() and 'macfuse' not in line.lower():
+                continue
+
+            m = re.match(r'(\S+) on (\S+) \(([^)]+)\)', line)
+            if not m:
+                continue
+
+            source = m.group(1)
+            mount_point = m.group(2)
+            options = m.group(3)
+
+            # Identify the FUSE subtype from the source or options
+            label = 'FUSE'
+            icon_name = 'cloud'
+            source_lower = source.lower()
+            for key, (lbl, icn) in fuse_labels.items():
+                if key in source_lower:
+                    label = lbl
+                    icon_name = icn
+                    break
+
+            is_connected = Path(mount_point).is_dir()
+
+            discovery_id = make_discovery_id(
+                DiscoveryType.SHARING,
+                f"osxfuse-{mount_point}"
+            )
+
+            discoveries.append(Discovery(
+                id=discovery_id,
+                type=DiscoveryType.SHARING,
+                name=f"{label.lower()}-{mount_point.replace('/', '-')}",
+                title=mount_point,
+                description=f"{label} mount: {source}",
+                severity=DiscoverySeverity.SUCCESS if is_connected else DiscoverySeverity.WARNING,
+                status='Mounted' if is_connected else 'Disconnected',
+                data={
+                    'share_type': f'osxfuse-{label.lower()}',
+                    'label': label,
+                    'source': source,
+                    'mount_point': mount_point,
+                    'connected': is_connected,
+                },
+                icon=icon_name,
+            ))
+
+        return discoveries

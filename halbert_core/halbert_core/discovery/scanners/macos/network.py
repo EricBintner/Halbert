@@ -185,7 +185,7 @@ class MacNetworkScanner(BaseScanner):
         if 'status: active' in stdout.lower():
             status['active'] = True
             status['operstate'] = 'up'
-        elif '<UP,' in stdout or 'flags=8' in stdout[:200]:
+        elif '<UP,' in stdout:
             # Interface is admin-up but link may be down
             status['operstate'] = 'up' if 'status: inactive' not in stdout.lower() else 'down'
         else:
@@ -317,12 +317,12 @@ class MacNetworkScanner(BaseScanner):
             name_field = parts[-1]
             if 'LISTEN' not in name_field and '*:' not in name_field:
                 continue
-            # Extract address:port from NAME like *:5173 or 127.0.0.1:8000
-            m = re.search(r'([\d.]+|\*):(\d+)', name_field)
+            # Extract address:port from NAME like *:5173, 127.0.0.1:8000, or [::1]:5000
+            m = re.search(r'(?:\[([0-9a-fA-F:]+)\]|([\d.]+|\*)):(\d+)', name_field)
             if not m:
                 continue
-            addr = m.group(1)
-            port = int(m.group(2))
+            addr = m.group(1) or m.group(2)  # IPv6 bracketed or IPv4/wildcard
+            port = int(m.group(3))
             if port in seen:
                 continue
             seen.add(port)
