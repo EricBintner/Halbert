@@ -24,9 +24,11 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import inspect
 import json
 import logging
 import os
+import re
 import socket
 import sys
 import traceback
@@ -1247,6 +1249,11 @@ class MCPServer:
                 handler = TOOL_HANDLERS.get(tool_name)
                 if handler is None:
                     return self._error(req_id, -32601, f"Unknown tool: {tool_name}")
+                # R2-OBS-1 at dispatch time: TOOL_HANDLERS can be mutated
+                # after import, so the registration guard runs here too —
+                # three substring checks for every non-camera tool name,
+                # the cached wiring verdict only for camera-named ones.
+                _assert_camera_gate_wired(tool_name)
                 # The egress boundary is enforced HERE, at the single choke
                 # point, not left to each tool author: every tool result
                 # passes through mcp_response() whether or not the handler
@@ -1352,6 +1359,72 @@ class MCPServer:
             if response is not None:
                 sys.stdout.write(json.dumps(response) + "\n")
                 sys.stdout.flush()
+
+
+# ---------------------------------------------------------------------------
+# R2-OBS-1 enforcement: the camera gate at registration, not by convention
+# ---------------------------------------------------------------------------
+#
+# camera_gate.gate_response() strips image data from any camera/vision
+# payload. It is wired TODAY at the single dispatch choke point below
+# (VIS-1: every handler's return path is
+# ``mcp_response(gate_response(tool_name, handler(tool_args)))``), which
+# makes the gate universal — but that wiring is one editable line, and the
+# original R2-OBS-1 landmine was exactly a comment promising protection
+# nobody had wired. So the promise is enforced, not stated: a tool whose
+# name marks it as a camera/vision surface cannot be registered (or, if
+# added to TOOL_HANDLERS after import, dispatched) unless the dispatch
+# source still routes handlers through the gate. An edit that drops the
+# gate turns the next camera-tool registration/dispatch into a loud
+# failure instead of a silent image-data egress path.
+
+_CAMERA_TOOL_MARKERS = ("frigate", "vision", "camera")
+# The load-bearing dispatch shape: the gate INSIDE the egress boundary.
+# Order matters in both directions (see the tools/call comment above).
+_CAMERA_GATE_WIRING_RE = re.compile(r"mcp_response\s*\(\s*gate_response\s*\(")
+_CAMERA_GATE_WIRED: Optional[bool] = None
+
+
+def _camera_gate_wired_at_dispatch() -> bool:
+    """True when ``MCPServer.handle_request`` routes every handler through
+    ``gate_response()`` inside ``mcp_response()``.
+
+    Detected from the dispatch source rather than trusted, so an edit that
+    drops the gate re-arms the guard instead of inheriting stale trust.
+    Unverifiable source (frozen/exec'd module) fails closed. The verdict is
+    cached: the check runs once at import (registration) and then only when
+    a camera-named tool is actually dispatched — never per-call for
+    ordinary tools.
+    """
+    global _CAMERA_GATE_WIRED
+    if _CAMERA_GATE_WIRED is None:
+        try:
+            src = inspect.getsource(MCPServer.handle_request)
+        except (OSError, TypeError):
+            _CAMERA_GATE_WIRED = False
+        else:
+            _CAMERA_GATE_WIRED = bool(_CAMERA_GATE_WIRING_RE.search(src))
+    return _CAMERA_GATE_WIRED
+
+
+def _assert_camera_gate_wired(tool_id: str) -> None:
+    """Registration guard (R2-OBS-1): camera/vision tools demand a wired gate."""
+    if not any(marker in tool_id.lower() for marker in _CAMERA_TOOL_MARKERS):
+        return
+    if not _camera_gate_wired_at_dispatch():
+        raise RuntimeError(
+            f"camera/vision tool '{tool_id}' registered without the camera gate; "
+            "wire mcp/camera_gate.gate_response into its return path first (R2-OBS-1)"
+        )
+
+
+# Registration-time check over the static registry: no camera/vision tool
+# may sit in TOOL_HANDLERS unless the dispatch choke point gates it. Runs
+# at import, so a future registry edit that adds one without wiring fails
+# at server startup, not at first leak.
+for _tool_id in TOOL_HANDLERS:
+    _assert_camera_gate_wired(_tool_id)
+del _tool_id
 
 
 # ---------------------------------------------------------------------------

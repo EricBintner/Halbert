@@ -43,6 +43,7 @@ from .sensitivity import classify_sensitivity
 from .secure_response import describe_secret
 from .secret_correlation import describe_with_correlations
 from .snapshot import CANON_DIR, SNAP_DIR
+from ..ingestion.redaction_registry import get_global_registry
 from ..utils.paths import data_dir
 
 logger = logging.getLogger(__name__)
@@ -340,6 +341,13 @@ def get_config_value(
             # behave differently for different key classes. Only this
             # code path may set the marker — see security_constants.
             result[EGRESS_ACK_FIELD] = True
+            # Variant registration (Packet 05 A2): the moment a secret is
+            # deliberately egressed, every encoded form of it (URL-encoded,
+            # JSON-escaped) becomes known-dangerous everywhere else. The
+            # acked value itself still crosses raw here — the escape is the
+            # escape — but any OTHER response that echoes the value in any
+            # form is now redacted by the registry pass on the boundary.
+            get_global_registry().register(value)
         else:  # local_only (default)
             result["description"] = describe_with_correlations(key, value, path)
             result["redacted"] = True
