@@ -12,6 +12,7 @@ from typing import Dict, Any, Optional
 from dataclasses import dataclass
 from pathlib import Path
 from datetime import datetime, timezone
+import re
 import shutil
 import json
 import logging
@@ -20,6 +21,14 @@ from ..obs.logging import get_logger
 from ..obs.audit import write_audit
 
 logger = get_logger("halbert")
+
+
+#: A persona is a NAME, not a path. It reached ``f"personas/{persona}"`` and then
+#: ``shutil.rmtree``, so ``persona="../.."`` deleted whatever sat above the memory
+#: root (SEC-3, F7/F171). Anchored, no separators, no dots — the containment check
+#: in ``_persona_dir`` is the second lock, but a name that cannot express a path is
+#: the first, and the one that is obvious in review.
+_PERSONA_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 
 
 @dataclass
@@ -67,12 +76,43 @@ class MemoryPurge:
         
         # Protected directories (NEVER purge)
         self.protected_dirs = ['core', 'runtime', 'shared']
+
+        # Resolved once, at construction, so every containment check below
+        # compares against the same real directory rather than re-deriving it.
+        self._root_resolved = self.memory_root.resolve()
         
         logger.info("MemoryPurge initialized", extra={
             "memory_root": str(self.memory_root),
             "protected_dirs": self.protected_dirs
         })
     
+    def _persona_dir(self, persona: str) -> Path:
+        """The directory for ``persona``, or raise.
+
+        Two locks, because this function's caller ends in ``shutil.rmtree``.
+
+        The name check is the one a reviewer sees: a persona cannot express a
+        path, so ``../..`` is rejected as a malformed name rather than resolved
+        into one. The containment check is the one that holds when the name rule
+        is later relaxed, or when a symlink is planted inside the memory root —
+        it compares the *resolved* directory against the resolved root, so the
+        string that is checked is the string that is deleted.
+        """
+        if not _PERSONA_NAME.match(persona or ""):
+            raise ValueError(
+                f"'{persona}' is not a persona name. Names start with a letter "
+                f"or digit and contain only letters, digits, '_' and '-'."
+            )
+
+        target = (self.memory_root / "personas" / persona).resolve()
+        root = self._root_resolved / "personas"
+        if target == root or root not in target.parents:
+            raise ValueError(
+                f"Refusing to operate on {target}: it is outside the persona "
+                f"memory root {root}."
+            )
+        return target
+
     def preview_purge(self, persona: str) -> PurgeConfirmation:
         """
         Preview what would be deleted by a purge.
@@ -101,7 +141,7 @@ class MemoryPurge:
         
         # Determine memory directory
         memory_dir = f"personas/{persona}"
-        target_dir = self.memory_root / memory_dir
+        target_dir = self._persona_dir(persona)
         
         if not target_dir.exists():
             raise ValueError(f"Persona memory directory does not exist: {memory_dir}")
@@ -174,7 +214,11 @@ class MemoryPurge:
             export_file = self._export_memory(persona, export_path)
         
         # Execute purge
-        target_dir = self.memory_root / confirmation.memory_dir
+        # Derived from the validated name, not by re-joining the confirmation's
+        # string: preview_purge already resolved this, and re-deriving it from a
+        # string carried through a dataclass is how the checked path and the
+        # deleted path drift apart.
+        target_dir = self._persona_dir(persona)
         
         try:
             # Remove directory
@@ -241,7 +285,7 @@ class MemoryPurge:
             Path to exported file
         """
         memory_dir = f"personas/{persona}"
-        source_dir = self.memory_root / memory_dir
+        source_dir = self._persona_dir(persona)
         
         if not source_dir.exists():
             raise ValueError(f"Persona memory directory does not exist: {memory_dir}")
@@ -271,7 +315,7 @@ class MemoryPurge:
             Path to exported file
         """
         memory_dir = f"personas/{persona}"
-        source_dir = self.memory_root / memory_dir
+        source_dir = self._persona_dir(persona)
         
         if not source_dir.exists():
             raise ValueError(f"Persona memory directory does not exist: {memory_dir}")
