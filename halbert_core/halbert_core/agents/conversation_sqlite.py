@@ -76,6 +76,155 @@ _MESSAGE_COLUMNS: List[Tuple[str, str]] = [
     ("visible_in_timeline", "INTEGER NOT NULL DEFAULT 1"),
 ]
 
+# ---------------------------------------------------------------------------
+# Declarative column reconciliation (packet 08 A3)
+#
+# ``_REFERENCE_SCHEMA`` is the single source of truth for every table's
+# columns: ``_ensure_schema`` executes it verbatim on every open, and
+# ``_reconcile_columns`` then ADDs each column an existing table is missing,
+# with the DEFAULT/NOT NULL clause parsed straight back out of this DDL.
+# A column addition needs no version-gated migration and a reordering can
+# never skip one (Hermes ``_reconcile_columns``). The reconciler only ever
+# ADDs -- it never renames, downgrades or drops an existing column, and the
+# ``schema_version`` ladder keeps owning row backfills and PK surgery.
+#
+# The lists above stay: they are the *update allowlists* (what
+# ``update_thread``/``update_message`` accept), and
+# ``test_additive_lists_agree_with_reference_schema`` pins them to this DDL
+# so the two spellings cannot drift.
+# ---------------------------------------------------------------------------
+
+_REFERENCE_SCHEMA: Dict[str, str] = {
+    "conversations": """CREATE TABLE IF NOT EXISTS conversations (
+                        id         TEXT PRIMARY KEY,
+                        user_id    TEXT,
+                        title      TEXT,
+                        created_at REAL NOT NULL,
+                        updated_at REAL NOT NULL,
+                        metadata   TEXT NOT NULL DEFAULT '{}',
+                        status     TEXT NOT NULL DEFAULT 'open',
+                        receipt    TEXT NOT NULL DEFAULT '',
+                        receipt_updated_at REAL,
+                        topic_domains TEXT NOT NULL DEFAULT '[]',
+                        entities_json TEXT NOT NULL DEFAULT '[]',
+                        last_active REAL,
+                        stale      INTEGER NOT NULL DEFAULT 0,
+                        ephemeral  INTEGER NOT NULL DEFAULT 0,
+                        parent_thread_id TEXT,
+                        merged_into TEXT,
+                        recalled_json TEXT NOT NULL DEFAULT '[]',
+                        unread     INTEGER NOT NULL DEFAULT 0,
+                        paused_at  REAL,
+                        turns_since_pause INTEGER NOT NULL DEFAULT 0,
+                        title_source TEXT NOT NULL DEFAULT 'provisional'
+                    )""",
+    "messages": """CREATE TABLE IF NOT EXISTS messages (
+                        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                        conversation_id  TEXT NOT NULL,
+                        role             TEXT NOT NULL,
+                        content          TEXT NOT NULL,
+                        timestamp        REAL NOT NULL,
+                        metadata         TEXT NOT NULL DEFAULT '{}',
+                        turn_id          TEXT,
+                        session_id       TEXT,
+                        origin           TEXT NOT NULL DEFAULT 'human',
+                        status           TEXT NOT NULL DEFAULT 'complete',
+                        blocks_json      TEXT NOT NULL DEFAULT '[]',
+                        terminal_block_ids TEXT NOT NULL DEFAULT '[]',
+                        diff_proposals_json TEXT NOT NULL DEFAULT '[]',
+                        visible_in_timeline INTEGER NOT NULL DEFAULT 1
+                    )""",
+    "session_somatic_blocks": """CREATE TABLE IF NOT EXISTS session_somatic_blocks (
+                        id         TEXT PRIMARY KEY,
+                        session_id TEXT NOT NULL,
+                        block_id   TEXT NOT NULL,
+                        block_type TEXT,
+                        status     TEXT,
+                        created_at REAL NOT NULL,
+                        metadata   TEXT NOT NULL DEFAULT '{}'
+                    )""",
+    "compact_boundaries": """CREATE TABLE IF NOT EXISTS compact_boundaries (
+                        id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+                        thread_id             TEXT NOT NULL,
+                        trigger               TEXT NOT NULL,
+                        pre_tokens            INTEGER,
+                        post_tokens           INTEGER,
+                        preserved_message_ids TEXT NOT NULL DEFAULT '[]',
+                        summary_message_id    INTEGER,
+                        created_at            REAL NOT NULL
+                    )""",
+    "terminal_blocks": """CREATE TABLE IF NOT EXISTS terminal_blocks (
+                        block_id    TEXT PRIMARY KEY,
+                        session_id  TEXT NOT NULL,
+                        thread_id   TEXT,
+                        turn_id     TEXT,
+                        command     TEXT NOT NULL,
+                        cwd         TEXT,
+                        owner       TEXT NOT NULL DEFAULT 'agent',
+                        interactive INTEGER NOT NULL DEFAULT 0,
+                        remote      INTEGER NOT NULL DEFAULT 0,
+                        redacted    INTEGER NOT NULL DEFAULT 0,
+                        started_at  REAL NOT NULL,
+                        ended_at    REAL,
+                        exit_code   INTEGER,
+                        output_head TEXT NOT NULL DEFAULT '',
+                        output_tail TEXT NOT NULL DEFAULT '',
+                        execution_id TEXT,
+                        output_elided_lines INTEGER
+                    )""",
+    "terminal_sessions": """CREATE TABLE IF NOT EXISTS terminal_sessions (
+                        session_id  TEXT PRIMARY KEY,
+                        kind        TEXT NOT NULL DEFAULT 'oneshot',
+                        owner       TEXT NOT NULL DEFAULT 'agent',
+                        watched     INTEGER NOT NULL DEFAULT 1,
+                        spawned_at  REAL NOT NULL,
+                        ended_at    REAL,
+                        last_state  TEXT NOT NULL DEFAULT 'running'
+                    )""",
+    "open_loops": """CREATE TABLE IF NOT EXISTS open_loops (
+                        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                        thread_id   TEXT NOT NULL,
+                        text        TEXT NOT NULL,
+                        domain      TEXT,
+                        created_at  REAL NOT NULL,
+                        closed_at   REAL,
+                        source      TEXT
+                    )""",
+}
+
+
+def _reference_columns(table: str) -> Dict[str, str]:
+    """Column name -> ADD-COLUMN declaration, parsed from ``_REFERENCE_SCHEMA``.
+
+    SQLite's own parser does the DDL reading: the reference statement is
+    created in a throwaway ``:memory:`` database and ``pragma_table_info``
+    is read back, so the declaration each missing column is added with is
+    the one this module's DDL actually states (NOT NULL and the DEFAULT
+    literal included) -- never a hand-maintained second copy. That clause is
+    the Hermes trap's whole point: a reconciler-added column without its
+    DEFAULT hid whole histories behind silent blanks. PRIMARY KEY columns
+    are structural (``ADD COLUMN`` can never re-create one) and are skipped.
+    """
+    mem = sqlite3.connect(":memory:")
+    try:
+        mem.execute(_REFERENCE_SCHEMA[table])
+        out: Dict[str, str] = {}
+        for cid, name, col_type, notnull, dflt, pk in mem.execute(
+            f"PRAGMA table_info({table})"
+        ):
+            del cid
+            if pk:
+                continue
+            decl = col_type or ""
+            if notnull:
+                decl += " NOT NULL"
+            if dflt is not None:
+                decl += f" DEFAULT {dflt}"
+            out[str(name)] = decl
+        return out
+    finally:
+        mem.close()
+
 # update_message field -> column
 _MESSAGE_UPDATABLE = {
     "content": "content",
@@ -280,19 +429,33 @@ class SqliteConversationStore:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _add_missing_columns(cur: sqlite3.Cursor, table: str, columns: List[Tuple[str, str]]) -> None:
+    def _reconcile_columns(cur: sqlite3.Cursor, table: str) -> None:
+        """ADD every column of ``table`` that the reference schema states and
+        the live table lacks (packet 08 A3).
+
+        The declaration comes from ``_reference_columns`` -- parsed out of the
+        same DDL ``_ensure_schema`` executes -- so a NOT NULL column arrives
+        with its DEFAULT and existing rows are backfilled by SQLite at ALTER
+        time instead of reading as blanks. Only ever ADDs: an extra column a
+        live table carries that the reference does not know about is left
+        untouched (no renames, no downgrades, no drops).
+
+        Raises when a missing column cannot be added (e.g. a NOT NULL column
+        with no DEFAULT on a populated table): aborting the open loudly is
+        the honest answer to a schema the store cannot honestly widen; the
+        one tolerated error is "duplicate column name", the belt-and-suspenders
+        case of a concurrent opener adding the column between our
+        ``PRAGMA table_info`` read and this ALTER (``_ensure_schema`` also
+        serializes openers with BEGIN IMMEDIATE -- A1 review finding 1).
+        """
+        reference = _reference_columns(table)
         existing = {row[1] for row in cur.execute(f"PRAGMA table_info({table})").fetchall()}
-        for name, decl in columns:
+        for name, decl in reference.items():
             if name in existing:
                 continue
             try:
                 cur.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
             except sqlite3.OperationalError as e:
-                # A concurrent opener may have added this column between our
-                # PRAGMA table_info read and this ALTER (belt-and-suspenders:
-                # _ensure_schema also serializes openers with BEGIN IMMEDIATE,
-                # but this keeps a single column race from aborting every
-                # column after it — see A1 review finding 1).
                 if "duplicate column name" in str(e):
                     continue
                 raise
@@ -350,48 +513,18 @@ class SqliteConversationStore:
                 self._conn = None
                 return
             try:
-                cur.execute(
-                    """CREATE TABLE IF NOT EXISTS conversations (
-                        id         TEXT PRIMARY KEY,
-                        user_id    TEXT,
-                        title      TEXT,
-                        created_at REAL NOT NULL,
-                        updated_at REAL NOT NULL,
-                        metadata   TEXT NOT NULL DEFAULT '{}'
-                    )"""
-                )
-                cur.execute(
-                    """CREATE TABLE IF NOT EXISTS messages (
-                        id              INTEGER PRIMARY KEY AUTOINCREMENT,
-                        conversation_id  TEXT NOT NULL,
-                        role             TEXT NOT NULL,
-                        content          TEXT NOT NULL,
-                        timestamp        REAL NOT NULL,
-                        metadata         TEXT NOT NULL DEFAULT '{}'
-                    )"""
-                )
-                cur.execute(
-                    "CREATE INDEX IF NOT EXISTS idx_messages_conv "
-                    "ON messages(conversation_id)"
-                )
-                cur.execute(
-                    """CREATE TABLE IF NOT EXISTS session_somatic_blocks (
-                        id         TEXT PRIMARY KEY,
-                        session_id TEXT NOT NULL,
-                        block_id   TEXT NOT NULL,
-                        block_type TEXT,
-                        status     TEXT,
-                        created_at REAL NOT NULL,
-                        metadata   TEXT NOT NULL DEFAULT '{}'
-                    )"""
-                )
-                cur.execute(
-                    "CREATE INDEX IF NOT EXISTS idx_ssb_session "
-                    "ON session_somatic_blocks(session_id)"
-                )
-                cur.execute(
-                    "CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)"
-                )
+                # Declarative schema (packet 08 A3): the reference DDL is the
+                # single source of truth -- executed verbatim here (its
+                # statements carry IF NOT EXISTS exactly as before), then
+                # reconciled column-by-column.
+                for ddl in _REFERENCE_SCHEMA.values():
+                    cur.execute(ddl)
+                # Column reconciliation BEFORE any index: an index on a
+                # column an old DB lacks (idx_messages_turn on turn_id, say)
+                # would otherwise fail CREATE INDEX before the reconciler
+                # ever ran.
+                for table in _REFERENCE_SCHEMA:
+                    self._reconcile_columns(cur, table)
                 # FTS fail-open breadcrumb store (packet 08 A2): the durable
                 # half of the degradation flag -- see ``_enter_fts_fail_open``.
                 cur.execute(
@@ -400,20 +533,19 @@ class SqliteConversationStore:
                         value TEXT NOT NULL
                     )"""
                 )
+                cur.execute(
+                    "CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)"
+                )
+                cur.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_messages_conv "
+                    "ON messages(conversation_id)"
+                )
+                cur.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_ssb_session "
+                    "ON session_somatic_blocks(session_id)"
+                )
                 # Opt-in LLM summaries (spec §8, §14): the table ships in Plan A
                 # with no writers — compaction stays default-off until a later plan.
-                cur.execute(
-                    """CREATE TABLE IF NOT EXISTS compact_boundaries (
-                        id                    INTEGER PRIMARY KEY AUTOINCREMENT,
-                        thread_id             TEXT NOT NULL,
-                        trigger               TEXT NOT NULL,
-                        pre_tokens            INTEGER,
-                        post_tokens           INTEGER,
-                        preserved_message_ids TEXT NOT NULL DEFAULT '[]',
-                        summary_message_id    INTEGER,
-                        created_at            REAL NOT NULL
-                    )"""
-                )
                 cur.execute(
                     "CREATE INDEX IF NOT EXISTS idx_compact_thread "
                     "ON compact_boundaries(thread_id)"
@@ -422,27 +554,6 @@ class SqliteConversationStore:
                 # Blocks are the persisted shell-command records that back
                 # terminal tiles on the timeline; sessions are the PTY
                 # sessions (user, agent-pool, oneshot) that produce them.
-                cur.execute(
-                    """CREATE TABLE IF NOT EXISTS terminal_blocks (
-                        block_id    TEXT PRIMARY KEY,
-                        session_id  TEXT NOT NULL,
-                        thread_id   TEXT,
-                        turn_id     TEXT,
-                        command     TEXT NOT NULL,
-                        cwd         TEXT,
-                        owner       TEXT NOT NULL DEFAULT 'agent',
-                        interactive INTEGER NOT NULL DEFAULT 0,
-                        remote      INTEGER NOT NULL DEFAULT 0,
-                        redacted    INTEGER NOT NULL DEFAULT 0,
-                        started_at  REAL NOT NULL,
-                        ended_at    REAL,
-                        exit_code   INTEGER,
-                        output_head TEXT NOT NULL DEFAULT '',
-                        output_tail TEXT NOT NULL DEFAULT '',
-                        execution_id TEXT,
-                        output_elided_lines INTEGER
-                    )"""
-                )
                 cur.execute(
                     "CREATE INDEX IF NOT EXISTS idx_tb_session "
                     "ON terminal_blocks(session_id)"
@@ -454,34 +565,6 @@ class SqliteConversationStore:
                 cur.execute(
                     "CREATE INDEX IF NOT EXISTS idx_tb_turn "
                     "ON terminal_blocks(turn_id)"
-                )
-                cur.execute(
-                    """CREATE TABLE IF NOT EXISTS terminal_sessions (
-                        session_id  TEXT PRIMARY KEY,
-                        kind        TEXT NOT NULL DEFAULT 'oneshot',
-                        owner       TEXT NOT NULL DEFAULT 'agent',
-                        watched     INTEGER NOT NULL DEFAULT 1,
-                        spawned_at  REAL NOT NULL,
-                        ended_at    REAL,
-                        last_state  TEXT NOT NULL DEFAULT 'running'
-                    )"""
-                )
-                self._add_missing_columns(cur, "conversations", _THREAD_COLUMNS)
-                self._add_missing_columns(cur, "messages", _MESSAGE_COLUMNS)
-                self._add_missing_columns(
-                    cur, "terminal_blocks", _TERMINAL_BLOCK_ADDITIVE
-                )
-                # v4: open_loops table (continuity R2-N2).
-                cur.execute(
-                    """CREATE TABLE IF NOT EXISTS open_loops (
-                        id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                        thread_id   TEXT NOT NULL,
-                        text        TEXT NOT NULL,
-                        domain      TEXT,
-                        created_at  REAL NOT NULL,
-                        closed_at   REAL,
-                        source      TEXT
-                    )"""
                 )
                 cur.execute(
                     "CREATE INDEX IF NOT EXISTS idx_open_loops_thread "
