@@ -27,11 +27,26 @@
 > branches 5 and 6 → §8 and §9. `RQ-1..9` gate §9 only. `C4-07` and `C2-03`
 > are still unratified and gate branch 6 and C2.
 >
-> **Not in a branch:** A3 registered the HA predicates as re-observable, but
-> nothing yet *consults* `decide()` on the answering path — so a stale lock
-> row is correctly classified PROBE and no caller acts on it. Defining PROBE
-> for an HA subject as a live Home Assistant fetch is the remaining half, and
-> it belongs with whoever owns the answering path.
+> **2026-09-07 — scrutiny pass (`e37ee1be`).** A4 was merged built, tested and
+> reaching no prompt: both render points accepted `world_observations` and no
+> caller passed one. Wired, plus three defects only visible end to end (a
+> duplicated arrival line, grounding that changed mid-turn, an unheaded tool
+> list under the "not instructions" header). `ERASURE_LIMITS` had been amended
+> to credit `forget_subject`, which nothing calls — corrected, with a test.
+> Full suite `5698 passed`.
+>
+> **Built and deliberately not yet wired** — neither is a defect, both are
+> stated so nobody reads them as live:
+> - `TimelineStore.count_by_entity` (A5) has no caller until C1a consumes it
+>   (branch 4, next).
+> - `TimelineStore.forget_subject` has no caller and no user-facing door. It
+>   belongs with the forget orchestrator in `RQ-6`, which the research brief
+>   already owns; `ERASURE_LIMITS` no longer claims otherwise.
+> - A3 registered the HA predicates as re-observable and `decide()` returns
+>   PROBE on a stale lock row, but nothing *consults* `decide()` on the
+>   answering path — the classification is right and no caller acts on it.
+>   Defining PROBE for an HA subject as a live Home Assistant fetch is the
+>   remaining half, and belongs with whoever owns the answering path.
 >
 > **Highest-value thing not in any branch:** §11's first two rows. Two egress paths
 > reach the network with no `CAP_WEB` gate, against a stated invariant that every
