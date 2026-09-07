@@ -18,6 +18,7 @@ import json
 import logging
 import re
 import sqlite3
+import sys
 import threading
 import time
 from pathlib import Path
@@ -74,6 +75,155 @@ _MESSAGE_COLUMNS: List[Tuple[str, str]] = [
     ("diff_proposals_json", "TEXT NOT NULL DEFAULT '[]'"),
     ("visible_in_timeline", "INTEGER NOT NULL DEFAULT 1"),
 ]
+
+# ---------------------------------------------------------------------------
+# Declarative column reconciliation (packet 08 A3)
+#
+# ``_REFERENCE_SCHEMA`` is the single source of truth for every table's
+# columns: ``_ensure_schema`` executes it verbatim on every open, and
+# ``_reconcile_columns`` then ADDs each column an existing table is missing,
+# with the DEFAULT/NOT NULL clause parsed straight back out of this DDL.
+# A column addition needs no version-gated migration and a reordering can
+# never skip one (Hermes ``_reconcile_columns``). The reconciler only ever
+# ADDs -- it never renames, downgrades or drops an existing column, and the
+# ``schema_version`` ladder keeps owning row backfills and PK surgery.
+#
+# The lists above stay: they are the *update allowlists* (what
+# ``update_thread``/``update_message`` accept), and
+# ``test_additive_lists_agree_with_reference_schema`` pins them to this DDL
+# so the two spellings cannot drift.
+# ---------------------------------------------------------------------------
+
+_REFERENCE_SCHEMA: Dict[str, str] = {
+    "conversations": """CREATE TABLE IF NOT EXISTS conversations (
+                        id         TEXT PRIMARY KEY,
+                        user_id    TEXT,
+                        title      TEXT,
+                        created_at REAL NOT NULL,
+                        updated_at REAL NOT NULL,
+                        metadata   TEXT NOT NULL DEFAULT '{}',
+                        status     TEXT NOT NULL DEFAULT 'open',
+                        receipt    TEXT NOT NULL DEFAULT '',
+                        receipt_updated_at REAL,
+                        topic_domains TEXT NOT NULL DEFAULT '[]',
+                        entities_json TEXT NOT NULL DEFAULT '[]',
+                        last_active REAL,
+                        stale      INTEGER NOT NULL DEFAULT 0,
+                        ephemeral  INTEGER NOT NULL DEFAULT 0,
+                        parent_thread_id TEXT,
+                        merged_into TEXT,
+                        recalled_json TEXT NOT NULL DEFAULT '[]',
+                        unread     INTEGER NOT NULL DEFAULT 0,
+                        paused_at  REAL,
+                        turns_since_pause INTEGER NOT NULL DEFAULT 0,
+                        title_source TEXT NOT NULL DEFAULT 'provisional'
+                    )""",
+    "messages": """CREATE TABLE IF NOT EXISTS messages (
+                        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                        conversation_id  TEXT NOT NULL,
+                        role             TEXT NOT NULL,
+                        content          TEXT NOT NULL,
+                        timestamp        REAL NOT NULL,
+                        metadata         TEXT NOT NULL DEFAULT '{}',
+                        turn_id          TEXT,
+                        session_id       TEXT,
+                        origin           TEXT NOT NULL DEFAULT 'human',
+                        status           TEXT NOT NULL DEFAULT 'complete',
+                        blocks_json      TEXT NOT NULL DEFAULT '[]',
+                        terminal_block_ids TEXT NOT NULL DEFAULT '[]',
+                        diff_proposals_json TEXT NOT NULL DEFAULT '[]',
+                        visible_in_timeline INTEGER NOT NULL DEFAULT 1
+                    )""",
+    "session_somatic_blocks": """CREATE TABLE IF NOT EXISTS session_somatic_blocks (
+                        id         TEXT PRIMARY KEY,
+                        session_id TEXT NOT NULL,
+                        block_id   TEXT NOT NULL,
+                        block_type TEXT,
+                        status     TEXT,
+                        created_at REAL NOT NULL,
+                        metadata   TEXT NOT NULL DEFAULT '{}'
+                    )""",
+    "compact_boundaries": """CREATE TABLE IF NOT EXISTS compact_boundaries (
+                        id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+                        thread_id             TEXT NOT NULL,
+                        trigger               TEXT NOT NULL,
+                        pre_tokens            INTEGER,
+                        post_tokens           INTEGER,
+                        preserved_message_ids TEXT NOT NULL DEFAULT '[]',
+                        summary_message_id    INTEGER,
+                        created_at            REAL NOT NULL
+                    )""",
+    "terminal_blocks": """CREATE TABLE IF NOT EXISTS terminal_blocks (
+                        block_id    TEXT PRIMARY KEY,
+                        session_id  TEXT NOT NULL,
+                        thread_id   TEXT,
+                        turn_id     TEXT,
+                        command     TEXT NOT NULL,
+                        cwd         TEXT,
+                        owner       TEXT NOT NULL DEFAULT 'agent',
+                        interactive INTEGER NOT NULL DEFAULT 0,
+                        remote      INTEGER NOT NULL DEFAULT 0,
+                        redacted    INTEGER NOT NULL DEFAULT 0,
+                        started_at  REAL NOT NULL,
+                        ended_at    REAL,
+                        exit_code   INTEGER,
+                        output_head TEXT NOT NULL DEFAULT '',
+                        output_tail TEXT NOT NULL DEFAULT '',
+                        execution_id TEXT,
+                        output_elided_lines INTEGER
+                    )""",
+    "terminal_sessions": """CREATE TABLE IF NOT EXISTS terminal_sessions (
+                        session_id  TEXT PRIMARY KEY,
+                        kind        TEXT NOT NULL DEFAULT 'oneshot',
+                        owner       TEXT NOT NULL DEFAULT 'agent',
+                        watched     INTEGER NOT NULL DEFAULT 1,
+                        spawned_at  REAL NOT NULL,
+                        ended_at    REAL,
+                        last_state  TEXT NOT NULL DEFAULT 'running'
+                    )""",
+    "open_loops": """CREATE TABLE IF NOT EXISTS open_loops (
+                        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                        thread_id   TEXT NOT NULL,
+                        text        TEXT NOT NULL,
+                        domain      TEXT,
+                        created_at  REAL NOT NULL,
+                        closed_at   REAL,
+                        source      TEXT
+                    )""",
+}
+
+
+def _reference_columns(table: str) -> Dict[str, str]:
+    """Column name -> ADD-COLUMN declaration, parsed from ``_REFERENCE_SCHEMA``.
+
+    SQLite's own parser does the DDL reading: the reference statement is
+    created in a throwaway ``:memory:`` database and ``pragma_table_info``
+    is read back, so the declaration each missing column is added with is
+    the one this module's DDL actually states (NOT NULL and the DEFAULT
+    literal included) -- never a hand-maintained second copy. That clause is
+    the Hermes trap's whole point: a reconciler-added column without its
+    DEFAULT hid whole histories behind silent blanks. PRIMARY KEY columns
+    are structural (``ADD COLUMN`` can never re-create one) and are skipped.
+    """
+    mem = sqlite3.connect(":memory:")
+    try:
+        mem.execute(_REFERENCE_SCHEMA[table])
+        out: Dict[str, str] = {}
+        for cid, name, col_type, notnull, dflt, pk in mem.execute(
+            f"PRAGMA table_info({table})"
+        ):
+            del cid
+            if pk:
+                continue
+            decl = col_type or ""
+            if notnull:
+                decl += " NOT NULL"
+            if dflt is not None:
+                decl += f" DEFAULT {dflt}"
+            out[str(name)] = decl
+        return out
+    finally:
+        mem.close()
 
 # update_message field -> column
 _MESSAGE_UPDATABLE = {
@@ -260,6 +410,10 @@ class SqliteConversationStore:
         self._lock = threading.RLock()
         self._conn: Optional[sqlite3.Connection] = None
         self._fts_ok = False
+        # FTS fail-open breadcrumb (packet 08 A2): True from the moment an
+        # index write failed until ``rebuild_fts()`` clears it. Persisted in
+        # ``store_meta`` so a reopen inherits it.
+        self._fts_degraded = False
         try:
             if self._db_path != ":memory:":
                 Path(self._db_path).parent.mkdir(parents=True, exist_ok=True)
@@ -275,19 +429,33 @@ class SqliteConversationStore:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _add_missing_columns(cur: sqlite3.Cursor, table: str, columns: List[Tuple[str, str]]) -> None:
+    def _reconcile_columns(cur: sqlite3.Cursor, table: str) -> None:
+        """ADD every column of ``table`` that the reference schema states and
+        the live table lacks (packet 08 A3).
+
+        The declaration comes from ``_reference_columns`` -- parsed out of the
+        same DDL ``_ensure_schema`` executes -- so a NOT NULL column arrives
+        with its DEFAULT and existing rows are backfilled by SQLite at ALTER
+        time instead of reading as blanks. Only ever ADDs: an extra column a
+        live table carries that the reference does not know about is left
+        untouched (no renames, no downgrades, no drops).
+
+        Raises when a missing column cannot be added (e.g. a NOT NULL column
+        with no DEFAULT on a populated table): aborting the open loudly is
+        the honest answer to a schema the store cannot honestly widen; the
+        one tolerated error is "duplicate column name", the belt-and-suspenders
+        case of a concurrent opener adding the column between our
+        ``PRAGMA table_info`` read and this ALTER (``_ensure_schema`` also
+        serializes openers with BEGIN IMMEDIATE -- A1 review finding 1).
+        """
+        reference = _reference_columns(table)
         existing = {row[1] for row in cur.execute(f"PRAGMA table_info({table})").fetchall()}
-        for name, decl in columns:
+        for name, decl in reference.items():
             if name in existing:
                 continue
             try:
                 cur.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
             except sqlite3.OperationalError as e:
-                # A concurrent opener may have added this column between our
-                # PRAGMA table_info read and this ALTER (belt-and-suspenders:
-                # _ensure_schema also serializes openers with BEGIN IMMEDIATE,
-                # but this keeps a single column race from aborting every
-                # column after it — see A1 review finding 1).
                 if "duplicate column name" in str(e):
                     continue
                 raise
@@ -320,6 +488,16 @@ class SqliteConversationStore:
                 cur.execute("PRAGMA journal_mode=WAL")
             except Exception as e:
                 logger.warning(f"PRAGMA journal_mode=WAL failed, continuing without WAL: {e}")
+            # Darwin durability (Hermes hermes_state_wal.py:93-111): Apple's
+            # fsync(2) guarantees neither ordering nor platter landing, and a
+            # shutdown was observed corrupting "durable" checkpoints. Platform
+            # truth, not preference -- not config-gated.
+            if sys.platform == "darwin":
+                try:
+                    cur.execute("PRAGMA checkpoint_fullfsync=1")
+                    cur.execute("PRAGMA synchronous=FULL")
+                except Exception as e:
+                    logger.warning(f"durability PRAGMAs failed, continuing: {e}")
             # Serialize schema creation/migration across concurrent openers of
             # the same database file. BEGIN IMMEDIATE claims the write lock
             # up front (busy_timeout above governs how long a racing opener
@@ -335,62 +513,39 @@ class SqliteConversationStore:
                 self._conn = None
                 return
             try:
+                # Declarative schema (packet 08 A3): the reference DDL is the
+                # single source of truth -- executed verbatim here (its
+                # statements carry IF NOT EXISTS exactly as before), then
+                # reconciled column-by-column.
+                for ddl in _REFERENCE_SCHEMA.values():
+                    cur.execute(ddl)
+                # Column reconciliation BEFORE any index: an index on a
+                # column an old DB lacks (idx_messages_turn on turn_id, say)
+                # would otherwise fail CREATE INDEX before the reconciler
+                # ever ran.
+                for table in _REFERENCE_SCHEMA:
+                    self._reconcile_columns(cur, table)
+                # FTS fail-open breadcrumb store (packet 08 A2): the durable
+                # half of the degradation flag -- see ``_enter_fts_fail_open``.
                 cur.execute(
-                    """CREATE TABLE IF NOT EXISTS conversations (
-                        id         TEXT PRIMARY KEY,
-                        user_id    TEXT,
-                        title      TEXT,
-                        created_at REAL NOT NULL,
-                        updated_at REAL NOT NULL,
-                        metadata   TEXT NOT NULL DEFAULT '{}'
+                    """CREATE TABLE IF NOT EXISTS store_meta (
+                        key   TEXT PRIMARY KEY,
+                        value TEXT NOT NULL
                     )"""
                 )
                 cur.execute(
-                    """CREATE TABLE IF NOT EXISTS messages (
-                        id              INTEGER PRIMARY KEY AUTOINCREMENT,
-                        conversation_id  TEXT NOT NULL,
-                        role             TEXT NOT NULL,
-                        content          TEXT NOT NULL,
-                        timestamp        REAL NOT NULL,
-                        metadata         TEXT NOT NULL DEFAULT '{}'
-                    )"""
+                    "CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)"
                 )
                 cur.execute(
                     "CREATE INDEX IF NOT EXISTS idx_messages_conv "
                     "ON messages(conversation_id)"
                 )
                 cur.execute(
-                    """CREATE TABLE IF NOT EXISTS session_somatic_blocks (
-                        id         TEXT PRIMARY KEY,
-                        session_id TEXT NOT NULL,
-                        block_id   TEXT NOT NULL,
-                        block_type TEXT,
-                        status     TEXT,
-                        created_at REAL NOT NULL,
-                        metadata   TEXT NOT NULL DEFAULT '{}'
-                    )"""
-                )
-                cur.execute(
                     "CREATE INDEX IF NOT EXISTS idx_ssb_session "
                     "ON session_somatic_blocks(session_id)"
                 )
-                cur.execute(
-                    "CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)"
-                )
                 # Opt-in LLM summaries (spec §8, §14): the table ships in Plan A
                 # with no writers — compaction stays default-off until a later plan.
-                cur.execute(
-                    """CREATE TABLE IF NOT EXISTS compact_boundaries (
-                        id                    INTEGER PRIMARY KEY AUTOINCREMENT,
-                        thread_id             TEXT NOT NULL,
-                        trigger               TEXT NOT NULL,
-                        pre_tokens            INTEGER,
-                        post_tokens           INTEGER,
-                        preserved_message_ids TEXT NOT NULL DEFAULT '[]',
-                        summary_message_id    INTEGER,
-                        created_at            REAL NOT NULL
-                    )"""
-                )
                 cur.execute(
                     "CREATE INDEX IF NOT EXISTS idx_compact_thread "
                     "ON compact_boundaries(thread_id)"
@@ -399,27 +554,6 @@ class SqliteConversationStore:
                 # Blocks are the persisted shell-command records that back
                 # terminal tiles on the timeline; sessions are the PTY
                 # sessions (user, agent-pool, oneshot) that produce them.
-                cur.execute(
-                    """CREATE TABLE IF NOT EXISTS terminal_blocks (
-                        block_id    TEXT PRIMARY KEY,
-                        session_id  TEXT NOT NULL,
-                        thread_id   TEXT,
-                        turn_id     TEXT,
-                        command     TEXT NOT NULL,
-                        cwd         TEXT,
-                        owner       TEXT NOT NULL DEFAULT 'agent',
-                        interactive INTEGER NOT NULL DEFAULT 0,
-                        remote      INTEGER NOT NULL DEFAULT 0,
-                        redacted    INTEGER NOT NULL DEFAULT 0,
-                        started_at  REAL NOT NULL,
-                        ended_at    REAL,
-                        exit_code   INTEGER,
-                        output_head TEXT NOT NULL DEFAULT '',
-                        output_tail TEXT NOT NULL DEFAULT '',
-                        execution_id TEXT,
-                        output_elided_lines INTEGER
-                    )"""
-                )
                 cur.execute(
                     "CREATE INDEX IF NOT EXISTS idx_tb_session "
                     "ON terminal_blocks(session_id)"
@@ -431,34 +565,6 @@ class SqliteConversationStore:
                 cur.execute(
                     "CREATE INDEX IF NOT EXISTS idx_tb_turn "
                     "ON terminal_blocks(turn_id)"
-                )
-                cur.execute(
-                    """CREATE TABLE IF NOT EXISTS terminal_sessions (
-                        session_id  TEXT PRIMARY KEY,
-                        kind        TEXT NOT NULL DEFAULT 'oneshot',
-                        owner       TEXT NOT NULL DEFAULT 'agent',
-                        watched     INTEGER NOT NULL DEFAULT 1,
-                        spawned_at  REAL NOT NULL,
-                        ended_at    REAL,
-                        last_state  TEXT NOT NULL DEFAULT 'running'
-                    )"""
-                )
-                self._add_missing_columns(cur, "conversations", _THREAD_COLUMNS)
-                self._add_missing_columns(cur, "messages", _MESSAGE_COLUMNS)
-                self._add_missing_columns(
-                    cur, "terminal_blocks", _TERMINAL_BLOCK_ADDITIVE
-                )
-                # v4: open_loops table (continuity R2-N2).
-                cur.execute(
-                    """CREATE TABLE IF NOT EXISTS open_loops (
-                        id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                        thread_id   TEXT NOT NULL,
-                        text        TEXT NOT NULL,
-                        domain      TEXT,
-                        created_at  REAL NOT NULL,
-                        closed_at   REAL,
-                        source      TEXT
-                    )"""
                 )
                 cur.execute(
                     "CREATE INDEX IF NOT EXISTS idx_open_loops_thread "
@@ -543,6 +649,17 @@ class SqliteConversationStore:
                 # re-verified (A1 review finding 2, the mirror of finding 3's
                 # False-latch bug).
                 self._fts_ok = fts_ready
+                # FTS fail-open breadcrumb (packet 08 A2): a past fail-open
+                # persisted its flag in ``store_meta``. While it stands the
+                # index has a gap of unknown extent, so a reopen must not
+                # trust it -- ``_fts_recover`` stays refused and only
+                # ``rebuild_fts()`` clears the flag.
+                breadcrumb = cur.execute(
+                    "SELECT value FROM store_meta WHERE key = 'fts_degraded'"
+                ).fetchone()
+                if breadcrumb is not None and str(breadcrumb[0]) == "1":
+                    self._fts_degraded = True
+                    self._fts_ok = False
             except Exception as e:
                 self._conn.rollback()
                 logger.warning(f"SqliteConversationStore schema failed: {e}")
@@ -602,6 +719,14 @@ class SqliteConversationStore:
         """
         if self._fts_ok or self._conn is None:
             return self._fts_ok
+        if self._fts_degraded:
+            # Fail-open contract (packet 08 A2): while the breadcrumb stands
+            # the index has a gap of unknown extent, so ordinary recovery
+            # (CREATE IF NOT EXISTS + a NOT-IN backfill) must not re-arm it.
+            # Only ``rebuild_fts()`` clears the flag. Silent by design -- the
+            # single ``fts_fail_open`` WARNING at the moment of degradation
+            # already said why; this branch runs on every read.
+            return False
         try:
             with self._lock:
                 nested = self._conn.in_transaction
@@ -633,6 +758,159 @@ class SqliteConversationStore:
         except sqlite3.OperationalError as e:
             logger.warning(f"FTS5 still unavailable, staying in LIKE-only fallback: {e}")
         return self._fts_ok
+
+    # ------------------------------------------------------------------
+    # FTS fail-open (packet 08 A2)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _is_fts_write_corruption_error(exc: Exception) -> bool:
+        """Whether an index-write failure means the index *structure* is
+        unusable -- the only class fail-open exists for.
+
+        Mirrors Hermes ``_is_fts_write_corruption_error`` (SQLITE_CORRUPT_VTAB,
+        or an ``fts5: ... corrupt structure`` message on older builds; a bare
+        malformed image is structural), widened for Halbert's direct-insert
+        sync: a dropped or shape-broken index table surfaces here as
+        ``no such table`` / ``no column named`` on ``messages_fts``.
+
+        Deliberately NOT fail-open: a constraint rejection (an FTS copy
+        refusing a row on CHECK/NOT NULL -- ``IntegrityError``) is not
+        corruption; that failure still fails and rolls back the whole
+        append, the atomicity contract ``test_failed_append_rolls_back_and_
+        returns_none`` pins.
+        """
+        code = getattr(exc, "sqlite_errorcode", None)
+        if code is not None and code == getattr(sqlite3, "SQLITE_CORRUPT_VTAB", 267):
+            return True
+        msg = str(exc).lower()
+        if "corrupt structure" in msg or "malformed" in msg:
+            return True
+        return isinstance(exc, sqlite3.OperationalError) and (
+            "no such table: messages_fts" in msg
+            or ("no column named" in msg and "messages_fts" in msg)
+        )
+
+    @property
+    def fts_degraded(self) -> bool:
+        """Whether the fail-open breadcrumb stands: an index write failed, the
+        sync path is disarmed, and the index holds a gap of unknown extent.
+
+        The only way back is ``rebuild_fts()`` -- nothing else may re-arm the
+        index (see ``_reinstall_fts_triggers``). ``search``/``search_receipts``
+        keep serving through their LIKE fallbacks while this is True.
+        """
+        return self._fts_degraded
+
+    def _enter_fts_fail_open(self, exc: Exception) -> None:
+        """Declare the FTS index untrustworthy and keep the write alive.
+
+        Called from inside an already-open write transaction (``append_message``,
+        ``update_message``, ``forget_request``) with the exception an index
+        write raised. In that same transaction it persists the stale
+        breadcrumb in ``store_meta``, so the degradation survives a reopen;
+        the in-memory flag flips immediately. Callers never re-raise: the
+        canonical write continues and search serves through the LIKE
+        fallback. Exactly one ``fts_fail_open`` WARNING is logged -- the
+        moment of degradation is the only place the reason exists.
+        """
+        try:
+            self._conn.execute(
+                "INSERT INTO store_meta(key, value) VALUES ('fts_degraded', '1') "
+                "ON CONFLICT(key) DO UPDATE SET value = '1'"
+            )
+        except Exception as e:
+            logger.warning(f"fts_fail_open breadcrumb persist failed: {e}")
+        self._fts_degraded = True
+        self._fts_ok = False
+        logger.warning(
+            "fts_fail_open: FTS index write failed (%s); index sync disarmed "
+            "in the same transaction and LIKE fallback serves; full rebuild "
+            "required before the index is trusted again",
+            exc,
+        )
+
+    def _reinstall_fts_triggers(self) -> bool:
+        """Re-arm the index sync path after a fail-open. Refused while degraded.
+
+        Hermes guards this exact gate with triggers (``hermes_state_fts.py``):
+        once its sync triggers are dropped, rows written during the degraded
+        window are missing from the index and nobody may reinstall the
+        triggers without a full rebuild. Halbert's sync is direct gated
+        INSERTs rather than triggers, so the equivalent gate is this method:
+        while the breadcrumb stands there is a gap of unknown extent in the
+        index, and re-arming the sync over it would make the backfill look
+        like proof of health. Only ``rebuild_fts()`` -- which rewrites the
+        whole index from ``messages`` -- may clear the flag first.
+        """
+        if self._fts_degraded:
+            raise RuntimeError(
+                "fts index has an unknown gap after fail-open; a full rebuild "
+                "is required before the sync path may be re-armed"
+            )
+        return True
+
+    def rebuild_fts(self) -> bool:
+        """Rebuild both FTS indexes from their canonical tables.
+
+        The only sanctioned exit from ``fts_degraded``: drop and recreate
+        ``messages_fts`` (and ``receipts_fts``) from ``messages`` /
+        ``conversations``, clear the ``store_meta`` breadcrumb, and go
+        healthy in one transaction. Returns False (after a WARNING) when the
+        rebuild itself fails; the store stays degraded and keeps serving
+        search through LIKE.
+        """
+        if self._conn is None:
+            return False
+        try:
+            with self._lock, self._conn:
+                self._conn.execute("DROP TABLE IF EXISTS messages_fts")
+                self._conn.execute(
+                    "CREATE VIRTUAL TABLE messages_fts USING fts5("
+                    "conversation_id UNINDEXED, content, "
+                    "tokenize='porter unicode61')"
+                )
+                self._conn.execute(
+                    "INSERT INTO messages_fts(rowid, conversation_id, content) "
+                    "SELECT id, conversation_id, content FROM messages"
+                )
+                self._conn.execute("DROP TABLE IF EXISTS receipts_fts")
+                self._conn.execute(
+                    "CREATE VIRTUAL TABLE receipts_fts USING fts5("
+                    "thread_id UNINDEXED, title, receipt, "
+                    "tokenize='porter unicode61')"
+                )
+                self._conn.execute(
+                    "INSERT INTO receipts_fts(thread_id, title, receipt) "
+                    "SELECT id, title, receipt FROM conversations "
+                    "WHERE receipt != ''"
+                )
+                self._conn.execute("DELETE FROM store_meta WHERE key = 'fts_degraded'")
+                self._fts_degraded = False
+                self._fts_ok = True
+            logger.info("fts rebuild complete; index re-armed from messages/conversations")
+            return True
+        except Exception as e:
+            logger.warning(f"rebuild_fts failed: {e}")
+            self._fts_ok = False
+            return False
+
+    def _corrupt_fts_for_test(self) -> None:
+        """TEST-ONLY (packet 08 A2): simulate a derived index whose write
+        path raises, so the fail-open contract can be pinned end to end.
+
+        Ships deliberately -- it is how ``tests/test_fts_fail_open.py`` holds
+        the contract -- but it must never be called outside a test. It
+        replaces ``messages_fts`` with an ordinary table that cannot accept
+        the sync INSERT: every index write raises ``OperationalError``, the
+        ``IF NOT EXISTS`` recovery cannot heal it, and ``rebuild_fts()`` can.
+        """
+        with self._lock, self._conn:
+            self._conn.execute("DROP TABLE IF EXISTS messages_fts")
+            # An ordinary table squatting on the index name: the sync INSERT
+            # names ``conversation_id``/``content`` columns it does not have,
+            # so the write raises instead of silently skipping the index.
+            self._conn.execute("CREATE TABLE messages_fts (decoy INTEGER)")
 
     # ------------------------------------------------------------------
     # Legacy CRUD (Conversation dataclass shape)
@@ -791,6 +1069,31 @@ class SqliteConversationStore:
                 results = [r[0] for r in rows]
             except Exception as e:
                 logger.warning(f"sqlite FTS search failed (LIKE fallback only): {e}")
+        if self._fts_degraded:
+            # Fail-open (packet 08 A2): the FTS pass above is refused while
+            # the breadcrumb stands, so message-content search would go
+            # silent. Serve it with a LIKE scan instead -- slow, but the
+            # canonical content is exactly what a degraded search must not
+            # lose. Same visibility rule as ``search_snippets``: only
+            # rewound (``visible_in_timeline = 0``) rows hide.
+            try:
+                with self._lock:
+                    for term in terms[:6]:
+                        crows = self._conn.execute(
+                            """SELECT DISTINCT m.conversation_id
+                               FROM messages m
+                               JOIN conversations c ON c.id = m.conversation_id
+                               WHERE lower(m.content) LIKE ?
+                                 AND m.visible_in_timeline = 1
+                                 AND (? IS NULL OR c.user_id = ?)
+                               LIMIT ?""",
+                            (f"%{term.lower()}%", user_id, user_id, limit),
+                        ).fetchall()
+                        for r in crows:
+                            if r[0] not in results:
+                                results.append(r[0])
+            except Exception as e:
+                logger.warning(f"sqlite content LIKE fallback failed: {e}")
         try:
             with self._lock:
                 trows = self._conn.execute(
@@ -890,11 +1193,24 @@ class SqliteConversationStore:
                     # above) -- a plain INSERT would then collide on rowid
                     # with what recovery already wrote (same content either
                     # way, so replacing is a no-op in substance).
-                    self._conn.execute(
-                        "INSERT OR REPLACE INTO messages_fts(rowid, conversation_id, content) "
-                        "VALUES (?, ?, ?)",
-                        (message_id, thread_id, text),
-                    )
+                    try:
+                        self._conn.execute(
+                            "INSERT OR REPLACE INTO messages_fts(rowid, conversation_id, content) "
+                            "VALUES (?, ?, ?)",
+                            (message_id, thread_id, text),
+                        )
+                    except sqlite3.DatabaseError as e:
+                        # Fail-open (packet 08 A2): a corrupt derived index
+                        # must never block the canonical write. Without this
+                        # catch the exception rolled the whole transaction
+                        # back -- the message row and the ``updated_at``
+                        # stamp with it -- and ``append_message`` reported
+                        # None as though the write had never happened.
+                        # Constraint rejections are not corruption: re-raise.
+                        if self._is_fts_write_corruption_error(e):
+                            self._enter_fts_fail_open(e)
+                        else:
+                            raise
                 # MAX(...): agrees with save()'s ON CONFLICT clause (A1 review
                 # finding 3) so the two write paths can't rewind each other.
                 # agents/migrations.py backfills messages with an explicit,
@@ -962,14 +1278,23 @@ class SqliteConversationStore:
                         "SELECT conversation_id, content FROM messages WHERE id = ?",
                         (message_id,),
                     ).fetchone()
-                    self._conn.execute(
-                        "DELETE FROM messages_fts WHERE rowid = ?", (message_id,)
-                    )
-                    self._conn.execute(
-                        "INSERT INTO messages_fts(rowid, conversation_id, content) "
-                        "VALUES (?, ?, ?)",
-                        (message_id, row["conversation_id"], row["content"]),
-                    )
+                    try:
+                        self._conn.execute(
+                            "DELETE FROM messages_fts WHERE rowid = ?", (message_id,)
+                        )
+                        self._conn.execute(
+                            "INSERT INTO messages_fts(rowid, conversation_id, content) "
+                            "VALUES (?, ?, ?)",
+                            (message_id, row["conversation_id"], row["content"]),
+                        )
+                    except sqlite3.DatabaseError as e:
+                        # Fail-open (packet 08 A2): same contract as
+                        # ``append_message`` -- the canonical UPDATE above
+                        # must survive an index that cannot be written.
+                        if self._is_fts_write_corruption_error(e):
+                            self._enter_fts_fail_open(e)
+                        else:
+                            raise
             return True
         except Exception as e:
             logger.warning(f"update_message {message_id} failed: {e}")
@@ -1415,7 +1740,17 @@ class SqliteConversationStore:
             if not ids:
                 return 0
             marks = ",".join("?" * len(ids))
-            self._conn.execute(f"DELETE FROM messages_fts WHERE rowid IN ({marks})", ids)
+            try:
+                self._conn.execute(f"DELETE FROM messages_fts WHERE rowid IN ({marks})", ids)
+            except sqlite3.DatabaseError as e:
+                # Fail-open (packet 08 A2): a "forget that session" is a
+                # canonical write -- a corrupt index must not roll the row
+                # deletion back, and a rolled-back forget that was reported
+                # as performed is the worst outcome available here.
+                if self._is_fts_write_corruption_error(e):
+                    self._enter_fts_fail_open(e)
+                else:
+                    raise
             self._conn.execute(f"DELETE FROM messages WHERE id IN ({marks})", ids)
         logger.info("Forgot %d message(s) written under %s", len(ids), request_id)
         return len(ids)

@@ -40,10 +40,28 @@ class SchedulerEngine:
                 continue
 
     def _persist_job(self, job: Job) -> None:
-        """Persist job state to disk."""
+        """Persist job state to disk, atomically.
+
+        The JSON is staged to a sibling temp file, flushed + fsynced, then
+        ``os.replace``d over the per-job record: a reader (``_load_jobs`` at
+        the next boot) sees either the whole previous state or the whole new
+        one, never a half-written file a ``JSONDecodeError`` would silently
+        drop from the queue.
+        """
         path = self._job_path(job.id)
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(job.__dict__, f, ensure_ascii=False, indent=2)
+        tmp = f"{path}.{os.getpid()}.tmp"
+        try:
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(job.__dict__, f, ensure_ascii=False, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, path)
+        except BaseException:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
 
     @trace_call("scheduler.add_job")
     def add_job(self, job: Job) -> None:
