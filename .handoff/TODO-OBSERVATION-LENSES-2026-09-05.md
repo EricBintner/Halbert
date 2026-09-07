@@ -135,13 +135,24 @@ Observations-only input; `summarizer=None` unless `active_lens` is set and `lens
 | Manifest line (`RQ-7`) and `ERASURE_LIMITS` text for the research plane | — | with the above |
 | A user-editable noun file under `~/.config/halbert/` so inference can see nouns intake does not know (`RQ-4`) | sonnet · med | still no model |
 
-## 10. Haloysius upstream asks (Phase-1 items, none blocking branches 1–4)
+## 10. Haloysius upstream asks (Phase-1 items) — **all four landed 2026-09-06**
 
-- `ObservationStore.delete()` that removes the row and its FTS row, with `PRAGMA secure_delete` as the ledger already does.
-- `ObservationStore.save()` respects a user tombstone (`forgotten_by_user:*`) instead of un-staling any duplicate.
-- `PersonaMemoryStore.teach()` / `update_preference()` set `memory.source = "user"` so a stated fact gets 0.9, not the inferred 0.7.
-- Contradiction detection cannot see "no longer interested in X" (`_extract_subject` matches no subject); the Halbert writer handles negation until it can.
-- Not needed: a `VIGILANCE` emotion category — branch 1 mapped it to `ANTICIPATION` (Plutchik's own model).
+On Haloysius `main`, pushed. API facts: [`/Volumes/4TB-BAD/Haloysius/.handoff/HANDOFF-OBSERVATION-LENSES-UPSTREAM-ASKS-2026-09-06.md`](file:///Volumes/4TB-BAD/Haloysius/.handoff/HANDOFF-OBSERVATION-LENSES-UPSTREAM-ASKS-2026-09-06.md). Nothing in §9 waits on the engine any more.
+
+| Ask | Landed |
+|---|---|
+| `ObservationStore.delete()` with `PRAGMA secure_delete` | `2648e72` |
+| `save()` respects a `forgotten_by_user:` tombstone | `2648e72` |
+| `teach()` / `update_preference()` set `source = "user"` | `324f186` |
+| Contradiction detection sees "no longer interested in X" | `4f95418` |
+| A `VIGILANCE` emotion category | not needed, as branch 1 assumed — `EmotionCategory.ANTICIPATION` is present in both persona modules |
+
+What changes on our side:
+
+- **`ERASURE_LIMITS`**: the observation plane is reached now, so the sentence naming it unreached stops being true once we call `delete()`. It removes the row, retires the external-content FTS entry (a reused rowid would otherwise inherit its terms), runs under `secure_delete` and ends with a WAL truncate checkpoint — the engine's test asserts the phrase is absent from `observations.db` **and** `observations.db-wal`. `False` on a miss is the per-plane report's `complete=False`.
+- **`RQ-6` is no longer forced**: both verbs exist. "Stop using" is `mark_stale(id, f"{USER_TOMBSTONE_PREFIX}{turn}")` — reversible, auditable, and no longer resurrectable by a consolidation pass, which is what `save()` returning `None` buys. "Forget" is `delete()`. `USER_TOMBSTONE_PREFIX` is importable from `haloysius.memory_v2.observation_store`, so our `stale_reason` convention and the engine's check cannot drift apart.
+- **The `remember` writer**: if it builds its own `PersonaMemory` rather than calling `teach()`, it must set `source="user"` itself — `metadata["source"]` calibrates nothing. A stated interest then clears the ≥ 0.7 extraction threshold in `Consolidator._extract_observations` immediately.
+- **Negation**: only "interested in X" is covered upstream (both polarities, trailing "anymore" stripped, the subject qualified so it cannot collide with a same-noun memory). "No longer uses X", "stopped X" and the rest still match nothing, so the writer keeps handling those — ask upstream with the phrasing if we want them. Contradiction detection is still gated on the embedder clearing `similarity_threshold` (0.85) at `smart_add` step 2.
 
 ## 11. Side findings for their own rows
 
