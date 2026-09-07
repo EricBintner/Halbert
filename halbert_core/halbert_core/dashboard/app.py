@@ -11,6 +11,7 @@ import asyncio
 import logging
 import json
 import os
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, List, Optional
 from pathlib import Path
 
@@ -214,7 +215,14 @@ def start_terminal_subsystem() -> Dict[str, bool]:
     return result
 
 
-def register_proactive_jobs(executor, *, load_config=None) -> Dict[str, str]:
+def register_proactive_jobs(
+    executor,
+    *,
+    load_config=None,
+    catchup_now: Optional[datetime] = None,
+    catchup_gate=None,
+    catchup_probe=None,
+) -> Dict[str, str]:
     """Register the scheduled background jobs on a started executor.
 
     T7e.1 detector sweep every 6 hours, and the T7d.2 daily morning report
@@ -227,22 +235,48 @@ def register_proactive_jobs(executor, *, load_config=None) -> Dict[str, str]:
     the startup thread so the registration path is testable; before C4-01
     every call here failed inside APScheduler and the failure was only ever
     a warning in the log.
+
+    Packet 03 B2: after registration, serve slots the cron jobs missed
+    while the machine was off (``_run_boot_catchup``; the ``catchup_*``
+    kwargs exist so tests can pin the clock, the monitor-hash gate and the
+    probe). The prior-boot job records must be read BEFORE registration —
+    ``schedule_cron_job`` re-creates the record, which is why the last-run
+    facts are captured first.
     """
     from ..scheduler.autonomous_tasks import create_autonomous_task
 
     outcome: Dict[str, str] = {}
+    catchup_specs: Dict[str, Dict[str, Any]] = {}
+
+    # Last-run facts from the previous boot's per-job JSON records, read
+    # before registration overwrites them.
+    prior_records: Dict[str, Any] = {}
+    try:
+        engine = getattr(executor, "scheduler_engine", None)
+        if engine is not None:
+            for jid in ("detector_sweep", "timeline_retention", "morning_report"):
+                rec = engine.get_job(jid)
+                if rec is not None:
+                    prior_records[jid] = rec
+    except Exception as e:
+        logger.debug(f"Boot catch-up: no prior job records ({e})")
 
     # T7e.1: scheduled detector sweep every 6 hours
     try:
         sweep_task = create_autonomous_task('detector_sweep')
+        sweep_func = lambda: sweep_task.execute({})  # noqa: E731
         executor.schedule_cron_job(
             job_id='detector_sweep',
-            task_func=lambda: sweep_task.execute({}),
+            task_func=sweep_func,
             cron_expr={'hour': '*/6', 'minute': 12},
             description='Detector sweep (drop-ins, fstab, permissions)',
         )
         logger.info("Detector sweep scheduled every 6 hours")
         outcome['detector_sweep'] = 'scheduled'
+        catchup_specs['detector_sweep'] = {
+            'task': sweep_func,
+            'cron_expr': {'hour': '*/6', 'minute': 12},
+        }
     except Exception as e:
         logger.warning(f"Failed to schedule detector sweep: {e}")
 
@@ -268,9 +302,13 @@ def register_proactive_jobs(executor, *, load_config=None) -> Dict[str, str]:
         )
         logger.info("Timeline retention sweep scheduled daily")
         outcome['timeline_retention'] = 'scheduled'
+        catchup_specs['timeline_retention'] = {
+            'task': _prune_timeline,
+            'cron_expr': {'hour': 4, 'minute': 37},
+        }
     except Exception as e:
         logger.warning(f"Failed to schedule timeline retention: {e}")
-        outcome['timeline_retention'] = f'error: {e}' 
+        outcome['timeline_retention'] = f'error: {e}'
         outcome['detector_sweep'] = f'error: {e}'
 
     # T7d.2: daily morning report per being.yml
@@ -285,9 +323,10 @@ def register_proactive_jobs(executor, *, load_config=None) -> Dict[str, str]:
         else:
             hour, minute = _parse_hhmm(report_cfg.get('time', '08:00'))
             report_task = create_autonomous_task('morning_report')
+            report_func = lambda: report_task.execute({})  # noqa: E731
             executor.schedule_cron_job(
                 job_id='morning_report',
-                task_func=lambda: report_task.execute({}),
+                task_func=report_func,
                 cron_expr={'hour': hour, 'minute': minute},
                 description='Daily morning report',
             )
@@ -296,11 +335,354 @@ def register_proactive_jobs(executor, *, load_config=None) -> Dict[str, str]:
                 f"{getattr(executor, 'timezone', '')}"
             )
             outcome['morning_report'] = 'scheduled'
+            catchup_specs['morning_report'] = {
+                'task': report_func,
+                'cron_expr': {'hour': hour, 'minute': minute},
+            }
     except Exception as e:
         logger.warning(f"Failed to schedule morning report: {e}")
         outcome['morning_report'] = f'error: {e}'
 
+    # Packet 03 B2: serve the slots the crons missed while the machine was
+    # off — bounded, staggered, age-gated per job, monitor-hash-gated for
+    # the named check-on-X job. Never disturbs the outcome above.
+    try:
+        _run_boot_catchup(
+            executor,
+            catchup_specs,
+            prior_records,
+            now=catchup_now,
+            gate=catchup_gate,
+            probe=catchup_probe,
+        )
+    except Exception as e:
+        logger.warning(f"Boot catch-up failed (non-fatal): {e}")
+
     return outcome
+
+
+# ---------------------------------------------------------------------------
+# Packet 03 B2: boot catch-up for the proactive jobs
+# ---------------------------------------------------------------------------
+
+#: Cadence of each proactive cron job, for the catch-up module's
+#: cadence-scaled grace (half the period, clamped [120s, 2h]).
+_PROACTIVE_PERIOD_S = {
+    'detector_sweep': 6 * 3600.0,
+    'timeline_retention': 24 * 3600.0,
+    'morning_report': 24 * 3600.0,
+}
+
+#: Per-job catch-up age bound. detector_sweep and timeline_retention are
+#: idempotent housekeeping, so a missed slot is always safe to serve; a
+#: stale morning report is noise, so it catches up only within 12h of its
+#: slot.
+_PROACTIVE_MAX_AGE_S = {
+    'morning_report': 12 * 3600.0,
+}
+
+#: Catch-up shape (OpenClaw timer-catchup/stagger): at most this many
+#: immediate one-time runs, the overflow staggered by this many seconds.
+_CATCHUP_MAX_IMMEDIATE = 2
+_CATCHUP_STAGGER_S = 60.0
+
+
+def _is_satellite_body() -> bool:
+    """Is this body a satellite of a canonical host (singular entity mode)?
+
+    The same guard ``_tick_thread_manager`` uses for the idle sweep,
+    expressed the cheap way: a satellite's conversation store proxies to the
+    canonical host over the peer link, and host-side proactive jobs belong
+    to the host — the satellite must not catch up work it would run twice.
+    Reads the config only (never constructs the thread manager); never
+    raises.
+    """
+    try:
+        from ..integrations.cognition_wiring import _get_canonical_thread_url
+
+        return bool(_get_canonical_thread_url())
+    except Exception:
+        return False
+
+
+def _detector_sweep_probe():
+    """Cheap deterministic snapshot of what the detector sweep looks at.
+
+    The monitor-hash gate (packet 03 addendum item 4) hashes this instead of
+    running the sweep: if the surface the detectors read has not changed
+    since the last evaluation, the catch-up run is suppressed entirely.
+    Names, sizes, modes and mtimes only — never file contents (a content
+    hash stands in for fstab). Returns ``(ok, text)``; a probe that cannot
+    read its sources comes back ``ok=False``, which the gate treats as an
+    error, never a "change".
+    """
+    import hashlib
+
+    lines: List[str] = []
+    ok = True
+
+    def _surface(path: str, recursive: bool) -> None:
+        nonlocal ok
+        try:
+            if not os.path.isdir(path):
+                lines.append(f"{path}: absent")
+                return
+            lines.append(f"{path}:")
+            entries: List[str] = []
+            if recursive:
+                for root, dirs, files in os.walk(path):
+                    dirs.sort()
+                    for name in sorted(files):
+                        entries.append(os.path.join(root, name))
+            else:
+                entries = [os.path.join(path, n) for n in sorted(os.listdir(path))]
+            for p in entries[:2000]:
+                try:
+                    st = os.stat(p)
+                    lines.append(
+                        f"  {p} size={st.st_size} mode={oct(st.st_mode & 0o777)} "
+                        f"mtime={int(st.st_mtime)}"
+                    )
+                except OSError as e:
+                    lines.append(f"  {p} stat-error={e.errno}")
+            if len(entries) > 2000:
+                lines.append(f"  ... ({len(entries) - 2000} more)")
+        except OSError:
+            ok = False
+
+    _surface("/etc/systemd/system", recursive=True)  # drop-in conflicts
+    _surface(os.path.join(os.path.expanduser("~"), ".ssh"), recursive=False)  # permissions hygiene
+    try:
+        if os.path.isfile("/etc/fstab"):
+            with open("/etc/fstab", "rb") as f:
+                lines.append(f"/etc/fstab: sha256={hashlib.sha256(f.read()).hexdigest()}")
+        else:
+            lines.append("/etc/fstab: absent")
+    except OSError:
+        ok = False
+    return ok, "\n".join(lines)
+
+
+def _last_run_of(record) -> Optional[datetime]:
+    """When did this job record's run actually happen? (completed_at, or the
+    first start if it never completed.) None when it never ran. The
+    SchedulerEngine writes these as UTC ISO strings."""
+    for attr in ("completed_at", "started_at"):
+        value = getattr(record, attr, None)
+        if not value:
+            continue
+        try:
+            ts = datetime.fromisoformat(value)
+        except ValueError:
+            continue
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        return ts
+    return None
+
+
+def _last_due_slot(trigger, now: datetime, *, horizon_s: float = 7 * 86400.0,
+                   max_steps: int = 64):
+    """The most recent slot at or before ``now`` for an APScheduler trigger.
+
+    APScheduler 3.x has no ``get_prev_fire_time``, so binary-search the
+    anchor whose "next slot" is the last one not after ``now``:
+    ``f(anchor) = get_next_fire_time(None, anchor)`` is monotonic, the last
+    due slot is ``f`` evaluated just below the point where ``f`` jumps past
+    ``now``, and the search is bounded regardless of how fast the cron
+    runs (a forward walk from a horizon is not — a 15-minute cron walks
+    672 slots in 7 days). None when no slot lies in the window.
+    """
+    lo = now - timedelta(seconds=horizon_s)
+    hi = now
+    first = trigger.get_next_fire_time(None, lo)
+    if first is None or first > now:
+        return None  # no slot between the horizon and now
+    for _ in range(max_steps):
+        mid = lo + (hi - lo) / 2
+        cand = trigger.get_next_fire_time(None, mid)
+        if cand is not None and cand <= now:
+            lo = mid
+        else:
+            hi = mid
+        if hi - lo <= timedelta(microseconds=1):
+            break
+    return trigger.get_next_fire_time(None, lo)
+
+
+def _run_boot_catchup(
+    executor,
+    specs: Dict[str, Dict[str, Any]],
+    prior_records: Dict[str, Any],
+    *,
+    now: Optional[datetime] = None,
+    gate=None,
+    probe: Optional[Callable] = None,
+) -> Dict[str, str]:
+    """Serve slots the proactive cron jobs missed while the machine was off.
+
+    For each job that registered this boot, compute the slot its cron last
+    passed (``_last_due_slot``) and whether the previous boot's record shows
+    it was served. Missed slots go through ``decide_catchup``
+    (max_immediate=2, stagger 60s) and come back as one-time runs on the
+    existing ``schedule_one_time`` path. A job past its per-job
+    ``max_age_s`` is skipped (a stale morning report is noise);
+    the monitor-hash gate suppresses a detector_sweep catch-up whose source
+    has not changed. Satellites never catch up — the canonical host runs
+    the proactive jobs. Never raises; returns per-job outcomes.
+    """
+    result: Dict[str, str] = {}
+    if not specs:
+        return result
+    if _is_satellite_body():
+        logger.info(
+            "Boot catch-up skipped: satellite body (the canonical host "
+            "runs the proactive jobs)"
+        )
+        return result
+    try:
+        from apscheduler.triggers.cron import CronTrigger
+    except ImportError:
+        return result
+    from ..scheduler.catchup import CatchupAction, decide_catchup
+    from ..scheduler.monitor_hash import MonitorDecision, MonitorHashGate
+    from ..utils.paths import data_subdir
+
+    if now is None:
+        now = datetime.now(timezone.utc)
+    if probe is None:
+        probe = _detector_sweep_probe
+    tz = getattr(executor, "timezone", "UTC")
+
+    candidates = []
+    for job_id, spec in specs.items():
+        try:
+            trigger = CronTrigger(**spec["cron_expr"], timezone=tz)
+            due = _last_due_slot(trigger, now)
+        except Exception as e:
+            logger.warning(
+                f"Boot catch-up: no last-due slot for {job_id} (non-fatal): {e}"
+            )
+            continue
+        if due is None:
+            continue  # no slot has passed in the window: the schedule owns it
+        if job_id not in prior_records:
+            # Never registered before (fresh install): nothing was missed.
+            continue
+        last_run = _last_run_of(prior_records[job_id])
+        if last_run is not None and last_run >= due:
+            continue  # the slot was served by the previous boot's run
+        max_age_s = _PROACTIVE_MAX_AGE_S.get(job_id)
+        if max_age_s is not None and (now - due).total_seconds() > max_age_s:
+            logger.info(
+                f"Boot catch-up: {job_id} slot at {due.isoformat()} is stale "
+                f"(older than its {max_age_s:g}s bound); skipped"
+            )
+            result[job_id] = "stale_skipped"
+            continue
+        candidates.append({
+            "id": job_id,
+            "due_at": due,
+            "period_s": _PROACTIVE_PERIOD_S.get(job_id),
+            "one_shot": False,
+            "task": spec["task"],
+        })
+
+    if not candidates:
+        return result
+
+    plan = decide_catchup(
+        candidates,
+        now=now,
+        max_immediate=_CATCHUP_MAX_IMMEDIATE,
+        stagger_s=_CATCHUP_STAGGER_S,
+    )
+
+    if gate is None:
+        try:
+            gate = MonitorHashGate(
+                os.path.join(data_subdir("scheduler"), "monitor_hashes.json")
+            )
+        except Exception as e:
+            logger.warning(
+                f"Boot catch-up: monitor-hash gate unavailable ({e}); "
+                f"running ungated"
+            )
+            gate = None
+
+    def _monitor_allows(job_id: str) -> bool:
+        """Named-job-set-only monitor gate: detector_sweep-class check-on-X
+        jobs are suppressed when their source is unchanged; everything else
+        (morning_report, timeline_retention) runs unconditionally."""
+        if gate is None or not gate.is_gated(job_id):
+            return True
+        try:
+            outcome = gate.evaluate(job_id, probe())
+        except Exception as e:
+            logger.warning(
+                f"Boot catch-up: monitor probe for {job_id} failed ({e}); "
+                f"running anyway"
+            )
+            return True
+        if outcome.decision is MonitorDecision.SUPPRESS:
+            logger.info(
+                f"Boot catch-up: {job_id} suppressed (source unchanged)"
+            )
+            return False
+        if outcome.decision is MonitorDecision.BASELINE:
+            logger.info(
+                f"Boot catch-up: {job_id} monitor baseline established; "
+                f"catch-up suppressed"
+            )
+            return False
+        if outcome.decision is MonitorDecision.SOURCE_ERROR:
+            logger.warning(
+                f"Boot catch-up: monitor source for {job_id} errored; "
+                f"running anyway (a source failure is never a 'change')"
+            )
+            return True
+        if outcome.diff:
+            logger.info(f"Boot catch-up: {job_id} source changed:\n{outcome.diff}")
+        return True
+
+    def _schedule_one_time(job: Dict[str, Any], run_at: datetime, tag: str) -> None:
+        run_id = f"{job['id']}:catchup"
+        try:
+            executor.schedule_one_time(
+                job_id=run_id,
+                task_func=job["task"],
+                run_at=run_at,
+            )
+        except Exception as e:
+            logger.warning(
+                f"Boot catch-up: could not schedule {run_id} (non-fatal): {e}"
+            )
+            return
+        logger.info(
+            f"Boot catch-up: {job['id']} scheduled one-time as {run_id} "
+            f"at {run_at.isoformat()}"
+        )
+        result[job["id"]] = tag
+
+    for entry in plan.actions:
+        job = entry.job
+        if entry.action in (CatchupAction.RUN_NOW, CatchupAction.FAST_FORWARD):
+            # FAST_FORWARD (beyond grace, recurring) also fires ONCE now:
+            # the cron registration owns the true next slot, so advancing
+            # the schedule is inherent — no backlog is replayed.
+            if _monitor_allows(job["id"]):
+                _schedule_one_time(job, now, "caught_up")
+        elif entry.action is CatchupAction.ADVANCE_ONLY:
+            result.setdefault(job["id"], "advanced")
+        elif entry.action is CatchupAction.RETIRE:
+            result.setdefault(job["id"], "retired")
+    for entry in plan.deferred:
+        job = entry.job
+        if _monitor_allows(job["id"]):
+            _schedule_one_time(
+                job, now + timedelta(seconds=entry.delay_s), "caught_up_deferred"
+            )
+    return result
 
 
 # ---------------------------------------------------------------------------
