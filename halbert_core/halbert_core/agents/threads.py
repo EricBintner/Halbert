@@ -357,6 +357,7 @@ class ThreadManager:
             if entry is not None:
                 recalled.append(entry)
                 self._persist_recall(thread, entry)
+                self._record_promotion_signal(query, strong, entry)
 
         if not history:
             history = self._history(thread)
@@ -1114,6 +1115,26 @@ class ThreadManager:
         recalled.append({k: entry[k] for k in ("thread_id", "title", "date", "status", "at")})
         thread["recalled_json"] = recalled
         self.store.update_thread(thread["thread_id"], recalled_json=recalled)
+
+    def _record_promotion_signal(
+        self, query: str, strong: Any, entry: Dict[str, Any]
+    ) -> None:
+        """A1: a strong auto-recall that surfaced a receipt is usage evidence.
+
+        The signal is keyed on the ledger-claim-shaped
+        ``(thread:<id>, recalled)`` — the receipt carries no claim of its
+        own, and ``thread:<id>`` is a subject shape the recall surface
+        already documents. Fail-soft: memory failures never eat a turn.
+        """
+        try:
+            from ..continuity.promotion import get_promotion_store
+            get_promotion_store().record_recall(
+                (f"thread:{entry['thread_id']}", "recalled"),
+                query=query,
+                score=float(getattr(strong, "score", 0.0) or 0.0),
+            )
+        except Exception as e:
+            logger.debug(f"promotion signal not recorded: {e}")
 
     def _recall_result(self, t: Dict[str, Any], query: Optional[str], match_terms: List[str], now: float) -> Dict[str, Any]:
         snippets = self.store.search_snippets(t["thread_id"], query, limit=RECALL_SNIPPETS) if query else []

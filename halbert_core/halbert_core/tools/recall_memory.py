@@ -103,6 +103,29 @@ def _more(shown: list, total: int) -> str:
     return f" (showing {len(shown)} of {total})" if total > len(shown) else ""
 
 
+#: This tool resolves an exact ledger key or abstains — its match strength is
+#: exactness, not a similarity score. That is what a promotion signal records
+#: here: the claim was asked for and the ledger *had* it.
+_EXACT_MATCH_SCORE = 1.0
+
+
+def _record_promotion_signal(subject: str, predicate: str, query: str) -> None:
+    """A1: a recall that returned a record is usage evidence for that claim.
+
+    The query is whatever the caller asked with (its free-text ``query`` arg
+    when there was one, else the subject itself) — hashed inside the store,
+    so raw text never lands there. Fail-soft: signal recording must never
+    eat a tool answer.
+    """
+    try:
+        from ..continuity.promotion import get_promotion_store
+        get_promotion_store().record_recall(
+            (subject, predicate), query=query or subject,
+            score=_EXACT_MATCH_SCORE)
+    except Exception as e:
+        logger.debug(f"promotion signal not recorded: {e}")
+
+
 def _when(ts: Optional[float]) -> str:
     if ts is None:
         return "now"
@@ -215,6 +238,8 @@ async def recall_memory(args: Dict[str, Any]) -> str:
                 history_limit=_MAX_HISTORY,
             )
             if result["found"]:
+                _record_promotion_signal(
+                    result["subject"], result["predicate"], query)
                 return _render(result)
             # The subject may be real and the predicate wrong. Abstaining
             # outright on a subject the ledger plainly knows is a lie by
