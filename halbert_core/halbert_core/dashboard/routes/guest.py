@@ -31,11 +31,18 @@ import logging
 from types import SimpleNamespace
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from ...federation.peer_middleware import PeerContext, require_local_admin, require_peer_auth
 from ...persona import guest, guest_homes, private_sources
+from ...persona.admission import (
+    ADMISSION_DISPATCH,
+    Gate,
+    GateEffect,
+    IngressDecision,
+    decide_ingress,
+)
 from ...persona.guest_announce import (
     EVENT_TYPE as _EVENT_TYPE,
     announce_fronting,
@@ -100,6 +107,222 @@ class BecomeRequest(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Named-gate admission (PACKET-02 C1)
+# ---------------------------------------------------------------------------
+
+# Every route's guards, as an ordered gate list. A deny is no longer an
+# opaque status: each request produces an IngressDecision
+# (persona/admission.py), and a refusal answers with the decisive gate and
+# its reason code, so any "no" can be explained after the fact.
+#
+# Halley's warning, made mechanical: this seam fails CLOSED on unwritten
+# policy. A route id with no entry below is refused admission outright
+# (``no_gate_list_configured``) — it never silently allows — and a
+# registry-completeness test keeps every route the router serves covered.
+#
+# Warrant-layer composition rule (packet, 2026-09-07): these gates grade
+# ADMISSION — capability. The claims ladder (persona/claims.py) grades
+# identity claims and the warrant layer grades legitimacy; neither is
+# chained behind the other.
+
+# Human words for the machine-readable codes; the payload carries both.
+_REASON_TEXT = {
+    "not_local_admin": "This control is available only from the machine it configures.",
+    "peer_token_missing": "A pairing token is required for this route.",
+    "guest_already_fronting": "Another persona is already fronting here.",
+    "no_such_session": "No live guest session with that id.",
+    "session_owned_by_other_peer": "That session was offered by another peer.",
+    "no_guest_fronting": "No guest persona is fronting.",
+    "no_session_to_forget": "No guest is fronting; say which session to forget.",
+    "no_gate_list_configured": "This route has no admission policy configured.",
+}
+
+
+def _allow(gate_id: str, phase: str, reason: str = "ok", **facts) -> Gate:
+    return Gate(
+        id=gate_id, phase=phase, effect=GateEffect.ALLOW,
+        allowed=True, reason_code=reason, facts=facts,
+    )
+
+
+def _block(
+    gate_id: str, phase: str, reason: str, http_status: int, **facts
+) -> Gate:
+    return Gate(
+        id=gate_id, phase=phase, effect=GateEffect.BLOCK,
+        allowed=False, reason_code=reason,
+        facts={"http_status": http_status, **facts},
+    )
+
+
+def _deny_payload(decisive_gate: str, reason_code: str) -> Dict[str, Any]:
+    return {
+        "reason_code": reason_code,
+        "decisive_gate": decisive_gate,
+        "message": _REASON_TEXT.get(reason_code, reason_code),
+    }
+
+
+# Gate builders. Each sees the raw request, the authenticated peer (the
+# app's side only; None elsewhere), and the parsed body when the route has
+# one. They are read-only: every state change still happens in the handler
+# and in persona/guest.py, which remain the authority.
+
+async def _local_admin_gate(request: Request, peer, body) -> Gate:
+    """``require_local_admin`` as a named gate. The route used to carry the
+    same check as a FastAPI dependency; the gate calls the very same
+    function, so there is one boundary check, not two."""
+    try:
+        await require_local_admin(request)
+    except HTTPException:
+        return _block("local_admin", "boundary", "not_local_admin", 403)
+    return _allow("local_admin", "boundary", reason="local_admin")
+
+
+async def _peer_identity_gate(request: Request, peer, body) -> Gate:
+    """The pairing-token boundary (``require_peer_auth``) ran as the route's
+    dependency before this gate list and produced the peer; the gate
+    records that outcome in the decision, and fails closed if no
+    authenticated peer reached the handler."""
+    if peer is None:
+        return _block("peer_token", "identity", "peer_token_missing", 401)
+    return _allow(
+        "peer_token", "identity", reason="peer_authenticated",
+        node_id=peer.node_id,
+    )
+
+
+async def _session_free_gate(request: Request, peer, body) -> Gate:
+    """One face at a time. The peer that offered the live session may
+    replace its own; nobody else may offer over it."""
+    live = guest.current_guest()
+    if live is None:
+        return _allow("session_free", "session")
+    if peer is not None and live.offered_by == peer.node_id:
+        return _allow("session_free", "session", reason="replaces_own_session")
+    return _block(
+        "session_free", "session", "guest_already_fronting", 409,
+        fronting=live.offered_by,
+    )
+
+
+async def _session_live_gate(request: Request, peer, body) -> Gate:
+    live = guest.current_guest()
+    if live is None or live.id != body.session_id:
+        return _block("session_live", "session", "no_such_session", 404)
+    return _allow("session_live", "session", reason="session_live")
+
+
+async def _session_owned_gate(request: Request, peer, body) -> Gate:
+    live = guest.current_guest()
+    if live is not None and live.offered_by != peer.node_id:
+        return _block(
+            "session_owned", "session", "session_owned_by_other_peer", 403,
+            offered_by=live.offered_by,
+        )
+    return _allow("session_owned", "session", reason="owned_by_caller")
+
+
+async def _withdraw_owned_gate(request: Request, peer, body) -> Gate:
+    """Withdrawing with nothing fronting is not a deny — the route answers
+    ``idle``. Only another peer's session is refused."""
+    live = guest.current_guest()
+    if live is None:
+        return _allow("session_owned", "session", reason="no_live_session")
+    if live.offered_by != peer.node_id:
+        return _block(
+            "session_owned", "session", "session_owned_by_other_peer", 403,
+            offered_by=live.offered_by,
+        )
+    return _allow("session_owned", "session", reason="owned_by_caller")
+
+
+async def _guest_fronting_gate(request: Request, peer, body) -> Gate:
+    if guest.current_guest() is None:
+        return _block("guest_fronting", "session", "no_guest_fronting", 409)
+    return _allow("guest_fronting", "session", reason="guest_fronting")
+
+
+async def _forget_target_gate(request: Request, peer, body) -> Gate:
+    """Forgetting needs a session to forget: one named, or the one
+    fronting. Neither is a refuse-the-caller deny — it is the request
+    that is incomplete, so the gate stays at 409 like the check it
+    replaces."""
+    if not body.session_id.strip() and guest.current_guest() is None:
+        return _block("forget_target", "session", "no_session_to_forget", 409)
+    return _allow("forget_target", "session", reason="session_named")
+
+
+async def _admit(
+    route_id: str,
+    request: Request,
+    peer: Optional[PeerContext] = None,
+    body: Any = None,
+) -> IngressDecision:
+    """Walk this route's ordered gate list and decide admission.
+
+    Unwritten policy denies: a route id with no gate list configured is
+    refused (403, ``no_gate_list_configured``) — never silently allowed.
+    """
+    builders = _ROUTE_GATES.get(route_id)
+    if builders is None:
+        raise HTTPException(
+            status_code=403, detail=_deny_payload(
+                "route_registry", "no_gate_list_configured"),
+        )
+    gates = []
+    for build in builders:
+        gates.append(await build(request, peer, body))
+    decision = decide_ingress(gates)
+    if decision.admission != ADMISSION_DISPATCH:
+        status = 403
+        for gate in decision.gate_graph:
+            if gate.id == decision.decisive_gate:
+                status = gate.facts.get("http_status", 403)
+                break
+        logger.info(
+            "guest ingress %s: dropped at %s (%s)",
+            route_id, decision.decisive_gate, decision.reason_code,
+        )
+        raise HTTPException(
+            status_code=status,
+            detail=_deny_payload(decision.decisive_gate, decision.reason_code),
+        )
+    logger.debug("guest ingress %s: dispatch at %s", route_id, decision.decisive_gate)
+    return decision
+
+
+# The ordered gate list per route, keyed by "METHOD path". The
+# registry-completeness test in halbert_core/tests/persona/
+# test_admission_wiring.py refuses a route on the router without an entry.
+_ROUTE_GATES: Dict[str, Any] = {
+    # The app's side — the pairing token is the boundary; the session
+    # checks below it are what the token permits.
+    "POST /api/guest/offer": (_peer_identity_gate, _session_free_gate),
+    "POST /api/guest/heartbeat": (
+        _peer_identity_gate, _session_live_gate, _session_owned_gate,
+    ),
+    "POST /api/guest/withdraw": (_peer_identity_gate, _withdraw_owned_gate),
+    # The user's side — this machine's operator only, deliberately not
+    # satisfiable by a peer token. The one-session-at-a-time conflict on
+    # pull stays with guest.offer's own GuestConflict (it alone knows
+    # whether the caller's home replaces its own session).
+    "POST /api/guest/pull": (_local_admin_gate,),
+    "POST /api/guest/end": (_local_admin_gate,),
+    "GET /api/guest/homes": (_local_admin_gate,),
+    "POST /api/guest/homes": (_local_admin_gate,),
+    "DELETE /api/guest/homes": (_local_admin_gate,),
+    "GET /api/guest/available": (_local_admin_gate,),
+    "POST /api/guest/become": (_local_admin_gate,),
+    "POST /api/guest/private/assign": (_local_admin_gate, _guest_fronting_gate),
+    "POST /api/guest/private/release": (_local_admin_gate,),
+    "GET /api/guest/private/sources": (_local_admin_gate,),
+    "POST /api/guest/forget": (_local_admin_gate, _forget_target_gate),
+    "GET /api/guest": (_local_admin_gate,),
+}
+
+
+# ---------------------------------------------------------------------------
 # Announcing
 # ---------------------------------------------------------------------------
 
@@ -110,9 +333,11 @@ class BecomeRequest(BaseModel):
 @router.post("/api/guest/offer")
 async def offer_persona(
     request: OfferRequest,
+    raw_request: Request,
     peer: PeerContext = Depends(require_peer_auth),
 ) -> Dict[str, Any]:
     """Lend this machine a persona for a session."""
+    await _admit("POST /api/guest/offer", raw_request, peer=peer, body=request)
     try:
         persona, dropped = guest.GuestPersona.from_payload(request.persona)
         home = guest.GuestHome.from_payload(request.home) if request.home else None
@@ -138,8 +363,10 @@ async def offer_persona(
 @router.post("/api/guest/heartbeat")
 async def heartbeat(
     request: HeartbeatRequest,
+    raw_request: Request,
     peer: PeerContext = Depends(require_peer_auth),
 ) -> Dict[str, Any]:
+    await _admit("POST /api/guest/heartbeat", raw_request, peer=peer, body=request)
     try:
         session = guest.heartbeat(request.session_id, offered_by=peer.node_id)
     except LookupError:
@@ -151,8 +378,10 @@ async def heartbeat(
 
 @router.post("/api/guest/withdraw")
 async def withdraw_persona(
+    raw_request: Request,
     peer: PeerContext = Depends(require_peer_auth),
 ) -> Dict[str, Any]:
+    await _admit("POST /api/guest/withdraw", raw_request, peer=peer)
     live = guest.current_guest()
     if live is None:
         return {"status": "idle", "session": None}
@@ -167,10 +396,11 @@ async def withdraw_persona(
 # The user's side
 # ---------------------------------------------------------------------------
 
-@router.post("/api/guest/pull", dependencies=[Depends(require_local_admin)])
-async def pull_persona(request: PullRequest) -> Dict[str, Any]:
+@router.post("/api/guest/pull")
+async def pull_persona(request: PullRequest, raw_request: Request) -> Dict[str, Any]:
     """Fetch a persona from a sibling's home and wear it. The session is
     kept alive by pinging the home, since nobody there is heartbeating."""
+    await _admit("POST /api/guest/pull", raw_request, body=request)
     from ...persona import sibling
 
     payload = request.model_dump()
@@ -207,9 +437,10 @@ async def pull_persona(request: PullRequest) -> Dict[str, Any]:
     return {"status": "ok", "session": session.to_dict(), "dropped": dropped}
 
 
-@router.post("/api/guest/end", dependencies=[Depends(require_local_admin)])
-async def end_session() -> Dict[str, Any]:
+@router.post("/api/guest/end")
+async def end_session(raw_request: Request) -> Dict[str, Any]:
     """The Presence Pill's control: the user takes the face off."""
+    await _admit("POST /api/guest/end", raw_request)
     _ensure_announcer()
     ended = guest.withdraw(reason="ended_by_user", by="user")
     if ended is None:
@@ -221,14 +452,16 @@ async def end_session() -> Dict[str, Any]:
 # The homes whose personas this machine may wear
 # ---------------------------------------------------------------------------
 
-@router.get("/api/guest/homes", dependencies=[Depends(require_local_admin)])
-async def list_homes() -> Dict[str, Any]:
+@router.get("/api/guest/homes")
+async def list_homes(raw_request: Request) -> Dict[str, Any]:
     """The homes this machine knows. Tokens are never returned."""
+    await _admit("GET /api/guest/homes", raw_request)
     return {"homes": [h.to_dict() for h in guest_homes.list_homes()]}
 
 
-@router.post("/api/guest/homes", dependencies=[Depends(require_local_admin)])
-async def add_home(request: HomeRequest) -> Dict[str, Any]:
+@router.post("/api/guest/homes")
+async def add_home(request: HomeRequest, raw_request: Request) -> Dict[str, Any]:
+    await _admit("POST /api/guest/homes", raw_request, body=request)
     try:
         record = guest_homes.add_home(
             request.base_url, request.label, request.token, request.profile,
@@ -238,8 +471,9 @@ async def add_home(request: HomeRequest) -> Dict[str, Any]:
     return {"status": "ok", "home": record.to_dict()}
 
 
-@router.delete("/api/guest/homes", dependencies=[Depends(require_local_admin)])
-async def forget_home(base_url: str) -> Dict[str, Any]:
+@router.delete("/api/guest/homes")
+async def forget_home(raw_request: Request, base_url: str) -> Dict[str, Any]:
+    await _admit("DELETE /api/guest/homes", raw_request)
     try:
         removed = guest_homes.remove_home(base_url)
     except guest_homes.BadHome as e:
@@ -247,18 +481,19 @@ async def forget_home(base_url: str) -> Dict[str, Any]:
     return {"status": "ok" if removed else "unknown"}
 
 
-@router.get("/api/guest/available", dependencies=[Depends(require_local_admin)])
-async def available_personas() -> Dict[str, Any]:
+@router.get("/api/guest/available")
+async def available_personas(raw_request: Request) -> Dict[str, Any]:
     """Every persona this machine could wear right now, across every home.
 
     A home that does not answer is reported, not raised: "be Marnie" should
     still work when the other house is asleep.
     """
+    await _admit("GET /api/guest/available", raw_request)
     return await asyncio.to_thread(guest_homes.available_personas)
 
 
-@router.post("/api/guest/become", dependencies=[Depends(require_local_admin)])
-async def become(request: BecomeRequest) -> Dict[str, Any]:
+@router.post("/api/guest/become")
+async def become(request: BecomeRequest, raw_request: Request) -> Dict[str, Any]:
     """Wear the persona with this name, wherever it lives.
 
     The verb the user actually says. ``/api/guest/pull`` still takes a URL, a
@@ -266,6 +501,7 @@ async def become(request: BecomeRequest) -> Dict[str, Any]:
     thing for a person; this resolves a name against the known homes and
     keeps the credential on disk where it belongs.
     """
+    await _admit("POST /api/guest/become", raw_request, body=request)
     try:
         match = await asyncio.to_thread(
             guest_homes.resolve_persona, request.name, request.base_url,
@@ -281,7 +517,7 @@ async def become(request: BecomeRequest) -> Dict[str, Any]:
         token=record.token if record else "",
         label=match["home_label"],
         ttl_seconds=request.ttl_seconds,
-    ))
+    ), raw_request)
 
 
 # ---------------------------------------------------------------------------
@@ -311,13 +547,16 @@ def _private_event(source_id: str, label: str, first: bool) -> ProactiveEvent:
     )
 
 
-@router.post("/api/guest/private/assign", dependencies=[Depends(require_local_admin)])
-async def assign_private_source(request: PrivateSourceRequest) -> Dict[str, Any]:
+@router.post("/api/guest/private/assign")
+async def assign_private_source(
+    request: PrivateSourceRequest, raw_request: Request,
+) -> Dict[str, Any]:
     """Hand one source to the fronting guest for the rest of its session.
 
     Local only, and deliberately not satisfiable by a peer token: the app that
     lent the persona must not be able to award itself the user's camera.
     """
+    await _admit("POST /api/guest/private/assign", raw_request, body=request)
     label = _label_for(request.source_id)
     first = not private_sources.active()
     try:
@@ -330,9 +569,12 @@ async def assign_private_source(request: PrivateSourceRequest) -> Dict[str, Any]
     return {"status": "ok", "private_sources": _private_sources_payload()}
 
 
-@router.post("/api/guest/private/release", dependencies=[Depends(require_local_admin)])
-async def release_private_source(request: PrivateSourceRequest) -> Dict[str, Any]:
+@router.post("/api/guest/private/release")
+async def release_private_source(
+    request: PrivateSourceRequest, raw_request: Request,
+) -> Dict[str, Any]:
     """Take one source back. The guest keeps fronting."""
+    await _admit("POST /api/guest/private/release", raw_request, body=request)
     try:
         private_sources.release(request.source_id)
     except private_sources.BadSourceId as e:
@@ -340,9 +582,10 @@ async def release_private_source(request: PrivateSourceRequest) -> Dict[str, Any
     return {"status": "ok", "private_sources": _private_sources_payload()}
 
 
-@router.get("/api/guest/private/sources", dependencies=[Depends(require_local_admin)])
-async def list_private_sources() -> Dict[str, Any]:
+@router.get("/api/guest/private/sources")
+async def list_private_sources(raw_request: Request) -> Dict[str, Any]:
     """Everything the user could hand over, across the senses, with its owner."""
+    await _admit("GET /api/guest/private/sources", raw_request)
     return {"sources": private_sources.catalogue()}
 
 
@@ -362,8 +605,8 @@ class ForgetRequest(BaseModel):
     session_id: str = ""
 
 
-@router.post("/api/guest/forget", dependencies=[Depends(require_local_admin)])
-async def forget_session(request: ForgetRequest) -> Dict[str, Any]:
+@router.post("/api/guest/forget")
+async def forget_session(request: ForgetRequest, raw_request: Request) -> Dict[str, Any]:
     """Erase what a guest session left in Halbert's own stores.
 
     D2's promise made good. In normal mode the transcript is Halbert's, kept
@@ -380,6 +623,7 @@ async def forget_session(request: ForgetRequest) -> Dict[str, Any]:
     Local only, and it does not require a guest to be fronting: the session
     most worth forgetting is usually one that has ended.
     """
+    await _admit("POST /api/guest/forget", raw_request, body=request)
     session_id = request.session_id.strip()
     if not session_id:
         live = guest.current_guest()
@@ -444,8 +688,9 @@ async def forget_session(request: ForgetRequest) -> Dict[str, Any]:
     }
 
 
-@router.get("/api/guest", dependencies=[Depends(require_local_admin)])
-async def guest_status() -> Dict[str, Any]:
+@router.get("/api/guest")
+async def guest_status(raw_request: Request) -> Dict[str, Any]:
+    await _admit("GET /api/guest", raw_request)
     live = guest.current_guest()
     return {
         "fronting": live.to_dict() if live else None,

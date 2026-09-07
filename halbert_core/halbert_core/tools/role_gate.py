@@ -33,6 +33,15 @@ import logging
 from typing import Dict, Optional
 
 from .safety import ToolSafetyFramework, RiskLevel, SafetyCheckResult, _RISK_ORDER
+from ..persona.guest_tools import WRITE_PLANE_TOOLS
+from ..persona.policy import (
+    AskPolicy,
+    GUEST_WRITE_PLANE_FLOOR,
+    OWNER_DEFAULT,
+    PolicyPair,
+    SecurityLevel,
+    merge_policies,
+)
 
 logger = logging.getLogger("halbert.tools.role_gate")
 
@@ -54,6 +63,83 @@ ROLE_MAX_RISK: Dict[str, str] = {
 UNKNOWN_CONFIRM_RISK = "high"
 
 
+# ---------------------------------------------------------------------------
+# Lattice policy view (PACKET-02 C2)
+# ---------------------------------------------------------------------------
+
+# The two-axis lattice (persona/policy.py) projected onto this module's
+# role table. This is the POLICY VIEW for the audit line — the guest
+# allowlist (persona/guest_tools.py) and the role risk caps above remain
+# the actual filters; the view records capability (security) and
+# consultation (ask) and must never loosen either.
+#
+# Unwritten policy fails closed (Halley's warning): a role with no
+# written floor reads as DENY + ALWAYS ask, never as owner-default, so
+# the audit line says "no policy was written for this" rather than
+# silently granting the owner's default.
+
+# Guest-class speakers run inside the allowlist; "unknown" is treated as
+# guest everywhere else in this module, so it reads as guest here too.
+GUEST_CLASS_ROLES = frozenset({"guest", "unknown"})
+# The owner's own voice: dashboard text turns are session-authenticated
+# and process-internal calls default to admin.
+OWNER_CLASS_ROLES = frozenset({"admin"})
+
+# The guest role floor: ALLOWLIST security — the allowlist still does the
+# actual filtering; this records the view — with ask ON_MISS, because an
+# allowlist is exactly "asked for by name or refused on the miss".
+GUEST_ROLE_FLOOR = PolicyPair(security=SecurityLevel.ALLOWLIST, ask=AskPolicy.ON_MISS)
+
+
+def role_floor(role: str) -> PolicyPair:
+    """The persona-policy floor a speaker role brings to every call.
+
+    Only two floors are written: the owner's default and the guest's
+    allowlist. Any other role has no written floor and reads as the
+    lattice's fail-closed default (DENY + ALWAYS ask) — conservative in
+    the view, and never permissive.
+    """
+    if role in OWNER_CLASS_ROLES:
+        return OWNER_DEFAULT
+    if role in GUEST_CLASS_ROLES:
+        return GUEST_ROLE_FLOOR
+    return merge_policies([])
+
+
+def tool_plane_policy(tool_name: str) -> PolicyPair:
+    """The policy a tool's plane contributes.
+
+    Write-plane tools (``WRITE_PLANE_TOOLS`` — their handlers write the
+    hash-chained audit log) carry the guest write-plane floor; everything
+    else contributes the owner default, which never tightens a merge.
+    """
+    if tool_name in WRITE_PLANE_TOOLS:
+        return GUEST_WRITE_PLANE_FLOOR
+    return OWNER_DEFAULT
+
+
+def effective_policy(
+    speaker_role: str,
+    tool_name: str,
+    session: Optional[PolicyPair] = None,
+) -> PolicyPair:
+    """The merged policy view for one call: role floor, then plane, then
+    any session layer, folded with the lattice (min security, max ask).
+
+    The write-plane floor is a floor for GUEST-CLASS speakers only — it
+    is the guest's floor for the machine's own audit record, and the
+    owner's audit tools are the owner's. Merging it for every role would
+    deny the owner the very tools that keep the record, which is not the
+    view the lattice is meant to record.
+    """
+    layers = [role_floor(speaker_role)]
+    if speaker_role in GUEST_CLASS_ROLES:
+        layers.append(tool_plane_policy(tool_name))
+    if session is not None:
+        layers.append(session)
+    return merge_policies(layers)
+
+
 class RoleGate:
     """Wraps ToolSafetyFramework to enforce speaker-role-based access.
 
@@ -62,6 +148,27 @@ class RoleGate:
 
     def __init__(self, safety_framework: ToolSafetyFramework):
         self._safety = safety_framework
+
+    def policy_view(
+        self,
+        tool_name: str,
+        speaker_role: str = "unknown",
+    ) -> PolicyPair:
+        """The lattice policy view for this call — the audit line's
+        capability/consultation record.
+
+        The allowlist and the role risk caps in ``classify()`` remain the
+        actual filters; this records what the two-axis lattice sees, so an
+        audit line can say "DENY, ask OFF" (a guest on the write plane)
+        instead of only what the risk cap did. Unwritten policy fails
+        closed: a role with no written floor reads as DENY + ALWAYS ask.
+        """
+        view = effective_policy(speaker_role, tool_name)
+        logger.info(
+            "RoleGate policy view: role=%s tool=%s security=%s ask=%s",
+            speaker_role, tool_name, view.security.name, view.ask.name,
+        )
+        return view
 
     def classify(
         self,
@@ -81,6 +188,11 @@ class RoleGate:
             SafetyCheckResult — may be tighter than the base classification
             but never looser.
         """
+        # The audit line's policy view: capability and consultation as the
+        # lattice sees them. Recorded, never enforced here — the caps
+        # below and the guest allowlist remain the filters.
+        self.policy_view(tool_name, speaker_role)
+
         base = self._safety.classify(tool_name, args)
 
         max_risk_name = ROLE_MAX_RISK.get(speaker_role, "medium")
