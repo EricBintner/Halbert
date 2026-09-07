@@ -7,8 +7,18 @@ at `3efd3145`; do not rebase onto the main tree's checked-out branch, which
 another session owns)
 **Read first:** `DESIGN-GUEST-PERSONA-2026-09-06.md` (§15 for what landed),
 `DESIGN-PERSONA-LAYERS-2026-09-06.md` (§13 for what landed, §14 for the
-warrant), `REVIEW-PRIVATE-MODE-2026-09-06.md`,
-`DESIGN-VISION-SOURCE-REGISTRY-2026-09-06.md` (VIS-1, ready to build).
+warrant), `REVIEW-PRIVATE-MODE-2026-09-06.md` (§4 and §6 still stand; its
+status and §7 are superseded),
+`DESIGN-VISION-SOURCE-REGISTRY-2026-09-06.md` (VIS-1, **built** — §10 for what
+the build found).
+
+**Everything N1–N8 is done. This file is now a record, not a queue.** What is
+open is listed once, at the end, under "Still open".
+
+**Correction, 2026-09-07:** an audit of the finished branch found that several
+gates it describes did not hold — including one whose fix had never executed.
+They are fixed (`b02bc04d`), and where a section below overstates what was
+working, it says so.
 **Founder decisions in force:** D1 life safety on a private source still
 reaches Halbert · D2 normal mode keeps the guest transcript, tagged and
 erasable · D3 the guest reads only its own memory · D4 private mode never
@@ -31,8 +41,11 @@ Everything below is built, tested, and green with the full backend suite
 | Home | `persona/sibling.py` — fetch a persona, forward each turn as one memory, `recall_guest_memory`, keepalive by ping; `POST /api/guest/pull` (local) |
 | Private sources | `persona/private_sources.py` — the session-bound source → owner map; `route_observation` with the life-safety exception; **Frigate mapper is the reference gate** |
 
-What is deliberately **absent**: any private-mode UI or route. The founder's
-rule: a private mode that gates one sense and not another is worse than none.
+What was deliberately **absent** when this was written: any private-mode UI or
+route. The founder's rule — a private mode that gates one sense and not another
+is worse than none — is why. **N1–N4 have since gated every wired sensor path
+and shipped the routes and the picker**, so that absence is over; the rule
+stands as the reason for the order.
 
 ## 2. How to run tests here (three traps)
 
@@ -129,14 +142,16 @@ paired peer is another *body* of this entity or a compute lender, and folding
 a sibling app's home into that would mean every paired body implicitly offered
 its personas.
 
-**Not done: saying it in chat.** There is no tool on the agent's surface, so
-"be Marnie" typed into the conversation still does nothing. The route it would
-call exists and is tested; what is missing is the tool definition and the
-decision that goes with it — the tool must be absent from
-`GUEST_ALLOWED_TOOLS`, or a guest could swap itself for another persona, and
-`test_guest_tools.py` pins every registered tool onto one list or the other so
-adding it is a deliberate act. Also not done: the turn's "⟨guest⟩ will not
-remember this turn" line. Original brief:
+~~**Not done: saying it in chat.**~~ **Done 2026-09-07** —
+`persona/become_tool.py`, registered by `ToolExecutor.register_become_tool` and
+denied to a guest (`GUEST_DENIED_TOOLS`, refused at `execute()`), which was the
+decision the earlier note said had to be taken deliberately.
+
+The "⟨guest⟩ will not remember this turn" line was **never** missing: it is
+emitted by `_forward_guest_turn` and asserted by
+`test_ownership_wiring.py::TestTheTick::test_with_a_guest_and_no_home_the_user_is_told`,
+both from `31ff43c4` — the commit §1 names as this branch's baseline. Listing it
+as outstanding was this document's mistake. Original brief:
 
 In chat and on the pill: list matches across paired homes
 (`SiblingClient.list_personas`) and call `POST /api/guest/pull`. The peer
@@ -165,8 +180,15 @@ the prefixed one; a test pins that.
 **The experiment is not run and cannot be from here**: it needs a live H3 to
 answer, and the `h3` prefix in the table is a guess from the brief's wording
 ("the historical-minds app's blueprint prefix") rather than a path anyone has
-seen respond. Point it at a real instance, correct the table if it is wrong,
-and the rest is already wired. Original brief:
+seen respond. Point it at a real instance and correct the table if it is wrong.
+
+**"and the rest is already wired" was false when written, and is true now.**
+`GuestHome` had no `profile` field, so `SiblingClient` fell back to the default
+mount for every call after the persona listing — the pull itself, every guest
+memory write, every recall. An h3 home would have listed its personas and then
+answered nothing. Fixed 2026-09-07: the profile is a `GuestHome` field, carried
+by `from_payload`, filled in from the remembered home by the pull route, and
+passed by the chat verb. Original brief:
 
 Override `SiblingClient.PATH_MEMORY_SEARCH` for the historical-minds app's
 blueprint prefix; run the experiment; nothing else.
@@ -226,3 +248,41 @@ The sibling apps are H2 (companion) and H3 (historical minds) in every
 document and commit in this repo; their product names are never written
 here. The debate-moderator consumer is referred to by role in Halbert's
 documents.
+
+---
+
+## 6. Still open (2026-09-07)
+
+Everything N1–N8 is built. What is genuinely left, in the order I would take it:
+
+1. **The H3 experiment.** The `h3` profile is wired end to end now — the pull,
+   every memory write, every recall — but its prefix is a guess from a
+   sentence, not a path anyone has seen answer. One live instance settles it.
+2. **`REVIEW-PRIVATE-MODE` §6.2's writer audit, as a test rather than a
+   reading.** The reading missed three writers that the 2026-09-07 branch
+   audit found — the thread title, the stored receipt, and
+   `PeerConversationStore.append_message`. An enumeration that fails when an
+   unclassified writer appears is the only version of that audit that stays
+   true; `P3` already says a writer nobody classified fails closed, and this
+   would make it visible before it fails.
+3. **The audit chain (D5, deferred).** Narrower than §4 of that review first
+   claimed — an ordinary tool call writes nothing to the chain today, and
+   `WRITE_PLANE_TOOLS ∩ GUEST_ALLOWED_TOOLS = ∅` is what holds it — but the
+   day a guest gets a write-plane tool, or `audit_fn` is wired on the agent
+   path, it binds. The engine change is Haloysius's to take.
+4. **What bounds a guest's *view*.** A guest inherits the host persona's
+   vision scope, because it cannot set `senses`. Whether it should instead
+   shrink to the sources handed to it is a product decision nobody has taken.
+5. **`AmbientWebcamMonitor` ignores `is_webcam_enabled()`.** Pre-existing, the
+   Vision tab's kill switch does not stop it, worth its own row.
+6. **The MCP `_tool_frigate_*` handlers** are registered nowhere and have no
+   per-source ownership gate; registering one is a deliberate act.
+
+**The lesson from the 2026-09-07 audit, worth carrying into all of the above:**
+of the gates this work is about, three did not hold, and one had never once
+executed — an import that reached beyond the top-level package, swallowed by a
+bare `except`, under a comment describing the exact leak it was failing to
+prevent. Every one of them was green. A gate is worth what its narrowest test
+proves, and the test that would have caught this one is "a camera whose name
+needs slugging", not "a camera".
+

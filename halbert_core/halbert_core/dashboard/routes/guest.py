@@ -173,8 +173,17 @@ async def pull_persona(request: PullRequest) -> Dict[str, Any]:
     kept alive by pinging the home, since nobody there is heartbeating."""
     from ...persona import sibling
 
+    payload = request.model_dump()
+    # A remembered home knows which API shape it speaks; the pull request does
+    # not carry it. Without this the session talks to the default mount for
+    # the rest of its life and an h3 home answers nothing after the listing.
+    known = guest_homes.get_home(payload.get("base_url", ""))
+    if known is not None:
+        payload.setdefault("profile", known.profile)
+        if not payload.get("token"):
+            payload["token"] = known.token
     try:
-        home = guest.GuestHome.from_payload(request.model_dump())
+        home = guest.GuestHome.from_payload(payload)
     except guest.GuestValidationError as e:
         raise HTTPException(status_code=400, detail=str(e))
     _ensure_announcer()
@@ -388,9 +397,16 @@ async def forget_session(request: ForgetRequest) -> Dict[str, Any]:
     receipts = 0
     failed = []
 
+    threads_blanked = 0
     try:
         from ...agents.conversation_sqlite import SqliteConversationStore
-        messages = SqliteConversationStore().forget_request(request_id)
+        store = SqliteConversationStore()
+        # Before the delete: afterwards there is nothing left to join on.
+        threads = store.threads_for_request(request_id)
+        messages = store.forget_request(request_id)
+        for thread_id in threads:
+            if store.blank_thread_words(thread_id):
+                threads_blanked += 1
     except Exception as e:
         logger.warning("Transcript not erased for %s: %s", request_id, e)
         failed.append(f"transcript: {e}")
@@ -424,6 +440,7 @@ async def forget_session(request: ForgetRequest) -> Dict[str, Any]:
         "request_id": request_id,
         "messages_removed": messages,
         "ledger_rows_redacted": receipts,
+        "threads_blanked": threads_blanked,
     }
 
 

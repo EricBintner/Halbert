@@ -242,9 +242,11 @@ class GuestHome:
         persona_id = _one_line(payload.get("persona_id"), "home.persona_id", 120)
         if not persona_id:
             raise GuestValidationError("home.persona_id is required")
+        profile = _one_line(payload.get("profile"), "home.profile", 40) or "default"
         return cls(
             base_url=url.rstrip("/"),
             persona_id=persona_id,
+            profile=profile,
             token=_one_line(payload.get("token"), "home.token", 512),
             label=_one_line(payload.get("label"), "home.label", MAX_NAME_CHARS),
         )

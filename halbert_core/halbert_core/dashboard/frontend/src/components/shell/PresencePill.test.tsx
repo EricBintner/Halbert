@@ -49,8 +49,17 @@ const FRONTING = {
 /** Instance info with a guest fronting; POST /api/guest/end answers ok and
  * the next info read has the face off. */
 const CATALOGUE = [
-  { id: 'webcam:desk', label: 'Desk webcam', kind: 'webcam', owner: 'halbert' },
-  { id: 'mic:local:study', label: 'study', kind: 'mic', owner: 'halbert' },
+  {
+    id: 'webcam:desk', label: 'Desk webcam', kind: 'webcam', owner: 'halbert',
+    statement:
+      'Macky stops recording what you say and what Desk webcam sees. It keeps ' +
+      'recording what the machine and the rest of the house are doing. Life ' +
+      'safety still reaches Macky.',
+  },
+  {
+    id: 'mic:local:study', label: 'study', kind: 'mic', owner: 'halbert',
+    statement: 'Macky stops recording what you say and what study sees. …',
+  },
 ]
 
 function stubFrontingFetch() {
@@ -238,6 +247,9 @@ describe('PresencePill', () => {
       const said = await screen.findByText(/stops recording what you say/i)
       expect(said).toHaveTextContent(/keeps recording what the machine and the rest of the house/i)
       expect(said).toHaveTextContent(/Life safety still reaches/i)
+      // Server-written and scoped to a source, not the pill's own copy:
+      // handing over the desk webcam does not stop the patio camera.
+      expect(said).toHaveTextContent(/what Desk webcam sees/i)
     })
 
     it('hands one source over and stops repeating the statement', async () => {

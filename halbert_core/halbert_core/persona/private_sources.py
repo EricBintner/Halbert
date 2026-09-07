@@ -151,6 +151,8 @@ def catalogue() -> list:
     out = []
     seen = set()
 
+    machine = _machine_name()
+
     def add(sid, label, kind):
         if not sid or sid in seen:
             return
@@ -160,6 +162,12 @@ def catalogue() -> list:
             "label": label or sid,
             "kind": kind,
             "owner": owner_of(sid).value,
+            # The sentence for THIS source, written once, here. The pill used
+            # to carry its own copy and the two had already drifted: ours said
+            # "what {label} sees", the pill's said "what it sees" with no
+            # label, which reads as every camera — and handing over the desk
+            # webcam does not stop the patio camera.
+            "statement": statement(label or sid, machine),
         })
 
     try:
@@ -181,6 +189,14 @@ def catalogue() -> list:
         logger.debug("Audio sources unavailable for the picker: %s", e)
 
     return out
+
+
+def _machine_name() -> str:
+    try:
+        from ..identity import resolve_entity_name
+        return resolve_entity_name()
+    except Exception:
+        return "Halbert"
 
 
 def statement(label: str, machine: str) -> str:

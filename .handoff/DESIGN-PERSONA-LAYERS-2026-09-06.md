@@ -42,7 +42,7 @@ Findings from the other sessions of 2026-09-06, all verified in code:
    like "the guest's own memory" and keeps every word on Halbert's disk.
    §4 routes the guest's words to the guest's home instead.
 6. **The cognitive tick feeds Halbert's own psyche with the user's words.**
-   `state_machine.py:2897 _run_cognition_tick` runs `advance_turn` against
+   `state_machine.py (`_run_cognition_tick`) _run_cognition_tick` runs `advance_turn` against
    `get_cognition()` — `PersonaCognition(persona_id=<Halbert's id>)` — with
    `memory_store_add` bound to Halbert's `PersonaMemoryStore`. Nothing on
    the guest branch stops this, so today a guest conversation lands in
@@ -354,7 +354,7 @@ change normal mode and fix §1.6, which is a leak today.
 
 | File | Role |
 |---|---|
-| `agents/state_machine.py:2897` | `_run_cognition_tick` — the tick to route |
+| `agents/state_machine.py (`_run_cognition_tick`)` | `_run_cognition_tick` — the tick to route |
 | `integrations/cognition_wiring.py:201,280,378` | Halbert's cognition, memory store and tick closure, all keyed to Halbert's persona id |
 | `agents/conversation_sqlite.py:813` | `append_message` — `origin`/`metadata` carry the actor without a schema change |
 | `agents/threads.py:846` | thread-close receipts — `actor`, `request_id` |
@@ -426,7 +426,13 @@ Memory at the home: one `episodic` memory per turn, content
 `halbert-guest-session`, `<session_id>`, `turn`; observations from a
 private source carry `observation` and the source id instead of `turn`.
 
-### 13.4 Left for the fill-in session, in order
+### 13.4 Left for the fill-in session, in order — **all done, 2026-09-07**
+
+Items 1–7 below are built. Kept as written because the order was the argument —
+sensors before the switch — and struck through where the instruction itself is
+now wrong. See `HANDOFF-OPUS-GUEST-PERSONA-NEXT-STEPS-2026-09-06.md` for what
+each became, and `b02bc04d` for the gates that turned out not to hold.
+
 
 1. ~~**Audio source ids and the acoustic gate.**~~ Done — §13.5. The HA
    mapper for smoke/CO/gas entities is still open.
@@ -443,8 +449,11 @@ private source carry `observation` and the source id instead of `turn`.
    request carries them.
 5. **The pill shows the home** (`fronting.home.label`) and says when a
    guest cannot remember (the `thinking` line the turn emits).
-6. **H3.** Point `SiblingClient.PATH_MEMORY_SEARCH` at its blueprint and
-   run the experiment; nothing else is needed.
+6. ~~**H3.** Point `SiblingClient.PATH_MEMORY_SEARCH` at its blueprint~~ —
+   **this instruction is now inert**: the paths are per-instance
+   (`sibling.API_PROFILES`), so assigning the class attribute changes nothing
+   for any client, and a test pins that. Add a home with `profile: "h3"`
+   instead. The experiment still needs a live H3.
 7. **A session-erase control**: `forget_request` + `redact_request` under
    one local-only route, for the normal-mode transcript (D2).
 
@@ -581,8 +590,11 @@ senses (vision registry ids from VIS-1, microphone ids from N1, plus
 gating one sense and not another is worse than none.
 
 **The statement ships with the control.** `private_sources.statement()` holds
-the review's P6 wording in one place; the pill renders it above the checkboxes
-*before* the first handover, and the bus carries the same words on the first
+the review's P6 wording in one place — and for a while it did not: the pill
+carried its own copy, and the two had already drifted, the pill's dropping the
+source's name so it read as every camera. The catalogue now ships each source's
+own sentence and the pill renders it, so there is one author again. The pill
+shows it above the checkboxes *before* the first handover, and the bus carries the same words on the first
 assignment so the promise is on the record rather than in a dialog the user
 dismissed. Once something is handed over the pill stops repeating it — pinned
 by a test, because a statement that never goes away is one people stop reading.

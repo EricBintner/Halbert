@@ -265,7 +265,12 @@ and local; no STT runs and no PCM is buffered beyond the detection window.** If
 anyone ever proposes wake-on-transcript, this is the line it breaks.
 
 **R3 — Erasure already has a primitive; use it.** `StateStore.redact_request`
-(`continuity/state_store.py:615`) removes everything from one request id, and
+(`continuity/state_store.py:615`) **replaces the stated reasons** written under
+one request id with `UNRECORDED` — it does not remove rows, and this document
+said "removes everything from one request id", which was never true. The
+distinction is the point of the primitive: the words go, the facts and their
+timeline stay, because what was true and when is not the thing being forgotten
+and deleting the rows would make the history lie. And
 `record_state` (`:463`) already carries `source`, `actor`, `request_id`,
 `thread_id` and `turn_id`. Tag every private-session turn with a session-scoped
 `request_id`, and a *bug* that leaks private content into Halbert's ledger
@@ -622,8 +627,14 @@ deliberately, so the mock gained the new one — inside the factory, since
 
 ### Not done, deliberately
 
-Private mode remains **absent from the UI**, per the §11 sequencing note. No
-toggle exists, nothing claims it, and the §6.2 writer audit is still
-unwritten.
+~~Private mode remains **absent from the UI**~~ — true when written; N1–N4 have
+since gated every wired sensor path and shipped the routes and the picker.
+
+The §6.2 writer audit **is** written: `REVIEW-PRIVATE-MODE-2026-09-06.md` §2,
+which §15.4 of this same document already cites. Two of its rows were wrong and
+are corrected there. What is still true is that the audit is a reading rather
+than an enumeration-by-test — and the branch audit of 2026-09-07 found three
+writers it had missed (the thread title, the stored receipt, and the peer
+conversation store), which is the argument for making it a test.
 
 > **Superseded in part (2026-09-06, second pass):** private mode, the memory divide and the pull channel are specified and partly built in `DESIGN-PERSONA-LAYERS-2026-09-06.md` (§13 for what landed). §6 and §12 Q1/Q2 of this document are answered there.
