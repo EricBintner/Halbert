@@ -223,6 +223,13 @@ class GuestHome:
     persona_id: str
     token: str = ""
     label: str = ""
+    #: Which API shape this house speaks (``sibling.API_PROFILES``).
+    #: ``SiblingClient`` reads it off the home, so a session pulled from an
+    #: h3 home keeps talking to h3's mount for the rest of its life — the
+    #: profile used to reach the persona *listing* only, and every later call
+    #: (the pull itself, every memory write, every recall) went to the
+    #: default paths and 404ed.
+    profile: str = "default"
 
     @classmethod
     def from_payload(cls, payload: Mapping[str, Any]) -> "GuestHome":
@@ -354,6 +361,12 @@ def current_guest(now: Optional[float] = None) -> Optional[GuestSession]:
     with _lock:
         if session.end_reason is not None:
             return None
+        if session.keepalive is not None and session._renewing:
+            # Another reader is mid-renewal. Its answer decides; ending the
+            # session here would kill a live one as "heartbeat_missed" and
+            # announce it, because this reader arrived a millisecond later.
+            # The window is bounded by the transport's timeout.
+            return session
         _end_locked(session, "heartbeat_missed", "", now)
     _notify(session)
     return None

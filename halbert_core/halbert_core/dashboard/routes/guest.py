@@ -36,14 +36,22 @@ from pydantic import BaseModel, Field
 
 from ...federation.peer_middleware import PeerContext, require_local_admin, require_peer_auth
 from ...persona import guest, guest_homes, private_sources
+from ...persona.guest_announce import (
+    EVENT_TYPE as _EVENT_TYPE,
+    announce_fronting,
+    ended_event as _ended_event,
+    ensure_announcer as _ensure_announcer,
+    fronting_event as _fronting_event,
+    offered_by_for,
+    own_name as _own_name,
+)
 from ...proactive.events import ProactiveEvent, get_event_bus
 
 logger = logging.getLogger("halbert.dashboard.guest")
 
 router = APIRouter()
 
-EVENT_TYPE = "guest_session"
-_ANNOUNCER_KEY = "dashboard.routes.guest.announce"
+EVENT_TYPE = _EVENT_TYPE
 
 
 class OfferRequest(BaseModel):
@@ -85,80 +93,15 @@ class BecomeRequest(BaseModel):
     """"Be Marnie" — a name and, when two homes have one, which home."""
     name: str
     base_url: str = ""
-    ttl_seconds: float = guest.DEFAULT_TTL_SECONDS
+    # Bounded like PullRequest's: unbounded, an out-of-range value reached
+    # guest.offer's own validation and surfaced as a 500.
+    ttl_seconds: float = Field(
+        default=guest.DEFAULT_TTL_SECONDS, ge=1.0, le=guest.MAX_TTL_SECONDS)
 
 
 # ---------------------------------------------------------------------------
 # Announcing
 # ---------------------------------------------------------------------------
-
-def _own_name() -> str:
-    try:
-        from ...identity import resolve_entity_name
-        return resolve_entity_name()
-    except Exception:
-        return "Halbert"
-
-
-def _fronting_event(session: guest.GuestSession) -> ProactiveEvent:
-    who = session.persona.name
-    by = session.offered_by_name or session.offered_by
-    return ProactiveEvent.create(
-        type=EVENT_TYPE,
-        severity="info",
-        title=f"{who} is speaking for {_own_name()}",
-        body=f"{by} lent {_own_name()} the persona {who} for this session. "
-             f"{_own_name()} keeps its tools, memory and rules underneath.",
-        data={"state": "fronting", **session.to_dict()},
-    )
-
-
-def _ended_event(session: guest.GuestSession) -> ProactiveEvent:
-    who = session.persona.name
-    own = _own_name()
-    reason = session.end_reason or "ended"
-    said = {
-        "withdrawn": f"{session.offered_by_name or session.offered_by} took {who} back.",
-        "handback": f"{who} handed the conversation back.",
-        "ended_by_user": f"You ended {who}'s session.",
-        "heartbeat_missed": f"{session.offered_by_name or session.offered_by} stopped answering; "
-                            f"{who}'s session lapsed.",
-        "replaced": f"{session.offered_by_name or session.offered_by} replaced {who}.",
-    }.get(reason, f"{who}'s session ended.")
-    return ProactiveEvent.create(
-        type=EVENT_TYPE,
-        severity="info",
-        title=f"{own} is speaking as {own} again",
-        body=said,
-        data={"state": "ended", "reason": reason, **session.to_dict()},
-    )
-
-
-def _publish_from_anywhere(event: ProactiveEvent) -> None:
-    """Publish from a sync observer, whichever thread notices the ending."""
-    bus = get_event_bus()
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        loop = None
-    if loop is not None:
-        loop.create_task(bus.publish(event))
-    else:
-        asyncio.run(bus.publish(event))
-
-
-def _announce_end(session: guest.GuestSession) -> None:
-    try:
-        _publish_from_anywhere(_ended_event(session))
-    except Exception as e:
-        logger.warning("Guest session ending not announced: %s", e)
-
-
-def _ensure_announcer() -> None:
-    """Idempotent: the same key re-subscribes, so a reset (tests, a reload)
-    cannot leave endings silent."""
-    guest.on_session_end(_announce_end, key=_ANNOUNCER_KEY)
-
 
 # ---------------------------------------------------------------------------
 # The app's side
@@ -241,7 +184,7 @@ async def pull_persona(request: PullRequest) -> Dict[str, Any]:
         session, dropped = await asyncio.to_thread(
             sibling.install_from_home,
             home,
-            offered_by=f"home:{urlparse(home.base_url).netloc}",
+            offered_by=offered_by_for(home.base_url),
             offered_by_name=who,
             ttl_seconds=request.ttl_seconds,
         )
@@ -443,18 +386,33 @@ async def forget_session(request: ForgetRequest) -> Dict[str, Any]:
     request_id = guest_request_id(SimpleNamespace(id=session_id))
     messages = 0
     receipts = 0
+    failed = []
 
     try:
         from ...agents.conversation_sqlite import SqliteConversationStore
         messages = SqliteConversationStore().forget_request(request_id)
     except Exception as e:
         logger.warning("Transcript not erased for %s: %s", request_id, e)
+        failed.append(f"transcript: {e}")
 
     try:
         from ...continuity.state_store import ACTOR_USER, StateStore
         receipts = StateStore().redact_request(request_id, actor=ACTOR_USER)
     except Exception as e:
         logger.warning("Ledger not redacted for %s: %s", request_id, e)
+        failed.append(f"ledger: {e}")
+
+    if failed:
+        # "ok" on a half-done erasure is the worst possible answer: the user
+        # believes the words are gone and stops looking. Say which half.
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                f"Partly forgotten. Removed {messages} message(s) and redacted "
+                f"{receipts} ledger row(s); these failed and the words remain — "
+                + "; ".join(failed)
+            ),
+        )
 
     logger.info(
         "Forgot guest session %s: %d message(s), %d ledger row(s)",
@@ -469,7 +427,7 @@ async def forget_session(request: ForgetRequest) -> Dict[str, Any]:
     }
 
 
-@router.get("/api/guest")
+@router.get("/api/guest", dependencies=[Depends(require_local_admin)])
 async def guest_status() -> Dict[str, Any]:
     live = guest.current_guest()
     return {

@@ -296,8 +296,17 @@ class ScreenCapture:
         _ensure_deps()
         try:
             with _mss.mss() as sct:
-                if monitor_index >= len(sct.monitors):
-                    monitor_index = 0
+                # No silent substitution (VIS-1 V2). This used to clamp an
+                # out-of-range index to 0 — which in mss is the UNION of every
+                # display — so a persona narrowed to screen:2, on a machine
+                # whose second monitor had been unplugged, was handed pixels
+                # from every screen instead of an error.
+                if monitor_index < 0 or monitor_index >= len(sct.monitors):
+                    raise ScreenCaptureError(
+                        f"monitor {monitor_index} is not attached "
+                        f"({len(sct.monitors) - 1} display(s) present)",
+                        error_type="monitor_unavailable",
+                    )
                 monitor = sct.monitors[monitor_index]
                 frame = _numpy.asarray(sct.grab(monitor))
         except Exception as e:

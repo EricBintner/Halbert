@@ -446,7 +446,14 @@ def permit_frigate_camera(camera: str) -> str:
     if not sid:
         raise SourceDenied("no camera named")
 
+    # Enabled, not merely declared: the per-source off switch is part of the
+    # system-enabled set every other kind is intersected with, and reading
+    # only ``declared`` here made the Vision tab's toggle decorative for
+    # Frigate.
+    enabled = set(enabled_source_ids())
     declared = {s.id for s in list_sources() if s.kind == KIND_FRIGATE}
+    if declared and sid in declared and sid not in enabled:
+        raise SourceDenied(f"{sid} is switched off")
     narrowing = _explicit_narrowing()
 
     if narrowing and sid not in set(narrowing):
@@ -567,7 +574,7 @@ def resolve_source(sid: str, *, quality: Optional[int] = None,
         from .screen_capture import ScreenCapture
         cap = ScreenCapture(
             quality=quality or cfg.screen_capture.quality,
-            max_dimension=max_dimension or cfg.screen_capture.max_dimension,
+            max_dim=max_dimension or cfg.screen_capture.max_dimension,
             grayscale=cfg.screen_capture.grayscale,
         )
         try:
@@ -580,7 +587,7 @@ def resolve_source(sid: str, *, quality: Optional[int] = None,
         cap = WebcamCapture(
             camera_index=int(src.native),
             quality=quality or cfg.webcam.quality,
-            max_dimension=max_dimension or cfg.webcam.max_dimension,
+            max_dim=max_dimension or cfg.webcam.max_dimension,
             grayscale=cfg.webcam.grayscale,
         )
         try:

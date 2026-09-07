@@ -273,11 +273,13 @@ class FrigateEventMapper:
         # meant a camera routed under one id and was handed over under
         # another, so route_observation missed and the detection fell through
         # to Halbert — the exact leak this gate exists to prevent.
-        try:
-            from ....vision.sources import frigate_source_id
-            source_id = frigate_source_id(camera)
-        except Exception:
-            source_id = f"frigate:{camera}" if camera else ""
+        # Three dots: this module is halbert_core.integrations.frigate, and
+        # four reached beyond the top-level package. The ImportError was
+        # swallowed by the except below, so the fallback ran on every message
+        # and the slug fix this block exists for never happened once.
+        from ...vision.sources import frigate_source_id
+
+        source_id = frigate_source_id(camera)
         label = str(state.get("label") or "").strip().lower()
         try:
             from ...continuity.ownership import route_observation

@@ -190,10 +190,19 @@ def resolve_persona(name: str, base_url: str = "", transport: Any = None) -> Dic
     """
     catalogue = available_personas(transport)
     wanted = " ".join(str(name or "").split()).lower()
+    # The disambiguator accepts either spelling. The listing shows a home by
+    # its LABEL ("at H2"), so a caller reading that listing and answering with
+    # what it read could never match a base-URL-only comparison — the only way
+    # out of an ambiguous name was a URL nothing had shown them.
+    home = " ".join(str(base_url or "").split()).lower().rstrip("/")
     matches = [
         p for p in catalogue["personas"]
         if p["name"].strip().lower() == wanted
-        and (not base_url or p["base_url"] == str(base_url).rstrip("/"))
+        and (
+            not home
+            or p["base_url"].lower().rstrip("/") == home
+            or p["home_label"].strip().lower() == home
+        )
     ]
     if not matches:
         raise NoSuchPersona(name, [u["home"] for u in catalogue["unreachable"]])
@@ -216,7 +225,7 @@ def available_personas(transport: Any = None) -> Dict[str, Any]:
     unreachable: List[Dict[str, str]] = []
     for record in list_homes(with_tokens=True):
         home = GuestHome(base_url=record.base_url, persona_id="", token=record.token,
-                         label=record.label)
+                         label=record.label, profile=record.profile)
         try:
             found = SiblingClient(home, transport, profile=record.profile).list_personas()
         except Exception as e:
@@ -231,5 +240,6 @@ def available_personas(transport: Any = None) -> Dict[str, Any]:
                 "name": str(entry.get("name") or pid),
                 "home_label": record.label,
                 "base_url": record.base_url,
+                "profile": record.profile,
             })
     return {"personas": personas, "unreachable": unreachable}

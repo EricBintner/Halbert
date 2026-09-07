@@ -78,8 +78,19 @@ def _record_line(session: Any, own_name: str) -> str:
         from . import private_sources
         if private_sources.active():
             home = getattr(session, "home", None)
-            where = getattr(home, "label", "") or "the guest's own home"
-            return f"this session's words go to {where}, not to {own_name}"
+            label = getattr(home, "label", "") if home is not None else ""
+            if home is None:
+                # An offered persona (no home) in private mode: the words go
+                # nowhere. Saying "they go to your home" would have the
+                # persona tell the user something untrue if they asked.
+                return (
+                    f"this session's words are not recorded — not by {own_name}, "
+                    f"and you have no home to send them to"
+                )
+            return (
+                f"this session's words go to {label or 'your own home'}, "
+                f"not to {own_name}"
+            )
     except Exception:
         pass
     return (

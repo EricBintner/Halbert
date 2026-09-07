@@ -84,18 +84,28 @@ async def become_persona(args: Dict[str, Any]) -> str:
     except guest_homes.NoSuchPersona as e:
         return str(e)
 
+    from .guest_announce import announce_fronting_async, offered_by_for
+
     record = guest_homes.get_home(match["base_url"])
     home = guest.GuestHome(
         base_url=match["base_url"],
         persona_id=match["persona_id"],
         token=record.token if record else "",
         label=match["home_label"],
+        # Carried, not dropped: without it every call after the listing —
+        # the pull, every memory write, every recall — goes to the default
+        # mount and an h3 home answers none of them.
+        profile=record.profile if record else match.get("profile", "default"),
     )
     try:
         session, dropped = await asyncio.to_thread(
             sibling.install_from_home,
             home,
-            offered_by=f"home:{match['base_url']}",
+            # The same spelling the route uses. ``guest.offer`` refuses a
+            # second session from a *different* peer, so two spellings meant
+            # switching faces between the pill and the chat was refused as
+            # another peer's session.
+            offered_by=offered_by_for(match["base_url"]),
             offered_by_name=match["home_label"],
         )
     except sibling.HomeUnreachable as e:
@@ -103,6 +113,11 @@ async def become_persona(args: Dict[str, Any]) -> str:
     except Exception as e:
         return f"Could not wear {match['name']}: {e}"
 
+    # The route announces; before this the chat verb did not — so a face put
+    # on by saying so changed who was speaking with nothing on the bell, and
+    # (because the end-of-session observer is installed by the same call) that
+    # session's *ending* went unannounced too, however it ended.
+    await announce_fronting_async(session)
     logger.info("Now fronting as %s from %s", session.persona.name, match["home_label"])
     note = f" (ignored: {', '.join(dropped)})" if dropped else ""
     return (

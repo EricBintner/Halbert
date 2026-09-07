@@ -178,10 +178,14 @@ export function PresencePill() {
         fetch(apiUrl('/api/guest/private/sources')),
         fetch(apiUrl('/api/guest')),
       ])
-      if (cat.ok) setSources((await cat.json()).sources || [])
-      if (status.ok) setHandedOver((await status.json()).private_sources || {})
+      setSources(cat.ok ? (await cat.json()).sources || [] : [])
+      // Cleared on failure, not left standing. A stale tick beside a source
+      // name says "this is handed over" about a session that may have ended,
+      // which is the one thing this control must never say wrongly.
+      setHandedOver(status.ok ? (await status.json()).private_sources || {} : {})
     } catch {
-      // Non-fatal — the pill still shows who is fronting
+      setSources([])
+      setHandedOver({})
     }
   }, [])
 
@@ -201,7 +205,14 @@ export function PresencePill() {
 
   const fronting = currentInfo?.fronting ?? null
   useEffect(() => {
-    if (fronting && isLocalEndpoint(activeEndpoint)) loadPrivateSources()
+    if (fronting && isLocalEndpoint(activeEndpoint)) {
+      loadPrivateSources()
+    } else {
+      // No guest, or a body that is not this one: nothing is handed over, and
+      // the ticks must not outlive the session they described.
+      setSources([])
+      setHandedOver({})
+    }
   }, [fronting?.session_id, activeEndpoint, loadPrivateSources])
 
   const loadAvailable = useCallback(async () => {

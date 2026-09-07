@@ -263,6 +263,24 @@ class TurnContext:
     notes: List[str] = field(default_factory=list)
 
 
+def _conversation_is_halberts() -> bool:
+    """Whether what was said this turn is Halbert's to keep.
+
+    The same question ``conversation_sqlite.append_message`` asks before it
+    writes a row, asked again by the two writers that are not rows: the thread
+    title and the stored receipt. Both carry the user's words, and neither is
+    reached by ``forget_request``.
+
+    Fails to True: a broken ownership lookup must not stop the machine keeping
+    its own conversation.
+    """
+    try:
+        from ..continuity.ownership import Owner, route_write
+        return route_write("conversation.message") is Owner.HALBERT
+    except Exception:
+        return True
+
+
 class ThreadManager:
     """Owns thread identity for every turn. Store failures never raise."""
 
@@ -302,8 +320,15 @@ class ThreadManager:
 
         history: List[Dict[str, Any]] = []
         if decision.action == "open_new" or open_thread is None:
+            # The provisional title is the first sixty characters of what the
+            # user just said. In private mode that is the user's own words,
+            # and it goes into a column no `forget_request` reaches — so it
+            # is not written at all, rather than written and chased.
+            title = provisional_title(query)
+            if not _conversation_is_halberts():
+                title = "Private session"
             thread_id = self._open_new_thread(
-                provisional_title(query), "provisional", now,
+                title, "provisional", now,
                 from_thread_id=previous_id, reason="auto",
             )
             if previous_id:
@@ -985,6 +1010,11 @@ class ThreadManager:
         # R2-N2: extract open loops from the last assistant message and
         # persist them as rows. The extractor already exists in receipt.py;
         # this is the row write that was missing.
+        # A receipt is a third copy of the words — the transcript, the ledger
+        # reasons, and this. It is searchable (receipts_fts) and nothing in
+        # the erase path touches it, so in private mode it is not written.
+        if not _conversation_is_halberts():
+            return receipt
         self._sync_open_loops(thread_id, t, messages)
         self.store.upsert_receipt(thread_id, t.get("title") or "", receipt)
         return receipt
