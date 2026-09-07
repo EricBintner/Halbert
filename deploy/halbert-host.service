@@ -21,10 +21,15 @@ Environment=SOURCEPREP_PROJECT_ID=halbert-host
 
 # Ports
 Environment=HALBERT_PORT=8000
-Environment=HALBERT_HOST=0.0.0.0
+# SEC-1: this unit shipped binding 0.0.0.0 with no authentication at all,
+# which put an arbitrary-file-write API and a PTY on the LAN. The dashboard
+# now refuses a non-loopback bind unless HALBERT_API_TOKEN is set, so if you
+# genuinely want this reachable off-box: set that token here, put TLS in
+# front, and understand that the token then crosses your LAN on every call.
+Environment=HALBERT_HOST=127.0.0.1
 Environment=WYOMING_PORT=10400
 
-ExecStart=/opt/halbert/bin/uvicorn halbert_core.dashboard.app:app --host 0.0.0.0 --port 8000
+ExecStart=/opt/halbert/bin/uvicorn halbert_core.dashboard.app:app --host 127.0.0.1 --port 8000
 Restart=on-failure
 RestartSec=5
 

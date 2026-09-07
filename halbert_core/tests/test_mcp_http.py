@@ -21,12 +21,26 @@ from halbert_core.mcp.server import MCPServer, generate_bearer_token, _make_http
 from http.server import HTTPServer
 
 
+#: The token the most recently started test server expects, so `_post` can
+#: present it without every call site threading it through. SEC-1 closed the
+#: transport's "open mode", so a test that does not care about auth still has
+#: to authenticate.
+_ACTIVE_TOKEN = {"value": ""}
+
+
 @pytest.fixture
 def http_server_factory():
-    """Factory that starts an HTTP server on a free port and returns its URL + token."""
+    """Factory that starts an HTTP server on a free port and returns its URL + token.
+
+    ``token=None`` (the default) generates one. Pass ``token=""`` only to test
+    the refusal path — the transport no longer serves anything unauthenticated.
+    """
     servers = []
 
-    def _start(token: str = "", host: str = "127.0.0.1", cors_origin: str = ""):
+    def _start(token=None, host: str = "127.0.0.1", cors_origin: str = ""):
+        if token is None:
+            token = generate_bearer_token()
+        _ACTIVE_TOKEN["value"] = token
         mcp = MCPServer(instance_name="test", hostname="test-host")
         handler = _make_http_handler(mcp, token, cors_origin=cors_origin)
         # Port 0 = OS picks a free port
@@ -44,8 +58,13 @@ def http_server_factory():
         thread.join(timeout=2)
 
 
-def _post(url: str, body: dict, token: str = "") -> tuple[int, dict | None]:
-    """POST a JSON-RPC request and return (status_code, response_json or None)."""
+def _post(url: str, body: dict, token=None) -> tuple[int, dict | None]:
+    """POST a JSON-RPC request and return (status_code, response_json or None).
+
+    Presents the active server's token unless a test names one explicitly.
+    """
+    if token is None:
+        token = _ACTIVE_TOKEN["value"]
     data = json.dumps(body).encode("utf-8")
     req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
     if token:
@@ -78,13 +97,17 @@ class TestBearerTokenGeneration:
 class TestHTTPTransport:
     """HTTP JSON-RPC transport."""
 
-    def test_initialize_no_auth(self, http_server_factory):
-        """Open mode (no token) should accept requests."""
+    def test_no_token_configured_serves_nothing(self, http_server_factory):
+        """SEC-1: there is no "open mode (local only)".
+
+        This transport serves every tool, including config writes, and every
+        process on this machine can reach loopback — so an unconfigured token
+        is a closed door, not an open one. ``main`` refuses to start the HTTP
+        transport without a token at all; this covers the handler directly.
+        """
         url, _ = http_server_factory(token="")
-        status, resp = _post(url, {"jsonrpc": "2.0", "id": 1, "method": "initialize"})
-        assert status == 200
-        assert resp["id"] == 1
-        assert "result" in resp
+        status, _resp = _post(url, {"jsonrpc": "2.0", "id": 1, "method": "initialize"}, token="")
+        assert status == 401
 
     def test_initialize_with_valid_token(self, http_server_factory):
         """Valid bearer token should accept requests."""
@@ -98,7 +121,7 @@ class TestHTTPTransport:
         """Missing Authorization header should return 401."""
         token = generate_bearer_token()
         url, _ = http_server_factory(token=token)
-        status, resp = _post(url, {"jsonrpc": "2.0", "id": 1, "method": "initialize"})
+        status, resp = _post(url, {"jsonrpc": "2.0", "id": 1, "method": "initialize"}, token="")
         assert status == 401
 
     def test_rejected_with_wrong_token(self, http_server_factory):
@@ -110,7 +133,7 @@ class TestHTTPTransport:
 
     def test_tools_list_over_http(self, http_server_factory):
         """tools/list should work over HTTP."""
-        url, _ = http_server_factory(token="")
+        url, _ = http_server_factory()
         status, resp = _post(url, {"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
         assert status == 200
         tools = resp["result"]["tools"]
@@ -118,7 +141,7 @@ class TestHTTPTransport:
 
     def test_tool_call_over_http(self, http_server_factory):
         """tools/call should work over HTTP."""
-        url, _ = http_server_factory(token="")
+        url, _ = http_server_factory()
         status, resp = _post(url, {
             "jsonrpc": "2.0", "id": 3, "method": "tools/call",
             "params": {"name": "get_vitals", "arguments": {}},
@@ -129,14 +152,14 @@ class TestHTTPTransport:
 
     def test_notification_returns_202(self, http_server_factory):
         """Notifications (no id) should return 202."""
-        url, _ = http_server_factory(token="")
+        url, _ = http_server_factory()
         status, resp = _post(url, {"jsonrpc": "2.0", "method": "notifications/initialized"})
         assert status == 202
         assert resp is None  # no body for 202
 
     def test_unknown_method_over_http(self, http_server_factory):
         """Unknown method should return error."""
-        url, _ = http_server_factory(token="")
+        url, _ = http_server_factory()
         status, resp = _post(url, {"jsonrpc": "2.0", "id": 4, "method": "bogus"})
         assert status == 200
         assert "error" in resp
@@ -175,7 +198,9 @@ class TestRateLimiting:
         """After exceeding the rate limit, returns 429."""
         # Start with a low rate limit
         mcp = MCPServer(instance_name="test")
-        handler = _make_http_handler(mcp, "", rate_limit=3)
+        token = generate_bearer_token()
+        _ACTIVE_TOKEN["value"] = token
+        handler = _make_http_handler(mcp, token, rate_limit=3)
         httpd = HTTPServer(("127.0.0.1", 0), handler)
         port = httpd.server_address[1]
         thread = threading.Thread(target=httpd.serve_forever, daemon=True)
@@ -199,17 +224,35 @@ class TestCORS:
 
     def test_cors_default_deny_on_post(self, http_server_factory):
         """With no origin configured, POST responses carry no CORS headers."""
-        url, _ = http_server_factory(token="")
+        url, _ = http_server_factory()
         data = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "ping"}).encode()
-        req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
+        req = urllib.request.Request(
+            url,
+            data=data,
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {_ACTIVE_TOKEN['value']}",
+            },
+        )
+    if _ACTIVE_TOKEN["value"]:
+        req.add_header("Authorization", f"Bearer {_ACTIVE_TOKEN['value']}")
         with urllib.request.urlopen(req, timeout=5) as resp:
             assert resp.headers.get("Access-Control-Allow-Origin") is None
 
     def test_cors_explicit_origin_on_post(self, http_server_factory):
         """An explicit origin is echoed, with Vary: Origin."""
-        url, _ = http_server_factory(token="", cors_origin="http://localhost:5173")
+        url, _ = http_server_factory(cors_origin="http://localhost:5173")
         data = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "ping"}).encode()
-        req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
+        req = urllib.request.Request(
+            url,
+            data=data,
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {_ACTIVE_TOKEN['value']}",
+            },
+        )
+    if _ACTIVE_TOKEN["value"]:
+        req.add_header("Authorization", f"Bearer {_ACTIVE_TOKEN['value']}")
         with urllib.request.urlopen(req, timeout=5) as resp:
             assert resp.headers.get("Access-Control-Allow-Origin") == "http://localhost:5173"
             assert "POST" in resp.headers.get("Access-Control-Allow-Methods", "")
@@ -217,16 +260,24 @@ class TestCORS:
 
     def test_options_preflight_default_deny(self, http_server_factory):
         """OPTIONS preflight returns 204 but no Allow-Origin by default."""
-        url, _ = http_server_factory(token="")
-        req = urllib.request.Request(url, method="OPTIONS")
+        url, _ = http_server_factory()
+        req = urllib.request.Request(
+            url,
+            method="OPTIONS",
+            headers={"Authorization": f"Bearer {_ACTIVE_TOKEN['value']}"},
+        )
         with urllib.request.urlopen(req, timeout=5) as resp:
             assert resp.status == 204
             assert resp.headers.get("Access-Control-Allow-Origin") is None
 
     def test_options_preflight_explicit_origin(self, http_server_factory):
         """OPTIONS preflight echoes the configured origin."""
-        url, _ = http_server_factory(token="", cors_origin="http://localhost:5173")
-        req = urllib.request.Request(url, method="OPTIONS")
+        url, _ = http_server_factory(cors_origin="http://localhost:5173")
+        req = urllib.request.Request(
+            url,
+            method="OPTIONS",
+            headers={"Authorization": f"Bearer {_ACTIVE_TOKEN['value']}"},
+        )
         with urllib.request.urlopen(req, timeout=5) as resp:
             assert resp.status == 204
             assert resp.headers.get("Access-Control-Allow-Origin") == "http://localhost:5173"
@@ -237,11 +288,20 @@ class TestRequestSizeLimit:
 
     def test_oversized_request_rejected(self, http_server_factory):
         """POST bodies larger than 1MB are rejected with 413."""
-        url, _ = http_server_factory(token="")
+        url, _ = http_server_factory()
         # Create a body larger than 1MB
         big_data = "x" * (1024 * 1024 + 100)
         data = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "ping", "params": {"x": big_data}}).encode()
-        req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
+        req = urllib.request.Request(
+            url,
+            data=data,
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {_ACTIVE_TOKEN['value']}",
+            },
+        )
+    if _ACTIVE_TOKEN["value"]:
+        req.add_header("Authorization", f"Bearer {_ACTIVE_TOKEN['value']}")
         try:
             urllib.request.urlopen(req, timeout=5)
             assert False, "Should have raised an error"
@@ -260,6 +320,10 @@ def _raw_post(url: str, headers: dict, timeout: int = 5) -> http.client.HTTPResp
     p = urllib.parse.urlparse(url)
     conn = http.client.HTTPConnection(p.hostname, p.port, timeout=timeout)
     conn.putrequest("POST", "/")
+    # SEC-1: the transport has no open mode any more, so even a malformed-header
+    # test has to get through the door before it can exercise the parsing it
+    # cares about.
+    headers = {"Authorization": f"Bearer {_ACTIVE_TOKEN['value']}", **headers}
     for name, value in headers.items():
         conn.putheader(name, value)
     conn.endheaders()
@@ -277,7 +341,7 @@ class TestContentLengthHardening:
     """
 
     def test_negative_content_length_rejected_413(self, http_server_factory):
-        url, _ = http_server_factory(token="")
+        url, _ = http_server_factory()
         resp = _raw_post(url, {
             "Content-Type": "application/json",
             "Content-Length": "-1",
@@ -285,7 +349,7 @@ class TestContentLengthHardening:
         assert resp.status == 413
 
     def test_non_integer_content_length_rejected_400(self, http_server_factory):
-        url, _ = http_server_factory(token="")
+        url, _ = http_server_factory()
         resp = _raw_post(url, {
             "Content-Type": "application/json",
             "Content-Length": "abc",
@@ -393,18 +457,24 @@ class TestSSESlotRelease:
     per race.
     """
 
-    def _make_handler_obj(self, handler_cls):
+    def _make_handler_obj(self, handler_cls, token=""):
         """A handler instance with just enough state for do_GET's early
-        path (no real socket machinery — the write calls are patched)."""
+        path (no real socket machinery — the write calls are patched).
+
+        Carries a credential because SEC-1 shut the transport's open mode: with
+        no Authorization header do_GET now stops at the 401 before it ever
+        reaches the SSE slot logic this test is about."""
         obj = object.__new__(handler_cls)
         obj.path = "/sse"
         obj.client_address = ("127.0.0.1", 0)
-        obj.headers = {}
+        obj.headers = {"Authorization": f"Bearer {token}"} if token else {}
         return obj
 
     def test_header_write_failure_releases_slot(self, monkeypatch):
         mcp = MCPServer(instance_name="test")
-        handler_cls = _make_http_handler(mcp, "", rate_limit=100)
+        token = generate_bearer_token()
+        _ACTIVE_TOKEN["value"] = token
+        handler_cls = _make_http_handler(mcp, token, rate_limit=100)
         tracker = handler_cls._sse_connections
 
         def _raise(*args, **kwargs):
@@ -418,7 +488,7 @@ class TestSSESlotRelease:
         # More races than the 10-slot cap: with the leak, the 11th call
         # would return a 503 path and the cap would be gone forever.
         for _ in range(12):
-            obj = self._make_handler_obj(handler_cls)
+            obj = self._make_handler_obj(handler_cls, token)
             obj.do_GET()  # must not raise
 
         assert tracker._current == 0

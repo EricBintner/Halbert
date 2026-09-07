@@ -22,14 +22,22 @@ ExecStartPre=/usr/bin/xset -dpms
 #   --disable-infobars   Suppress "Chrome is being controlled by automated software" bar
 #   --check-for-update-interval=31536000  Effectively disable update checks (1 year)
 #   --autoplay-policy=no-user-gesture-required  Allow TTS audio playback without user interaction
-ExecStart=/usr/bin/chromium-browser \
+# SEC-1: the dashboard no longer answers an unauthenticated caller, and a
+# browser cannot be given a header — so the kiosk opens a one-time ticket URL
+# that redeems for a session cookie. Minted fresh on every start, which is what
+# --incognito requires anyway: it keeps no cookie between restarts.
+#
+# The ticket is valid for five minutes and once only, so it is spent by the time
+# it reaches the journal. Wrapped in sh -c because the URL has to be computed at
+# start time; systemd does not expand command substitution itself.
+ExecStart=/bin/sh -c 'exec /usr/bin/chromium-browser \
   --kiosk \
-  --app=http://localhost:${HALBERT_PORT}/voice \
+  --app="$(python3 -m halbert_core.dashboard.ticket --port "$HALBERT_PORT" --path /voice)" \
   --incognito \
   --noerrdialogs \
   --disable-infobars \
   --check-for-update-interval=31536000 \
-  --autoplay-policy=no-user-gesture-required
+  --autoplay-policy=no-user-gesture-required'
 
 Restart=on-failure
 RestartSec=5

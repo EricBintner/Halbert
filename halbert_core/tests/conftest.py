@@ -165,3 +165,68 @@ def _isolated_data_and_log_dirs(monkeypatch, tmp_path):
     """
     monkeypatch.setenv("HALBERT_DATA_DIR", str(tmp_path / "_data"))
     monkeypatch.setenv("HALBERT_LOG_DIR", str(tmp_path / "_logs"))
+
+
+#: The credential every test client presents. Fixed rather than random so a
+#: failure message is reproducible, and obviously fake so it can never be
+#: mistaken for a real one in a log.
+TEST_API_TOKEN = "test-token-not-a-real-credential"
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _authenticated_test_clients():
+    """Give every TestClient in the suite a valid credential (SEC-1).
+
+    Every dashboard route now sits behind ``require_owner``. Suites that
+    exercise business logic should not each have to re-learn how to
+    authenticate, and threading a header through several hundred call sites
+    would bury the change that matters in noise.
+
+    **Session-scoped on purpose.** Several suites build their client in a
+    ``scope="module"`` fixture, which runs before any function-scoped fixture —
+    so a function-scoped version of this patched nothing for them, and the app
+    they built had already minted a different token.
+
+    This does not weaken the tests that check the boundary:
+    ``tests/test_route_auth_census.py`` asserts on anonymous callers by passing
+    its own headers, and an explicit ``headers=`` from a test still wins over
+    the default set here.
+    """
+    import os
+
+    previous = os.environ.get("HALBERT_API_TOKEN")
+    os.environ["HALBERT_API_TOKEN"] = TEST_API_TOKEN
+
+    try:
+        from starlette.testclient import TestClient
+    except ImportError:  # pragma: no cover - dashboard extra not installed
+        yield
+        return
+
+    original_init = TestClient.__init__
+    original_ws = TestClient.websocket_connect
+
+    def init(self, *args, **kwargs):
+        headers = dict(kwargs.pop("headers", None) or {})
+        headers.setdefault("Authorization", f"Bearer {TEST_API_TOKEN}")
+        original_init(self, *args, headers=headers, **kwargs)
+
+    def websocket_connect(self, url, *args, **kwargs):
+        # A browser cannot set a header on a handshake, so the WebSocket door
+        # also accepts ?token=. Use that path here, because it is the one a
+        # real client takes.
+        if "token=" not in url:
+            url = f"{url}{'&' if '?' in url else '?'}token={TEST_API_TOKEN}"
+        return original_ws(self, url, *args, **kwargs)
+
+    TestClient.__init__ = init
+    TestClient.websocket_connect = websocket_connect
+    try:
+        yield
+    finally:
+        TestClient.__init__ = original_init
+        TestClient.websocket_connect = original_ws
+        if previous is None:
+            os.environ.pop("HALBERT_API_TOKEN", None)
+        else:
+            os.environ["HALBERT_API_TOKEN"] = previous

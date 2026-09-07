@@ -1366,9 +1366,17 @@ class _MCPHTTPHandler(BaseHTTPRequestHandler):
     _RATE_LIMIT_MAX_REQUESTS = 60  # per window per IP
 
     def _check_auth(self) -> bool:
-        """Validate the Bearer token from the Authorization header."""
+        """Validate the Bearer token from the Authorization header.
+
+        SEC-1: this used to return True when no token was configured — "open
+        mode (local only)". Loopback is not a boundary: every other process
+        running as this user is on it, and this transport exposes the whole
+        tool surface, including config writes (F89). ``main`` now refuses to
+        start the HTTP transport without a token, so an empty one here means a
+        caller reached a handler that should not exist. Fail closed.
+        """
         if not self._bearer_token:
-            return True  # No token configured — open mode (local only)
+            return False
         auth = self.headers.get("Authorization", "")
         # Always run the constant-time comparison, even when the Bearer
         # prefix is missing, so the branch timing does not leak which
@@ -1384,6 +1392,26 @@ class _MCPHTTPHandler(BaseHTTPRequestHandler):
         # constant-time; a non-ASCII token simply fails closed with 401.
         return hmac.compare_digest(
             token.encode("utf-8"), self._bearer_token.encode("utf-8"))
+
+    def _check_forgery(self) -> bool:
+        """Refuse a rebound Host or a foreign Origin.
+
+        A bearer token does not stop a browser: a page that has rebound its own
+        hostname to 127.0.0.1 is same-origin with this server, and a page the
+        operator visits can POST to it cross-origin without a preflight. Neither
+        can forge the Host header, and a browser always sends Origin — so
+        checking both is what actually closes it (F89).
+        """
+        host = (self.headers.get("Host") or "").rsplit(":", 1)[0].strip("[]").lower()
+        if host and host not in ("localhost", "127.0.0.1", "::1", "testserver"):
+            return False
+        origin = (self.headers.get("Origin") or "").strip().lower()
+        if not origin:
+            return True  # not a browser; the bearer token is the control
+        if self._cors_origin and origin == self._cors_origin.strip().lower():
+            return True
+        parsed = urlparse(origin)
+        return parsed.hostname in ("localhost", "127.0.0.1", "::1")
 
     def _check_rate_limit(self) -> bool:
         """Check if the client IP is within the rate limit."""
@@ -1437,6 +1465,10 @@ class _MCPHTTPHandler(BaseHTTPRequestHandler):
             self._send_json(429, {"error": "Rate limit exceeded"})
             return
 
+        if not self._check_forgery():
+            self._send_json(421, {"error": "Unrecognised Host or Origin"})
+            return
+
         if not self._check_auth():
             self._send_json(401, {"error": "Unauthorized"})
             return
@@ -1478,6 +1510,10 @@ class _MCPHTTPHandler(BaseHTTPRequestHandler):
         # Rate limit BEFORE auth — see do_POST.
         if not self._check_rate_limit():
             self._send_json(429, {"error": "Rate limit exceeded"})
+            return
+
+        if not self._check_forgery():
+            self._send_json(421, {"error": "Unrecognised Host or Origin"})
             return
 
         if not self._check_auth():
@@ -1701,7 +1737,16 @@ def main() -> None:
             )
             sys.exit(2)
         if not token:
-            logger.warning("HTTP transport with no bearer token — open mode (local only)")
+            # SEC-1: there is no such thing as "open mode (local only)". This
+            # transport serves every tool, including config writes, and every
+            # process on this machine can reach loopback.
+            print(
+                "Refusing to start the HTTP transport with no bearer token.\n"
+                "Set HALBERT_MCP_TOKEN or pass --bearer-token. Generate one with:\n"
+                "  python -c 'import secrets; print(secrets.token_urlsafe(32))'",
+                file=sys.stderr,
+            )
+            sys.exit(2)
         if args.cors_origin == "*":
             logger.warning(
                 "CORS origin '*' on an authenticated endpoint lets any website "

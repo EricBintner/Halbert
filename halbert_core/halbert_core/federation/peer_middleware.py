@@ -226,9 +226,13 @@ def _is_local_client(request: "Request") -> bool:
     client = getattr(request, "client", None)
     host = getattr(client, "host", None) if client else None
     if not host:
-        # No peer address at all (some ASGI transports, and TestClient's
-        # default) — treat as local. A real network request always has one.
-        return True
+        # No peer address at all. This used to return True — "a real network
+        # request always has one" — which made the only authorization primitive
+        # in the product answer *yes* when it could not tell. Verified not
+        # reachable through the shipped uvicorn TCP server, but a fail-open
+        # default is one deployment change (a UNIX socket, a proxy that strips
+        # the peer) away from mattering, so it fails closed now (SEC-1).
+        return False
     try:
         import ipaddress
 
