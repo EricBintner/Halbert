@@ -11,6 +11,14 @@ agent can call them as tools during GPU diagnosis (the specialist model
 decides what to gather) while the monitoring endpoints keep calling the
 same functions directly. Tool registration follows the executor pattern
 (register_ha_tools / register_system_tools).
+
+GPU-1 (2026-09-07): refactored from a single Linux/NVIDIA path into a
+**probe dispatcher**. Each probe enriches a vendor's GPUs with live
+stats and classifies the memory architecture (``discrete`` /
+``unified`` / ``integrated``). The dispatcher runs all applicable probes
+and merges results. This handles the 2026 unified-memory landscape
+(Apple Silicon, NVIDIA RTX Spark, AMD Strix Halo, Qualcomm Snapdragon)
+without per-platform special cases at the call site.
 """
 
 from __future__ import annotations
@@ -98,12 +106,449 @@ def run_command(cmd: List[str], timeout: int = 10) -> Optional[str]:
         return None
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Normalized GPU dict helpers (GPU-1)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _make_gpu_dict(vendor: str, model: str, pci_id: str) -> Dict[str, Any]:
+    """Create a GPU dict with all fields (legacy + GPU-1 normalized)."""
+    return {
+        # Legacy fields (backward compatible)
+        "vendor": vendor,
+        "model": model,
+        "pci_id": pci_id,
+        "vram_mb": None,
+        "driver_version": None,
+        "driver_type": None,
+        "cuda_version": None,
+        "temperature_c": None,
+        "power_draw_w": None,
+        "power_limit_w": None,
+        "utilization_percent": None,
+        "memory_used_mb": None,
+        "memory_total_mb": None,
+        "role": get_gpu_role(pci_id),
+        # GPU-1 normalized fields
+        "memory_architecture": "discrete",  # default; probes override
+        "unified_memory_gb": None,
+        "gpu_memory_ceiling_gb": None,
+        "gpu_memory_in_use_gb": None,
+        "core_count": None,
+        "compute_api": None,
+        "memory_source_label": "VRAM",
+    }
+
+
+def _normalize_gpu(gpu: Dict[str, Any]) -> None:
+    """Populate normalized fields from legacy fields if not already set.
+
+    Called after each probe enriches the GPU dict. Ensures the normalized
+    fields are consistent with the legacy fields for backward compatibility.
+    """
+    arch = gpu.get("memory_architecture", "discrete")
+    if arch == "discrete":
+        gpu.setdefault("memory_source_label", "VRAM")
+        if gpu.get("memory_total_mb") and not gpu.get("gpu_memory_ceiling_gb"):
+            gpu["gpu_memory_ceiling_gb"] = round(gpu["memory_total_mb"] / 1024, 1)
+        if gpu.get("memory_used_mb") and not gpu.get("gpu_memory_in_use_gb"):
+            gpu["gpu_memory_in_use_gb"] = round(gpu["memory_used_mb"] / 1024, 1)
+    elif arch == "unified":
+        gpu.setdefault("memory_source_label", "Unified Memory")
+    elif arch == "integrated":
+        gpu.setdefault("memory_source_label", "System RAM")
+
+    # Set compute_api from driver_type if not explicitly set
+    if not gpu.get("compute_api"):
+        dt = gpu.get("driver_type") or ""
+        if "nvidia" in dt:
+            gpu["compute_api"] = "cuda"
+        elif "amdgpu" in dt or "radeon" in dt:
+            gpu["compute_api"] = "rocm"
+        elif "i915" in dt:
+            gpu["compute_api"] = "opencl"
+        elif "metal" in dt:
+            gpu["compute_api"] = "metal"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Hardware detection via lspci (Linux)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _detect_gpus_via_lspci() -> tuple[List[Dict], bool, bool, bool]:
+    """Detect GPUs via lspci. Returns (gpus, has_nvidia, has_amd, has_intel).
+
+    Each GPU dict is initialized with vendor, model, pci_id and default
+    values. Probes enrich these with live stats.
+    """
+    gpus: List[Dict] = []
+    has_nvidia = False
+    has_amd = False
+    has_intel = False
+
+    lspci_output = run_command(["lspci", "-nn"])
+    if not lspci_output:
+        return gpus, has_nvidia, has_amd, has_intel
+
+    for line in lspci_output.split("\n"):
+        if "VGA" not in line and "3D controller" not in line and "Display controller" not in line:
+            continue
+        # Example: "01:00.0 VGA compatible controller [0300]: NVIDIA Corporation GA106 [GeForce RTX 3060] [10de:2503] (rev a1)"
+        pci_match = re.match(
+            r'^([0-9a-f:.]+)\s+(.+?):\s+(.+?)(?:\s+\[([0-9a-f:]+)\])?(?:\s+\(rev.*\))?$',
+            line, re.I,
+        )
+        if not pci_match:
+            continue
+        pci_id = pci_match.group(1)
+        vendor_model = pci_match.group(3)
+
+        vendor = "Unknown"
+        vm_lower = vendor_model.lower()
+        if "nvidia" in vm_lower:
+            vendor = "NVIDIA"
+            has_nvidia = True
+        elif "amd" in vm_lower or "radeon" in vm_lower:
+            vendor = "AMD"
+            has_amd = True
+        elif "intel" in vm_lower:
+            vendor = "Intel"
+            has_intel = True
+
+        gpus.append(_make_gpu_dict(vendor, vendor_model, pci_id))
+
+    return gpus, has_nvidia, has_amd, has_intel
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Probes — each enriches GPU dicts with vendor-specific live stats
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _probe_nvidia_discrete(gpus: List[Dict], issues: List[str]) -> bool:
+    """Enrich NVIDIA GPUs with nvidia-smi live stats (discrete GPUs).
+
+    Returns True if nvidia-smi was available (even if memory fields are
+    "Not Supported" — that signals a unified-memory NVIDIA device like
+    RTX Spark, handled by _probe_nvidia_unified).
+    """
+    nvidia_smi = run_command([
+        "nvidia-smi",
+        "--query-gpu=name,driver_version,memory.total,memory.used,temperature.gpu,power.draw,power.limit,utilization.gpu",
+        "--format=csv,noheader,nounits",
+    ])
+    if not nvidia_smi:
+        return False
+
+    nvidia_gpus = [g for g in gpus if g["vendor"] == "NVIDIA"]
+    for i, line in enumerate(nvidia_smi.split("\n")):
+        if not line.strip():
+            continue
+        parts = [p.strip() for p in line.split(",")]
+        if len(parts) < 8 or i >= len(nvidia_gpus):
+            continue
+        gpu = nvidia_gpus[i]
+        gpu["driver_version"] = parts[1] if parts[1] != "[N/A]" else None
+        gpu["driver_type"] = "nvidia"
+
+        # RTX Spark / unified memory: nvidia-smi reports "Not Supported"
+        # for memory fields. Detect this and mark for the unified probe.
+        mem_total_raw = parts[2]
+        if mem_total_raw in ("[N/A]", "Not Supported", "N/A", ""):
+            gpu["memory_architecture"] = "unified"
+            gpu["compute_api"] = "cuda"
+            # Util/temp/power still work on unified NVIDIA
+            try:
+                gpu["temperature_c"] = int(float(parts[4])) if parts[4] != "[N/A]" else None
+                gpu["power_draw_w"] = float(parts[5]) if parts[5] != "[N/A]" else None
+                gpu["power_limit_w"] = float(parts[6]) if parts[6] != "[N/A]" else None
+                gpu["utilization_percent"] = int(float(parts[7])) if parts[7] != "[N/A]" else None
+            except (ValueError, IndexError):
+                pass
+            continue
+
+        gpu["memory_architecture"] = "discrete"
+        try:
+            gpu["memory_total_mb"] = int(float(mem_total_raw))
+            gpu["vram_mb"] = gpu["memory_total_mb"]
+            gpu["memory_used_mb"] = int(float(parts[3]))
+            gpu["temperature_c"] = int(float(parts[4])) if parts[4] != "[N/A]" else None
+            gpu["power_draw_w"] = float(parts[5]) if parts[5] != "[N/A]" else None
+            gpu["power_limit_w"] = float(parts[6]) if parts[6] != "[N/A]" else None
+            gpu["utilization_percent"] = int(float(parts[7])) if parts[7] != "[N/A]" else None
+        except (ValueError, IndexError):
+            pass
+
+    # CUDA version via nvcc
+    nvcc_output = run_command(["nvcc", "--version"])
+    if nvcc_output:
+        cuda_match = re.search(r"release (\d+\.\d+)", nvcc_output)
+        if cuda_match:
+            for gpu in nvidia_gpus:
+                gpu["cuda_version"] = cuda_match.group(1)
+
+    return True
+
+
+def _probe_nvidia_unified(gpus: List[Dict], issues: List[str]) -> None:
+    """Fill memory fields for NVIDIA unified-memory GPUs (RTX Spark).
+
+    nvidia-smi reports "Not Supported" for memory on these devices.
+    Fall back to system memory queries. The GPU working-set ceiling is
+    ~75% of total unified memory (NVIDIA's documented fraction for Spark,
+    matching Apple's UNIFIED_MEMORY_FRACTION in hardware_detector.py).
+    """
+    nvidia_unified = [g for g in gpus if g["vendor"] == "NVIDIA" and g.get("memory_architecture") == "unified"]
+    if not nvidia_unified:
+        return
+
+    # System memory total (Linux: /proc/meminfo; WSL2 also has this)
+    meminfo = run_command(["cat", "/proc/meminfo"])
+    mem_total_kb = None
+    mem_avail_kb = None
+    if meminfo:
+        for line in meminfo.split("\n"):
+            if line.startswith("MemTotal:"):
+                mem_total_kb = int(line.split()[1])
+            elif line.startswith("MemAvailable:"):
+                mem_avail_kb = int(line.split()[1])
+
+    if mem_total_kb:
+        unified_gb = mem_total_kb // (1024 * 1024)
+        ceiling_gb = round(unified_gb * 0.75, 1)
+        for gpu in nvidia_unified:
+            gpu["unified_memory_gb"] = unified_gb
+            gpu["gpu_memory_ceiling_gb"] = ceiling_gb
+            gpu["memory_total_mb"] = int(ceiling_gb * 1024)
+            gpu["vram_mb"] = gpu["memory_total_mb"]
+            if mem_avail_kb:
+                used_gb = round((mem_total_kb - mem_avail_kb) / (1024 * 1024), 1)
+                gpu["gpu_memory_in_use_gb"] = used_gb
+                gpu["memory_used_mb"] = int(used_gb * 1024)
+            gpu["compute_api"] = "cuda"
+            gpu["memory_source_label"] = "Unified Memory"
+
+
+def _probe_nvidia_nouveau(gpus: List[Dict], issues: List[str]) -> None:
+    """Detect nouveau driver for NVIDIA GPUs without nvidia-smi."""
+    nvidia_gpus = [g for g in gpus if g["vendor"] == "NVIDIA" and not g.get("driver_type")]
+    if not nvidia_gpus:
+        return
+    lsmod = run_command(["lsmod"])
+    if lsmod and "nouveau" in lsmod:
+        for gpu in nvidia_gpus:
+            gpu["driver_type"] = "nouveau"
+        issues.append(
+            "NVIDIA GPU using open-source nouveau driver. "
+            "Consider installing proprietary drivers for better performance."
+        )
+
+
+def _probe_amd_discrete(gpus: List[Dict], issues: List[str]) -> None:
+    """Enrich AMD GPUs with rocm-smi live stats (discrete GPUs).
+
+    Fills the pre-existing gap where AMD GPUs were detected via lspci
+    but never queried for utilization, memory, temperature, or power.
+    Also detects Strix Halo (unified) and delegates to _probe_amd_unified.
+    """
+    amd_gpus = [g for g in gpus if g["vendor"] == "AMD"]
+    if not amd_gpus:
+        return
+
+    # Detect driver via lsmod
+    lsmod = run_command(["lsmod"])
+    if lsmod:
+        if "amdgpu" in lsmod:
+            for gpu in amd_gpus:
+                gpu["driver_type"] = "amdgpu"
+        elif "radeon" in lsmod:
+            for gpu in amd_gpus:
+                gpu["driver_type"] = "radeon"
+            issues.append(
+                "AMD GPU using legacy radeon driver. "
+                "Consider amdgpu for newer GPUs."
+            )
+
+    # rocm-smi for live stats
+    rocm_smi = run_command([
+        "rocm-smi",
+        "--showuse",
+        "--showtemp",
+        "--showpower",
+        "--showclocks",
+        "--json",
+    ])
+    if not rocm_smi:
+        # rocm-smi not available — try sysfs for VRAM (amdgpu)
+        _probe_amd_sysfs(amd_gpus)
+        return
+
+    try:
+        data = json.loads(rocm_smi)
+    except (json.JSONDecodeError, ValueError):
+        _probe_amd_sysfs(amd_gpus)
+        return
+
+    # rocm-smi --json keys are like "GPU 0 [GPU 0]": { ... }
+    for i, gpu in enumerate(amd_gpus):
+        key = f"GPU {i}"
+        # rocm-smi json format varies; try common key patterns
+        gpu_data = None
+        for k, v in data.items():
+            if k.startswith(key) or (isinstance(v, dict) and f"card {i}" in k.lower()):
+                gpu_data = v
+                break
+        if not gpu_data:
+            continue
+
+        # Parse rocm-smi JSON fields (names vary by version)
+        def _get(fields):
+            for f in fields:
+                if f in gpu_data:
+                    val = gpu_data[f]
+                    if val not in ("N/A", "[N/A]", "", None):
+                        return val
+            return None
+
+        try:
+            util = _get(["GPU use (%)", "GPU-0 use (%)", "GPU use"])
+            if util:
+                gpu["utilization_percent"] = int(float(str(util).replace("%", "").strip()))
+        except (ValueError, TypeError):
+            pass
+
+        try:
+            temp = _get(["Temperature (C)", "GPU-0 temp (C)", "Temperature"])
+            if temp:
+                gpu["temperature_c"] = int(float(str(temp).strip()))
+        except (ValueError, TypeError):
+            pass
+
+        try:
+            power = _get(["Average Graphics Package Power (W)", "GPU-0 power (W)", "Power"])
+            if power:
+                gpu["power_draw_w"] = float(str(power).replace("W", "").strip())
+        except (ValueError, TypeError):
+            pass
+
+        # Memory — check for unified memory indicators (Strix Halo)
+        vram_total = _get(["VRAM Total Memory (B)", "Memory total"])
+        vram_used = _get(["VRAM Used Memory (B)", "Memory used"])
+        gtt_total = _get(["GTT Total Memory (B)", "GTT total"])
+
+        if gtt_total:
+            # Strix Halo: VRAM + GTT pools share physical memory.
+            # Report VRAM carve-out as the guaranteed ceiling, not the sum.
+            gpu["memory_architecture"] = "unified"
+            gpu["compute_api"] = "rocm"
+            gpu["memory_source_label"] = "Unified Memory"
+            try:
+                vram_bytes = int(str(vram_total).replace(",", "").strip()) if vram_total else 0
+                gpu["gpu_memory_ceiling_gb"] = round(vram_bytes / (1024 ** 3), 1)
+                gpu["memory_total_mb"] = int(vram_bytes / (1024 ** 2))
+                gpu["vram_mb"] = gpu["memory_total_mb"]
+            except (ValueError, TypeError):
+                pass
+            try:
+                used_bytes = int(str(vram_used).replace(",", "").strip()) if vram_used else 0
+                gpu["gpu_memory_in_use_gb"] = round(used_bytes / (1024 ** 3), 1)
+                gpu["memory_used_mb"] = int(used_bytes / (1024 ** 2))
+            except (ValueError, TypeError):
+                pass
+            # Total system memory from /proc/meminfo
+            meminfo = run_command(["cat", "/proc/meminfo"])
+            if meminfo:
+                for line in meminfo.split("\n"):
+                    if line.startswith("MemTotal:"):
+                        gpu["unified_memory_gb"] = int(line.split()[1]) // (1024 * 1024)
+                        break
+        elif vram_total:
+            # Discrete AMD GPU
+            gpu["memory_architecture"] = "discrete"
+            try:
+                vram_bytes = int(str(vram_total).replace(",", "").strip())
+                gpu["memory_total_mb"] = int(vram_bytes / (1024 ** 2))
+                gpu["vram_mb"] = gpu["memory_total_mb"]
+            except (ValueError, TypeError):
+                pass
+            try:
+                used_bytes = int(str(vram_used).replace(",", "").strip()) if vram_used else 0
+                gpu["memory_used_mb"] = int(used_bytes / (1024 ** 2))
+            except (ValueError, TypeError):
+                pass
+
+
+def _probe_amd_sysfs(amd_gpus: List[Dict]) -> None:
+    """Fallback: read AMD GPU memory from sysfs (/sys/class/drm).
+
+    Used when rocm-smi is not installed. The amdgpu driver exposes
+    mem_info_vram_total and mem_info_vram_used in bytes.
+    """
+    import glob
+    for gpu in amd_gpus:
+        # Try to find the matching drm card — we don't have a perfect
+        # pci_id → cardN mapping, so try all cards and use the first
+        # that has VRAM info.
+        for vram_path in sorted(glob.glob("/sys/class/drm/card*/device/mem_info_vram_total")):
+            try:
+                with open(vram_path) as f:
+                    vram_bytes = int(f.read().strip())
+                gpu["memory_total_mb"] = int(vram_bytes / (1024 ** 2))
+                gpu["vram_mb"] = gpu["memory_total_mb"]
+                gpu["memory_architecture"] = "discrete"
+                # Read used
+                used_path = vram_path.replace("vram_total", "vram_used")
+                try:
+                    with open(used_path) as f:
+                        used_bytes = int(f.read().strip())
+                    gpu["memory_used_mb"] = int(used_bytes / (1024 ** 2))
+                except (OSError, ValueError):
+                    pass
+                break
+            except (OSError, ValueError):
+                continue
+
+
+def _probe_intel(gpus: List[Dict], issues: List[str]) -> None:
+    """Detect Intel GPU driver."""
+    intel_gpus = [g for g in gpus if g["vendor"] == "Intel"]
+    if not intel_gpus:
+        return
+    lsmod = run_command(["lsmod"])
+    if lsmod and "i915" in lsmod:
+        for gpu in intel_gpus:
+            gpu["driver_type"] = "i915"
+            gpu["memory_architecture"] = "integrated"
+            gpu["memory_source_label"] = "System RAM"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Dispatcher
+# ─────────────────────────────────────────────────────────────────────────────
+
 def get_gpu_info() -> Dict[str, Any]:
     """Detect GPU hardware and driver information.
 
-    Non-Linux platforms return an empty result with an explanatory issue
-    instead of silently looking GPU-less — detection uses lspci/nvidia-smi.
+    Uses a probe dispatcher: lspci detects all GPUs, then vendor-specific
+    probes enrich them with live stats and classify the memory architecture
+    (``discrete`` / ``unified`` / ``integrated``).
+
+    Non-Linux/non-Darwin platforms return an empty result with an
+    explanatory issue. macOS is handled by the Apple Silicon probe
+    (Phase 2 — until then, macOS gets the unsupported fallback).
     """
+    if platform.system() == "Darwin":
+        # Phase 2 will add _probe_apple_silicon here.
+        # Until then, macOS gets the unsupported fallback.
+        return {
+            "gpus": [],
+            "has_nvidia": False,
+            "has_amd": False,
+            "has_intel": False,
+            "nvidia_smi_available": False,
+            "recommended_driver": None,
+            "driver_status": "missing",
+            "issues": ["GPU detection on macOS is not yet implemented (GPU-1 Phase 2 pending)."],
+        }
+
     if platform.system() != "Linux":
         return {
             "gpus": [],
@@ -113,125 +558,34 @@ def get_gpu_info() -> Dict[str, Any]:
             "nvidia_smi_available": False,
             "recommended_driver": None,
             "driver_status": "missing",
-            "issues": ["GPU detection requires Linux (lspci / nvidia-smi); this platform is not supported."],
+            "issues": ["GPU detection requires Linux (lspci / nvidia-smi / rocm-smi); this platform is not supported."],
         }
 
-    gpus = []
-    issues = []
-    has_nvidia = False
-    has_amd = False
-    has_intel = False
+    gpus, has_nvidia, has_amd, has_intel = _detect_gpus_via_lspci()
+    issues: List[str] = []
     nvidia_smi_available = False
 
-    # Use lspci to detect GPUs
-    lspci_output = run_command(["lspci", "-nn"])
-    if lspci_output:
-        for line in lspci_output.split("\n"):
-            # VGA compatible controller or 3D controller
-            if "VGA" in line or "3D controller" in line or "Display controller" in line:
-                # Parse the line
-                # Example: "01:00.0 VGA compatible controller [0300]: NVIDIA Corporation GA106 [GeForce RTX 3060] [10de:2503] (rev a1)"
-                pci_match = re.match(r'^([0-9a-f:.]+)\s+(.+?):\s+(.+?)(?:\s+\[([0-9a-f:]+)\])?(?:\s+\(rev.*\))?$', line, re.I)
-                if pci_match:
-                    pci_id = pci_match.group(1)
-                    vendor_model = pci_match.group(3)
+    # NVIDIA probes
+    if has_nvidia:
+        nvidia_smi_available = _probe_nvidia_discrete(gpus, issues)
+        if nvidia_smi_available:
+            # _probe_nvidia_discrete may have marked some GPUs as "unified"
+            # (RTX Spark) — fill their memory from system queries.
+            _probe_nvidia_unified(gpus, issues)
+        else:
+            _probe_nvidia_nouveau(gpus, issues)
 
-                    # Determine vendor
-                    vendor = "Unknown"
-                    if "nvidia" in vendor_model.lower():
-                        vendor = "NVIDIA"
-                        has_nvidia = True
-                    elif "amd" in vendor_model.lower() or "radeon" in vendor_model.lower():
-                        vendor = "AMD"
-                        has_amd = True
-                    elif "intel" in vendor_model.lower():
-                        vendor = "Intel"
-                        has_intel = True
-
-                    gpu = {
-                        "vendor": vendor,
-                        "model": vendor_model,
-                        "pci_id": pci_id,
-                        "vram_mb": None,
-                        "driver_version": None,
-                        "driver_type": None,
-                        "cuda_version": None,
-                        "temperature_c": None,
-                        "power_draw_w": None,
-                        "power_limit_w": None,
-                        "utilization_percent": None,
-                        "memory_used_mb": None,
-                        "memory_total_mb": None,
-                        "role": get_gpu_role(pci_id),  # 'auto', 'display', or 'compute'
-                    }
-                    gpus.append(gpu)
-
-    # Try nvidia-smi for NVIDIA GPUs
-    nvidia_smi = run_command(["nvidia-smi", "--query-gpu=name,driver_version,memory.total,memory.used,temperature.gpu,power.draw,power.limit,utilization.gpu", "--format=csv,noheader,nounits"])
-    if nvidia_smi:
-        nvidia_smi_available = True
-        for i, line in enumerate(nvidia_smi.split("\n")):
-            if line.strip():
-                parts = [p.strip() for p in line.split(",")]
-                if len(parts) >= 8 and i < len(gpus):
-                    # Find the NVIDIA GPU in our list
-                    for gpu in gpus:
-                        if gpu["vendor"] == "NVIDIA":
-                            gpu["driver_version"] = parts[1] if parts[1] != "[N/A]" else None
-                            gpu["driver_type"] = "nvidia"
-                            try:
-                                gpu["memory_total_mb"] = int(float(parts[2]))
-                                gpu["vram_mb"] = gpu["memory_total_mb"]
-                                gpu["memory_used_mb"] = int(float(parts[3]))
-                                gpu["temperature_c"] = int(float(parts[4])) if parts[4] != "[N/A]" else None
-                                gpu["power_draw_w"] = float(parts[5]) if parts[5] != "[N/A]" else None
-                                gpu["power_limit_w"] = float(parts[6]) if parts[6] != "[N/A]" else None
-                                gpu["utilization_percent"] = int(float(parts[7])) if parts[7] != "[N/A]" else None
-                            except (ValueError, IndexError):
-                                pass
-                            break
-
-        # Get CUDA version
-        cuda_output = run_command(["nvidia-smi", "--query-gpu=driver_version", "--format=csv,noheader"])
-        nvcc_output = run_command(["nvcc", "--version"])
-        if nvcc_output:
-            cuda_match = re.search(r"release (\d+\.\d+)", nvcc_output)
-            if cuda_match:
-                for gpu in gpus:
-                    if gpu["vendor"] == "NVIDIA":
-                        gpu["cuda_version"] = cuda_match.group(1)
-
-    # Check for nouveau driver
-    if has_nvidia and not nvidia_smi_available:
-        # Check if nouveau is loaded
-        lsmod = run_command(["lsmod"])
-        if lsmod and "nouveau" in lsmod:
-            for gpu in gpus:
-                if gpu["vendor"] == "NVIDIA":
-                    gpu["driver_type"] = "nouveau"
-                    issues.append("NVIDIA GPU using open-source nouveau driver. Consider installing proprietary drivers for better performance.")
-
-    # Check for AMD driver
+    # AMD probes (NEW — fills the pre-existing rocm-smi gap)
     if has_amd:
-        lsmod = run_command(["lsmod"])
-        if lsmod:
-            if "amdgpu" in lsmod:
-                for gpu in gpus:
-                    if gpu["vendor"] == "AMD":
-                        gpu["driver_type"] = "amdgpu"
-            elif "radeon" in lsmod:
-                for gpu in gpus:
-                    if gpu["vendor"] == "AMD":
-                        gpu["driver_type"] = "radeon"
-                        issues.append("AMD GPU using legacy radeon driver. Consider amdgpu for newer GPUs.")
+        _probe_amd_discrete(gpus, issues)
 
-    # Check for Intel driver
+    # Intel probe
     if has_intel:
-        lsmod = run_command(["lsmod"])
-        if lsmod and "i915" in lsmod:
-            for gpu in gpus:
-                if gpu["vendor"] == "Intel":
-                    gpu["driver_type"] = "i915"
+        _probe_intel(gpus, issues)
+
+    # Normalize all GPUs (fill derived fields)
+    for gpu in gpus:
+        _normalize_gpu(gpu)
 
     # Determine overall driver status
     driver_status = "unknown"
@@ -251,7 +605,7 @@ def get_gpu_info() -> Dict[str, Any]:
         "has_amd": has_amd,
         "has_intel": has_intel,
         "nvidia_smi_available": nvidia_smi_available,
-        "recommended_driver": None,  # Could be populated with web search
+        "recommended_driver": None,
         "driver_status": driver_status,
         "issues": issues,
     }
@@ -350,7 +704,9 @@ def get_gpu_architecture(model: str) -> Optional[str]:
     model_lower = model.lower()
 
     # NVIDIA architectures
-    if "rtx 40" in model_lower or "ada" in model_lower:
+    if "rtx 50" in model_lower or "blackwell" in model_lower or "gb10" in model_lower or "rtx spark" in model_lower or "n1x" in model_lower:
+        return "Blackwell"
+    elif "rtx 40" in model_lower or "ada" in model_lower:
         return "Ada Lovelace"
     elif "rtx 30" in model_lower or "ampere" in model_lower or "a2000" in model_lower or "a4000" in model_lower or "a5000" in model_lower or "a6000" in model_lower:
         return "Ampere"
@@ -362,10 +718,32 @@ def get_gpu_architecture(model: str) -> Optional[str]:
         return "Maxwell"
 
     # AMD architectures
-    elif "rx 7" in model_lower or "rdna 3" in model_lower:
-        return "RDNA 3"
+    elif "rx 90" in model_lower or "rdna 4" in model_lower:
+        return "RDNA 4"
+    elif "rx 7" in model_lower or "rdna 3" in model_lower or "8060s" in model_lower or "strix halo" in model_lower:
+        return "RDNA 3.5"
     elif "rx 6" in model_lower or "rdna 2" in model_lower:
         return "RDNA 2"
+
+    # Apple Silicon architectures
+    elif "m6" in model_lower:
+        return "Apple Silicon M6"
+    elif "m5" in model_lower:
+        return "Apple Silicon M5"
+    elif "m4" in model_lower:
+        return "Apple Silicon M4"
+    elif "m3" in model_lower:
+        return "Apple Silicon M3"
+    elif "m2" in model_lower:
+        return "Apple Silicon M2"
+    elif "m1" in model_lower:
+        return "Apple Silicon M1"
+
+    # Intel architectures
+    elif "arc" in model_lower or "alchemist" in model_lower:
+        return "Intel Arc (Alchemist)"
+    elif "meteor lake" in model_lower or "core ultra" in model_lower:
+        return "Intel Meteor Lake"
 
     return None
 
@@ -471,7 +849,7 @@ async def _search_latest_driver_info_handler(args: Dict) -> str:
 GPU_TOOL_SCHEMAS = {
     "gpu_info": {
         "name": "gpu_info",
-        "description": "Detect GPU hardware, driver version, VRAM, CUDA version, and live statistics (temperature, power, utilization). Linux-only — uses lspci and nvidia-smi.",
+        "description": "Detect GPU hardware, driver version, memory architecture (discrete/unified/integrated), VRAM or unified memory, CUDA/Metal/ROCm version, and live statistics (temperature, power, utilization). Works on Linux (NVIDIA/AMD/Intel) with macOS and Windows support in progress.",
         "parameters": {
             "type": "object",
             "properties": {},
@@ -480,7 +858,7 @@ GPU_TOOL_SCHEMAS = {
     },
     "gpu_system_context": {
         "name": "gpu_system_context",
-        "description": "Gather deep system context for GPU analysis: kernel version, distro, display server (X11/Wayland), secure boot status, installed NVIDIA packages, CUDA toolkit paths, ML frameworks (PyTorch/TensorFlow), container runtime. Linux-only.",
+        "description": "Gather deep system context for GPU analysis: kernel version, distro, display server (X11/Wayland), secure boot status, installed NVIDIA packages, CUDA toolkit paths, ML frameworks (PyTorch/TensorFlow), container runtime. Linux currently; macOS and Windows support in progress.",
         "parameters": {
             "type": "object",
             "properties": {},
