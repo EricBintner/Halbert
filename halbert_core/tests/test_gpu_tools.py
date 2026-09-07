@@ -87,7 +87,7 @@ def test_get_gpu_info_parses_nvidia_gpu(monkeypatch, tmp_path):
 
 
 def test_get_gpu_info_non_linux_fallback(monkeypatch):
-    _mock_run_command(monkeypatch, {}, platform_system="Darwin")
+    _mock_run_command(monkeypatch, {}, platform_system="Windows")
 
     info = get_gpu_info()
 
@@ -96,7 +96,7 @@ def test_get_gpu_info_non_linux_fallback(monkeypatch):
     assert info["nvidia_smi_available"] is False
     assert info["driver_status"] == "missing"
     # The fallback says why, rather than silently looking GPU-less.
-    assert any("not yet implemented" in issue or "not supported" in issue for issue in info["issues"])
+    assert any("not supported" in issue for issue in info["issues"])
 
 
 def test_get_gpu_architecture_known_models():
@@ -312,6 +312,126 @@ def test_nvidia_nouveau_driver_warning(monkeypatch, tmp_path):
     assert any("nouveau" in issue for issue in info["issues"])
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# GPU-1 Phase 2: Apple Silicon probe
+# ─────────────────────────────────────────────────────────────────────────────
+
+SYSTEM_PROFILER_JSON = json.dumps({
+    "SPDisplaysDataType": [
+        {
+            "_name": "Apple M1 Ultra",
+            "spdisplays_mtlgpufamilysupport": "spdisplays_metal4",
+            "spdisplays_vendor": "sppci_vendor_Apple",
+            "sppci_bus": "spdisplays_builtin",
+            "sppci_cores": "48",
+            "sppci_device_type": "spdisplays_gpu",
+            "sppci_model": "Apple M1 Ultra",
+        }
+    ]
+})
+
+IOREG_OUTPUT = (
+    '+-o AGXAcceleratorG13X  <class AGXAcceleratorG13X, id 0x100001112>\n'
+    '    {\n'
+    '      "PerformanceStatistics" = {"In use system memory (driver)"=0,"Alloc system memory"=28724150272,"Tiler Utilization %"=10,"Renderer Utilization %"=9,"Device Utilization %"=10,"In use system memory"=1298513920}\n'
+    '      "model" = "Apple M1 Ultra"\n'
+    '      "gpu-core-count" = 48\n'
+    '    }\n'
+)
+
+
+def _mock_apple_silicon(monkeypatch, outputs):
+    """Mock run_command for Apple Silicon tests + patch is_mac_apple_silicon."""
+    monkeypatch.setattr(gpu_tools, "run_command",
+                        lambda cmd, timeout=10: outputs.get(tuple(cmd)))
+    monkeypatch.setattr(platform, "system", lambda: "Darwin")
+    # Mock is_mac_apple_silicon to return True
+    import halbert_core.utils.platform as plat
+    monkeypatch.setattr(plat, "is_mac_apple_silicon", lambda: True)
+
+
+def test_apple_silicon_probe(monkeypatch, tmp_path):
+    """Apple Silicon GPU detected with live stats from ioreg."""
+    outputs = {
+        ("system_profiler", "SPDisplaysDataType", "-json"): SYSTEM_PROFILER_JSON,
+        ("ioreg", "-c", "AGXAccelerator", "-r", "-d", "1"): IOREG_OUTPUT,
+        ("sysctl", "-n", "hw.memsize"): "137438953472",  # 128 GB
+        ("sw_vers", "-productVersion"): "26.5.1",
+    }
+    _mock_apple_silicon(monkeypatch, outputs)
+    _isolated_gpu_config(monkeypatch, tmp_path)
+
+    info = get_gpu_info()
+
+    assert info["has_apple"] is True
+    assert len(info["gpus"]) == 1
+    gpu = info["gpus"][0]
+
+    assert gpu["vendor"] == "Apple"
+    assert gpu["model"] == "Apple M1 Ultra"
+    assert gpu["memory_architecture"] == "unified"
+    assert gpu["compute_api"] == "metal"
+    assert gpu["memory_source_label"] == "Unified Memory"
+    assert gpu["core_count"] == 48
+    assert gpu["unified_memory_gb"] == 128
+    assert gpu["gpu_memory_ceiling_gb"] == 96.0  # 128 * 0.75
+    # ioreg: Device Utilization % = 10
+    assert gpu["utilization_percent"] == 10
+    # ioreg: In use system memory = 1298513920 bytes ~ 1.2 GB
+    assert gpu["gpu_memory_in_use_gb"] == round(1298513920 / (1024 ** 3), 2)
+    assert gpu["driver_version"] == "macOS 26.5.1"
+    assert info["driver_status"] == "optimal"
+
+
+def test_apple_silicon_system_context(monkeypatch):
+    """macOS deep system context collects Metal version, MLX, unified memory."""
+    outputs = {
+        ("sw_vers", "-productVersion"): "26.5.1",
+        ("uname", "-r"): "26.5.0",
+        ("system_profiler", "SPDisplaysDataType", "-json"): SYSTEM_PROFILER_JSON,
+        ("sysctl", "-n", "hw.memsize"): "137438953472",
+        ("python3", "-c", "import mlx; print(mlx.__version__)"): "0.22.0",
+        ("python3", "-c", "import torch; print(torch.__version__, torch.backends.mps.is_available())"): "2.5.0 True",
+        ("which", "orbstack"): "/usr/local/bin/orbstack",
+    }
+    _mock_run_command(monkeypatch, outputs, platform_system="Darwin")
+
+    context = get_deep_system_context()
+
+    assert context["platform"] == "macOS"
+    assert context["macos_version"] == "26.5.1"
+    assert context["metal_version"] == "Metal 4"
+    assert context["unified_memory_gb"] == 128
+    assert context["ml_frameworks"]["mlx"]["version"] == "0.22.0"
+    assert context["ml_frameworks"]["pytorch"]["mps_available"] is True
+    assert context["container_runtime"] == "orbstack"
+
+
+def test_apple_silicon_intel_mac_fallback(monkeypatch):
+    """Intel Macs (non-Apple-Silicon) get empty result, not a fake Apple GPU."""
+    outputs = {
+        ("system_profiler", "SPDisplaysDataType", "-json"): json.dumps({
+            "SPDisplaysDataType": [{
+                "_name": "AMD Radeon Pro 5500 XT",
+                "sppci_vendor": "sppci_vendor_AMD",
+                "sppci_bus": "spdisplays_builtin",
+                "sppci_model": "AMD Radeon Pro 5500 XT",
+            }]
+        }),
+    }
+    monkeypatch.setattr(gpu_tools, "run_command",
+                        lambda cmd, timeout=10: outputs.get(tuple(cmd)))
+    monkeypatch.setattr(platform, "system", lambda: "Darwin")
+    # Intel Mac — not Apple Silicon
+    import halbert_core.utils.platform as plat
+    monkeypatch.setattr(plat, "is_mac_apple_silicon", lambda: False)
+
+    info = get_gpu_info()
+
+    assert info["gpus"] == []
+    assert info["driver_status"] == "missing"
+
+
 def test_gpu_system_context_parses_kernel_and_distro(monkeypatch):
     outputs = {
         ("uname", "-r"): "6.8.0-45-generic",
@@ -339,7 +459,7 @@ class TestToolHandlers:
         assert nvidia[0]["driver_version"] == "550.107.02"
 
     def test_gpu_info_handler_graceful_on_non_linux(self, monkeypatch):
-        _mock_run_command(monkeypatch, {}, platform_system="Darwin")
+        _mock_run_command(monkeypatch, {}, platform_system="Windows")
 
         result = json.loads(asyncio.run(GPU_TOOL_HANDLERS["gpu_info"]({})))
 

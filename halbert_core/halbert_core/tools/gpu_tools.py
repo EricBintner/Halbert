@@ -521,6 +521,188 @@ def _probe_intel(gpus: List[Dict], issues: List[str]) -> None:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Apple Silicon probe (macOS)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _probe_apple_silicon() -> tuple[List[Dict], List[str]]:
+    """Detect Apple Silicon GPU(s) on macOS.
+
+    Uses:
+    - ``system_profiler SPDisplaysDataType -json`` for hardware identity
+      (model, Metal family, GPU cores)
+    - ``ioreg -c AGXAccelerator -r -d 1`` for live stats (utilization,
+      memory) — no root required
+    - ``sysctl -n hw.memsize`` for total unified memory
+    - ``sw_vers -productVersion`` for OS version (= driver version)
+
+    Returns (gpus, issues). On non-Apple-Silicon Macs (Intel Macs with
+    AMD/NVIDIA dGPUs), returns ([], []) — those fall through to the
+    unsupported fallback.
+    """
+    gpus: List[Dict] = []
+    issues: List[str] = []
+
+    # Check for Apple Silicon
+    try:
+        from ..utils.platform import is_mac_apple_silicon
+        if not is_mac_apple_silicon():
+            return gpus, issues
+    except Exception:
+        # Fallback: check arch directly
+        import os
+        if os.uname().machine != "arm64":
+            return gpus, issues
+
+    # Hardware identity via system_profiler
+    sp_output = run_command(["system_profiler", "SPDisplaysDataType", "-json"])
+    if not sp_output:
+        issues.append("system_profiler returned no display data.")
+        return gpus, issues
+
+    try:
+        sp_data = json.loads(sp_output)
+    except (json.JSONDecodeError, ValueError):
+        issues.append("Could not parse system_profiler JSON output.")
+        return gpus, issues
+
+    displays = sp_data.get("SPDisplaysDataType", [])
+    for card in displays:
+        model = card.get("sppci_model") or card.get("_name") or "Apple GPU"
+        # Only Apple-integrated GPUs (not AMD dGPUs on Intel Macs)
+        vendor = card.get("sppci_vendor", "")
+        bus = card.get("sppci_bus", "")
+        if "apple" not in vendor.lower() and "builtin" not in bus.lower():
+            # This is a non-Apple GPU (e.g. AMD dGPU on Intel Mac)
+            continue
+
+        cores_str = card.get("sppci_cores")
+        core_count = None
+        if cores_str:
+            try:
+                core_count = int(cores_str)
+            except ValueError:
+                pass
+
+        metal_family = card.get("spdisplays_mtlgpufamilysupport", "")
+        # e.g. "spdisplays_metal4" -> "Metal 4"
+        metal_version = None
+        if "metal4" in metal_family.lower():
+            metal_version = "Metal 4"
+        elif "metal3" in metal_family.lower():
+            metal_version = "Metal 3"
+        elif "metal2" in metal_family.lower():
+            metal_version = "Metal 2"
+
+        gpu = _make_gpu_dict("Apple", model, "apple-soc-0")
+        gpu["driver_type"] = "metal"
+        gpu["memory_architecture"] = "unified"
+        gpu["compute_api"] = "metal"
+        gpu["memory_source_label"] = "Unified Memory"
+        gpu["core_count"] = core_count
+        gpu["driver_version"] = metal_version or "Metal"
+        gpus.append(gpu)
+
+    if not gpus:
+        return gpus, issues
+
+    # Total unified memory via sysctl
+    memsize_output = run_command(["sysctl", "-n", "hw.memsize"])
+    unified_memory_gb = None
+    if memsize_output:
+        try:
+            unified_memory_bytes = int(memsize_output.strip())
+            unified_memory_gb = unified_memory_bytes // (1024 ** 3)
+        except ValueError:
+            pass
+
+    # OS version (used as driver version proxy)
+    os_version = run_command(["sw_vers", "-productVersion"])
+
+    # GPU working-set ceiling: 75% of unified memory (matching
+    # UNIFIED_MEMORY_FRACTION in hardware_detector.py). If Metal API
+    # is available (Phase 5), use recommendedMaxWorkingSetSize instead.
+    ceiling_gb = None
+    if unified_memory_gb:
+        ceiling_gb = round(unified_memory_gb * 0.75, 1)
+
+    for gpu in gpus:
+        gpu["unified_memory_gb"] = unified_memory_gb
+        gpu["gpu_memory_ceiling_gb"] = ceiling_gb
+        if ceiling_gb:
+            gpu["memory_total_mb"] = int(ceiling_gb * 1024)
+            gpu["vram_mb"] = gpu["memory_total_mb"]
+        if os_version:
+            gpu["driver_version"] = f"macOS {os_version.strip()}"
+
+    # Live stats via ioreg (no root required)
+    ioreg_output = run_command(["ioreg", "-c", "AGXAccelerator", "-r", "-d", "1"])
+    if ioreg_output:
+        for gpu in gpus:
+            _parse_ioreg_stats(gpu, ioreg_output)
+
+    return gpus, issues
+
+
+def _parse_ioreg_stats(gpu: Dict, ioreg_output: str) -> None:
+    """Parse ioreg PerformanceStatistics for live GPU stats.
+
+    ioreg output is not JSON — it's an Apple property list format.
+    We extract the PerformanceStatistics dict and relevant fields.
+    The keys have been stable from macOS 11 through 26 but are not
+    officially documented; parse defensively.
+    """
+    # Extract PerformanceStatistics block
+    perf_match = re.search(
+        r'"PerformanceStatistics"\s*=\s*\{([^}]+)\}',
+        ioreg_output,
+    )
+    if not perf_match:
+        return
+    perf_block = perf_match.group(1)
+
+    # Device Utilization %
+    util_match = re.search(r'"Device Utilization %"\s*=\s*(\d+)', perf_block)
+    if util_match:
+        try:
+            gpu["utilization_percent"] = int(util_match.group(1))
+        except ValueError:
+            pass
+
+    # Renderer Utilization % (compute-bound rendering)
+    renderer_match = re.search(r'"Renderer Utilization %"\s*=\s*(\d+)', perf_block)
+    # Tiler Utilization % (geometry/tiling)
+    tiler_match = re.search(r'"Tiler Utilization %"\s*=\s*(\d+)', perf_block)
+
+    # In use system memory (bytes) — GPU-allocated memory currently resident
+    in_use_match = re.search(r'"In use system memory"\s*=\s*(\d+)', perf_block)
+    if in_use_match:
+        try:
+            in_use_bytes = int(in_use_match.group(1))
+            gpu["gpu_memory_in_use_gb"] = round(in_use_bytes / (1024 ** 3), 2)
+            gpu["memory_used_mb"] = int(in_use_bytes / (1024 ** 2))
+        except ValueError:
+            pass
+
+    # Alloc system memory (bytes) — total GPU-allocated (may be larger than in-use)
+    alloc_match = re.search(r'"Alloc system memory"\s*=\s*(\d+)', perf_block)
+
+    # GPU core count (fallback if system_profiler didn't have it)
+    if not gpu.get("core_count"):
+        core_match = re.search(r'"gpu-core-count"\s*=\s*(\d+)', ioreg_output)
+        if core_match:
+            try:
+                gpu["core_count"] = int(core_match.group(1))
+            except ValueError:
+                pass
+
+    # Model (fallback)
+    if not gpu.get("model") or gpu["model"] == "Apple GPU":
+        model_match = re.search(r'"model"\s*=\s*"([^"]+)"', ioreg_output)
+        if model_match:
+            gpu["model"] = model_match.group(1)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Dispatcher
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -531,22 +713,24 @@ def get_gpu_info() -> Dict[str, Any]:
     probes enrich them with live stats and classify the memory architecture
     (``discrete`` / ``unified`` / ``integrated``).
 
-    Non-Linux/non-Darwin platforms return an empty result with an
-    explanatory issue. macOS is handled by the Apple Silicon probe
-    (Phase 2 — until then, macOS gets the unsupported fallback).
+    On macOS, the Apple Silicon probe uses system_profiler + ioreg.
+    On Linux, lspci + nvidia-smi/rocm-smi/sysfs.
+    Other platforms return an empty result with an explanatory issue.
     """
     if platform.system() == "Darwin":
-        # Phase 2 will add _probe_apple_silicon here.
-        # Until then, macOS gets the unsupported fallback.
+        gpus, issues = _probe_apple_silicon()
+        has_apple = any(g["vendor"] == "Apple" for g in gpus)
+        driver_status = "optimal" if gpus else "missing"
         return {
-            "gpus": [],
+            "gpus": gpus,
             "has_nvidia": False,
-            "has_amd": False,
-            "has_intel": False,
+            "has_amd": any(g["vendor"] == "AMD" for g in gpus),
+            "has_intel": any(g["vendor"] == "Intel" for g in gpus),
+            "has_apple": has_apple,
             "nvidia_smi_available": False,
             "recommended_driver": None,
-            "driver_status": "missing",
-            "issues": ["GPU detection on macOS is not yet implemented (GPU-1 Phase 2 pending)."],
+            "driver_status": driver_status,
+            "issues": issues,
         }
 
     if platform.system() != "Linux":
@@ -617,7 +801,13 @@ def get_deep_system_context() -> Dict[str, Any]:
 
     Collects: kernel, distro, display server, secure boot, installed packages,
     ML frameworks, container runtimes, etc.
+
+    On macOS, collects macOS version, Metal version, MLX/PyTorch-MPS
+    presence instead of Linux-specific fields.
     """
+    if platform.system() == "Darwin":
+        return _get_apple_system_context()
+
     context = {
         "kernel": None,
         "distro": None,
@@ -695,6 +885,92 @@ def get_deep_system_context() -> Dict[str, Any]:
     nvidia_docker = run_command(["which", "nvidia-container-toolkit"])
     if nvidia_docker:
         context["container_runtime"] = "nvidia-container-toolkit"
+
+    return context
+
+
+def _get_apple_system_context() -> Dict[str, Any]:
+    """Gather macOS-specific system context for GPU analysis.
+
+    Collects: macOS version, Metal version, MLX presence, PyTorch MPS
+    backend, unified memory total, Apple Intelligence eligibility.
+    """
+    context = {
+        "platform": "macOS",
+        "macos_version": None,
+        "kernel": None,
+        "metal_version": None,
+        "unified_memory_gb": None,
+        "ml_frameworks": {},
+        "apple_intelligence": None,
+        "container_runtime": None,
+    }
+
+    # macOS version
+    os_version = run_command(["sw_vers", "-productVersion"])
+    if os_version:
+        context["macos_version"] = os_version.strip()
+
+    # Kernel
+    kernel = run_command(["uname", "-r"])
+    if kernel:
+        context["kernel"] = kernel
+
+    # Metal version + GPU model from system_profiler
+    sp_output = run_command(["system_profiler", "SPDisplaysDataType", "-json"])
+    if sp_output:
+        try:
+            sp_data = json.loads(sp_output)
+            displays = sp_data.get("SPDisplaysDataType", [])
+            for card in displays:
+                metal_family = card.get("spdisplays_mtlgpufamilysupport", "")
+                if "metal4" in metal_family.lower():
+                    context["metal_version"] = "Metal 4"
+                elif "metal3" in metal_family.lower():
+                    context["metal_version"] = "Metal 3"
+                elif "metal2" in metal_family.lower():
+                    context["metal_version"] = "Metal 2"
+                break
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+    # Unified memory total
+    memsize = run_command(["sysctl", "-n", "hw.memsize"])
+    if memsize:
+        try:
+            context["unified_memory_gb"] = int(memsize.strip()) // (1024 ** 3)
+        except ValueError:
+            pass
+
+    # MLX
+    mlx_check = run_command(["python3", "-c", "import mlx; print(mlx.__version__)"])
+    if mlx_check:
+        context["ml_frameworks"]["mlx"] = {"version": mlx_check.strip()}
+
+    # PyTorch with MPS
+    pytorch_check = run_command([
+        "python3", "-c",
+        "import torch; print(torch.__version__, torch.backends.mps.is_available())",
+    ])
+    if pytorch_check:
+        parts = pytorch_check.split()
+        context["ml_frameworks"]["pytorch"] = {
+            "version": parts[0] if parts else "unknown",
+            "mps_available": "True" in pytorch_check,
+        }
+
+    # Apple Intelligence eligibility (lazy import)
+    try:
+        from ..model.hardware_detector import apple_intelligence_eligible
+        context["apple_intelligence"] = apple_intelligence_eligible()
+    except Exception:
+        pass
+
+    # Container runtime (OrbStack / Colima / Docker Desktop)
+    for tool in ["orbstack", "colima", "docker"]:
+        if run_command(["which", tool]):
+            context["container_runtime"] = tool
+            break
 
     return context
 
