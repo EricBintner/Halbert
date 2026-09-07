@@ -401,6 +401,9 @@ class AgentStateMachine:
         history_budget: Optional[int] = None,
         retrieval_scope: Optional[str] = None,
         speaker_role: Optional[str] = None,
+        modality: Optional[str] = None,
+        speaker_name: Optional[str] = None,
+        claim_source: Optional[str] = None,
     ) -> AsyncIterator[StreamEvent]:
         """
         Process a user query through the state machine.
@@ -439,6 +442,15 @@ class AgentStateMachine:
                 to tighten tool-risk classification. Voice ingress passes
                 "unknown" (the satellite protocol verifies no one); absent
                 means the dashboard-chat default "admin" applies.
+            modality: Ingress modality ("voice" for a spoken turn). Absent
+                means a typed turn — today's behavior, unchanged. A voice
+                turn with no speaker_role defaults to "unknown", never to
+                the "admin" a typed turn carries: the RoleGate must not
+                hear the owner's voice in an unidentified speaker's.
+            speaker_name: Who the audio pipeline identified as speaking
+                (CAM++ match name). A claim to record, not a role grant.
+            claim_source: Where the speaker claim came from
+                ("voice_speaker_verification" | "free_text_name" | None).
 
         Yields:
             StreamEvent objects for each state change, tool call, etc.
@@ -467,6 +479,36 @@ class AgentStateMachine:
             for event in self._turn_lock_timeout_events(session_id):
                 yield event
             return
+
+        # Packet 04 A1: typed voice ingress. Exactly one door
+        # (/api/agent/message) serves typed and spoken turns, so the turn
+        # has to carry which it is. Defaulting, in order: an explicit role
+        # always wins; a typed turn keeps today's "admin" (dashboard chat
+        # is session-authenticated); a voice turn with no identified
+        # speaker is "unknown" — never a silent admin default, which is
+        # the security gap this closes. The modality is normalized to the
+        # two ingress values so a client cannot invent a third.
+        turn_modality = "voice" if str(modality or "").strip().lower() == "voice" else "text"
+        if speaker_role:
+            turn_speaker_role = speaker_role
+        elif turn_modality == "text":
+            turn_speaker_role = "admin"
+        else:
+            turn_speaker_role = "unknown"
+
+        # Packet 04 B1: the per-turn mutation digest. Bound on the
+        # ContextVar so a write-plane success anywhere in this turn
+        # (tools execute in tasks spawned inside it, which copy the
+        # context) records into the turn's own digest — and cleared in
+        # the finally below so no effect ever lands in a LATER turn.
+        digest_token = None
+        turn_digest = None
+        try:
+            from ..security.turn_digest import TurnDigest, current_turn_digest
+            turn_digest = TurnDigest()
+            digest_token = current_turn_digest.set(turn_digest)
+        except Exception as e:
+            logger.debug(f"turn digest not bound (non-fatal): {e}")
 
         try:
             # Generation params live on the one shared LLM adapter, so they
@@ -499,7 +541,11 @@ class AgentStateMachine:
                 tier_override=tier_override,
                 history_budget=history_budget or _default_conversation_tokens(),
                 retrieval_scope=retrieval_scope,
-                speaker_role=speaker_role or "admin",
+                speaker_role=turn_speaker_role,
+                modality=turn_modality,
+                speaker_name=speaker_name or None,
+                claim_source=claim_source or None,
+                turn_digest=turn_digest,
             )
 
             # Phase 3: Run intake pipeline before cognitive tick
@@ -540,8 +586,10 @@ class AgentStateMachine:
             # debug a turn; the words are in the transcript when they are
             # Halbert's to keep.
             logger.info(
-                "Starting agent processing: session=%s, query_chars=%d",
+                "Starting agent processing: session=%s, query_chars=%d, "
+                "modality=%s, speaker_role=%s, claim_source=%s",
                 session_id, len(query or ""),
+                turn_modality, turn_speaker_role, claim_source or "none",
             )
 
             yield StreamEvent.session_started(session_id, request_id)
@@ -600,6 +648,16 @@ class AgentStateMachine:
             # above: a consumer that goes away exactly there would otherwise
             # leave the session registered.
             self._settle_turn(session_id)
+            # Packet 04 B1: the turn's digest binding dies with the turn,
+            # whichever way it ended — an effect recorded after this point
+            # belongs to no turn and is dropped rather than attributed to
+            # the next one.
+            if digest_token is not None:
+                try:
+                    from ..security.turn_digest import current_turn_digest
+                    current_turn_digest.reset(digest_token)
+                except Exception as e:
+                    logger.debug(f"turn digest unbind failed (non-fatal): {e}")
             self.turn_lock.release()
 
     def _supersede_paused_turn(self, session_id: str) -> None:
@@ -3151,6 +3209,8 @@ class AgentStateMachine:
             modality_ctx = build_modality_context(
                 user_query=self.ctx.user_query,
                 speaker_role=self.ctx.speaker_role,
+                ingress_modality=getattr(self.ctx, "modality", "text"),
+                speaker_name=getattr(self.ctx, "speaker_name", None),
             )
             if modality_ctx is not None:
                 modality_ctx = resolve_turn_modality(modality_ctx)
@@ -3371,7 +3431,9 @@ class AgentStateMachine:
                     get_display_text,
                     get_speech_text,
                     should_speak,
+                    spoken_segment_lines,
                 )
+                from ..integrations.tts_quality import adapt_for_speech
                 payload = demux_response(
                     clean_response,
                     modality_ctx,
@@ -3386,7 +3448,12 @@ class AgentStateMachine:
                     )
                     # Apply pronunciation substitutions to the speech text
                     # so TTS pronounces domain terms correctly (spec 5.14).
-                    speech_text = apply_pronunciation(get_speech_text(payload))
+                    # Packet 04 C1: the spoken copy is adapted first — a
+                    # code-heavy reply speaks the fallback line, prose is
+                    # fence-stripped. The display text is untouched.
+                    speech_text = apply_pronunciation(
+                        adapt_for_speech(get_speech_text(payload))
+                    )
                     yield StreamEvent(
                         type="modality_resolved",
                         session_id=self.ctx.session_id,
@@ -3403,41 +3470,26 @@ class AgentStateMachine:
                         # O3: collect the spoken segments (post-pronunciation
                         # text + rate) as they are emitted so the TTS egress
                         # hook below can synthesize the same audio the ribbon
-                        # is showing.
+                        # is showing. Packet 04 C1: the selection goes
+                        # through spoken_segment_lines so the spoken copy is
+                        # TTS-adapted (code-heavy -> one fallback line;
+                        # prose -> fence-stripped) while the on-screen text
+                        # is untouched.
                         spoken_segments: List[tuple] = []
-                        for seg in getattr(payload, "segments", []):
-                            if not getattr(seg, "is_spoken", False):
-                                continue
-                            seg_text = apply_pronunciation(seg.text)
-                            seg_rate = float(
-                                getattr(
-                                    getattr(seg, "prosody", None),
-                                    "rate", 1.0,
-                                ) or 1.0
-                            )
+                        for line in spoken_segment_lines(clean_response, payload):
+                            seg_text = apply_pronunciation(line["text"])
+                            seg_rate = float(line.get("rate") or 1.0)
                             spoken_segments.append((seg_text, seg_rate))
                             yield StreamEvent(
                                 type="speech_segment",
                                 session_id=self.ctx.session_id,
                                 data={
                                     "text": seg_text,
-                                    "role": getattr(
-                                        getattr(seg, "role", None),
-                                        "value", "persona",
-                                    ),
+                                    "role": line.get("role", "persona"),
                                     "prosody": {
-                                        "rate": getattr(
-                                            getattr(seg, "prosody", None),
-                                            "rate", 1.0,
-                                        ),
-                                        "volume": getattr(
-                                            getattr(seg, "prosody", None),
-                                            "volume", 1.0,
-                                        ),
-                                        "whisper": getattr(
-                                            getattr(seg, "prosody", None),
-                                            "whisper", False,
-                                        ),
+                                        "rate": line.get("rate", 1.0),
+                                        "volume": line.get("volume", 1.0),
+                                        "whisper": line.get("whisper", False),
                                     },
                                 },
                             )
@@ -3445,6 +3497,50 @@ class AgentStateMachine:
                             f"Emitted {len(spoken_segments)} "
                             f"speech segments for voice delivery"
                         )
+                        # Packet 04 B1: the turn's mutation digest tail —
+                        # accountability for what this spoken command did,
+                        # spoken while the user can still hear it. Voice
+                        # turns only; a typed turn's effects stay in the
+                        # audit chain and the receipt. The same line is
+                        # appended to the hash-chained audit log: this is a
+                        # turn-scoped rollup of records the write plane
+                        # already wrote, not a new audit channel.
+                        try:
+                            from ..security.turn_digest import spoken_tail
+                            tail = spoken_tail(
+                                getattr(self.ctx, "turn_digest", None),
+                                getattr(self.ctx, "modality", "text"),
+                            )
+                        except Exception as e:
+                            logger.debug(f"turn digest tail skipped (non-fatal): {e}")
+                            tail = None
+                        if tail:
+                            spoken_segments.append((tail, 1.0))
+                            yield StreamEvent(
+                                type="speech_segment",
+                                session_id=self.ctx.session_id,
+                                data={
+                                    "text": tail,
+                                    "role": "persona",
+                                    "prosody": {
+                                        "rate": 1.0,
+                                        "volume": 1.0,
+                                        "whisper": False,
+                                    },
+                                },
+                            )
+                            try:
+                                from ..obs.audit import write_audit
+                                write_audit(
+                                    tool="turn_digest",
+                                    mode="rollup",
+                                    request_id=self.ctx.request_id,
+                                    ok=True,
+                                    summary=tail,
+                                    reason="voice turn mutation digest",
+                                )
+                            except Exception as e:
+                                logger.debug(f"turn digest audit rollup failed (non-fatal): {e}")
                         # Voice mode (O3): stream the same spoken segments to
                         # any browser subscribed to this session's audio on
                         # /api/audio/tts. Strictly optional — the turn is

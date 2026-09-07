@@ -47,7 +47,7 @@ const h = vi.hoisted(() => {
     uplinks: [] as Array<{ start: ReturnType<typeof vi.fn>; stop: ReturnType<typeof vi.fn>; state: string; getAnalyserTap: () => unknown }>,
     uplinkOptions: [] as Array<{
       onError?: (message: string) => void
-      onTranscript?: (t: { text: string }) => void
+      onTranscript?: (t: { text: string; speakerName?: string; speakerRole?: string }) => void
     }>,
     /** When true, the next PcmUplink.start() stays 'starting' until the
      * test resolves it (a pending getUserMedia). */
@@ -129,7 +129,7 @@ vi.mock('@/lib/pcmCapture', () => ({
       h.uplinkOptions.push(
         opts as {
           onError?: (message: string) => void
-          onTranscript?: (t: { text: string }) => void
+          onTranscript?: (t: { text: string; speakerName?: string; speakerRole?: string }) => void
         },
       )
     }
@@ -390,8 +390,38 @@ describe('mark tap handling', () => {
     expect(onTranscript).toBeTypeOf('function')
     act(() => { onTranscript!({ text: 'what is my disk usage' }) })
 
+    // Packet 04 A1: the spoken turn is typed as voice. No speaker was
+    // identified in this transcript, so the claim fields are absent —
+    // the backend then defaults the role to "unknown", never admin.
     expect(h.agent!.sendMessage).toHaveBeenCalledWith(
       'what is my disk usage', expect.any(String),
+      undefined, undefined,
+      expect.objectContaining({ speakerName: undefined, speakerRole: undefined }),
+    )
+  })
+
+  it('listening: an identified transcript carries the speaker claim into the turn', async () => {
+    setMachine('listening', 'listening')
+    mount()
+    await waitFor(() => expect(h.uplinkOptions.length).toBeGreaterThan(0))
+
+    const onTranscript = h.uplinkOptions[0]?.onTranscript
+    act(() => {
+      onTranscript!({
+        text: 'restart the scanner service',
+        speakerName: 'Eric',
+        speakerRole: 'member',
+      } as Parameters<NonNullable<typeof onTranscript>>[0])
+    })
+
+    expect(h.agent!.sendMessage).toHaveBeenCalledWith(
+      'restart the scanner service', expect.any(String),
+      undefined, undefined,
+      {
+        speakerName: 'Eric',
+        speakerRole: 'member',
+        claimSource: 'voice_speaker_verification',
+      },
     )
   })
 

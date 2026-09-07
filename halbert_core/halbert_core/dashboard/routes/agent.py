@@ -68,6 +68,19 @@ class SendMessageRequest(BaseModel):
     tier: Optional[str] = Field(None, description="'guide' | 'specialist' | 'vision' | 'auto'")
     endpoint_id: Optional[str] = Field(None, description="Saved-endpoint id the pinned model came from; removes ambiguity when the same model name exists on two endpoints")
     scope: Optional[str] = Field(None, description="Explicit SourcePrep scope id for retrieval this turn (e.g. 'host'). Used when no active skill provides a scope.")
+    # Packet 04 A1: typed voice ingress. A spoken turn reaches this same
+    # door as a typed one (browser-relayed STT: the transcript comes back
+    # down the mic uplink and the browser submits it here), so the turn
+    # carries what the audio pipeline already resolved. All optional and
+    # all absent on a typed turn — absent fields are today's behavior
+    # exactly (process() applies the defaults). A voice turn with no
+    # identified speaker defaults to speaker_role="unknown" inside
+    # process(), never "admin": RoleGate must not hear the owner's voice
+    # in an unidentified speaker's.
+    modality: Optional[str] = Field(None, description="'voice' when this turn arrived spoken; absent means typed")
+    speaker_name: Optional[str] = Field(None, description="Speaker identified by the audio pipeline (CAM++ match name) for a voice turn")
+    speaker_role: Optional[str] = Field(None, description="Identified speaker role for a voice turn (admin/member/guest/restricted/unknown). Never inferred; absent + voice modality defaults to 'unknown'")
+    claim_source: Optional[str] = Field(None, description="Where the speaker claim came from ('voice_speaker_verification' | 'free_text_name')")
 
 
 class ConfirmActionRequest(BaseModel):
@@ -1607,6 +1620,10 @@ if FASTAPI_AVAILABLE:
                     temperature=request.temperature,
                     history_budget=history_budget,
                     retrieval_scope=request.scope,
+                    modality=request.modality,
+                    speaker_name=request.speaker_name,
+                    speaker_role=request.speaker_role,
+                    claim_source=request.claim_source,
                 )) as stream:
                     async for event in stream:
                         yield event.to_sse()

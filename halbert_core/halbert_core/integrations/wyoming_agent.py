@@ -254,6 +254,10 @@ class HalbertWyomingAgent:
                     # dashboard-chat "admin" default, or the RoleGate
                     # tightening for unidentified speakers never applies.
                     speaker_role="unknown",
+                    # Packet 04 A1: the same turn is now typed as voice at
+                    # the ingress, so the modality context and the
+                    # per-turn digest tail know what they are serving.
+                    modality="voice",
                 )
                 async with aclosing(stream) as events:
                     async for event in events:

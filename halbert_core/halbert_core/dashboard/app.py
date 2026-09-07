@@ -1019,6 +1019,27 @@ def create_app(enable_cors: bool = True) -> FastAPI:
                 _coordinator = app.state.audio_coordinator
 
                 async def _relay_voice_turn(observation) -> None:
+                    # Packet 04 A1 + Hermes addendum. Transcribe-once: the
+                    # VoiceTurnObservation IS the single STT+identification
+                    # result for this utterance (StreamingASR + SpeakerIdentifier
+                    # ran once in the speech track, and the result is cached
+                    # on this event); every consumer — the speaker badge via
+                    # /api/audio/status, this relay, the browser's turn
+                    # submission — reads it, never a second STT call.
+                    #
+                    # Empty/failure sentinels: an empty transcript broadcasts
+                    # NOTHING and creates no turn — the agent is never handed
+                    # an empty utterance to guess at, and the browser's
+                    # recognition watchdog returns to listening with a
+                    # neutral note that never mentions STT setup (the Hermes
+                    # #41603 lesson: setup-advice text that persists and the
+                    # model keeps volunteering it).
+                    #
+                    # The transcript reaches the browser as a plain line — no
+                    # wrapper phrase (a wrapper reads as a meta-instruction);
+                    # the browser echoes it back to the user verbatim and
+                    # submits it as the turn text, carrying the speaker
+                    # claim below into the typed ingress.
                     text = getattr(observation, "text", "") or ""
                     if not text.strip():
                         return

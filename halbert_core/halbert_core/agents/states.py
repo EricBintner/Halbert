@@ -263,6 +263,34 @@ class StateContext:
     # uses this to tighten (never loosen) the base safety classification.
     speaker_role: str = "admin"
 
+    # Packet 04 A1 (typed voice ingress): the ingress modality and the
+    # speaker CLAIM, not a role grant. A voice turn arrives through the
+    # same /api/agent/message door as a typed one, so without these the
+    # turn was indistinguishable from dashboard chat and speaker_role
+    # silently defaulted to "admin" — RoleGate then treated every spoken
+    # command as the owner's. modality is ingress ("text" | "voice"),
+    # defaulting by the same rule as speaker_role: explicit wins, text
+    # turns keep today's behavior exactly, voice turns with no identified
+    # speaker are "unknown" — never a silent admin default.
+    modality: str = "text"
+    # Who the audio pipeline says is speaking (CAM++ match name, "" when
+    # unmatched). A name to display and a claim to record — identification
+    # failing or absent changes the claim strength, never the role itself.
+    speaker_name: Optional[str] = None
+    # Where the speaker claim came from ("voice_speaker_verification" for a
+    # biometric match, "free_text_name" for a spoken self-identification,
+    # None when unverified). Recording only in this packet — mapping to
+    # claim strengths and RoleGate enforcement is the permission-system
+    # deep pass (PACKET-02 Phase B / A2).
+    claim_source: Optional[str] = None
+
+    # Packet 04 B1: the per-turn mutation digest — the rollup of this
+    # turn's successful write-plane effects, (tool, redacted target)
+    # pairs only, never raw args. Created by process(), read at turn
+    # finalize; a voice turn speaks it as a tail and the audit log
+    # carries the same line. None only before process() runs.
+    turn_digest: Optional[Any] = None
+
     # Phase 2 modality wiring: the user query with <speech>/<text>/
     # <modality_context> control tags stripped (spec 5.11), resolved in
     # RESPONDING and consumed by _build_messages. It lives here, on the

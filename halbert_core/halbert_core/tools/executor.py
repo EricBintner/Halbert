@@ -559,10 +559,23 @@ class ToolExecutor:
                 result = handler(args)
 
             elapsed = (time.time() - start) * 1000
-            
+
             logger.info(f"Executed {tool_name}: success in {elapsed:.0f}ms")
             self._audit(tool_name, args, session_id, success=True)
-            
+
+            # Packet 04 B1: a successful write-plane effect lands in the
+            # current turn's mutation digest — the per-turn rollup a
+            # voice reply speaks and the audit log carries. Redacted
+            # (tool, target) only, never raw args; a no-op when no turn
+            # digest is bound (executor used outside an agent turn).
+            try:
+                from ..persona.guest_tools import WRITE_PLANE_TOOLS
+                from ..security.turn_digest import record_effect
+                if tool_name in WRITE_PLANE_TOOLS:
+                    record_effect(tool_name, args)
+            except Exception as e:
+                logger.debug(f"turn digest record skipped (non-fatal): {e}")
+
             return ExecutionResult(
                 success=True,
                 result=result,
