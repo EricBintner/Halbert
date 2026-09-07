@@ -20,6 +20,8 @@ from typing import AsyncIterator, Dict, List, Optional, Callable, Any, TYPE_CHEC
 from .blocks import content_to_text
 from .states import AgentState, StateContext, CRAGAction, ToolCall, PlanStep, ConversationStatus
 from .events import StreamEvent
+from .steering import Decision, Verdict, apply_steer_to_results, decide_midturn
+from .turn_activity import TurnActivity
 from ..streaming.terminal_bridge import get_terminal_event_bus
 from ..tools.safety import THREAD_META_TOOLS
 
@@ -306,6 +308,20 @@ class AgentStateMachine:
         # Cancellation tracking for session interruption
         self.cancelled: Dict[str, bool] = {}
 
+        # Packet 07: the interrupt algebra. ``turn_activity`` carries the
+        # running turn's activity generation (B1): a stop claims it, so an
+        # abort that loses the race to a finishing turn declines instead of
+        # double-firing. ``_turn_generation`` is the generation the running
+        # turn stamped at its start — the generation a stop observes.
+        # ``_pending_steer`` is the single replace-not-grow steer slot per
+        # session (B2): a mid-turn arrival steers into the next batch
+        # boundary instead of queueing a whole second turn. Both are plain
+        # cross-request surfaces in ``cancel_session``'s discipline: they
+        # never take the turn lock, which a mid-turn arrival can never own.
+        self.turn_activity = TurnActivity()
+        self._turn_generation: Optional[int] = None
+        self._pending_steer: Dict[str, str] = {}
+
         # Voice mode (O3): the PiperTTS instance behind the Haloysius voice
         # backend, cached once resolved so every egress turn shares one model
         # load. None until a turn needs it (and stays None without a seam).
@@ -481,6 +497,14 @@ class AgentStateMachine:
             for event in self._turn_lock_timeout_events(session_id):
                 yield event
             return
+
+        # Packet 07 B1: the turn's activity generation, stamped at the
+        # first sync step under the lock (no await separates the acquire
+        # from here, so no other request can observe the sliver). A stop
+        # issued against this turn observes and claims this generation;
+        # the RESPONDING finalize stamp below is what makes such a claim
+        # stale once the turn's answer is committed.
+        self._turn_generation = self.turn_activity.stamp()
 
         # Packet 04 A1: typed voice ingress. Exactly one door
         # (/api/agent/message) serves typed and spoken turns, so the turn
@@ -856,6 +880,19 @@ class AgentStateMachine:
         self.current_state = AgentState.IDLE
         self.active_sessions.pop(session_id, None)
         self.cancelled.pop(session_id, None)
+        # Packet 07 B2: a steer that never found a batch boundary (the turn
+        # ended, errored or was stopped first) leaves the slot here. The
+        # arrival's own response already confirmed it (steer_accepted), so
+        # this is bookkeeping, not a silent drop — but it is said in the
+        # log so a steer the model never saw is diagnosable. Repeated by
+        # process()'s outer finally, idempotently.
+        leftover_steer = self._pending_steer.pop(session_id, None)
+        if leftover_steer:
+            logger.info(
+                "Session %s ended with an unapplied steer (%d chars); the "
+                "turn finished before a batch boundary could apply it",
+                session_id, len(leftover_steer),
+            )
 
     async def _begin_turn(self) -> AsyncIterator[StreamEvent]:
         """Persist the user message and resolve the thread (spec §4.1-§4.4).
@@ -1178,6 +1215,12 @@ class AgentStateMachine:
                 yield StreamEvent.cancelled(session_id)
                 return
 
+            # Packet 07 B2: the batch boundary. A steer queued by a
+            # mid-turn arrival applies here, between handler steps, so
+            # the next model call re-reads the observations with the
+            # user's mid-turn text appended to the last tool result.
+            self._drain_pending_steer()
+
             if self.current_state == AgentState.AWAITING_CONFIRMATION:
                 # Blocking state: end this SSE stream and keep the session
                 # in active_sessions so confirm_action() can resume it.
@@ -1332,6 +1375,10 @@ class AgentStateMachine:
             # A stop pressed while the confirmation dialog was open must not
             # cancel the turn the user has just approved.
             self.cancelled.pop(session_id, None)
+            # Packet 07 B1: the resumed turn is new activity — stamp it, so
+            # a stop issued against the resumed turn claims this generation
+            # and not the one the original half of the turn ran under.
+            self._turn_generation = self.turn_activity.stamp()
 
             if not self.ctx.pending_confirmation:
                 yield StreamEvent.error(session_id, "No pending confirmation")
@@ -1463,6 +1510,196 @@ class AgentStateMachine:
         """
         lock = self._turn_lock
         return bool(lock is not None and lock.locked())
+
+    # ------------------------------------------------------------------
+    # Packet 07: the interrupt algebra at the machine edge
+    # ------------------------------------------------------------------
+
+    def request_stop(self, session_id: str) -> str:
+        """Generation-claimed stop of the running turn (Packet 07 B1).
+
+        Returns ``"stopped"`` or ``"turn completed, stop declined"`` —
+        never both, never a retry. The stop carries the generation the
+        running turn stamped at its start (Hermes ``require_generation``);
+        the claim executes only while that generation is still current,
+        exactly once. The RESPONDING finalize stamp is the final mutation
+        edge: once the turn's answer is committed the claim is stale, and a
+        stop that loses that race declines instead of firing on a turn
+        that already delivered.
+
+        A turn paused on a confirmation (its stream already closed) is
+        stopped through ``cancel_session``'s teardown — nothing is racing,
+        no claim is needed. Like ``cancel_session``, this runs on a
+        different request while the turn is mid-flight: it touches only
+        the ``cancelled`` flag and the user-facing status, never the
+        turn's own writes, which the turn's finally owns.
+        """
+        if session_id not in self.active_sessions:
+            return "turn completed, stop declined"
+        if not self._turn_in_flight():
+            # Paused on a confirmation, or a turn whose finally has not
+            # run yet: the teardown cancel_session owns is the whole stop.
+            self.cancel_session(session_id)
+            return "stopped"
+        generation = self._turn_generation
+        if generation is None:
+            # Defensive: a turn in flight is stamped at its first sync
+            # step under the lock, so this cannot happen on the normal
+            # path. Decline rather than fire a claim nobody can vouch for.
+            return "turn completed, stop declined"
+
+        def _abort() -> bool:
+            # The same flag _drive polls between steps and between
+            # events; the turn's own finally does the teardown and names
+            # the turn cancelled. The claim's single-shot lock is what
+            # keeps two stops from both firing on one turn.
+            self.cancelled[session_id] = True
+            ctx = self.active_sessions.get(session_id)
+            if ctx is not None and not ctx.conversation_status.is_terminal():
+                try:
+                    ctx.conversation_status.transition(ConversationStatus.CANCELLED)
+                except ValueError:
+                    pass
+            return True
+
+        if self.turn_activity.claim(generation, _abort) is None:
+            # Stale (the turn finalized between observation and claim) or
+            # already claimed (another stop got there first and its flag
+            # is up). Either way this caller stopped nothing new; say
+            # "stopped" when the turn is already stopping, else decline.
+            if self.cancelled.get(session_id):
+                return "stopped"
+            return "turn completed, stop declined"
+        return "stopped"
+
+    def request_steer(self, text: str) -> Dict[str, Any]:
+        """Queue a steer for the running turn (Packet 07 B2).
+
+        Never interrupts: the text rides the single replace-not-grow
+        pending slot for the running session and is applied at the next
+        batch boundary (``_drive``'s between-steps seam), where it is
+        appended to the last tool result — or, when the turn has produced
+        no tool result yet, enters the observations as its own
+        ``[steered]`` line so the next model call still sees it.
+        """
+        if not self._turn_in_flight() or self.ctx is None:
+            return {"accepted": False, "reason": "no turn in flight"}
+        session_id = self.ctx.session_id
+        replaced = session_id in self._pending_steer
+        # Exactly one slot per session (the packet's replace-not-grow
+        # rule): a second arrival before the boundary replaces the first
+        # rather than growing a queue. No arrival is silently dropped
+        # either way — each one's confirmation line (steer_accepted) is
+        # the observable verdict.
+        self._pending_steer[session_id] = text
+        return {
+            "accepted": True,
+            "replaced": replaced,
+            "reason": "steer queued for the next batch boundary",
+        }
+
+    def _drain_pending_steer(self) -> None:
+        """Apply the queued steer at the batch boundary (Packet 07 B2).
+
+        Called from ``_drive`` between handler steps — the seam where the
+        next model call will re-read the observations.
+        ``apply_steer_to_results`` owns the append (steers concatenate,
+        ``\\n[steered]`` marker); a turn with no tool result yet takes the
+        fresh-observation fallback so the text still reaches the model
+        instead of waiting for a boundary that may never come.
+        """
+        ctx = self.ctx
+        if ctx is None:
+            return
+        text = self._pending_steer.get(ctx.session_id)
+        if not text:
+            return
+        view: List[Dict[str, Any]] = []
+        if ctx.observations:
+            name = ctx.tool_calls[-1].name if ctx.tool_calls else "tool"
+            view = [{"name": name, "output": ctx.observations[-1]}]
+        applied = apply_steer_to_results(view, text)
+        if applied is not None:
+            # The apply fn mutated the view's copy of the last
+            # observation; write the appended text back to the line the
+            # context assembler actually reads.
+            ctx.observations[-1] = applied
+        else:
+            ctx.add_observation(f"[steered] {text}")
+        self._pending_steer.pop(ctx.session_id, None)
+
+    def handle_midturn_arrival(self, session_id: str, text: str) -> tuple:
+        """Route one arrival that reached the machine while a turn runs.
+
+        Packet 07 B1/B2. Returns ``(decision, events)``: ``events is None``
+        means NORMAL_TURN and the caller runs an ordinary turn; otherwise
+        the events are the arrival's own observable verdict — a steer
+        rides the single pending slot, a stop claims the running turn's
+        activity generation — so no mid-turn arrival is ever silently
+        dropped. The running turn is ``self.ctx``'s (the lock serialises
+        everything), not the arrival's own session id.
+        """
+        if not self._turn_in_flight() or self.ctx is None:
+            return (
+                decide_midturn(turn_active=False, is_command=False, text=text),
+                None,
+            )
+        tokens = (text or "").strip().split()
+        # Only "/stop" is a machine command today: the composer's other
+        # slash commands ("/model") are parsed away client-side, and an
+        # unknown "/anything" is text the model should see, not a verb.
+        is_command = bool(tokens) and tokens[0].lower() == "/stop"
+        tool_batch_in_flight = self.current_state in (
+            AgentState.EXECUTING,
+            AgentState.SEARCHING,
+            AgentState.READING,
+        )
+        decision = decide_midturn(
+            turn_active=True,
+            is_command=is_command,
+            text=text,
+            tool_batch_in_flight=tool_batch_in_flight,
+            # REDIRECT awaits a cancellable provider client (the Phase B
+            # verify-first finding: none of today's clients expose one),
+            # so the predicate is never reported and redirect stays
+            # dormant, degrading to steer by decide_midturn's rules.
+            in_model_request=False,
+        )
+        if decision.verb == Verdict.STOP:
+            outcome = self.request_stop(self.ctx.session_id)
+            if outcome == "stopped":
+                # Existing vocabulary only: the arrival's stream closes
+                # the way the stopped turn's own stream closes.
+                events = [
+                    StreamEvent.cancelled(session_id),
+                    StreamEvent.session_ended(session_id, 0, 0),
+                ]
+            else:
+                # New event type; backend-only until a frontend consumer
+                # renders it (see the packet's Phase C decisions).
+                events = [
+                    StreamEvent(
+                        type="stop_declined",
+                        session_id=session_id,
+                        data={"reason": outcome},
+                    )
+                ]
+            return decision, events
+        if decision.verb in (Verdict.STEER, Verdict.REDIRECT):
+            steer = self.request_steer(text)
+            events = [
+                StreamEvent(
+                    type="steer_accepted",
+                    session_id=session_id,
+                    data={
+                        "reason": decision.reason,
+                        "replaced": bool(steer.get("replaced")),
+                        "demoted": "interrupt_demoted_to_steer" in decision.notes,
+                    },
+                )
+            ]
+            return decision, events
+        return decision, None
 
     def _detect_oscillation(self) -> bool:
         """Detect A→B→A→B pattern indicating infinite loop."""
@@ -3444,6 +3681,13 @@ class AgentStateMachine:
         # Commit the stripped text as the session's final response text
         self.ctx.response_chunks.clear()
         self.ctx.response_chunks.append(clean_response)
+
+        # Packet 07 B1: the final mutation edge. The committed answer is
+        # the turn's last mutation; from here a stop declines ("turn
+        # completed, stop declined") instead of firing on a turn that
+        # already delivered. Mid-stream stops still work: they claim the
+        # start generation, which stays current until this stamp.
+        self.turn_activity.stamp()
 
         # B1: the cognitive tick must run exactly once per turn. Turns that
         # reach RESPONDING without passing REFLECTING (max-loop / oscillation

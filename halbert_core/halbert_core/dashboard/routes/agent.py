@@ -1571,6 +1571,36 @@ if FASTAPI_AVAILABLE:
         # client could correlate.
         session_id = request.session_id or str(uuid.uuid4())
 
+        # Packet 07 B1/B2: the interrupt algebra. An arrival that reaches the
+        # machine while a turn is in flight no longer queues as a whole
+        # second turn: "/stop" claims the running turn's activity generation
+        # (a stop that loses the race to a finishing turn declines), and
+        # plain text steers into the next batch boundary through the
+        # machine's single replace-not-grow pending slot. The arrival's own
+        # stream carries its verdict (steer_accepted / the stop outcome), so
+        # nothing is silently dropped. Arrivals carrying images keep the
+        # queue-a-turn path below: images ride the per-turn context, and no
+        # mid-turn seam for them exists yet.
+        if not request.images:
+            _decision, arrival_events = agent.handle_midturn_arrival(
+                session_id, request.message
+            )
+            if arrival_events is not None:
+                async def arrival_stream():
+                    for event in arrival_events:
+                        yield event.to_sse()
+
+                return StreamingResponse(
+                    arrival_stream(),
+                    media_type="text/event-stream",
+                    headers={
+                        "Cache-Control": "no-cache",
+                        "Connection": "keep-alive",
+                        "X-Accel-Buffering": "no",
+                        "Access-Control-Allow-Origin": "*",
+                    },
+                )
+
         # In-chat model picker for this turn. "auto" means "no pin" -- it is the
         # absence of an override, not a third mode.
         tier_override = request.tier if request.tier in ("guide", "specialist", "vision") else None
@@ -1732,12 +1762,35 @@ if FASTAPI_AVAILABLE:
             agent = get_agent()
         except Exception as e:
             raise HTTPException(500, f"Agent not available: {e}")
-        
+
         if agent.cancel_session(session_id):
             return {"cancelled": True, "session_id": session_id}
-        
+
         raise HTTPException(404, "Session not found")
-    
+
+    @router.post("/stop/{session_id}")
+    async def stop_turn(session_id: str, req: Request):
+        """Generation-claimed stop of the running turn (Packet 07 B1).
+
+        Unlike ``/cancel``, which raises the flag unconditionally, the stop
+        claims the turn's activity generation: a stop issued as the turn
+        completes declines ("turn completed, stop declined") instead of
+        firing on a turn that already delivered — and never both, never a
+        retry. Always 200 with the outcome; the stopped turn's own stream
+        is the one that ends with the ``cancelled`` event.
+        """
+        try:
+            agent = get_agent()
+        except Exception as e:
+            raise HTTPException(500, f"Agent not available: {e}")
+
+        outcome = agent.request_stop(session_id)
+        return {
+            "stopped": outcome == "stopped",
+            "outcome": outcome,
+            "session_id": session_id,
+        }
+
     @router.get("/health")
     async def health():
         """Health check for agent service."""
