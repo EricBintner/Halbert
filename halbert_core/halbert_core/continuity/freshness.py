@@ -57,6 +57,13 @@ RE_OBSERVABLE_PREDICATES = frozenset({
     "load_average", "admin_presence",
     "mounted", "running", "enabled", "listening", "installed_version",
     "free_space", "permissions", "owner", "port", "pid", "uptime",
+    # Home Assistant state (A3). A lock read from memory is the worst kind of
+    # stale answer -- the door's actual position is one fetch away, and saying
+    # "it's locked" from a week-old row is how a person stops trusting any of
+    # it. PROBE for these subjects means asking Home Assistant, not running a
+    # subprocess.
+    "lock_state", "alarm_state", "presence",
+    "door_state", "power_state", "climate_state", "moisture_state",
 })
 
 #: Receipt lines that stay true because they record what happened, not what is.

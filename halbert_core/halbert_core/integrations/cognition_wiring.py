@@ -29,6 +29,8 @@ _frigate_event_mapper = None
 _trackers = None
 _timeline_store = None
 _timeline_store_failed = False
+_state_ledger = None
+_state_ledger_failed = False
 
 # Multi-instance: ensure Haloysius memory tree follows HALBERT_DATA_DIR
 # so persona memory stores are fully isolated per instance.
@@ -468,6 +470,31 @@ def get_trackers():
     return _trackers
 
 
+def get_state_ledger():
+    """The machine-state ledger, or None.
+
+    Same failure posture as ``get_timeline_store``: an observation *source*
+    must not depend on a store that observes it, so a ledger that cannot be
+    opened is absent rather than fatal, logged once at ERROR.
+    """
+    global _state_ledger, _state_ledger_failed
+    if _state_ledger is None and not _state_ledger_failed:
+        try:
+            from .state_trackers import _default_ledger
+
+            _state_ledger = _default_ledger()
+        except Exception as e:
+            _state_ledger_failed = True
+            logger.error(
+                f"State ledger unavailable ({type(e).__name__}: {e}); HA state "
+                f"transitions will not be recorded as state"
+            )
+            return None
+        if _state_ledger is None:
+            _state_ledger_failed = True
+    return _state_ledger
+
+
 def get_timeline_store():
     """Get or create the singleton TimelineStore instance, or None.
 
@@ -515,7 +542,15 @@ def get_ha_event_mapper():
     if _ha_event_mapper is None:
         try:
             from .home_assistant.ha_event_mapper import HAEventMapper
-            _ha_event_mapper = HAEventMapper(trackers=_trackers, timeline=get_timeline_store())
+            _ha_event_mapper = HAEventMapper(
+                trackers=_trackers,
+                timeline=get_timeline_store(),
+                # A3: the state half. HA transitions that describe a standing
+                # condition -- a lock, an alarm, presence, a door -- go to the
+                # state ledger as well as the event ledger, because dedup is
+                # the feature there and countability is the feature here.
+                ledger=get_state_ledger(),
+            )
         except Exception as e:
             logger.warning(f"Could not create HA event mapper: {e}")
     return _ha_event_mapper
@@ -610,7 +645,7 @@ def start_ha_event_stream() -> None:
 
 def shutdown():
     """Clean shutdown of background threads and trackers."""
-    global _event_mapper, _cognition, _trackers, _ha_event_mapper, _ha_event_stream, _frigate_event_mapper, _timeline_store, _timeline_store_failed
+    global _event_mapper, _cognition, _trackers, _ha_event_mapper, _ha_event_stream, _frigate_event_mapper, _timeline_store, _timeline_store_failed, _state_ledger, _state_ledger_failed
     if _event_mapper is not None:
         _event_mapper.stop_background_scan()
         _event_mapper = None
@@ -621,4 +656,6 @@ def shutdown():
     _trackers = None
     _timeline_store = None
     _timeline_store_failed = False
+    _state_ledger = None
+    _state_ledger_failed = False
     logger.info("Cognition wiring shut down")
