@@ -268,6 +268,7 @@ class _OutputCapture:
         self.total = 0
         self.original = sys.stdout
         self._spill = None
+        self._closed = False
         self._head = bytearray()
         self._tail = bytearray()
 
@@ -278,7 +279,9 @@ class _OutputCapture:
         data = s.encode("utf-8", "replace") if isinstance(s, str) else bytes(s)
         self.activity[0] = time.monotonic()
         self.total += len(data)
-        if self._spill is None and self.spill_path:
+        # A worker wedged in C code can outlive the run; once the run is
+        # over and the spill deleted, a late write must not resurrect it.
+        if self._spill is None and self.spill_path and not self._closed:
             self._spill = open(self.spill_path, "wb")
         if self._spill is not None:
             self._spill.write(data)
@@ -300,6 +303,7 @@ class _OutputCapture:
         return False
 
     def close(self) -> None:
+        self._closed = True
         if self._spill is not None:
             try:
                 self._spill.close()
@@ -521,6 +525,10 @@ async def run_script(executor, args: Dict) -> Dict:
                 os.remove(spill_path)
             except OSError:
                 pass
+        logger.info(
+            "execute_code run finished: tool_calls=%d budget_remaining=%d",
+            host.calls_dispatched, host.budget_remaining,
+        )
 
     assert result is not None
     return result
