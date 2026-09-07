@@ -96,7 +96,7 @@ class TestExecutorWiring:
         token = current_turn_digest.set(d)
         try:
             import asyncio
-            result = asyncio.get_event_loop().run_until_complete(
+            result = asyncio.run(
                 executor.execute(
                     "write_file", {"path": "/tmp/x", "content": "SECRET"},
                     session_id="s", confirmed=True,
@@ -116,7 +116,7 @@ class TestExecutorWiring:
         executor = ToolExecutor(safety=ToolSafetyFramework())
         executor.tools["write_file"] = lambda args: "written"
         import asyncio
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             executor.execute("write_file", {"path": "/tmp/x"}, confirmed=True)
         )
         assert result.success  # no digest bound: nothing recorded, no error
@@ -134,7 +134,7 @@ class TestExecutorWiring:
         token = current_turn_digest.set(d)
         try:
             import asyncio
-            result = asyncio.get_event_loop().run_until_complete(
+            result = asyncio.run(
                 executor.execute("write_file", {"path": "/tmp/x"}, confirmed=True)
             )
         finally:
