@@ -29,7 +29,7 @@ import threading
 import time
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger("halbert.continuity.timeline")
 
@@ -70,6 +70,31 @@ class TimelineEvent:
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
+
+
+def as_prompt_line(row: Dict[str, Any]) -> str:
+    """One ledger row as a citable prompt line: ``[t12] Front door opened``.
+
+    The ``t`` prefix is deliberate. ``observation_id`` is already the
+    provenance type used for *retrieval* ids, and the state machine records
+    that a plain string cannot be cited at all -- so a ledger reference needs
+    to be distinguishable from a retrieval one at a glance and in
+    ``_extract_provenance``.
+
+    Falls back to the entity id when a row carries no title: an untitled row
+    rendering as a bare ``[t12]`` would be a citation to nothing, which is
+    worse than a rough description.
+
+    Newlines are stripped here as well as at the sink. The sink is the right
+    place for it and this is the last place it can be got wrong, and the cost
+    of doing it twice is nothing.
+    """
+    rid = row.get("id")
+    text = (row.get("title") or "").strip()
+    if not text:
+        text = (row.get("entity_id") or row.get("event_type") or "an event").strip()
+    text = " ".join(text.split())
+    return f"[t{rid}] {text}"
 
 
 class TimelineStore:
@@ -245,6 +270,64 @@ class TimelineStore:
             return [self._row_to_dict(row) for row in rows]
         finally:
             conn.close()
+
+    #: Event types with a new/update/end lifecycle, where one tracked object
+    #: produces several rows. Only Frigate has one; everything else is one row
+    #: per occurrence, and filtering those to "end" would count none of them.
+    _LIFECYCLE_EVENT_TYPES = ("frigate_event",)
+
+    def count_by_entity(
+        self,
+        since: float,
+        until: Optional[float] = None,
+        event_type: Optional[str] = None,
+    ) -> Dict[str, Tuple[int, float, float]]:
+        """Recurrence per entity in a window: ``{entity_id: (count, first, last)}``.
+
+        The arithmetic behind CD-3's selection. Deterministic on purpose: "this
+        van, three times, with timestamps" is a fact, where clustering chat
+        topics yields "docker" and "the thing we tried".
+
+        Frigate rows are counted on ``end`` rather than ``new``
+        (``DECISIONS.md`` 2026-09-06). One ``end`` per tracked object dedupes
+        exactly as one ``new`` does, but Frigate assigns ``sub_label`` -- the
+        plate or the face, the thing that makes it *that* van rather than *a*
+        van -- only after an object is first tracked. Counting ``new`` grouped
+        everything as ``front_door:person``.
+
+        Rows with no ``entity_id`` are skipped: an empty group key is not an
+        entity, and letting it through would produce a phantom row that
+        recurs constantly.
+        """
+        lifecycle = ",".join("?" for _ in self._LIFECYCLE_EVENT_TYPES)
+        where = [
+            "timestamp >= ?",
+            "entity_id != ''",
+            # A lifecycle row counts only at its end; everything else counts
+            # once per row.
+            f"""(event_type NOT IN ({lifecycle})
+                 OR json_extract(data, '$.type') = 'end')""",
+        ]
+        params: List[Any] = [since, *self._LIFECYCLE_EVENT_TYPES]
+        if until is not None:
+            where.append("timestamp <= ?")
+            params.append(until)
+        if event_type:
+            where.append("event_type = ?")
+            params.append(event_type)
+
+        conn = sqlite3.connect(self.db_path)
+        try:
+            rows = conn.execute(
+                f"""SELECT entity_id, COUNT(*), MIN(timestamp), MAX(timestamp)
+                    FROM timeline_events
+                    WHERE {' AND '.join(where)}
+                    GROUP BY entity_id""",
+                params,
+            ).fetchall()
+        finally:
+            conn.close()
+        return {r[0]: (r[1], r[2], r[3]) for r in rows}
 
     def get_recent(self, hours: float = 24, limit: int = 100) -> List[Dict[str, Any]]:
         """Get events from the last N hours."""
