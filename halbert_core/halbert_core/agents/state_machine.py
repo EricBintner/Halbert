@@ -3431,7 +3431,9 @@ class AgentStateMachine:
                     get_display_text,
                     get_speech_text,
                     should_speak,
+                    spoken_segment_lines,
                 )
+                from ..integrations.tts_quality import adapt_for_speech
                 payload = demux_response(
                     clean_response,
                     modality_ctx,
@@ -3446,7 +3448,12 @@ class AgentStateMachine:
                     )
                     # Apply pronunciation substitutions to the speech text
                     # so TTS pronounces domain terms correctly (spec 5.14).
-                    speech_text = apply_pronunciation(get_speech_text(payload))
+                    # Packet 04 C1: the spoken copy is adapted first — a
+                    # code-heavy reply speaks the fallback line, prose is
+                    # fence-stripped. The display text is untouched.
+                    speech_text = apply_pronunciation(
+                        adapt_for_speech(get_speech_text(payload))
+                    )
                     yield StreamEvent(
                         type="modality_resolved",
                         session_id=self.ctx.session_id,
@@ -3463,41 +3470,26 @@ class AgentStateMachine:
                         # O3: collect the spoken segments (post-pronunciation
                         # text + rate) as they are emitted so the TTS egress
                         # hook below can synthesize the same audio the ribbon
-                        # is showing.
+                        # is showing. Packet 04 C1: the selection goes
+                        # through spoken_segment_lines so the spoken copy is
+                        # TTS-adapted (code-heavy -> one fallback line;
+                        # prose -> fence-stripped) while the on-screen text
+                        # is untouched.
                         spoken_segments: List[tuple] = []
-                        for seg in getattr(payload, "segments", []):
-                            if not getattr(seg, "is_spoken", False):
-                                continue
-                            seg_text = apply_pronunciation(seg.text)
-                            seg_rate = float(
-                                getattr(
-                                    getattr(seg, "prosody", None),
-                                    "rate", 1.0,
-                                ) or 1.0
-                            )
+                        for line in spoken_segment_lines(clean_response, payload):
+                            seg_text = apply_pronunciation(line["text"])
+                            seg_rate = float(line.get("rate") or 1.0)
                             spoken_segments.append((seg_text, seg_rate))
                             yield StreamEvent(
                                 type="speech_segment",
                                 session_id=self.ctx.session_id,
                                 data={
                                     "text": seg_text,
-                                    "role": getattr(
-                                        getattr(seg, "role", None),
-                                        "value", "persona",
-                                    ),
+                                    "role": line.get("role", "persona"),
                                     "prosody": {
-                                        "rate": getattr(
-                                            getattr(seg, "prosody", None),
-                                            "rate", 1.0,
-                                        ),
-                                        "volume": getattr(
-                                            getattr(seg, "prosody", None),
-                                            "volume", 1.0,
-                                        ),
-                                        "whisper": getattr(
-                                            getattr(seg, "prosody", None),
-                                            "whisper", False,
-                                        ),
+                                        "rate": line.get("rate", 1.0),
+                                        "volume": line.get("volume", 1.0),
+                                        "whisper": line.get("whisper", False),
                                     },
                                 },
                             )
