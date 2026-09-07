@@ -49,7 +49,11 @@ class LocalMicConfig:
 class WyomingIngressConfig:
     """Wyoming TCP satellite ingress (ESP32 / Pi on port 10400)."""
     enabled: bool = False
-    host: str = "0.0.0.0"
+    #: SEC-1: loopback. This defaulted to every interface, which put an
+    #: unauthenticated audio ingress on the LAN — a bare `transcript` line
+    #: from anyone on the network became an admin-authority turn (F144).
+    #: DECISIONS ratified 127.0.0.1 on 2026-09-01; the code had not followed.
+    host: str = "127.0.0.1"
     port: int = 10400
 
 
@@ -154,7 +158,7 @@ def _parse_config(data: dict) -> AudioConfig:
         ),
         wyoming_ingress=WyomingIngressConfig(
             enabled=wy.get("enabled", False),
-            host=wy.get("host", "0.0.0.0"),
+            host=wy.get("host", "127.0.0.1"),
             port=wy.get("port", 10400),
         ),
         rtsp_ingress=RtspIngressConfig(

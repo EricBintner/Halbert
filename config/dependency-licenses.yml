@@ -209,6 +209,8 @@ rust:
   sysinfo: {spdx: MIT}
   chrono: {spdx: MIT OR Apache-2.0}
   image: {spdx: MIT OR Apache-2.0}
+  # SEC-1: OS entropy for the per-launch dashboard API token.
+  getrandom: {spdx: MIT OR Apache-2.0}
 
   # `voice-capture` feature (opt-in, audio workstream T2.3)
   cpal:

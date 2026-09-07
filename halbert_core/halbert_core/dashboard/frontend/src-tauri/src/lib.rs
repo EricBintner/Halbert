@@ -73,6 +73,31 @@ fn api_base() -> String {
     format!("http://{}:{}", HOST, backend_port())
 }
 
+/// The API credential for this launch, minted once (SEC-1).
+///
+/// Every dashboard route now requires one. The shell is the natural place to
+/// mint it: it starts the backend, so it can hand the same secret to the
+/// sidecar's environment and to its own webview, and neither ever has to read
+/// it off disk. A fresh token per launch means a stale one in some other
+/// process's memory stops working when Halbert restarts.
+///
+/// `HALBERT_API_TOKEN` from the environment wins, so a developer attaching to a
+/// backend they started themselves works the same way an explicit
+/// `HALBERT_PORT` does.
+fn api_token() -> &'static str {
+    static TOKEN: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    TOKEN.get_or_init(|| {
+        if let Ok(t) = std::env::var("HALBERT_API_TOKEN") {
+            if !t.is_empty() {
+                return t;
+            }
+        }
+        let mut bytes = [0u8; 32];
+        getrandom::getrandom(&mut bytes).expect("no OS entropy source for the API token");
+        bytes.iter().map(|b| format!("{b:02x}")).collect()
+    })
+}
+
 /// Repo root for the sidecar. Precedence: HALBERT_REPO_ROOT env, then (dev builds only)
 /// walk up from CARGO_MANIFEST_DIR until a dir containing halbert_core/pyproject.toml.
 fn repo_root() -> Option<PathBuf> {
@@ -104,6 +129,10 @@ fn spawn_backend(app: &tauri::AppHandle) -> tauri::Result<()> {
         .map_err(|e| tauri::Error::Anyhow(e.into()))?
         .env("HALBERT_HOST", HOST)
         .env("HALBERT_PORT", backend_port().to_string())
+        // SEC-1: the sidecar and this shell must agree on the credential.
+        // Passed in the environment rather than on the command line, which is
+        // world-readable through the process table.
+        .env("HALBERT_API_TOKEN", api_token())
         // The backend's parent watchdog (dashboard/parent_watchdog.py) exits
         // uvicorn when this pid disappears, covering force-quit and crashes
         // where kill_backend() never runs.
@@ -486,8 +515,9 @@ pub fn run() {
     // Injected before any page script runs so the frontend (src/lib/apiBase.ts)
     // knows the backend origin inside the tauri://localhost webview.
     let init_script = format!(
-        "window.__HALBERT_API_BASE__ = {};",
-        serde_json::to_string(&api_base()).unwrap()
+        "window.__HALBERT_API_BASE__ = {};window.__HALBERT_TOKEN__ = {};",
+        serde_json::to_string(&api_base()).unwrap(),
+        serde_json::to_string(api_token()).unwrap()
     );
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())

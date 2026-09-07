@@ -76,7 +76,7 @@ class TestHACallService:
 
     def test_observe_blocks_action(self):
         mock_gate = MagicMock()
-        mock_gate.evaluate.return_value = MagicMock(
+        mock_gate.evaluate_call.return_value = MagicMock(
             allowed=False,
             auto_execute=False,
             requires_proposal=False,
@@ -95,7 +95,7 @@ class TestHACallService:
 
     def test_act_executes_level_0(self):
         mock_gate = MagicMock()
-        mock_gate.evaluate.return_value = MagicMock(
+        mock_gate.evaluate_call.return_value = MagicMock(
             allowed=True,
             auto_execute=True,
             requires_proposal=False,
@@ -117,7 +117,7 @@ class TestHACallService:
 
     def test_suggest_creates_proposal(self):
         mock_gate = MagicMock()
-        mock_gate.evaluate.return_value = MagicMock(
+        mock_gate.evaluate_call.return_value = MagicMock(
             allowed=True,
             auto_execute=False,
             requires_proposal=True,

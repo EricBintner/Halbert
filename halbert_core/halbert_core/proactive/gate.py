@@ -27,6 +27,19 @@ logger = logging.getLogger(__name__)
 # Severity ranking for comparison
 _SEVERITY_ORDER = {"info": 0, "warning": 1, "critical": 2}
 
+# Event types the user configured rather than ones we chose to raise. In the
+# engine's terms these are ``Utterance(user_requested=True)``: the day being
+# quiet is the report's *content*, not a reason to withhold it. Without this
+# the scheduled brief derives severity "info" from a clean day's findings and
+# is suppressed at the default dial, contradicting `the-being.md` §4
+# ("Balanced: important findings *and a scheduled morning report*") and
+# ROADMAP ATTN-2. A per-category override still outranks it.
+_USER_REQUESTED_TYPES = frozenset({"morning_report"})
+
+#: Dial levels at which a user-requested event passes regardless of the
+#: severity its content happened to produce.
+_USER_REQUESTED_DIALS = frozenset({"balanced", "assertive"})
+
 # Proactivity dial → minimum severity required
 _PROACTIVITY_THRESHOLD = {
     "off": 99,  # nothing passes
@@ -47,13 +60,34 @@ class ProactiveGate:
         being_config: BeingConfig,
         guardrail_enforcer: GuardrailEnforcer | None = None,
         finding_store: FindingStore | None = None,
+        recorder=None,
     ):
         self.config = being_config
         self.guardrails = guardrail_enforcer
         self.findings = finding_store
+        # Optional attunement.SuppressionRecorder. Stage one of the rollout
+        # (plan §4.6): the gate decides exactly as before and writes down what
+        # it did, so "why did I not hear about this?" becomes answerable
+        # before any behaviour changes. None → byte-identical to before.
+        self.recorder = recorder
 
     def should_notify(self, event: ProactiveEvent) -> Tuple[bool, str]:
         """Check if an event should be shown to the user.
+
+        Thin wrapper over :meth:`_decide` so that every suppression path is
+        recorded from one place rather than at each return site — a new
+        suppression reason cannot be added without it appearing in the log.
+        """
+        allowed, reason = self._decide(event)
+        if self.recorder is not None:
+            try:
+                self.recorder.record(event, allowed=allowed, reason=reason)
+            except Exception as exc:  # a log must never break what it observes
+                logger.warning("proactive gate: could not record decision: %s", exc)
+        return allowed, reason
+
+    def _decide(self, event: ProactiveEvent) -> Tuple[bool, str]:
+        """Decide whether an event should be shown to the user.
 
         Returns:
             (True, "") if the event should be shown.
@@ -82,7 +116,12 @@ class ProactiveGate:
         min_severity = _PROACTIVITY_THRESHOLD.get(dial, 1)
         event_severity = _SEVERITY_ORDER.get(event.severity, 0)
 
-        if event_severity < min_severity:
+        user_requested = (
+            getattr(event, "type", None) in _USER_REQUESTED_TYPES
+            and dial in _USER_REQUESTED_DIALS
+        )
+
+        if event_severity < min_severity and not user_requested:
             return False, f"proactivity dial is '{dial}' (requires severity >= {min_severity})"
 
         # 2. Check quiet hours — delegate to the engine's

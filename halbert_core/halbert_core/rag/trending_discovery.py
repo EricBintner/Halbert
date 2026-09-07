@@ -22,6 +22,21 @@ from typing import Any, Dict, List, Optional, Set
 logger = logging.getLogger(__name__)
 
 
+def _web_egress_allowed() -> bool:
+    """The CAP_WEB switch, as every egress path is supposed to check it.
+
+    ``web/search_config.is_web_search_enabled()`` resolves the capability
+    registry including the being.yml override, and reads as off on any
+    failure -- which is the behaviour wanted here: a lookup that breaks must
+    not open the network.
+    """
+    try:
+        from ..web.search_config import is_web_search_enabled
+        return bool(is_web_search_enabled())
+    except Exception:
+        return False
+
+
 @dataclass
 class TrendingRepo:
     """A trending repository from GitHub."""
@@ -232,6 +247,16 @@ class GitHubTrendingFetcher:
             min_stars: Minimum star count
             limit: Max results to return
         """
+        # The query IS the detected stack of this machine, so this is not a
+        # neutral lookup: it describes what is installed here, unprompted, on
+        # a Knowledge-tab open. CAP_WEB is off by preset (C3-08).
+        if not _web_egress_allowed():
+            logger.info(
+                "Trending discovery skipped: web egress is off (CAP_WEB). "
+                "The detected stack is not sent anywhere."
+            )
+            return []
+
         try:
             import requests
         except ImportError:

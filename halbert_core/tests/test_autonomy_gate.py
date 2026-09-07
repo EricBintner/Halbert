@@ -100,9 +100,12 @@ class TestAutonomyGateOrchestrate:
         assert d.cancel_window_seconds == 30
         assert d.governance_level == 2
 
-    def test_water_valve_forbidden_at_orchestrate(self, governance):
+    def test_hub_code_execution_forbidden_at_orchestrate(self, governance):
         gate = AutonomyGate("orchestrate", governance=governance)
-        d = gate.evaluate("water_valve", "valve.main", "close")
+        # SEC-9: `water_valve` is not an HA domain, so this assertion used to
+        # pass against a tier that matched nothing. `shell_command` is real,
+        # and is arbitrary code execution on the hub.
+        d = gate.evaluate("shell_command", "shell_command.rm_rf", "run")
         assert not d.allowed
         assert d.governance_level == 3
 
@@ -145,9 +148,12 @@ class TestAutonomyGateForbidden:
     """Level 3 is always forbidden regardless of autonomy level."""
 
     @pytest.mark.parametrize("level", ["observe", "suggest", "act", "orchestrate"])
-    def test_water_valve_always_forbidden(self, governance, level):
+    def test_hub_code_execution_always_forbidden(self, governance, level):
         gate = AutonomyGate(level, governance=governance)
-        d = gate.evaluate("water_valve", "valve.main", "close")
+        # SEC-9: `water_valve` is not an HA domain, so this assertion used to
+        # pass against a tier that matched nothing. `shell_command` is real,
+        # and is arbitrary code execution on the hub.
+        d = gate.evaluate("shell_command", "shell_command.rm_rf", "run")
         assert not d.allowed
         assert d.governance_level == 3
 

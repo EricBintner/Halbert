@@ -158,10 +158,28 @@ Examples:
     except ImportError:
         from halbert_core.dashboard.app import create_app
     
+    # SEC-1: binding off loopback without a credential is how the shipped units
+    # put an arbitrary-file-write API and a PTY on the LAN. Binding wide is a
+    # legitimate thing to want; doing it with no door is not, so this refuses
+    # rather than warning — a warning in a service log is read by nobody.
+    from .auth import TOKEN_ENV, guard_bind, load_or_create_token
+
+    guard_bind(args.host, token_present=bool(os.environ.get(TOKEN_ENV)))
+
     app = create_app(enable_cors=True)
-    
+
     # Start server
     logger.info(f"Starting Halbert Dashboard on http://{args.host}:{port}")
+    if not os.environ.get(TOKEN_ENV):
+        # Print the ticket URL rather than the token: a token in a terminal
+        # scrollback is a credential in a terminal scrollback.
+        from .auth import mint_ticket
+
+        ticket = mint_ticket(load_or_create_token())
+        logger.info(
+            "Open this once to authenticate your browser: "
+            f"http://{args.host}:{port}/auth/enter?ticket={ticket}"
+        )
     
     try:
         import uvicorn

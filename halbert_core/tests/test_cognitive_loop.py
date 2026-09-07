@@ -153,7 +153,7 @@ class TestCognitiveLoopAutonomy:
             ha_client=ha_client,
         )
         loop._decide = lambda perceived: [
-            {"domain": "water_valve", "entity_id": "valve.main", "service": "close"}
+            {"domain": "shell_command", "entity_id": "shell_command.rm_rf", "service": "run"}
         ]
         result = loop.tick()
         assert len(result.actions_blocked) == 1

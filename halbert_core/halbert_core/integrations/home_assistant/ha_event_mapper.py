@@ -90,6 +90,76 @@ def classify_severity(event: Dict[str, Any]) -> str:
     return "info"
 
 
+#: State-shaped HA observations, and the predicate each records under.
+#:
+#: The split is not tidiness. ``StateStore.record_state`` deduplicates -- one
+#: row per (subject, predicate) value, superseded on change -- which is exactly
+#: right for "the door is unlocked" and fatal for "a van was seen", because
+#: three sightings would collapse into one. Events stay in the event ledger,
+#: where they can be counted.
+#:
+#: Motion is the case worth naming: "motion detected" is a moment, so it is an
+#: event and gets no triple. A door being open is a condition, so it does.
+_STATE_PREDICATES = {
+    "lock": "lock_state",
+    "alarm_control_panel": "alarm_state",
+    "person": "presence",
+    "device_tracker": "presence",
+    "climate": "climate_state",
+    "light": "power_state",
+    "switch": "power_state",
+}
+
+#: binary_sensor is by device_class, not by domain: the same domain carries
+#: both conditions (a door) and moments (motion).
+_BINARY_SENSOR_STATES = {
+    "door": ("door_state", {"on": "open", "off": "closed"}),
+    "opening": ("door_state", {"on": "open", "off": "closed"}),
+    "window": ("door_state", {"on": "open", "off": "closed"}),
+    "garage_door": ("door_state", {"on": "open", "off": "closed"}),
+    "moisture": ("moisture_state", {"on": "wet", "off": "dry"}),
+}
+
+
+def state_triple(event: Dict[str, Any]) -> Optional[tuple]:
+    """``(predicate, object)`` for a state-shaped observation, else ``None``.
+
+    Pure and total, like the describer beside it -- HA sends a null state
+    object when an entity is removed, and a classifier that raises on the
+    ingestion path costs the event as well as the triple.
+
+    Deliberately does **not** encode a timestamp in the object value. Doing so
+    would let state rows accumulate like events, which is the specific shortcut
+    that would quietly turn the state ledger into a bad event ledger.
+    """
+    if not isinstance(event, dict):
+        return None
+    domain = event.get("domain") or ""
+    new_state = event.get("new_state") or ""
+    if not domain or not new_state:
+        return None
+
+    if domain == "binary_sensor":
+        device_class = (event.get("attributes") or {}).get("device_class") or ""
+        mapping = _BINARY_SENSOR_STATES.get(device_class)
+        if not mapping:
+            return None
+        predicate, values = mapping
+        obj = values.get(new_state)
+        return (predicate, obj) if obj else None
+
+    predicate = _STATE_PREDICATES.get(domain)
+    if not predicate:
+        return None
+    if domain == "lock" and new_state not in ("locked", "unlocked"):
+        return None
+    if domain in _OCCUPANCY_DOMAINS and new_state in _UNKNOWN_STATES:
+        return None
+    if domain in ("light", "switch") and new_state not in ("on", "off"):
+        return None
+    return (predicate, new_state)
+
+
 def describe_state_change(event: Dict[str, Any]) -> str:
     """One line of prose for a state change, for the ledger row's title.
 
@@ -175,11 +245,14 @@ class HAEventMapper:
     # Same rationale for emotion-write failures.
     _EMOTION_LOG_INTERVAL = 60.0
 
-    def __init__(self, trackers: Optional[Dict] = None, timeline: Optional[TimelineStore] = None):
+    def __init__(self, trackers: Optional[Dict] = None,
+                 timeline: Optional[TimelineStore] = None,
+                 ledger: Optional[Any] = None):
         self._pending_events: List[Dict[str, Any]] = []
         self._lock = threading.Lock()
         self._trackers = trackers or {}
         self._timeline = timeline
+        self._ledger = ledger
         self._dropped_since_log = 0
         self._last_drop_log_ts = 0.0
         self._last_emotion_log_ts = 0.0
@@ -215,6 +288,7 @@ class HAEventMapper:
             return
 
         self._record_to_timeline(event)
+        self._record_state(event)
 
         with self._lock:
             self._pending_events.append(event)
@@ -232,6 +306,37 @@ class HAEventMapper:
                     )
                     self._dropped_since_log = 0
                     self._last_drop_log_ts = now
+
+    def _record_state(self, event: Dict[str, Any]) -> None:
+        """Write the state half of an observation to the state ledger.
+
+        At ingestion, beside the event row, because state is about *now* and
+        ``populate_cognition`` runs only when someone chats.
+
+        Goes through ``state_trackers._record``, the never-raising funnel every
+        deterministic writer uses, so the reason is mandatory and names itself:
+        a tracker is a rule, not a judgement, and ``UNRECORDED`` must never be
+        replaced by an invented rationale.
+        """
+        if self._ledger is None:
+            return
+        triple = state_triple(event)
+        if triple is None:
+            return
+        predicate, obj = triple
+        entity_id = event.get("entity_id") or ""
+        old_state = event.get("old_state") or "unknown"
+        new_state = event.get("new_state") or "unknown"
+        try:
+            from ..state_trackers import ACTOR_SYSTEM, _record
+
+            _record(
+                self._ledger, entity_id, predicate, obj, "ha_event_stream",
+                reason=f"ha: state_changed {old_state}->{new_state}",
+                actor=ACTOR_SYSTEM,
+            )
+        except Exception as e:
+            logger.warning(f"Could not record HA state triple: {e}")
 
     @staticmethod
     def _route(event: Dict[str, Any]):
