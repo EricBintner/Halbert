@@ -19,7 +19,7 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 logger = logging.getLogger("halbert.dashboard.home")
 
@@ -155,7 +155,8 @@ async def call_service(req: ServiceCallRequest):
         gate = _get_autonomy_gate()
         if gate is None:
             raise HTTPException(status_code=503, detail="Autonomy gate not available")
-        decision = gate.evaluate(req.domain, req.entity_id, req.service)
+        # SEC-9: `req.data` is forwarded to HA and can name its own target.
+        decision = gate.evaluate_call(req.domain, req.entity_id, req.service, req.data)
         if not decision.allowed:
             raise HTTPException(
                 status_code=403,
@@ -227,12 +228,27 @@ async def get_voice_status():
     }
 
 
+class ProactiveSpeakRequest(BaseModel):
+    """Body for proactive TTS.
+
+    SEC-9: this took ``message`` as a *query parameter*, which made it a
+    "simple request" in browser terms — no preflight, so any page the operator
+    visited could POST to it cross-origin and speak arbitrary text through
+    every speaker in the house. A JSON body forces a preflight, and SEC-1's
+    authentication now stands in front of it as well. Belt and braces, because
+    this one reaches into a room where other people are.
+    """
+
+    message: str = Field(..., min_length=1, max_length=2000)
+    area_id: Optional[str] = None
+
+
 @router.post("/home/voice/speak")
-async def proactive_speak_api(message: str = Query(..., description="Message to speak"), area_id: Optional[str] = Query(None, description="Target area ID")):
+async def proactive_speak_api(req: ProactiveSpeakRequest):
     """Trigger proactive TTS via HA's tts.speak service."""
     from ...integrations.wyoming_agent import proactive_speak
-    success = await proactive_speak(text=message, area_id=area_id)
-    return {"success": success, "message": message, "area_id": area_id}
+    success = await proactive_speak(text=req.message, area_id=req.area_id)
+    return {"success": success, "message": req.message, "area_id": req.area_id}
 
 
 # --- Phase 6: HACS Integration ---

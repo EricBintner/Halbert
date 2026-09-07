@@ -81,12 +81,25 @@ Status key: `[ ]` not started · `[~]` in progress · `[x]` done, wired and test
 - [ ] Phase 0 starts nothing privileged; subsystems wait on consent
 - [ ] The seven first-run screens; review screen; consent records not booleans
 
-### `[ ]` SEC-9 · Home Assistant governance — 8 findings (C2 H2 M4)
+### `[~]` SEC-9 · Home Assistant governance — 8 findings (C2 H2 M4)
 Independent of SEC-1 in code; reachable through SEC-1's door.
-- [ ] Unknown domain → deny, not auto-execute
-- [ ] Tiers keyed on domains Home Assistant actually has (L2/L3 are dead code today)
-- [ ] Entity check moved where `data:` cannot route around it
-- [ ] `POST /api/home/voice/speak` stops taking `message` as a query parameter
+- [x] Unknown domain → confirm, never auto-execute (was Level 1 "act, log only")
+- [x] Tiers keyed on domains Home Assistant actually has. `garage_door` and
+      `water_valve` do not exist — HA uses `cover` and `valve` — so L2/L3 matched
+      nothing while `cover` sat in L1 and opened the garage silently.
+- [x] L3 now covers what cannot be undone from a chat message: `shell_command`,
+      `python_script`, `hassio`, `homeassistant`, `automation`, `script`,
+      `rest_command`, `command_line`, `recorder`, `backup`
+- [x] Entity check moved where `data:` cannot route around it — `evaluate_call()`
+      judges the union of `entity_id`, `data.entity_id` and `data.target.entity_id`,
+      most-restrictive-wins. All three call sites (MCP, route, tool) switched.
+- [x] `POST /api/home/voice/speak` takes a JSON body, not a query parameter
+- [x] 11 new tests in `test_ha_governance_targets.py`, incl. one pinning the old
+      permissive path so nobody "simplifies" `evaluate_call` back to `evaluate`
+- [ ] Per-entity opt-in for L2 domains (the design's "T2 per-entity ○") — deferred
+      to the SEC-5 consent model, which is where the grant record lives
+- [ ] HA→Halbert direction: the component still relays any HA caller's text into a
+      full agent turn (that half is SEC-12 + SEC-10)
 
 ---
 

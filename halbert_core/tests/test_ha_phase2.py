@@ -46,10 +46,31 @@ class TestHAGovernancePolicy:
         assert result["level"] == 2
         assert result["requires_confirmation"] is True
 
-    def test_level3_water_valve(self):
-        result = self.policy.classify("water_valve", "water_valve.main", "open")
-        assert result["level"] == 3
-        assert result["allowed"] is False
+    def test_level3_is_arbitrary_code_execution_on_the_hub(self):
+        """SEC-9: Level 3 used to key on `water_valve`, which is not an HA domain.
+
+        HA calls it `valve`, so the forbidden tier matched nothing and every
+        real valve call fell through to the unknown-domain default and ran.
+        Level 3 now covers what actually cannot be undone from a chat message:
+        arbitrary code execution and host control on the hub.
+        """
+        for domain in ("shell_command", "python_script", "hassio", "homeassistant"):
+            result = self.policy.classify(domain, f"{domain}.thing", "run")
+            assert result["level"] == 3, domain
+            assert result["allowed"] is False, domain
+
+    def test_valve_and_cover_require_confirmation(self):
+        """A garage door is a `cover` and a stopcock is a `valve`.
+
+        The domain alone cannot tell either from a bedroom blind or a radiator
+        valve, and classify() is not always given the device_class — so both
+        whole domains confirm. Before this they sat at Level 1 and opened with
+        no confirmation at all.
+        """
+        for domain in ("cover", "valve"):
+            result = self.policy.classify(domain, f"{domain}.front", "open")
+            assert result["level"] == 2, domain
+            assert result["requires_confirmation"] is True, domain
 
     def test_level3_forbidden_entity(self):
         result = self.policy.classify("switch", "switch.freezer", "turn_off")
@@ -61,10 +82,16 @@ class TestHAGovernancePolicy:
         assert result["level"] == 3
         assert result["allowed"] is False
 
-    def test_unknown_domain_defaults_to_level1(self):
-        result = self.policy.classify("unknown_domain", "unknown_domain.test", "test")
-        assert result["level"] == 1
-        assert result["allowed"] is True
+    def test_unknown_domain_asks_rather_than_acting(self):
+        """SEC-9: an allowlist whose default is "run it" is not an allowlist.
+
+        Thirteen device domains were classified and everything else returned
+        Level 1 — act, log only — which is how `notify`, `script` and every
+        other domain nobody had thought of went straight through.
+        """
+        result = self.policy.classify("some_new_domain", "some_new_domain.test", "test")
+        assert result["level"] == 2
+        assert result["requires_confirmation"] is True
 
 
 # --- Event mapper tests ---

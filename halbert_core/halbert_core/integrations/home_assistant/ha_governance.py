@@ -4,13 +4,26 @@
 
 Levels:
     0 — No confirmation needed (light, fan, media_player, vacuum)
-    1 — Low risk, log only (climate, humidifier, cover)
-    2 — Confirmation required (lock, alarm, garage_door)
-    3 — Forbidden (water_valve, freezer, medical devices)
+    1 — Low risk, log only (climate, humidifier, switch)
+    2 — Confirmation required (lock, alarm, cover, valve, and anything unknown)
+    3 — Forbidden (arbitrary code execution, host control, medical devices)
 
-Phase 2: governance is enforced via the ToolExecutor safety framework.
-The classify() method returns a risk level that the executor checks
-before allowing execution.
+Governance is enforced via the ToolExecutor safety framework; classify()
+returns a risk level the executor checks before allowing execution.
+
+**SEC-9 — two criticals, both of which made most of this file decorative.**
+
+1. *The confirm and forbid tiers keyed on domains Home Assistant does not
+   have.* There is no ``garage_door`` domain — a garage door is a ``cover``
+   with ``device_class: garage`` — and no ``water_valve`` domain; HA calls it
+   ``valve``. So Level 2 and Level 3 matched nothing, ever, while ``cover``
+   sat in Level 1 and opened the garage with no confirmation.
+
+2. *An unknown domain returned Level 1: act, log only.* Thirteen device
+   domains were classified and everything else auto-executed — including
+   ``shell_command``, ``python_script``, ``hassio`` and ``homeassistant``,
+   which is arbitrary code execution and host control on the hub. A default
+   that runs what it does not recognise is not a policy.
 """
 
 from __future__ import annotations
@@ -32,21 +45,53 @@ LEVEL_0_NO_CONFIRM: Set[str] = {
 LEVEL_1_LOW_RISK: Set[str] = {
     "climate",
     "humidifier",
-    "cover",
     "switch",
     "input_boolean",
+    "input_number",
+    "input_select",
+    "select",
+    "number",
+    "scene",
+    "text",
+    "button",
+    "siren",
+    "remote",
+    "water_heater",
 }
 
-# Level 2: Confirmation required — security-critical
+# Level 2: Confirmation required — security-critical or physically consequential.
+#
+# `cover` and `valve` are whole-domain entries on purpose: the domain cannot
+# tell a bedroom blind from a garage door, or a radiator valve from a mains
+# stopcock, and classify() is not always given the device_class. Confirming a
+# blind is a small tax; opening a garage without asking is not.
 LEVEL_2_CONFIRM_REQUIRED: Set[str] = {
     "lock",
     "alarm_control_panel",
-    "garage_door",
+    "cover",
+    "valve",
+    "camera",
+    "person",
+    "device_tracker",
+    "notify",
+    "tts",
+    "conversation",
 }
 
-# Level 3: Forbidden — physical safety risk
+# Level 3: Forbidden — arbitrary code execution, host control, or physical
+# safety. These are not device domains; they are the ones that turn "Halbert
+# may adjust the lights" into "Halbert may run anything on the hub".
 LEVEL_3_FORBIDDEN: Set[str] = {
-    "water_valve",
+    "shell_command",
+    "python_script",
+    "hassio",
+    "homeassistant",   # restart, stop, reload_core_config
+    "automation",      # rewriting the automations is rewriting the rules
+    "script",
+    "rest_command",
+    "command_line",
+    "recorder",        # purge deletes the history that would show what happened
+    "backup",
 }
 
 # Entity IDs that are always forbidden regardless of domain
@@ -122,10 +167,18 @@ class HAGovernancePolicy:
                 "reason": f"Domain '{domain}' is safe (no confirmation needed)",
             }
 
-        # Unknown domain — default to Level 1 (cautious but not blocking)
+        # Unknown domain — ask, do not guess.
+        #
+        # This returned Level 1 ("cautious but not blocking") and auto-executed.
+        # An allowlist whose default is "run it" is not an allowlist: every
+        # domain the author had not thought of — including the ones that execute
+        # arbitrary code on the hub — went straight through (SEC-9).
         return {
-            "level": 1,
+            "level": 2,
             "allowed": True,
-            "requires_confirmation": False,
-            "reason": f"Domain '{domain}' is unknown — treating as low risk",
+            "requires_confirmation": True,
+            "reason": (
+                f"Domain '{domain}' is not one I have been told how to judge, "
+                f"so I will ask before acting on it"
+            ),
         }

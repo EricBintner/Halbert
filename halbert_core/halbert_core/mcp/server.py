@@ -671,7 +671,10 @@ def _tool_ha_call_service(params: Dict[str, Any]) -> Dict[str, Any]:
         if gate is None:
             return mcp_response({"error": "Autonomy gate not available"})
 
-        decision = gate.evaluate(domain, entity_id, service)
+        # SEC-9: gate on every entity the payload names. `data` reaches HA
+        # and can carry its own entity_id, so judging the argument alone let
+        # a benign target stand in for a forbidden one.
+        decision = gate.evaluate_call(domain, entity_id, service, data)
 
         if not decision.allowed:
             return mcp_response({

@@ -28,11 +28,54 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from .ha_governance import HAGovernancePolicy
 
 logger = logging.getLogger("halbert.integrations.home_assistant.autonomy_gate")
+
+
+def effective_entity_ids(entity_id: Any = "", data: Optional[Dict[str, Any]] = None) -> List[str]:
+    """Every entity a service call will actually touch.
+
+    SEC-9: Home Assistant takes its target from ``data["entity_id"]`` as
+    readily as from a separate argument, and accepts a list as well as a
+    string. Callers evaluated the gate on the *argument* and then merged the
+    caller's ``data`` on top, so
+
+        entity_id="switch.lamp", data={"entity_id": "switch.life_support"}
+
+    was judged as the lamp and executed against the life-support switch. The
+    only entity-level check in the whole policy was one dict key away from
+    being decorative.
+
+    Gate on the union, and let a caller name a target in whichever place they
+    like — just not in a place the gate does not read.
+    """
+    found: List[str] = []
+
+    def _add(value: Any) -> None:
+        if isinstance(value, str):
+            if value.strip():
+                found.append(value.strip())
+        elif isinstance(value, (list, tuple, set)):
+            for item in value:
+                _add(item)
+
+    _add(entity_id)
+    if isinstance(data, dict):
+        _add(data.get("entity_id"))
+        # `target` is the modern HA spelling and carries the same weight.
+        target = data.get("target")
+        if isinstance(target, dict):
+            _add(target.get("entity_id"))
+
+    seen, unique = set(), []
+    for e in found:
+        if e not in seen:
+            seen.add(e)
+            unique.append(e)
+    return unique
 
 # Autonomy level → max governance level allowed for auto-execution
 # observe:    nothing auto-executes (max_level = -1)
@@ -190,6 +233,44 @@ class AutonomyGate:
             governance_level=gov_level,
             reason=f"Unknown autonomy level '{effective_level}'",
         )
+
+    def evaluate_call(
+        self,
+        domain: str,
+        entity_id: Any = "",
+        service: str = "",
+        data: Optional[Dict[str, Any]] = None,
+    ) -> AutonomyDecision:
+        """Evaluate a whole service call, including targets hidden in ``data``.
+
+        Prefer this over :meth:`evaluate` at any call site that forwards a
+        caller-supplied ``data`` dict to Home Assistant. ``evaluate`` judges one
+        named entity; HA will act on every entity the payload names, and before
+        SEC-9 those were not the same set (see :func:`effective_entity_ids`).
+
+        The most restrictive verdict across all targets wins, and a call naming
+        no entity at all is still judged on its domain — ``shell_command`` needs
+        no target to be dangerous.
+        """
+        targets = effective_entity_ids(entity_id, data)
+        if not targets:
+            return self.evaluate(domain, "", service)
+
+        decisions = [self.evaluate(domain, target, service) for target in targets]
+
+        # Rank by how much they permit: a denial beats a proposal beats an
+        # auto-execute. Ties keep the highest governance level, so the reason
+        # the operator reads names the worst thing in the payload, not the first.
+        def permissiveness(d: AutonomyDecision) -> tuple:
+            return (d.allowed, d.auto_execute, -d.governance_level)
+
+        worst = min(decisions, key=permissiveness)
+        if len(targets) > 1 and worst.governance_level >= 2:
+            logger.info(
+                "HA call names %d entities; judged on the most restrictive (%s)",
+                len(targets), worst.reason,
+            )
+        return worst
 
     def update_level(self, level: str, overrides: Optional[Dict[str, str]] = None) -> None:
         """Update the autonomy level at runtime (e.g. from UI slider)."""
