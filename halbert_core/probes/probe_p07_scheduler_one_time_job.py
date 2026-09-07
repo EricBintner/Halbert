@@ -72,7 +72,16 @@ def main() -> int:
             record = ex.scheduler_engine.get_job("soon")
             state = record.state if record else "<no record>"
         finally:
-            ex.stop(wait=False)
+            # Merge seam (wave 2, over 03-B): stop(wait=False) left the
+            # scheduler's worker free to flush receipts/ledger/jobs.db into
+            # HALBERT_DATA_DIR after the probe left this block, racing
+            # TemporaryDirectory's rmtree into "Directory not empty" and a
+            # HARNESS-ERROR exit 3 that the registry correctly reads as a
+            # broken instrument. Joining the worker here makes the teardown
+            # deterministic; the observed seam (job runs, outcome recorded)
+            # is untouched. Worker writes surviving stop(wait=False) is a
+            # recorded observation, not a chased one.
+            ex.stop(wait=True)
 
         print(
             f"PROBE {PROBE_ID} scheduler-one-time: OBSERVED -- task ran: {ran_within}; "
