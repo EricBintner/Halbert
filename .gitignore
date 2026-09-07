@@ -132,6 +132,11 @@ data/linux/man-pages/
 !data/macos/support/*.jsonl
 !data/non-commercial/**/*.jsonl
 
+# R5 eval raw rows are the scorecard's evidence and MUST be versioned; the
+# blanket *.jsonl rule above would silently drop them (same trap as the
+# licence-gated corpus slices). See halbert_core/evals/consolidation/README.md.
+!halbert_core/evals/consolidation/*.jsonl
+
 # SourcePrep staging output (generated from JSONL, 87MB of markdown)
 data/staging/
 
@@ -149,3 +154,6 @@ packages/design-system/.storybook_home/
 
 # Claude Code worktrees
 .claude/worktrees/
+
+# R5 eval harness: question-bank cache regenerates from the seed
+halbert_core/evals/consolidation/cache/
