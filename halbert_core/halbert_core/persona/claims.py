@@ -14,6 +14,7 @@ warrant.authorize() would wrongly silence a mandated act whenever the trigger's
 identity is weak.
 """
 from __future__ import annotations
+import hashlib
 from dataclasses import dataclass
 from enum import IntEnum
 
@@ -38,6 +39,22 @@ CLAIM_SOURCE_STRENGTHS: dict[str, ClaimStrength] = {
     "dashboard_token": ClaimStrength.ASSERTED,
     "device_cert": ClaimStrength.VERIFIED,
 }
+
+
+def claim_from_source(claim_source: str | None, *, value: str | None = None) -> IdentifierClaim:
+    """Derive a speaker's IdentifierClaim from the turn's declared source.
+
+    Packet 04 A2: a voice turn carries ``claim_source`` (typed ingress,
+    A1); this maps it through CLAIM_SOURCE_STRENGTHS. A source the ladder
+    does not know — or an absent one — fails closed to UNVERIFIED, never
+    to a stronger reading. ``value`` is the raw identifier (the speaker
+    name): it is hashed and never stored on the claim. Recording only —
+    nothing here gates an action; RoleGate consumption is the D-6
+    permission-system pass.
+    """
+    strength = CLAIM_SOURCE_STRENGTHS.get(claim_source or "", ClaimStrength.UNVERIFIED)
+    value_sha256 = hashlib.sha256(value.encode("utf-8")).hexdigest() if value else ""
+    return IdentifierClaim(kind="speaker", strength=strength, value_sha256=value_sha256)
 
 
 def meets_floor(actual: ClaimStrength, required: ClaimStrength) -> bool:

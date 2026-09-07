@@ -24,6 +24,7 @@ contract.
 from __future__ import annotations
 
 import ast
+import logging
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
@@ -35,6 +36,7 @@ from fastapi.testclient import TestClient
 import halbert_core.dashboard.routes.agent as agent_routes
 from halbert_core.agents.events import StreamEvent
 from halbert_core.agents.state_machine import AgentStateMachine
+from halbert_core.persona.claims import ClaimStrength
 from halbert_core.tools.safety import ToolSafetyFramework
 from halbert_core.tools.executor import ToolExecutor
 
@@ -244,6 +246,81 @@ class TestModalityContextCarriesTheClaim:
         )
         assert ctx is not None
         assert ctx.speaker is None
+
+
+# -----------------------------------------------------------------------------
+# Packet 04 A2: claim strength at the voice gate — recorded, never enforced.
+# RoleGate consumption is the D-6 permission-system pass; here the claim
+# only rides the turn context and the turn's audit/start line.
+# -----------------------------------------------------------------------------
+
+class TestClaimStrengthAtTheVoiceGate:
+
+    @pytest.mark.asyncio
+    async def test_unverified_voice_claim_logs_unverified_never_admin(self, caplog):
+        """The pin: a voice turn with no corroborated claim records
+        claim_strength=unverified on its audit/start line, and that line
+        never logs "admin" as the speaker role — an unidentified voice is
+        "unknown", never the owner. (The A1 defaulting rule, read back
+        through the log the audit trail keeps.)"""
+        agent = _make_agent()
+        with caplog.at_level(logging.INFO, logger="halbert.agents.state_machine"):
+            ctx = await _ctx_after_turn_start(agent, modality="voice", speaker_name="Stranger")
+        assert ctx.identifier_claim is not None
+        assert ctx.identifier_claim.strength == ClaimStrength.UNVERIFIED
+        # the raw speaker name is hashed onto the claim, never stored
+        assert ctx.identifier_claim.value_sha256
+        assert "Stranger" not in ctx.identifier_claim.value_sha256
+        start_lines = [
+            r.getMessage() for r in caplog.records
+            if r.getMessage().startswith("Starting agent processing")
+        ]
+        assert start_lines, "the turn's audit/start line never logged"
+        assert "claim_strength=unverified" in start_lines[0]
+        assert "speaker_role=admin" not in start_lines[0]
+        assert "speaker_role=unknown" in start_lines[0]
+
+    @pytest.mark.asyncio
+    async def test_ladder_maps_the_known_sources(self, caplog):
+        """voice_speaker_verification → ASSERTED, free_text_name → MUTABLE,
+        both visible on the start line."""
+        for source, expected in (
+            ("voice_speaker_verification", ClaimStrength.ASSERTED),
+            ("free_text_name", ClaimStrength.MUTABLE),
+        ):
+            caplog.clear()
+            agent = _make_agent()
+            with caplog.at_level(logging.INFO, logger="halbert.agents.state_machine"):
+                ctx = await _ctx_after_turn_start(
+                    agent, modality="voice", claim_source=source,
+                )
+            assert ctx.identifier_claim is not None
+            assert ctx.identifier_claim.strength is expected
+            start_lines = [
+                r.getMessage() for r in caplog.records
+                if r.getMessage().startswith("Starting agent processing")
+            ]
+            assert f"claim_strength={expected.name.lower()}" in start_lines[0]
+
+    @pytest.mark.asyncio
+    async def test_unknown_claim_source_fails_closed_to_unverified(self):
+        """A source the ladder does not know must never read as stronger
+        than unverified."""
+        agent = _make_agent()
+        ctx = await _ctx_after_turn_start(
+            agent, modality="voice", claim_source="whispered_in_the_dark",
+        )
+        assert ctx.identifier_claim is not None
+        assert ctx.identifier_claim.strength == ClaimStrength.UNVERIFIED
+
+    @pytest.mark.asyncio
+    async def test_typed_turn_records_no_claim(self):
+        """Absent request fields keep today's behavior exactly: a typed
+        turn's identity rides the dashboard session, so no identifier
+        claim is attached to it here."""
+        agent = _make_agent()
+        ctx = await _ctx_after_turn_start(agent)
+        assert ctx.identifier_claim is None
 
 
 # -----------------------------------------------------------------------------

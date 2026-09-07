@@ -17,6 +17,7 @@ from .blocks import TextBlock, ToolUseBlock, ToolResultBlock
 
 if TYPE_CHECKING:
     from ..intake import MessageIntake
+    from ..persona.claims import IdentifierClaim
     from .conversation_status import ConversationStatusMachine
 
 
@@ -283,6 +284,15 @@ class StateContext:
     # claim strengths and RoleGate enforcement is the permission-system
     # deep pass (PACKET-02 Phase B / A2).
     claim_source: Optional[str] = None
+    # Packet 04 A2: the derived identifier claim (PACKET-02 strength
+    # ladder) for a voice turn — claim_source mapped to a ClaimStrength
+    # (voice_speaker_verification→ASSERTED, free_text_name→MUTABLE,
+    # unknown/absent→UNVERIFIED), the raw speaker name hashed, never
+    # stored. Recording only: nothing reads this to gate a tool yet —
+    # RoleGate consumption is the D-6 permission-system pass. Typed
+    # turns leave it None (their identity rides the dashboard session,
+    # and the packet's gate is that absent fields change nothing).
+    identifier_claim: Optional["IdentifierClaim"] = None
 
     # Packet 04 B1: the per-turn mutation digest — the rollup of this
     # turn's successful write-plane effects, (tool, redacted target)
