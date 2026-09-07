@@ -27,6 +27,17 @@
 > branches 5 and 6 → §8 and §9. `RQ-1..9` gate §9 only. `C4-07` and `C2-03`
 > are still unratified and gate branch 6 and C2.
 >
+> **2026-09-07 — every open branch is merged (`58ce4b1d`); `git branch
+> --no-merged main` is empty.** Six merges beyond branch 3: SEC-9 and SEC-2/3,
+> the guest persona (twice — that worktree is live), `feat/attunement-halbert`
+> (which contained all nine of `fix/observation-text-normalisation`, so §2's
+> merge row is discharged and rev 2.1 won as it said it should), and the Rust
+> crates. Full suite `6221 passed, 15 skipped, 6 xfailed`, plus one pre-existing
+> flake named in the handoff. **Six conflicts, three of them judgment calls, are
+> written up for review in `HANDOFF-INTEGRATION-MERGE-PASS-2026-09-07.md` — one
+> of them changed what `feat/guest-persona` intended and wants its owner's
+> sign-off.**
+>
 > **2026-09-07 — scrutiny pass (`e37ee1be`).** A4 was merged built, tested and
 > reaching no prompt: both render points accepted `world_observations` and no
 > caller passed one. Wired, plus three defects only visible end to end (a
@@ -91,7 +102,7 @@ founder calls, code for other tiers, and upstream asks.
 | DetectorRunner → `add_event`; rewrite `_scan_discovery` / `_check_critical_conditions` against `DiscoveryEngine` methods that exist | sonnet · high | until it lands a sysadmin ledger receives only VisualWatcher anomalies (dispatch §3.2) |
 | `PatternInferrer.infer_from_timeline` needs a since-last-run watermark before anything schedules it (re-upserts its whole window; ~7× inflation at a daily cadence) | sonnet · med | or scope it out; nothing calls it today |
 | The affective half: worries reach the prompt only by ~12 % random intrusion, emotions never; `to_prompt_block()` has no consumer | — | deferred explicitly under `CD-10`; `C4-05` territory |
-| Merge branch 1 into main; the handoff exists in two versions (rev 2 + D10 on `fix/observation-text-normalisation`, rev 2.1 here, a descendant) — take this branch's copy | whoever merges | rebase before the RESULTS row; line numbers drift |
+| ~~Merge branch 1 into main; the handoff exists in two versions (rev 2 + D10 on `fix/observation-text-normalisation`, rev 2.1 here, a descendant) — take this branch's copy~~ **DONE 2026-09-07** | — | Merged as part of `c26222c8`; rev 2.1 kept, as this row said to |
 
 ## 3. ~~Branch 2 — `feat/skills-wired` = B1 + B2 + B3~~ — **DONE, merged `3efd3145`**
 
