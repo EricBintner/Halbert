@@ -19,7 +19,7 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import Response
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 
 logger = logging.getLogger("halbert.dashboard.frigate")
@@ -191,6 +191,22 @@ async def get_reviews(
         await client.close()
 
 
+def _permit_frigate(camera: str):
+    """Refuse a camera outside this persona's scope, the way the tools do.
+
+    routes/vision.py already carries the note that a gate placed only in
+    tools/ leaves an open capture endpoint behind it. These two routes return
+    the same raw JPEG the gated tools do, from the same app.
+    """
+    from ...vision.sources import SourceDenied, permit_frigate_camera
+    try:
+        permit_frigate_camera(camera)
+        return None
+    except SourceDenied as e:
+        logger.warning("Frigate camera refused: %s", e)
+        return JSONResponse({"error": str(e), "error_type": "source_denied"}, status_code=403)
+
+
 @router.get("/frigate/snapshot/{event_id}")
 async def get_snapshot(event_id: str):
     """Get event snapshot as JPEG."""
@@ -203,6 +219,12 @@ async def get_snapshot(event_id: str):
 
     client = FrigateClient(config)
     try:
+        # The camera has to be resolved before the pixels: fetching and then
+        # refusing would still have read the camera.
+        event = await client.get_event(event_id)
+        refusal = _permit_frigate(str((event or {}).get("camera") or ""))
+        if refusal is not None:
+            return refusal
         jpeg_bytes = await client.get_event_snapshot(event_id)
         return Response(content=jpeg_bytes, media_type="image/jpeg")
     except Exception as e:
@@ -214,6 +236,9 @@ async def get_snapshot(event_id: str):
 @router.get("/frigate/latest/{camera}")
 async def get_latest_frame(camera: str):
     """Get latest camera frame as JPEG."""
+    refusal = _permit_frigate(camera)
+    if refusal is not None:
+        return refusal
     from ...integrations.frigate.frigate_config import load_frigate_config
     from ...integrations.frigate.frigate_client import FrigateClient
 

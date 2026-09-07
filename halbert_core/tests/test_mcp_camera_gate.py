@@ -286,3 +286,46 @@ class TestExpandedIsCameraQuery:
     def test_detect_objects_is_camera(self):
         from halbert_core.mcp.camera_gate import is_camera_query
         assert is_camera_query("detect_objects") is True
+
+
+class TestTheGateIsWiredIn:
+    """It said in its own header that it was not (R2-OBS-1). Frigate cameras
+    became real CV sources, which is the condition it named."""
+
+    def _dispatch(self, tool_name, payload, monkeypatch):
+        from halbert_core.mcp import server as srv
+
+        monkeypatch.setitem(srv.TOOL_HANDLERS, tool_name, lambda args: payload)
+        reply = srv.MCPServer().handle_request({
+            "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": {"name": tool_name, "arguments": {}},
+        })
+        import json
+        return json.loads(reply["result"]["content"][0]["text"])
+
+    def test_a_camera_query_loses_its_image_bytes(self, monkeypatch):
+        out = self._dispatch(
+            "frigate_get_events",
+            {"events": [{"camera": "patio", "snapshot": "data:image/jpeg;base64,AAAA"}]},
+            monkeypatch,
+        )
+        assert "AAAA" not in str(out)
+
+    def test_a_non_camera_tool_passes_through(self, monkeypatch):
+        """Carries a field the gate WOULD strip, so it fails if the tool-name
+        discrimination is lost — a payload the gate leaves alone would pass
+        whether or not the check existed. Not "keys": mcp_response redacts
+        that field name, which would prove the egress boundary instead."""
+        out = self._dispatch(
+            "get_config_structure",
+            {"sections": ["a", "b"], "snapshot": "data:image/jpeg;base64,AAAA"},
+            monkeypatch,
+        )
+        assert out["sections"] == ["a", "b"]
+        assert out["snapshot"] == "data:image/jpeg;base64,AAAA"
+
+    def test_the_envelope_survives(self, monkeypatch):
+        """`content` is itself in _FORBIDDEN_IMAGE_FIELDS, so gating the
+        JSON-RPC envelope rather than the payload would delete the reply."""
+        out = self._dispatch("frigate_get_events", {"events": []}, monkeypatch)
+        assert out == {"events": []}

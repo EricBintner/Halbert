@@ -31,6 +31,12 @@ from .frigate_mqtt_subscriber import (
 
 logger = logging.getLogger("halbert.integrations.frigate.event_mapper")
 
+from ...continuity.ownership import Owner
+
+# Frigate object labels that are life safety when a custom model emits them.
+# A detection with one of these on a private camera still reaches Halbert.
+LIFE_SAFETY_LABELS = frozenset({"fire", "smoke"})
+
 
 class FrigateStateTracker:
     """Tracks active Frigate detections for context assembly.
@@ -217,6 +223,17 @@ class FrigateEventMapper:
         records a durable ledger row for a detection event, and queues
         the event for cognitive processing.
         """
+        # Ownership (design §5.3): a camera the user handed to a guest for a
+        # private session is the guest's. Its detections go to the guest's
+        # home and touch none of Halbert's stores — not the timeline, not
+        # the state tracker, not the cognition queue. Life safety is the
+        # exception (D1): the house is not private from its own smoke alarm.
+        owner, source_id = self._route(topic, payload)
+        if owner is not Owner.HALBERT:
+            if owner is Owner.GUEST:
+                self._forward_to_guest(payload, source_id)
+            return
+
         # Update state tracker first (synchronous, no cognition needed)
         self.state_tracker.on_event(topic, payload)
 
@@ -244,6 +261,42 @@ class FrigateEventMapper:
                     )
                     self._dropped_since_log = 0
                     self._last_drop_log_ts = now
+
+    @staticmethod
+    def _route(topic: str, payload: dict):
+        """Who this message belongs to right now, and the source id it came
+        from (``frigate:<camera>``, or "" when the message names none)."""
+        state = (payload.get("after") or payload.get("before") or {}) if isinstance(payload, dict) else {}
+        camera = str(state.get("camera") or "").strip()
+        # Through the registry, not an f-string. A camera called "Front Door"
+        # slugs to frigate:front_door there; building the id here by hand
+        # meant a camera routed under one id and was handed over under
+        # another, so route_observation missed and the detection fell through
+        # to Halbert — the exact leak this gate exists to prevent.
+        try:
+            from ....vision.sources import frigate_source_id
+            source_id = frigate_source_id(camera)
+        except Exception:
+            source_id = f"frigate:{camera}" if camera else ""
+        label = str(state.get("label") or "").strip().lower()
+        try:
+            from ...continuity.ownership import route_observation
+            owner = route_observation(source_id, life_safety=label in LIFE_SAFETY_LABELS)
+        except Exception:
+            owner = Owner.HALBERT
+        return owner, source_id
+
+    @staticmethod
+    def _forward_to_guest(payload: dict, source_id: str) -> None:
+        try:
+            from ...persona import sibling
+            from ...persona.guest import current_guest
+            session = current_guest()
+            if session is None:
+                return
+            sibling.forward_observation(session, f"[{source_id}] {describe_detection(payload)}", source_id)
+        except Exception as e:
+            logger.debug("Private-camera detection not forwarded: %s", e)
 
     def _record_to_timeline(self, payload: dict, received_at: float) -> None:
         """A2 row contract: one row per Frigate message, never a second row

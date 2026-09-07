@@ -20,7 +20,7 @@
  * (sound_class, anomaly_severity 0-3, ...) built by AcousticAnomalyDetector.
  */
 import type { BeingEvent } from './useBeingEvents'
-import { isAcousticEvent } from './useBeingEvents'
+import { acousticData, isAcousticEvent } from './useBeingEvents'
 
 /** Tagger anomaly_severity at or above this forces a wake (plan O5: >= 2). */
 export const ACOUSTIC_WAKE_MIN_SEVERITY = 2
@@ -44,11 +44,12 @@ export function acousticWakeEvent(event: BeingEvent): AcousticWakeEvent | null {
   if (!isAcousticEvent(event)) return null
   // No structured payload -> no severity -> not wake-worthy (a bare
   // title/severity finding event cannot be trusted to wake the screen).
-  const severity = event.data?.anomaly_severity ?? 0
+  const data = acousticData(event)
+  const severity = data?.anomaly_severity ?? 0
   if (severity < ACOUSTIC_WAKE_MIN_SEVERITY) return null
   return {
     type: 'acoustic_wake',
-    soundClass: event.data?.sound_class ?? 'unknown',
+    soundClass: data?.sound_class ?? 'unknown',
     severity,
     urgency: severity >= 3 ? 'critical' : 'urgent',
   }

@@ -17,6 +17,7 @@ import datetime
 import logging
 import os
 import platform
+import re
 import threading
 import time
 from contextlib import contextmanager
@@ -37,6 +38,10 @@ VALID_VARIANTS = {"sysadmin", "home"}
 VALID_AUTONOMY_LEVELS = {"observe", "suggest", "act", "orchestrate"}
 VALID_OPERATIONAL_TIERS = {"cloud_ok", "local_only", "redact"}
 VALID_SECRET_TIERS = {"local_only", "cloud_ok_acknowledged"}
+
+#: A vision registry id (VIS-1). Same grammar as ``persona/private_sources``
+#: and ``vision/sources``; spelled here so being_config does not import either.
+_VISION_SOURCE_ID = re.compile(r"^[a-z][a-z0-9_]*:[A-Za-z0-9_.:-]{1,120}$")
 
 
 @dataclass
@@ -178,6 +183,15 @@ class SensesVisionConfig:
         "error", "failed", "panic", "warning", "exception",
         "connection refused", "access denied", "not found",
     ])
+    #: Which sources this persona may look through (VIS-1). Registry ids —
+    #: ``screen:1``, ``webcam:desk``, ``frigate:patio``. **Empty means every
+    #: source the system has enabled**, not none: an empty list is "not
+    #: narrowed", which is what every existing persona file means today.
+    #:
+    #: Narrowing only. The list is intersected with ``vision_config.yml``'s
+    #: enabled sources, so naming a source the system has switched off does
+    #: not switch it on (design invariant V1 / I1).
+    sources: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -335,6 +349,19 @@ class BeingConfig:
             raise ValueError(
                 f"senses.vision.interval_seconds must be >= 10, got {vision.interval_seconds}"
             )
+        if not isinstance(vision.sources, list):
+            raise ValueError(
+                f"senses.vision.sources must be a list, got {type(vision.sources).__name__}"
+            )
+        for sid in vision.sources:
+            # Shape only. Whether the source exists is the registry's question
+            # and changes as hardware comes and goes; a persona file naming a
+            # camera that is currently unplugged is not invalid.
+            if not isinstance(sid, str) or not _VISION_SOURCE_ID.match(sid):
+                raise ValueError(
+                    f"senses.vision.sources entries must be registry ids "
+                    f"(e.g. 'webcam:desk'), got {sid!r}"
+                )
         # Singular entity / multi-body validation
         if self.canonical_memory_url and not self.canonical_memory_url.startswith(("http://", "https://")):
             raise ValueError(

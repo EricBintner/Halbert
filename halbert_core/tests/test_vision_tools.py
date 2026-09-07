@@ -7,6 +7,27 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 
+@pytest.fixture(autouse=True)
+def _vision_env(monkeypatch):
+    """A machine with vision switched on, and no dedup carried between tests.
+
+    Since VIS-1 a capture resolves its source through the registry, and the
+    registry reads ``vision_config.yml`` — so a test that patched only
+    ``is_screen_capture_enabled`` would be refused for having no enabled
+    source. This pins the config these tests have always assumed.
+    """
+    from halbert_core.vision import config as vcfg
+    import halbert_core.tools.vision_tools as vt
+
+    cfg = vcfg.VisionConfig()
+    cfg.screen_capture.enabled = True
+    cfg.webcam.enabled = True
+    monkeypatch.setattr(vcfg, "load_config", lambda: cfg)
+    vt.reset_dedup_for_tests()
+    yield
+    vt.reset_dedup_for_tests()
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Vision tool schemas and handlers
 # ─────────────────────────────────────────────────────────────────────────────
@@ -77,7 +98,7 @@ class TestCaptureWebcamHandler:
     @pytest.mark.asyncio
     async def test_returns_dict_with_image_key(self):
         import halbert_core.tools.vision_tools as vt
-        vt._last_webcam_hash = None
+        vt.reset_dedup_for_tests()
 
         from halbert_core.tools.vision_tools import capture_webcam
 
@@ -97,7 +118,7 @@ class TestCaptureWebcamHandler:
         assert isinstance(result, dict)
         assert "image" in result
         assert "description" in result
-        vt._last_webcam_hash = None
+        vt.reset_dedup_for_tests()
 
     @pytest.mark.asyncio
     async def test_blocked_when_disabled(self):
@@ -144,7 +165,7 @@ class TestCaptureAndOcrHandler:
     @pytest.mark.asyncio
     async def test_returns_ocr_text_when_text_found(self):
         import halbert_core.tools.vision_tools as vt
-        vt._last_screenshot_hash = None
+        vt.reset_dedup_for_tests()
 
         from halbert_core.tools.vision_tools import capture_and_ocr
 
@@ -166,12 +187,12 @@ class TestCaptureAndOcrHandler:
         assert "ocr_text" in result
         assert result["ocr_text"] == "Error: file not found"
         assert "image" not in result
-        vt._last_screenshot_hash = None
+        vt.reset_dedup_for_tests()
 
     @pytest.mark.asyncio
     async def test_falls_back_to_image_when_no_text(self):
         import halbert_core.tools.vision_tools as vt
-        vt._last_screenshot_hash = None
+        vt.reset_dedup_for_tests()
 
         from halbert_core.tools.vision_tools import capture_and_ocr
 
@@ -192,7 +213,7 @@ class TestCaptureAndOcrHandler:
 
         assert "image" in result
         assert "ocr_text" not in result
-        vt._last_screenshot_hash = None
+        vt.reset_dedup_for_tests()
 
 
 class TestListWindowsHandler:
@@ -253,7 +274,7 @@ class TestCaptureWindowHandler:
     @pytest.mark.asyncio
     async def test_returns_image_on_success(self):
         import halbert_core.tools.vision_tools as vt
-        vt._last_window_hash = None
+        vt.reset_dedup_for_tests()
 
         from halbert_core.tools.vision_tools import capture_window_tool
 
@@ -272,7 +293,7 @@ class TestCaptureWindowHandler:
 
         assert "image" in result
         assert "123" in result["description"]
-        vt._last_window_hash = None
+        vt.reset_dedup_for_tests()
 
 
 class TestCaptureActiveWindowHandler:
@@ -305,7 +326,7 @@ class TestCaptureActiveWindowHandler:
     @pytest.mark.asyncio
     async def test_returns_image_on_success(self):
         import halbert_core.tools.vision_tools as vt
-        vt._last_active_window_hash = None
+        vt.reset_dedup_for_tests()
 
         from halbert_core.tools.vision_tools import capture_active_window_tool
 
@@ -332,7 +353,7 @@ class TestCaptureActiveWindowHandler:
         assert "image" in result
         assert "Terminal" in result["description"]
         assert result["window"]["owner"] == "Terminal"
-        vt._last_active_window_hash = None
+        vt.reset_dedup_for_tests()
 
 
 class TestCaptureScreenshotHandler:
@@ -341,7 +362,7 @@ class TestCaptureScreenshotHandler:
     @pytest.mark.asyncio
     async def test_returns_dict_with_image_key(self):
         import halbert_core.tools.vision_tools as vt
-        vt._last_screenshot_hash = None  # Reset dedup
+        vt.reset_dedup_for_tests()
 
         from halbert_core.tools.vision_tools import capture_screenshot
 
@@ -362,12 +383,12 @@ class TestCaptureScreenshotHandler:
         assert "image" in result
         assert "description" in result
         assert "Screenshot" in result["description"]
-        vt._last_screenshot_hash = None
+        vt.reset_dedup_for_tests()
 
     @pytest.mark.asyncio
     async def test_region_capture(self):
         import halbert_core.tools.vision_tools as vt
-        vt._last_screenshot_hash = None
+        vt.reset_dedup_for_tests()
 
         from halbert_core.tools.vision_tools import capture_screenshot
 
@@ -389,12 +410,12 @@ class TestCaptureScreenshotHandler:
         assert "image" in result
         assert "region" in result["description"].lower()
         mock_cap.capture_region.assert_called_once_with(100, 200, 800, 600)
-        vt._last_screenshot_hash = None
+        vt.reset_dedup_for_tests()
 
     @pytest.mark.asyncio
     async def test_dependency_error_returns_error_dict(self):
         import halbert_core.tools.vision_tools as vt
-        vt._last_screenshot_hash = None
+        vt.reset_dedup_for_tests()
 
         from halbert_core.tools.vision_tools import capture_screenshot
 
@@ -412,7 +433,7 @@ class TestCaptureScreenshotHandler:
         assert "error" in result
         assert result.get("error_type") == "dependency_missing"
         assert "image" not in result
-        vt._last_screenshot_hash = None
+        vt.reset_dedup_for_tests()
 
     @pytest.mark.asyncio
     async def test_screenshot_blocked_when_disabled(self):
@@ -460,7 +481,7 @@ class TestCaptureScreenshotHandler:
         mock_cap.capture_full.return_value = b"sameframe"
 
         # Reset dedup state
-        vt._last_screenshot_hash = None
+        vt.reset_dedup_for_tests()
 
         with patch("halbert_core.vision.config.is_screen_capture_enabled",
                     return_value=True), \
@@ -481,10 +502,7 @@ class TestCaptureScreenshotHandler:
             assert "unchanged" in r2["description"].lower()
 
         # Cleanup
-        vt._last_screenshot_hash = None
-
-
-# ─────────────────────────────────────────────────────────────────────────────
+        vt.reset_dedup_for_tests()
 # Safety classification
 # ─────────────────────────────────────────────────────────────────────────────
 

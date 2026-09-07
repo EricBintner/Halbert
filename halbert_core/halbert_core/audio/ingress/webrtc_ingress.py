@@ -76,6 +76,7 @@ class WebRtcIngress(AudioIngressAdapter):
                     pcm=data,
                     samples=len(data) // 2,
                     source=self.source_type,
+                    source_id=self.source_id,
                     area_id=self.area_id,
                 )
                 try:

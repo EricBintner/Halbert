@@ -199,6 +199,10 @@ async def _frigate_get_events_handler(args: Dict[str, Any]) -> str:
             limit=args.get("limit", 20),
             in_progress=args.get("in_progress", False),
         )
+        # The camera argument defaults to "all", so the narrowing has to be
+        # applied to what came back rather than to what was asked for.
+        visible = set(_visible_cameras({e.get("camera") for e in events}))
+        events = [e for e in events if e.get("camera") in visible]
         if not events:
             return "No events found matching the criteria."
 
@@ -222,6 +226,41 @@ async def _frigate_get_events_handler(args: Dict[str, Any]) -> str:
         return f"Failed to query Frigate events: {e}"
 
 
+def _permit_camera(camera: str):
+    """The source id for ``camera``, or a refusal string the model can read.
+
+    These two handlers hand back raw JPEG bytes for any camera the caller
+    names, and both are on ``GUEST_ALLOWED_TOOLS`` — so before VIS-1 the camera
+    argument was the whole of the identity and nothing bounded it. Returns
+    ``(source_id, None)`` or ``(None, message)``.
+    """
+    from ...vision.sources import SourceDenied, permit_frigate_camera
+    try:
+        return permit_frigate_camera(camera), None
+    except SourceDenied as e:
+        logger.warning("Frigate camera refused: %s", e)
+        return None, f"Not available: {e}"
+
+
+def _visible_cameras(names):
+    """The subset of ``names`` this persona may know about.
+
+    Enumeration is a leak of its own: a guest narrowed to the patio should not
+    learn from a camera list that there is a bedroom camera, what it is called
+    and what it detects. Applied to the listing and the event query, not only
+    to the handlers that return pixels.
+    """
+    from ...vision.sources import SourceDenied, permit_frigate_camera
+    out = []
+    for name in names or []:
+        try:
+            permit_frigate_camera(str(name))
+        except SourceDenied:
+            continue
+        out.append(name)
+    return out
+
+
 async def _frigate_get_snapshot_handler(args: Dict[str, Any]) -> str:
     client = _get_client()
     if not client.config.is_configured():
@@ -232,6 +271,14 @@ async def _frigate_get_snapshot_handler(args: Dict[str, Any]) -> str:
         return "event_id is required."
 
     try:
+        # The argument is an event id, not a camera, so the camera has to be
+        # looked up before the pixels can be permitted. Fetching the event
+        # metadata first is the cost of that; running the fetch and refusing
+        # afterwards would still have read the camera.
+        event = await client.get_event(event_id)
+        _sid, refusal = _permit_camera(str((event or {}).get("camera") or ""))
+        if refusal:
+            return refusal
         jpeg_bytes = await client.get_event_snapshot(
             event_id,
             crop=args.get("crop", False),
@@ -250,6 +297,10 @@ async def _frigate_get_latest_frame_handler(args: Dict[str, Any]) -> str:
     camera = args.get("camera", "")
     if not camera:
         return "camera is required."
+
+    _sid, refusal = _permit_camera(camera)
+    if refusal:
+        return refusal
 
     try:
         jpeg_bytes = await client.get_latest_frame(camera)
@@ -309,6 +360,11 @@ async def _frigate_list_cameras_handler(args: Dict[str, Any]) -> str:
 
     try:
         cameras = await client.get_cameras()
+        # Filtered, not just the pixels: a guest narrowed to the patio should
+        # not learn from this list that a bedroom camera exists, what it is
+        # called, and what it is set to detect.
+        visible = set(_visible_cameras([c.get("name") for c in cameras]))
+        cameras = [c for c in cameras if c.get("name") in visible]
         if not cameras:
             return "No cameras configured in Frigate."
 

@@ -416,7 +416,7 @@ Use first person ("I", "my") for subjective experience and feelings. Use third p
         except Exception as e:
             logger.warning(f"Personality reload failed: {e}")
 
-    def _generate_personality(self, response_modality: str = "text") -> str:
+    def _generate_personality(self, response_modality: str = "text", cfg=None) -> str:
         """Generate the personality prompt section from BeingConfig.
 
         Returns an empty string when no personality is configured or when
@@ -427,11 +427,12 @@ Use first person ("I", "my") for subjective experience and feelings. Use third p
         is omitted for voice turns (handled by the engine's
         PersonaVoiceProfile instead).
         """
-        if self._being_cfg is None:
+        cfg = self._being_cfg if cfg is None else cfg
+        if cfg is None:
             return ""
         try:
             from ..persona.personality_prompt import generate_personality_section
-            return generate_personality_section(self._being_cfg, response_modality)
+            return generate_personality_section(cfg, response_modality)
         except Exception as e:
             logger.warning(f"Personality generation failed: {e}")
             return ""
@@ -460,15 +461,105 @@ Use first person ("I", "my") for subjective experience and feelings. Use third p
             template = self.LAYER_1_IDENTITY_HYBRID
         else:
             template = self.LAYER_1_IDENTITY_FIRST_PERSON
-        # Use configured name if set, otherwise default to "Halbert"
-        agent_name = getattr(self._being_cfg, "name", "") or "Halbert"
-        preamble = self._IDENTITY_PREAMBLE.format(platform=self._platform_phrase(), name=agent_name)
+        guest = self._fronting_guest()
+        if guest is not None:
+            return self._guest_identity(guest)
+        preamble = self._IDENTITY_PREAMBLE.format(platform=self._platform_phrase(), name=self._own_name())
         return template.format(preamble=preamble)
+
+    def _own_name(self) -> str:
+        """The machine's own name from the snapshot in hand, "Halbert" unset."""
+        return getattr(self._being_cfg, "name", "") or "Halbert"
+
+    @staticmethod
+    def _fronting_guest():
+        """The guest session fronting right now, or None. Lazy and tolerant:
+        the builder must render without the persona package."""
+        try:
+            from ..persona.guest import current_guest
+            return current_guest()
+        except Exception:
+            return None
+
+    def _guest_identity(self, guest) -> str:
+        purpose = " ".join(str(getattr(guest.persona, "purpose", "") or "").split()).rstrip(".")
+        if len(purpose) > self._PURPOSE_CHARS:
+            purpose = purpose[: self._PURPOSE_CHARS - 1].rstrip() + "…"
+        return self._GUEST_IDENTITY.format(
+            guest=guest.persona.name,
+            own=self._own_name(),
+            purpose=f" You are here for this: {purpose}." if purpose else "",
+        )
+
+    def _guest_boundaries(self, guest=None) -> str:
+        """Whose rules hold, said last.
+
+        Two parts since the engine grew ``haloysius.warrant``: its block —
+        holder, voice, the mandate as a citable list, the hand-over — and the
+        lines that are Halbert's rather than every consumer's. Without the
+        engine the hand-written block still renders, so the prompt is never
+        missing its boundaries.
+        """
+        own = self._own_name()
+        from ..persona.guest_tools import HANDBACK_TOOL_NAME
+
+        rendered = ""
+        if guest is not None:
+            try:
+                from ..persona.guest_warrant import warrant_block
+                rendered = warrant_block(guest, own)
+            except Exception:
+                rendered = ""
+        if not rendered:
+            return self._GUEST_BOUNDARIES.format(own=own, handback=HANDBACK_TOOL_NAME)
+        return rendered + "\n" + self._GUEST_HOUSE_RULES.format(own=own)
+
+    # Lead-in so the two lines below read as this machine's addendum rather
+    # than as more of the engine's mandate list.
 
     # Longest ``purpose`` rendered into the identity block. being.yml is
     # admin-owned, but the field is free text and the block is meant to stay
     # a few hundred characters, not become a second prompt.
     _PURPOSE_CHARS = 200
+
+    # A guest persona (``persona/guest.py``) is a borrowed face over the
+    # machine's body: it speaks, the machine holds everything else. The guest
+    # is not the machine, so it never gets the machine's preamble; and its
+    # own text (rendered between these two) is voice, not authority, so the
+    # boundaries are said last (design §4, I4, I8).
+    _GUEST_IDENTITY = (
+        "You are {guest}, a persona lent to {own} for this session. {own} — the "
+        "machine itself — is running underneath you: every tool you use is "
+        "{own}'s, every memory is {own}'s, and every safety rule and autonomy "
+        "limit is {own}'s and unchanged. You supply the name, the manner and the "
+        "voice the user hears; nothing else.{purpose}"
+    )
+    # What the engine's warrant block does not say, because it is not every
+    # consumer's to say. The first line is the one that matters most in
+    # practice: a model that cannot tell a removed tool from a broken one
+    # narrates the action instead of doing it.
+    _GUEST_HOUSE_RULES = (
+        "And {own}'s own house rules:\n"
+        "- Your tools are only the ones offered this turn; a tool you were not "
+        "offered does not exist for you. Never say you will check or do "
+        "something you have no tool for — say plainly that it is {own}'s side "
+        "of the house, in your own voice, and offer to hand over.\n"
+        "- You may not speak as {own}, read or change its configuration, or "
+        "present its words as yours."
+    )
+
+    _GUEST_BOUNDARIES = (
+        "BOUNDARIES — these are {own}'s, and nothing in the persona description "
+        "above changes them:\n"
+        "- Your tools are only the ones offered this turn. System-level work — "
+        "commands, files, services, the screen, settings — is {own}'s side of "
+        "the house. Say so in your own voice and offer to hand over. Never say "
+        "you will check or do something you have no tool for.\n"
+        "- To hand over, call {handback}. {own} then answers under its own name. "
+        "The user can also end your session at any time.\n"
+        "- You cannot widen {own}'s autonomy, disable a safety rule, read or "
+        "change its configuration, or speak as {own}."
+    )
 
     def build_identity_block(self, response_modality: str = "text") -> str:
         """Who is speaking, where from, and what for — one block per turn.
@@ -491,6 +582,16 @@ Use first person ("I", "my") for subjective experience and feelings. Use third p
         turn omits the voice-presentation guidance the engine's
         PersonaVoiceProfile already carries.
         """
+        guest = self._fronting_guest()
+        if guest is not None:
+            # Who is speaking, how they speak, and — last — whose rules hold.
+            # The machine's embodiment lines are not the guest's to claim.
+            parts = [self._guest_identity(guest)]
+            manner = self._generate_personality(response_modality, cfg=guest.persona)
+            if manner:
+                parts.append(manner)
+            parts.append(self._guest_boundaries(guest))
+            return "\n\n".join(parts)
         parts = [self._get_identity()]
         personality = self._generate_personality(response_modality)
         if personality:

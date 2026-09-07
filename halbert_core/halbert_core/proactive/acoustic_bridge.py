@@ -40,7 +40,14 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Callable, List, Optional
 
+from ..continuity.ownership import Owner
 from .events import ProactiveEvent
+
+#: Tagger severity at which an acoustic anomaly is "confirmed" — glass break,
+#: intrusion. ``ProactiveGate._is_wake_worthy_acoustic`` treats these exactly
+#: like the engine's life-safety set, and so does the ownership gate below:
+#: a confirmed anomaly on a private microphone still reaches Halbert (D1).
+CONFIRMED_ANOMALY = 2
 
 if TYPE_CHECKING:
     from ..audio.pipeline import AcousticEventObservation
@@ -106,6 +113,19 @@ class AcousticAnomalyBridge:
         throw (``DetectorRunner._run_detector`` swallows every detector
         failure into a warning-once log line).
         """
+        # Ownership (design §5.3): a microphone the user handed to a guest
+        # for a private session is the guest's. Its acoustic events go to the
+        # guest's home and touch none of Halbert's stores — not the detector,
+        # not findings, not the event bus. Life safety is the exception (D1):
+        # the house is not private from its own smoke alarm, and a confirmed
+        # anomaly is what this gate already treats as life safety everywhere
+        # else (``ProactiveGate._is_wake_worthy_acoustic``).
+        owner, source_id = self._route(observation)
+        if owner is not Owner.HALBERT:
+            if owner is Owner.GUEST:
+                self._forward_to_guest(observation, source_id)
+            return []
+
         runner = self._build_runner()
         detector = getattr(runner, "acoustic_detector", None)
         if runner is None or detector is None:
@@ -130,6 +150,41 @@ class AcousticAnomalyBridge:
             return []
 
         return await runner.run_acoustic()
+
+
+    @staticmethod
+    def _route(observation) -> "tuple[Owner, str]":
+        """Who this event belongs to, and the id to label a forward with.
+
+        The window was classified from the shared ring buffer, so it names
+        every live ear rather than one (``AudioPipelineCoordinator.
+        live_source_ids``). ``route_mixed_observation`` drops a window whose
+        ears disagree about their owner instead of guessing.
+        """
+        ids = list(getattr(observation, "source_ids", None) or [])
+        life_safety = int(getattr(observation, "anomaly_severity", 0) or 0) >= CONFIRMED_ANOMALY
+        try:
+            from ..continuity.ownership import route_mixed_observation
+            owner = route_mixed_observation(ids, life_safety=life_safety)
+        except Exception:
+            owner = Owner.HALBERT
+        return owner, (ids[0] if len(ids) == 1 else "mic")
+
+    def _forward_to_guest(self, observation, source_id: str) -> None:
+        try:
+            from ..persona import sibling
+            from ..persona.guest import current_guest
+            session = current_guest()
+            if session is None:
+                return
+            sound = getattr(observation, "sound_class", "") or "a sound"
+            area = getattr(observation, "area_id", "") or ""
+            where = f" in {area}" if area else ""
+            sibling.forward_observation(
+                session, f"[{source_id}] heard {sound}{where}", source_id,
+            )
+        except Exception as e:
+            self._log_once("forward", f"Private-microphone event not forwarded: {e}")
 
 
 # ---------------------------------------------------------------------------

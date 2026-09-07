@@ -361,12 +361,39 @@ class ToolExecutor:
         self.schemas[name] = schema
         logger.debug(f"Registered tool: {name}")
     
+    @staticmethod
+    def _fronting_guest():
+        """The guest persona fronting this turn, or None. Lazy so the
+        executor never depends on the persona package at import."""
+        try:
+            from ..persona.guest import current_guest
+            return current_guest()
+        except Exception:
+            return None
+
     def get_schemas(self) -> List[Dict]:
-        """Get all tool schemas for LLM."""
-        return [
+        """Get all tool schemas for LLM.
+
+        While a guest persona fronts (``persona/guest.py``), the list is
+        narrowed to ``GUEST_ALLOWED_TOOLS`` and the handback tool is added:
+        a tool the model cannot see is a tool it does not have to be talked
+        out of. This is the one per-turn choke point (design §4).
+        """
+        guest = self._fronting_guest()
+        if guest is None:
+            return [
+                {"type": "function", "function": schema}
+                for schema in self.schemas.values()
+            ]
+        from ..persona.guest_tools import GUEST_ONLY_TOOLS, is_tool_allowed_for_guest
+        narrowed = [
             {"type": "function", "function": schema}
-            for schema in self.schemas.values()
+            for name, schema in self.schemas.items()
+            if is_tool_allowed_for_guest(name)
         ]
+        for schema in GUEST_ONLY_TOOLS.values():
+            narrowed.append({"type": "function", "function": dict(schema)})
+        return narrowed
     
     async def execute(
         self,
@@ -393,7 +420,44 @@ class ToolExecutor:
             ExecutionResult with success status and result/error
         """
         start = time.time()
-        
+
+        # A guest persona fronting narrows what may run, not just what the
+        # model is shown: the history it inherits holds Halbert's own earlier
+        # tool calls, and a model can imitate a call it was not offered.
+        guest = self._fronting_guest()
+        if guest is not None:
+            from ..persona.guest_tools import (
+                GUEST_ONLY_TOOLS,
+                HANDBACK_TOOL_NAME,
+                is_tool_allowed_for_guest,
+            )
+            if tool_name == HANDBACK_TOOL_NAME:
+                return self._hand_back(guest, args, session_id, start)
+            if tool_name in GUEST_ONLY_TOOLS:
+                return await self._run_guest_only(tool_name, args, session_id, start)
+            if not is_tool_allowed_for_guest(tool_name):
+                who = guest.persona.name
+                logger.info(f"Refused {tool_name}: not available while {who} fronts")
+                self._audit(
+                    tool_name, args, session_id,
+                    success=False, error=f"not available while {who} fronts",
+                )
+                return ExecutionResult(
+                    success=False,
+                    error=(
+                        f"{tool_name} is not available while {who} is fronting. "
+                        f"System-level work is the machine's own; use "
+                        f"{HANDBACK_TOOL_NAME} to hand the conversation back."
+                    ),
+                    execution_time_ms=0,
+                )
+        elif self._is_guest_only(tool_name):
+            return ExecutionResult(
+                success=False,
+                error=f"{tool_name} exists only while a guest persona is fronting.",
+                execution_time_ms=0,
+            )
+
         # Check if tool exists
         if tool_name not in self.tools:
             # Try peer tool proxy (singular entity mode): route the tool
@@ -530,6 +594,65 @@ class ToolExecutor:
 
         finally:
             current_agent_session.reset(session_token)
+
+    @staticmethod
+    def _is_guest_only(tool_name: str) -> bool:
+        try:
+            from ..persona.guest_tools import GUEST_ONLY_TOOLS
+            return tool_name in GUEST_ONLY_TOOLS
+        except Exception:
+            return False
+
+    async def _run_guest_only(self, tool_name: str, args: Dict, session_id: str, start: float) -> ExecutionResult:
+        """A tool that exists only while a guest fronts (the guest's own
+        recall). Runs its handler from ``GUEST_ONLY_HANDLERS``; never the
+        registry."""
+        from ..persona.guest_tools import GUEST_ONLY_HANDLERS
+
+        handler = GUEST_ONLY_HANDLERS.get(tool_name)
+        if handler is None:
+            return ExecutionResult(success=False, error=f"No handler for {tool_name}", execution_time_ms=0)
+        try:
+            result = await handler(args or {})
+        except Exception as e:
+            self._audit(tool_name, args, session_id, success=False, error=str(e))
+            return ExecutionResult(success=False, error=str(e), execution_time_ms=(time.time() - start) * 1000)
+        self._audit(tool_name, args, session_id, success=True)
+        return ExecutionResult(
+            success=True, result=result, execution_time_ms=(time.time() - start) * 1000, risk_level=RiskLevel.SAFE,
+        )
+
+    def _hand_back(self, guest, args: Dict, session_id: str, start: float) -> ExecutionResult:
+        """The guest hands the conversation back to the machine (design §4).
+
+        Ends the guest session in the same path a withdrawal takes, and
+        answers the model with who is speaking now. The tool list was fixed
+        at the start of this turn, so the machine's full tools return on the
+        next turn; the identity block is re-rendered on the next LLM call.
+        """
+        from ..persona.guest import handback
+        from ..persona.guest_tools import HANDBACK_TOOL_NAME
+
+        who = guest.persona.name
+        reason = str((args or {}).get("reason") or "").strip()
+        try:
+            from ..identity import resolve_entity_name
+            own_name = resolve_entity_name()
+        except Exception:
+            own_name = "Halbert"
+        handback()
+        logger.info(f"Guest {who} handed back to {own_name}" + (f": {reason}" if reason else ""))
+        self._audit(HANDBACK_TOOL_NAME, {"reason": reason}, session_id, success=True)
+        return ExecutionResult(
+            success=True,
+            result=(
+                f"{who} has handed the conversation back. You are {own_name} now, "
+                f"speaking under your own name; your full tools return on the next turn. "
+                f"Say so briefly in your own voice, then answer the user's request."
+            ),
+            execution_time_ms=(time.time() - start) * 1000,
+            risk_level=RiskLevel.SAFE,
+        )
 
     def _audit(
         self,

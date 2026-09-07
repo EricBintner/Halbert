@@ -42,6 +42,10 @@ if FASTAPI_AVAILABLE:
         webcam_grayscale: Optional[bool] = None
         redaction_enabled: Optional[bool] = None
         redaction_blocklist: Optional[list] = None
+        #: Declared sources (VIS-1). save_config rewrites the whole file, so
+        #: omitting this from the model would drop every declared source on
+        #: the next settings change.
+        sources: Optional[list] = None
 
     @router.get("/config")
     async def get_vision_config():
@@ -67,6 +71,10 @@ if FASTAPI_AVAILABLE:
                 "enabled": cfg.redaction.enabled,
                 "blocklist": cfg.redaction.blocklist,
             },
+            # The resolved registry, not the raw list: an install that has
+            # never declared sources still gets the two the old scalars
+            # imply, so the settings page has something to render on day one.
+            "sources": [s.to_dict() for s in _resolved_sources(cfg)],
         }
 
     @router.put("/config")
@@ -99,9 +107,61 @@ if FASTAPI_AVAILABLE:
             cfg.redaction.enabled = update.redaction_enabled
         if update.redaction_blocklist is not None:
             cfg.redaction.blocklist = update.redaction_blocklist
+        if update.sources is not None:
+            # Validated on the way in, so a malformed entry is a 400 the user
+            # can see rather than a source silently dropped on the next read.
+            from ...vision.sources import BadSourceId, VisionSource
+            declared = []
+            for entry in update.sources:
+                try:
+                    declared.append(VisionSource.from_dict(entry).to_dict())
+                except (BadSourceId, AttributeError, TypeError) as e:
+                    return JSONResponse(
+                        {"error": f"bad vision source {entry!r}: {e}"}, status_code=400,
+                    )
+            cfg.sources = declared
 
         save_config(cfg)
         return {"status": "ok"}
+
+
+    def _resolved_sources(cfg):
+        # list_sources, not sources_from_config: the latter reads only the
+        # local declarations, so the settings page and the persona picker
+        # were both built from a list that never contained a frigate:* id —
+        # while permit_frigate_camera authorised against one that did. Any
+        # narrowing at all therefore revoked every Frigate camera, and no UI
+        # could grant one back.
+        from ...vision.sources import list_sources
+        return list_sources()
+
+    def _safe_scope():
+        """This caller's own permitted ids, or none when unreadable."""
+        from ...vision.sources import SourceDenied, persona_scope
+        try:
+            return persona_scope()
+        except SourceDenied:
+            return []
+
+    def _source_denied(e):
+        """The HTTP surface refuses the same way the tool surface does.
+
+        This route bypasses tools/vision_tools.py entirely, so a gate placed
+        only there leaves an open capture endpoint behind it. Refused, never
+        substituted: a request for a source this persona may not see must not
+        come back with a picture of a different one.
+        """
+        return JSONResponse(
+            {
+                "error": str(e),
+                "error_type": "source_denied",
+                # The caller's own scope, not the machine's list: a refusal that
+        # enumerated every enabled source would hand a guest persona the ids
+        # of the sources it was just denied.
+        "available_sources": _safe_scope(),
+            },
+            status_code=403,
+        )
 
     @router.get("/screenshot")
     async def capture_screenshot(
@@ -125,7 +185,12 @@ if FASTAPI_AVAILABLE:
         cfg = load_config()
         eff_quality = quality if quality is not None else cfg.screen_capture.quality
         eff_max_dim = max_dim if max_dim is not None else cfg.screen_capture.max_dimension
-        eff_monitor = monitor if monitor is not None else cfg.screen_capture.monitor_index
+        from ...vision import sources as _sources
+        try:
+            src = _sources.resolve_request(monitor, _sources.KIND_SCREEN)
+        except (_sources.SourceDenied, _sources.UnknownSource) as e:
+            return _source_denied(e)
+        eff_monitor = int(src.native)
 
         try:
             from ...vision.screen_capture import ScreenCapture, ScreenCaptureError
@@ -175,7 +240,12 @@ if FASTAPI_AVAILABLE:
             )
 
         cfg = load_config()
-        eff_camera = camera if camera is not None else cfg.webcam.camera_index
+        from ...vision import sources as _sources
+        try:
+            src = _sources.resolve_request(camera, _sources.KIND_WEBCAM)
+        except (_sources.SourceDenied, _sources.UnknownSource) as e:
+            return _source_denied(e)
+        eff_camera = int(src.native)
         eff_quality = quality if quality is not None else cfg.webcam.quality
         eff_max_dim = max_dim if max_dim is not None else cfg.webcam.max_dimension
 

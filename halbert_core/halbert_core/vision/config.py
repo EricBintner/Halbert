@@ -63,6 +63,12 @@ class VisionConfig:
     screen_capture: ScreenCaptureConfig = field(default_factory=ScreenCaptureConfig)
     webcam: WebcamConfig = field(default_factory=WebcamConfig)
     redaction: RedactionConfig = field(default_factory=RedactionConfig)
+    #: Declared vision sources (VIS-1). Each is ``{id, label, kind, native,
+    #: enabled}``; ``vision/sources.py`` owns the shape. Empty means "not
+    #: declared yet" and the two scalars above are migrated into two sources
+    #: on read — so an install that never opens the new settings page keeps
+    #: behaving exactly as it did.
+    sources: list = field(default_factory=list)
 
 
 _DEFAULT_CONFIG = VisionConfig()
@@ -99,6 +105,9 @@ def load_config() -> VisionConfig:
                 enabled=redaction.get("enabled", False),
                 blocklist=redaction.get("blocklist", []),
             ),
+            # Passed through as plain dicts; sources.py validates and drops
+            # malformed entries rather than failing the whole config load.
+            sources=list(data.get("sources") or []),
         )
     except Exception as e:
         logger.warning(f"Failed to load vision config: {e}, using defaults")
@@ -128,6 +137,13 @@ def save_config(config: VisionConfig) -> None:
             "enabled": config.redaction.enabled,
             "blocklist": config.redaction.blocklist,
         },
+        # save_config rewrites the whole file, so anything missing here is
+        # silently lost on the next settings change. Sources are written even
+        # when empty so the key's absence keeps meaning "never declared".
+        "sources": [
+            s.to_dict() if hasattr(s, "to_dict") else dict(s)
+            for s in (config.sources or [])
+        ],
     }
     with open(path, "w") as f:
         yaml.dump(data, f, default_flow_style=False)

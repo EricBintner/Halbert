@@ -2894,6 +2894,36 @@ class AgentStateMachine:
             # Need more info, go back to planning
             yield await self._transition(AgentState.PLANNING)
     
+    async def _forward_guest_turn(self, reply: str) -> AsyncIterator[StreamEvent]:
+        """While a guest fronts, the turn goes to the guest's home; when it
+        cannot, the user is told the guest will not remember it. The round
+        trip runs in a worker thread and is bounded by the sibling client's
+        timeout. Non-fatal on error."""
+        try:
+            from ..persona import sibling
+            from ..persona.guest import current_guest
+            session = current_guest()
+        except Exception:
+            return
+        if session is None:
+            return
+        # Once per turn, like the tick: a turn that re-enters RESPONDING must
+        # not become two memories at the home.
+        if getattr(self.ctx, "guest_turn_forwarded", False):
+            return
+        self.ctx.guest_turn_forwarded = True
+        ok = False
+        try:
+            ok = await asyncio.to_thread(sibling.forward_turn, session, self.ctx.user_query, reply)
+        except Exception as e:
+            logger.warning(f"Guest turn not forwarded: {e}")
+        if not ok:
+            why = "no memory home in this session" if session.home is None else "their home did not answer"
+            yield StreamEvent.thinking(
+                self.ctx.session_id,
+                f"{session.persona.name} will not remember this turn: {why}.",
+            )
+
     async def _run_cognition_tick(self, assistant_response: str) -> AsyncIterator[StreamEvent]:
         """Run the Haloysius cognitive tick at most once per turn (B1).
 
@@ -2907,6 +2937,18 @@ class AgentStateMachine:
         """
         if self.ctx.cognition_ticked:
             return
+        # Ownership (design §4.2, R2): while a guest persona fronts, the tick
+        # is the guest's. Halbert's own cognition and semantic memory must not
+        # learn a guest's evenings; the turn goes to the guest's home instead
+        # (``_forward_guest_turn``, from RESPONDING with the real reply).
+        try:
+            from ..continuity.ownership import Owner, route_write
+            if route_write("cognition.tick") is not Owner.HALBERT:
+                self.ctx.cognition_ticked = True
+                logger.debug("Cognition tick skipped: a guest persona fronts")
+                return
+        except Exception as e:
+            logger.debug(f"Ownership check unavailable, ticking as before: {e}")
         if self.cognition_tick is None or self.ctx.persona_cognition is None:
             logger.debug("No cognition_tick wired, skipping")
             return
@@ -3158,6 +3200,13 @@ class AgentStateMachine:
         # guards, ERROR give-up) tick here, with the real reply — the closest
         # match to advance_turn's assistant_response.
         async for event in self._run_cognition_tick(clean_response):
+            yield event
+
+        # Ownership (design §4.2): a guest's turn is one memory at the guest's
+        # home. Done here, with the real reply, and never from REFLECTING,
+        # whose stand-in reply is Halbert's observations — machine facts that
+        # must not reach a guest persona (R2).
+        async for event in self._forward_guest_turn(clean_response):
             yield event
 
         # Phase 4: Parse config-edit blocks from response (ported from chat.py)

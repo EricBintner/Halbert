@@ -67,12 +67,17 @@ vi.mock('@/hooks/useAgentStream', () => ({
   },
 }))
 
-// isAcousticEvent is re-implemented here (not mocked away) so the REAL
-// acousticWakeEvent seam in voiceModeEvents runs against these events.
+// isAcousticEvent and acousticData are re-implemented here (not mocked
+// away) so the REAL acousticWakeEvent seam in voiceModeEvents runs against
+// these events. `data` carries whichever payload the event type implies, so
+// the seam narrows through acousticData before reading a field.
+// The factory is hoisted, so both predicates are spelled out inside it.
 vi.mock('@/hooks/useBeingEvents', () => ({
   useBeingEvents: () => ({ events: h.beingEvents }),
   isAcousticEvent: (e: { type?: string; category?: string }) =>
     e.type === 'acoustic' || e.category === 'acoustic',
+  acousticData: (e: { type?: string; category?: string; data?: unknown }) =>
+    e.type === 'acoustic' || e.category === 'acoustic' ? (e.data ?? null) : null,
 }))
 
 vi.mock('@/hooks/useHostIdentity', () => ({

@@ -215,6 +215,7 @@ class WyomingIngress(AudioIngressAdapter):
                     pcm=frame.payload,
                     samples=len(frame.payload) // self._audio_format.get("width", 2),
                     source=self.source_type,
+                    source_id=self.source_id,
                     area_id=self.area_id,
                 )
                 try:

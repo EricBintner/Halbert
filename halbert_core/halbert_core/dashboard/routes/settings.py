@@ -3065,6 +3065,11 @@ class BeingConfigUpdate(BaseModel):
     model_endpoint_id: Optional[str] = None
     # Security (MCP trust boundary)
     security: Optional[Dict[str, Any]] = None
+    # Senses (vision autonomy, and VIS-1's per-persona source narrowing).
+    # Absent until now, which meant every POST the Settings > Being senses
+    # panel has ever sent was silently discarded by Pydantic: the toggles
+    # rendered, said "Saved", and changed nothing.
+    senses: Optional[Dict[str, Any]] = None
 
 
 @router.get("/being")
@@ -3125,6 +3130,24 @@ async def update_being_config(update: BeingConfigUpdate) -> Dict[str, Any]:
                     cfg.directives = update.directives
                 if update.custom_personality_prompt is not None:
                     cfg.custom_personality_prompt = update.custom_personality_prompt
+                # Senses — merged, not replaced. The UI sends the whole
+                # vision object it holds, but a partial POST from anywhere
+                # else must not blank the fields it did not mention.
+                if update.senses is not None:
+                    from ...config.being_config import SensesConfig, SensesVisionConfig
+
+                    incoming = (update.senses or {}).get("vision") or {}
+                    if isinstance(incoming, dict):
+                        current = cfg.senses.vision
+                        merged = {
+                            f: getattr(current, f)
+                            for f in SensesVisionConfig.__dataclass_fields__
+                        }
+                        merged.update({
+                            k: v for k, v in incoming.items()
+                            if k in SensesVisionConfig.__dataclass_fields__
+                        })
+                        cfg.senses = SensesConfig(vision=SensesVisionConfig(**merged))
                 # Character (Phase 3)
                 if update.name is not None:
                     cfg.name = update.name

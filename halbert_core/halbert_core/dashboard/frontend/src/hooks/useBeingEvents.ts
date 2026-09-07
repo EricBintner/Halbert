@@ -50,7 +50,8 @@ export interface BeingEvent {
     | 'system_anomaly'
     | 'reflex_fired'
     | 'reflex_escalate'
-    | 'reflex_command_proposed';
+    | 'reflex_command_proposed'
+    | 'guest_session';
   severity: 'info' | 'warning' | 'critical';
   title: string;
   body: string;
@@ -58,9 +59,11 @@ export interface BeingEvent {
   proposal_id?: string | null;
   created_at: string;
   category?: string;
-  /** Structured payload (O5): present on acoustic findings — the exact
-   * AcousticAnomalyData contract the AcousticAnomalyModule renders. */
-  data?: AcousticAnomalyData | null;
+  /** Structured payload: the exact AcousticAnomalyData contract the
+   * AcousticAnomalyModule renders (O5), or the session a guest_session
+   * event describes — discriminate with isAcousticEvent() /
+   * isGuestSessionEvent(). */
+  data?: AcousticAnomalyData | GuestSessionData | null;
   /** The finding's four whys — the interrupt justifies itself (C2-02).
    * Absent on events that are not findings. */
   why?: FindingWhy | null;
@@ -89,6 +92,48 @@ export function canProposeFix(event: BeingEvent): boolean {
  */
 export function isAcousticEvent(event: BeingEvent): boolean {
   return event.type === 'acoustic' || event.category === 'acoustic';
+}
+
+/**
+ * A borrowed face going on or coming off (persona/guest.py). The event is
+ * how the user learns who is speaking for the machine, so it carries the
+ * session rather than a finding: `state` is 'fronting' or 'ended', and an
+ * ending names its `reason`.
+ */
+export interface GuestSessionData {
+  state: 'fronting' | 'ended';
+  reason?: 'withdrawn' | 'handback' | 'ended_by_user' | 'heartbeat_missed' | 'replaced';
+  session_id: string;
+  name: string;
+  offered_by: string;
+  offered_by_name: string;
+  started_at: string;
+  seconds_until_expiry: number;
+  active: boolean;
+  end_reason: string | null;
+}
+
+/**
+ * The acoustic payload, or null when the event is not one — `data` carries
+ * whichever structured payload the event type implies, so a reader must
+ * narrow before touching a field.
+ */
+export function acousticData(event: BeingEvent): AcousticAnomalyData | null {
+  if (!isAcousticEvent(event)) return null;
+  const data = event.data as AcousticAnomalyData | null | undefined;
+  return data && typeof data.sound_class === 'string' ? data : null;
+}
+
+/** True when the event announces a guest persona change. */
+export function isGuestSessionEvent(event: BeingEvent): boolean {
+  return event.type === 'guest_session';
+}
+
+/** The session an announcement carries, or null when it is another event. */
+export function guestSessionData(event: BeingEvent): GuestSessionData | null {
+  if (!isGuestSessionEvent(event)) return null;
+  const data = event.data as GuestSessionData | null | undefined;
+  return data && typeof data.state === 'string' ? data : null;
 }
 
 interface UseBeingEventsResult {
