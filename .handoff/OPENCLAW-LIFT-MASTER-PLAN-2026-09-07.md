@@ -1,0 +1,76 @@
+# OPENCLAW-LIFT-MASTER-PLAN — dispatch, review, and status for the lift program
+
+**Date:** 2026-09-07 (updated same day with the Hermes pass — see "The packets" and "Status log")
+**Origin:** `.handoff/OSS-REVIEW-OPENCLAW-2026-09-07.md` (first synthesis) and `.handoff/OSS-REVIEW-HERMES-2026-09-07.md` (second synthesis — cross-references the first; read both for the *why* behind every packet)
+**Owner of record:** this plan; review checkpoints come back to a founder-supervised session
+**Companion memory:** `openclaw-review-2026-09-07` (session memory) and the per-packet "Verified current state" sections (state mapping done 2026-09-07; re-verify if executing later than ~2 weeks out)
+
+---
+
+## The packets
+
+| # | Packet | File | Scope | Executor tier | Status |
+|---|--------|------|-------|---------------|--------|
+| 01 | Memory promotion + curated core | `OPENCLAW-LIFT-PACKET-01-MEMORY-PROMOTION-2026-09-07.md` | Recall-driven promotion signal store; curated always-in-context core (gated); recall-loop hygiene | Phase A small-friendly; Phase B needs review | **Phase A ready; Phase B gated** |
+| 02 | Policy lattice + claims ladder | `OPENCLAW-LIFT-PACKET-02-POLICY-LATTICE-2026-09-07.md` | security×ask lattice, named-gate decisions, identifier claim strengths | A–B small-friendly; C needs review | **Ready** |
+| 03 | Scheduler durability + heartbeat ground rules | `OPENCLAW-LIFT-PACKET-03-SCHEDULER-DURABILITY-2026-09-07.md` | Catch-up, restart budgets, run receipts; prompted-heartbeat rules recorded (decision, not work) | A–B small-friendly; C is a founder decision | **Ready** |
+| 04 | Typed voice ingress | `OPENCLAW-LIFT-PACKET-04-VOICE-INGRESS-2026-09-07.md` | Speaker claims + modality on voice turns, mutation digest, TTS quality rules | A medium; B–C small; A2 depends on P02 | **Ready** |
+| 05 | Redaction hardening (+Hermes addendum: display-side seam) | `OPENCLAW-LIFT-PACKET-05-SECURITY-HARDENING-2026-09-07.md` | Secret variant registry, echo guard, one pipeline, camera-gate assertion, UI-transport redact+cap | A & C small-friendly; B is locate-then-wire | **Ready (pre-flight check inside)** |
+| 06 | Zero-context script execution | `OPENCLAW-LIFT-PACKET-06-SCRIPT-EXECUTION-2026-09-07.md` | `execute_code`: generated stub module, host-side RPC, stdout-only capped return, per-call policy preserved | A–B small-friendly with care | **Ready after founder sign-off** (new capability surface) |
+| 07 | Interrupt algebra | `OPENCLAW-LIFT-PACKET-07-INTERRUPT-ALGEBRA-2026-09-07.md` | stop/steer/redirect verbs, generation claims, yield-not-kill | A pure; B–C verify-first | **A ready; B–C after A + review** |
+| 08 | Conversation-store hardening | `OPENCLAW-LIFT-PACKET-08-STORE-HARDENING-2026-09-07.md` | darwin fsync PRAGMAs, FTS fail-open, declarative column reconciliation | All small-friendly (best first packet for a small executor) | **Ready** |
+| 09 | R5 eval harness + probe battery | `OPENCLAW-LIFT-PACKET-09-EVAL-HARNESS-2026-09-07.md` | question-bank invariance, ceiling arm, closed-book exam, scorecards; red-seam probes; CRAG verdict contract | A medium; B mechanical/splittable; C small | **Ready** (gate stays closed; harness measures) |
+
+**Dispatch order / dependencies:**
+- 01-A, 02-A/B, 03-A (+addendum; 03-B follows 03-A's merge), 05-A, 08, 09 are fully independent — dispatch in parallel to different sessions.
+- **Wave-1 file-ownership board** (per the Fable approval §6): maintain one table here — packet → branch → files → session — updated by whoever dispatches, so 02/04's shared `state_machine.py` neighborhoods never collide silently.
+- 02-B → 04-A2 (claims ladder consumed by voice ingress).
+- 02-B → 06-B (lattice gate test for write-plane tools in scripts).
+- 01-B is gated on its own review checkpoint (R9 fence) — do not batch with 01-A dispatch decisions.
+- 05 pre-flights against `worktree-sec-1-one-door` (see "Standing coordination" below).
+- 03-C, 04-C2, 01-C, 06-C, 07-C are recorded decisions, not dispatchable work.
+- 09 is intentionally independent of the Consolidator LLM work: it builds the instrument while the gate stays closed; its first scorecard (deterministic baseline + ceiling) is the founder's evidence for opening the gate.
+
+## How packets are written (what executors can assume)
+
+Each packet is self-contained: verified current-state facts (file paths and symbols checked against main on 2026-09-07), phased tasks in the house TDD style with test code and commit steps, out-of-scope guards derived from the review's anti-pattern list, verification gates, and the executor gotchas (arch-arm64 pytest, `wt_pytest.py` in worktrees, pathspec commits, no co-author trailers). Hard STOP conditions are written into the packets — an executor hitting one reports back rather than improvising.
+
+## Review checkpoints (what comes back to a founder session)
+
+1. **Per-packet completion:** each packet's verification gates are the merge bar. The executor's handoff should paste the gate command output verbatim. Merge decisions are the founder's, per house practice.
+2. **Phase-gated reviews:** 01-B (R9 fence edit + DECISIONS.md entry) and 02-C (integration into RoleGate) require explicit review *before* the executor starts the phase — treat the packet's "gated" marks as blocking.
+3. **Decisions parked for the founder** (deep-pass agenda):
+   - 03-C: does a prompted heartbeat exist at all, and is `HomeCognitiveLoop` its substrate? (Coordinate with the attunement workstream first — tick-fires-at-REFLECTING is pinned there.)
+   - 01-C: recall-intent escalation lane (spending agent turns on memory) — pair with the heartbeat decision.
+   - 05-C: whether internal (non-MCP) tool results route through the shared redaction core.
+   - 04-C2: spoken summarization — blocked on a utility-model slot existing at all.
+   - Standing: guest view bounds and the remaining six open items in `HANDOFF-OPUS-GUEST-PERSONA-NEXT-STEPS-2026-09-06.md` §6 are adjacent to but NOT part of this program.
+
+## Standing coordination (repo state to check at dispatch time)
+
+- **`worktree-sec-1-one-door`** (6 commits unmerged): packet 05 pre-flights against it. If the sec branch merges first, re-branch 05 from the merge. Also: **the entire audit corpus (`SECURITY-AUDIT-FINDINGS*.md/json/html`, `SECURITY-IMPLEMENTATION-PLAN-2026-09-06.md`, `PERMISSION-AND-CONSENT-SYSTEM-2026-09-06.md`) is untracked in the main checkout** — it exists in git only on the sec branch. Until that branch merges, losing the sec worktree loses the committed history. Worth a deliberate commit-to-main of the corpus, or an explicit founder call that the branch is its home.
+- **Haloysius is external** (`/Volumes/4TB-BAD/Haloysius`, editable install). Packets are scoped to stay inside Halbert. **The parallel Haloysius-side program now has its own decision document**: `/Volumes/4TB-BAD/Haloysius/.handoff/HANDOFF-OPENCLAW-MEMORY-PROMOTION-SECOND-GUESS-2026-09-07.md` — read it before any memory work that crosses the repo boundary. Its verdicts that bind this program:
+  - The recommended ladder is **Option A (fix the pre-existing `.access()` feedback loop: retrieval events in a table instead of strengthen-on-retrieval) → Option B (claim-keyed signal store + query diversity) → Option C (curated core injection — founder review required, NOT dispatchable)**. Halbert's Packet-01 implements the Halbert-owned analogue and does not conflict with A or B.
+  - **Promotion signals are claim-keyed (observation content hashes), not memory-ID-keyed.** Halbert's Packet-01 keys signals on `(subject, predicate)` ledger keys, which is claim-shaped — the two stores can converge at the claim level. Do not introduce any third keying scheme.
+  - The second-guess doc explicitly rates the Halbert packet dispatch-ready and smaller-blast-radius ("Halbert has less to break") — Packet-01 Phase A is unaffected by the Haloysius decision.
+  - Open founder questions live in that doc (§"Open questions"): claim vs memory keying, file-based vs query-time curated core, whether the `.access()` fix is in-program or separate, recall-event provenance, and whether the two curated cores are designed to coexist. **Packet-01 Phase B's review checkpoint must include this coexistence question** — Halbert's curated core and Haloysius's (if Option C is ever approved) must not double-inject the same claims.
+- **Concurrent sessions:** the founder runs multiple sessions against this repo. All packets assume pathspec commits and no index sweeps. If two packets touch the same file (none do by design — 02 and 04 both touch `state_machine.py` only at different call sites; sequence 02 before 04 if dispatching simultaneously to the same tree, or use worktrees), the dispatching session resolves.
+- **Test invocation is uniform** across packets: main checkout `cd halbert_core && arch -arm64 ../.venv/bin/python -m pytest tests/ -q`; worktrees `arch -arm64 ./wt_pytest.py`. Baseline is green on main apart from the known REV-06 seams (per memory; re-verify baseline before blaming a packet).
+
+## Deep-pass agenda (further passes, in priority order)
+
+1. **Memory (01 follow-through + Hermes inputs):** wire the curated core (Phase B) once review passes — the review checkpoint now includes the frozen-snapshot-vs-per-turn question (Hermes freezes per session for cache stability and accepts intra-session staleness; OpenClaw re-renders per turn). All memory decisions cross-check `/Volumes/4TB-BAD/Haloysius/.handoff/HERMES-INPUTS-MEMORY-SECOND-GUESS-2026-09-07.md` (A1 read-only recall vs A2 event table; sanitize-in-both-directions; write-approval staging).
+2. **Session tree / compaction (now pre-solved by Hermes):** the OpenClaw review flagged this as too big for a first-pass packet; Hermes's state machinery (`publish_compression_child` atomic rotation + watermark tail-clone + lineage-rooted turn leases + persisted anti-thrash counters + the JSON-marker trick for four edge types) is the reference implementation the brainstorming pass should design against. Packet 08 lands the store hardening this migration will stand on.
+3. **Permission system (02 follow-through):** the five-axis model in `PERMISSION-AND-CONSENT-SYSTEM-2026-09-06.md` has no code; the lattice + gates + claims from 02 are its mechanism layer. Hermes adds: two-axis talk/command permissions, IDOR-proof cross-surface resume, wire-invisible trust flags, identity canonicalization shared by authz and session keys.
+4. **Voice (04 follow-through):** RoleGate *enforcement* of speaker claims (A2 records, doesn't enforce); spoken summarization once a utility slot exists (Hermes: the utility model resolves from the provider's own catalog — `agent/auxiliary_client.py` is the blueprint).
+5. **Skills system (Hermes learning-loop skeleton):** the OpenClaw review's §8 (CC-compatible SKILL.md, catalog, capability gating) plus Hermes's enforcement details (hard-reject >60-char descriptions at create time; deterministic nudge counters; post-delivery review fork with dispatch-side whitelist; anti-hoarding prompt policy text — lift nearly verbatim; read-before-write guard; `created_by` provenance sidecar; archive-not-delete curator; calibrated linter). Notably: Hermes has the "## Verification" section but no runner — Halbert's version should execute it.
+6. **Watchdog/daemon** (no packet yet — deliberately): OpenClaw §8 lifts (close-code 1013, watchdog alignment, restart-handoff) presuppose the daemon/watchdog workstream conversation; write the packet when that workstream is scheduled. Hermes's startup watchdog (armed-before-imports, phase-owned progress leases, escort-thread exit) is the template when it does.
+7. **Channel design** (emerging): per-channel session keys with opt-in cross-channel continuity (Hermes's IDOR-proof `/resume`), the turn lease keyed by transcript-owner, the delivery-obligation ledger with honest duplicate markers, and `TeeTransport` for a second frontend — these belong with the terminal-channel integration pass, alongside packets 06/07.
+
+## Status log
+
+- 2026-09-07: research synthesis (`OSS-REVIEW-OPENCLAW-2026-09-07.md`) + state mapping (memory/scheduler/voice; guest persona/security) + all five packets written. Nothing dispatched yet. Phase A of 01, all of 02-A/B, 03-A/B, 04-A/B/C, 05 ready.
+- 2026-09-07 (later): **Haloysius memory second-guess intake** — the parallel Haloysius program now has a decision doc (see Standing coordination); master plan and Packet-01 Phase C updated with the claim-keying alignment rule and the curated-core coexistence question.
+- 2026-09-07 (latest): **Hermes review complete** — synthesis at `OSS-REVIEW-HERMES-2026-09-07.md` (eight deep-dives; cross-referenced against OpenClaw so confirmed-twice patterns are distinguished from new ones). Deliverables landed: (a) addenda to packets 03 (cadence grace, occurrence receipts, monitor hash, status enum, incident dedup, notepad KV), 04 (voice-memo discipline), 05 (display-side redact+cap seam); (b) four new packets 06–09; (c) a Hermes-inputs companion note in the Haloysius repo (`HERMES-INPUTS-MEMORY-SECOND-GUESS-2026-09-07.md`) — the A1-vs-A2 fork, the re-ingestion half of the loop, and write-approval staging for the Option-C governance question; (d) deep-pass agenda re-ranked (session tree now pre-solved by Hermes's rotation machinery; skills entry added with the learning-loop skeleton). Packet 06 awaits founder sign-off (new capability surface); everything else dispatch-ready.
+- 2026-09-07 (final): **PROGRAM PARKED FOR ECOSYSTEM REVIEW** — the single entry-point handoff `HANDOFF-OSS-RESEARCH-PROGRAM-REVIEW-REQUEST-2026-09-07.md` (this directory) verbosely documents both reviews, the memory decision trail, all nine packets, and per-app feedback asks (Halbert core, Haloysius, Halley, DebateHaus/Warrant). **No dispatches until replies land and the revisit pass reconciles them** (§11 of that doc). Reply convention: `REPLY-OSS-RESEARCH-PROGRAM-2026-09-07.md` in each replying repo's `.handoff/`.
+- 2026-09-07 (reconciled): **ECOSYSTEM REVIEW COMPLETE + RECONCILED** — four replies in (DebateHaus from their session; BrightestMinds, Halley, Haloysius-engine produced by review agents on each app's behalf, founder to spot-check). Reconciliation: `RECONCILIATION-OSS-RESEARCH-PROGRAM-2026-09-07.md` (this directory) — the memory fork resolves to **A2 at the store level with Option B's keying, provenance-first** (three-way convergence); the universal-vs-Halbert-specific split is answered (engine gets the 7-item memory program + recorded candidates; all nine packets confirmed app-internal). **The Haloysius work is handed off**: `/Volumes/4TB-BAD/Haloysius/.handoff/HANDOFF-MEMORY-ENGINE-PROGRAM-2026-09-07.md` (Phases 1–3 authorized to plan/execute; Option C stays gated behind the joint coexistence session with packet-01 Phase B). Packet deltas from feedback recorded in the reconciliation §4 (packet 02 fail-closed note, packet 08 JSON-job-file task, others unchanged). Dispatch state unchanged otherwise: 01-A, 02-A/B, 03, 04, 05, 08, 09 ready; 07-A ready; 06 pending founder sign-off.
