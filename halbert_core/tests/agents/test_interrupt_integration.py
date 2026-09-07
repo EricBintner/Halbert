@@ -164,3 +164,141 @@ class TestStop:
         assert "paused" not in agent.active_sessions
         assert agent.current_state == AgentState.IDLE
 
+
+class TestSteer:
+    @pytest.mark.asyncio
+    async def test_steer_applies_to_the_last_tool_result_at_the_boundary(self):
+        llm = _ToolThenAnswerLLM()
+        agent = _agent(llm)
+
+        async def fake_execute(tool_name, args, session_id=None, confirmed=False,
+                               speaker_role="admin"):
+            # A mid-turn arrival while the tool runs (a different request
+            # in production; the same task here, which changes nothing —
+            # the slot is a plain cross-request surface).
+            assert agent.request_steer("also check the logs")["accepted"] is True
+            return ExecutionResult(success=True, result="127.0.0.1 localhost")
+
+        agent.tools.execute = fake_execute
+        await _collect(agent.process("read the hosts file", session_id="steer"))
+
+        # The steer applied to the LAST tool result at the batch boundary,
+        # with the Phase A concatenation and marker.
+        assert any("\n[steered] also check the logs" in o for o in agent.ctx.observations)
+        # And the next model call actually saw it (the planning prompt rides
+        # the leading instructions, so the whole messages array is checked).
+        assert any(
+            "[steered] also check the logs" in str(m)
+            for m in llm.seen[1:]
+        )
+        assert agent._pending_steer == {}
+
+    @pytest.mark.asyncio
+    async def test_steer_before_any_tool_becomes_its_own_observation(self):
+        llm = _SlowLLM(delay=0.15)
+        agent = _agent(llm)
+        task = asyncio.ensure_future(_collect(agent.process("hello", session_id="early")))
+        await asyncio.sleep(0.03)          # inside PLANNING's chat()
+        assert agent.request_steer("and the camera too")["accepted"] is True
+        await asyncio.wait_for(task, timeout=5)
+        # No tool result existed to append to, so the steer entered the
+        # observations as its own line and the model still saw it.
+        assert agent.ctx.observations[0].startswith("[steered] and the camera too")
+        assert any("and the camera too" in str(m) for m in llm.seen)
+
+    @pytest.mark.asyncio
+    async def test_the_pending_slot_is_single_replace_not_grow(self):
+        agent = _agent(_SlowLLM(delay=0.15))
+        task = asyncio.ensure_future(_collect(agent.process("hello", session_id="slot")))
+        await asyncio.sleep(0.03)
+        first = agent.request_steer("first steer")
+        second = agent.request_steer("second steer")
+        assert first["replaced"] is False
+        assert second["replaced"] is True
+        assert agent._pending_steer["slot"] == "second steer"   # one slot
+        await asyncio.wait_for(task, timeout=5)
+        joined = "\n".join(agent.ctx.observations)
+        assert "second steer" in joined
+        assert "first steer" not in joined
+
+    @pytest.mark.asyncio
+    async def test_an_unapplied_steer_leaves_no_slot_behind(self):
+        # A steer that never finds a batch boundary (the turn is stopped
+        # first) leaves the slot via _settle_turn — never a stale text for
+        # a later turn under the same session id.
+        agent = _agent(_SlowLLM(delay=0.2))
+        task = asyncio.ensure_future(_collect(agent.process("hello", session_id="late")))
+        await asyncio.sleep(0.03)
+        agent.request_steer("too late")
+        assert agent.request_stop("late") == "stopped"
+        await asyncio.wait_for(task, timeout=5)
+        assert agent._pending_steer == {}
+
+
+class TestMidturnArrivals:
+    """B2's never-silently-dropped invariant: every arrival while busy
+    yields a verdict the requester can observe."""
+
+    @pytest.mark.asyncio
+    async def test_text_while_busy_steers_with_an_observable_event(self):
+        agent = _agent(_SlowLLM(delay=0.15))
+        task = asyncio.ensure_future(_collect(agent.process("hello", session_id="busy")))
+        await asyncio.sleep(0.03)
+
+        decision, events = agent.handle_midturn_arrival("arr-1", "also check the logs")
+        assert decision.verb is Verdict.STEER
+        assert [e.type for e in events] == ["steer_accepted"]
+        assert events[0].data["replaced"] is False
+        assert agent._pending_steer["busy"] == "also check the logs"
+
+        await asyncio.wait_for(task, timeout=5)
+        assert any("[steered] also check the logs" in o for o in agent.ctx.observations)
+
+    @pytest.mark.asyncio
+    async def test_stop_while_busy_stops_with_existing_event_vocabulary(self):
+        agent = _agent(_SlowLLM(delay=0.15))
+        task = asyncio.ensure_future(_collect(agent.process("hello", session_id="busy")))
+        await asyncio.sleep(0.03)
+
+        decision, events = agent.handle_midturn_arrival("arr-1", "/stop")
+        assert decision.verb is Verdict.STOP
+        assert [e.type for e in events] == ["cancelled", "session_ended"]
+        assert agent.cancelled["busy"] is True
+
+        events_main = await asyncio.wait_for(task, timeout=5)
+        assert "cancelled" in [e.type for e in events_main]
+
+    @pytest.mark.asyncio
+    async def test_a_stop_during_a_tool_batch_demotes_to_steer(self):
+        # The pinned Phase A rule: never kill a tool to deliver guidance —
+        # "/stop" while a tool runs steers (yield), and the turn completes.
+        llm = _ToolThenAnswerLLM()
+        agent = _agent(llm)
+        seen = {}
+
+        async def fake_execute(tool_name, args, session_id=None, confirmed=False,
+                               speaker_role="admin"):
+            decision, events = agent.handle_midturn_arrival("arr", "/stop")
+            seen["decision"] = decision
+            seen["events"] = events
+            return ExecutionResult(success=True, result="ok")
+
+        agent.tools.execute = fake_execute
+        await _collect(agent.process("read the hosts file", session_id="demote"))
+
+        decision = seen["decision"]
+        assert decision.verb is Verdict.STEER
+        assert "interrupt_demoted_to_steer" in decision.notes
+        assert seen["events"][0].type == "steer_accepted"
+        assert seen["events"][0].data["demoted"] is True
+        # The stop text rode the steer into the last tool result, and the
+        # tool was never killed: the turn ran to its answer.
+        assert any("[steered] /stop" in o for o in agent.ctx.observations)
+        assert agent.current_state == AgentState.IDLE
+
+    def test_arrival_when_idle_is_an_ordinary_turn(self):
+        agent = _agent(_SlowLLM(delay=0))
+        decision, events = agent.handle_midturn_arrival("s", "hello")
+        assert decision.verb is Verdict.NORMAL_TURN
+        assert events is None
+        assert agent._pending_steer == {}

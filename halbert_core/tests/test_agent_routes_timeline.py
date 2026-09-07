@@ -290,6 +290,13 @@ def test_message_passes_thread_manager_and_never_force_resets(client, tm, monkey
             yield StreamEvent.session_started("s1", "r1")
             yield StreamEvent.response_complete("s1")
 
+        def handle_midturn_arrival(self, session_id, text):
+            # Packet 07: nothing is in flight on this fake, so every
+            # arrival is an ordinary turn and the route falls through to
+            # process() exactly as before.
+            from halbert_core.agents.steering import decide_midturn
+            return decide_midturn(turn_active=False, is_command=False, text=text), None
+
     fake = _FakeAgent()
     monkeypatch.setattr(agent_routes, "get_agent", lambda: fake)
     r = client.post("/api/agent/message", json={"message": "hi", "session_id": "s1"})

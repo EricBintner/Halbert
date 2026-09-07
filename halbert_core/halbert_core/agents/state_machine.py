@@ -18,6 +18,7 @@ from typing import AsyncIterator, Dict, List, Optional, Callable, Any, TYPE_CHEC
 from .blocks import content_to_text
 from .states import AgentState, StateContext, CRAGAction, ToolCall, PlanStep, ConversationStatus
 from .events import StreamEvent
+from .steering import Decision, Verdict, apply_steer_to_results, decide_midturn
 from .turn_activity import TurnActivity
 from ..streaming.terminal_bridge import get_terminal_event_bus
 from ..tools.safety import THREAD_META_TOOLS
@@ -309,12 +310,15 @@ class AgentStateMachine:
         # running turn's activity generation (B1): a stop claims it, so an
         # abort that loses the race to a finishing turn declines instead of
         # double-firing. ``_turn_generation`` is the generation the running
-        # turn stamped at its start — the generation a stop observes. A
-        # plain cross-request surface in ``cancel_session``'s discipline:
-        # it never takes the turn lock, which a mid-turn arrival can never
-        # own.
+        # turn stamped at its start — the generation a stop observes.
+        # ``_pending_steer`` is the single replace-not-grow steer slot per
+        # session (B2): a mid-turn arrival steers into the next batch
+        # boundary instead of queueing a whole second turn. Both are plain
+        # cross-request surfaces in ``cancel_session``'s discipline: they
+        # never take the turn lock, which a mid-turn arrival can never own.
         self.turn_activity = TurnActivity()
         self._turn_generation: Optional[int] = None
+        self._pending_steer: Dict[str, str] = {}
 
         # Voice mode (O3): the PiperTTS instance behind the Haloysius voice
         # backend, cached once resolved so every egress turn shares one model
@@ -851,6 +855,19 @@ class AgentStateMachine:
         self.current_state = AgentState.IDLE
         self.active_sessions.pop(session_id, None)
         self.cancelled.pop(session_id, None)
+        # Packet 07 B2: a steer that never found a batch boundary (the turn
+        # ended, errored or was stopped first) leaves the slot here. The
+        # arrival's own response already confirmed it (steer_accepted), so
+        # this is bookkeeping, not a silent drop — but it is said in the
+        # log so a steer the model never saw is diagnosable. Repeated by
+        # process()'s outer finally, idempotently.
+        leftover_steer = self._pending_steer.pop(session_id, None)
+        if leftover_steer:
+            logger.info(
+                "Session %s ended with an unapplied steer (%d chars); the "
+                "turn finished before a batch boundary could apply it",
+                session_id, len(leftover_steer),
+            )
 
     async def _begin_turn(self) -> AsyncIterator[StreamEvent]:
         """Persist the user message and resolve the thread (spec §4.1-§4.4).
@@ -1172,6 +1189,12 @@ class AgentStateMachine:
                 logger.info(f"Session {session_id} cancelled between steps")
                 yield StreamEvent.cancelled(session_id)
                 return
+
+            # Packet 07 B2: the batch boundary. A steer queued by a
+            # mid-turn arrival applies here, between handler steps, so
+            # the next model call re-reads the observations with the
+            # user's mid-turn text appended to the last tool result.
+            self._drain_pending_steer()
 
             if self.current_state == AgentState.AWAITING_CONFIRMATION:
                 # Blocking state: end this SSE stream and keep the session
@@ -1523,6 +1546,135 @@ class AgentStateMachine:
                 return "stopped"
             return "turn completed, stop declined"
         return "stopped"
+
+    def request_steer(self, text: str) -> Dict[str, Any]:
+        """Queue a steer for the running turn (Packet 07 B2).
+
+        Never interrupts: the text rides the single replace-not-grow
+        pending slot for the running session and is applied at the next
+        batch boundary (``_drive``'s between-steps seam), where it is
+        appended to the last tool result — or, when the turn has produced
+        no tool result yet, enters the observations as its own
+        ``[steered]`` line so the next model call still sees it.
+        """
+        if not self._turn_in_flight() or self.ctx is None:
+            return {"accepted": False, "reason": "no turn in flight"}
+        session_id = self.ctx.session_id
+        replaced = session_id in self._pending_steer
+        # Exactly one slot per session (the packet's replace-not-grow
+        # rule): a second arrival before the boundary replaces the first
+        # rather than growing a queue. No arrival is silently dropped
+        # either way — each one's confirmation line (steer_accepted) is
+        # the observable verdict.
+        self._pending_steer[session_id] = text
+        return {
+            "accepted": True,
+            "replaced": replaced,
+            "reason": "steer queued for the next batch boundary",
+        }
+
+    def _drain_pending_steer(self) -> None:
+        """Apply the queued steer at the batch boundary (Packet 07 B2).
+
+        Called from ``_drive`` between handler steps — the seam where the
+        next model call will re-read the observations.
+        ``apply_steer_to_results`` owns the append (steers concatenate,
+        ``\\n[steered]`` marker); a turn with no tool result yet takes the
+        fresh-observation fallback so the text still reaches the model
+        instead of waiting for a boundary that may never come.
+        """
+        ctx = self.ctx
+        if ctx is None:
+            return
+        text = self._pending_steer.get(ctx.session_id)
+        if not text:
+            return
+        view: List[Dict[str, Any]] = []
+        if ctx.observations:
+            name = ctx.tool_calls[-1].name if ctx.tool_calls else "tool"
+            view = [{"name": name, "output": ctx.observations[-1]}]
+        applied = apply_steer_to_results(view, text)
+        if applied is not None:
+            # The apply fn mutated the view's copy of the last
+            # observation; write the appended text back to the line the
+            # context assembler actually reads.
+            ctx.observations[-1] = applied
+        else:
+            ctx.add_observation(f"[steered] {text}")
+        self._pending_steer.pop(ctx.session_id, None)
+
+    def handle_midturn_arrival(self, session_id: str, text: str) -> tuple:
+        """Route one arrival that reached the machine while a turn runs.
+
+        Packet 07 B1/B2. Returns ``(decision, events)``: ``events is None``
+        means NORMAL_TURN and the caller runs an ordinary turn; otherwise
+        the events are the arrival's own observable verdict — a steer
+        rides the single pending slot, a stop claims the running turn's
+        activity generation — so no mid-turn arrival is ever silently
+        dropped. The running turn is ``self.ctx``'s (the lock serialises
+        everything), not the arrival's own session id.
+        """
+        if not self._turn_in_flight() or self.ctx is None:
+            return (
+                decide_midturn(turn_active=False, is_command=False, text=text),
+                None,
+            )
+        tokens = (text or "").strip().split()
+        # Only "/stop" is a machine command today: the composer's other
+        # slash commands ("/model") are parsed away client-side, and an
+        # unknown "/anything" is text the model should see, not a verb.
+        is_command = bool(tokens) and tokens[0].lower() == "/stop"
+        tool_batch_in_flight = self.current_state in (
+            AgentState.EXECUTING,
+            AgentState.SEARCHING,
+            AgentState.READING,
+        )
+        decision = decide_midturn(
+            turn_active=True,
+            is_command=is_command,
+            text=text,
+            tool_batch_in_flight=tool_batch_in_flight,
+            # REDIRECT awaits a cancellable provider client (the Phase B
+            # verify-first finding: none of today's clients expose one),
+            # so the predicate is never reported and redirect stays
+            # dormant, degrading to steer by decide_midturn's rules.
+            in_model_request=False,
+        )
+        if decision.verb == Verdict.STOP:
+            outcome = self.request_stop(self.ctx.session_id)
+            if outcome == "stopped":
+                # Existing vocabulary only: the arrival's stream closes
+                # the way the stopped turn's own stream closes.
+                events = [
+                    StreamEvent.cancelled(session_id),
+                    StreamEvent.session_ended(session_id, 0, 0),
+                ]
+            else:
+                # New event type; backend-only until a frontend consumer
+                # renders it (see the packet's Phase C decisions).
+                events = [
+                    StreamEvent(
+                        type="stop_declined",
+                        session_id=session_id,
+                        data={"reason": outcome},
+                    )
+                ]
+            return decision, events
+        if decision.verb in (Verdict.STEER, Verdict.REDIRECT):
+            steer = self.request_steer(text)
+            events = [
+                StreamEvent(
+                    type="steer_accepted",
+                    session_id=session_id,
+                    data={
+                        "reason": decision.reason,
+                        "replaced": bool(steer.get("replaced")),
+                        "demoted": "interrupt_demoted_to_steer" in decision.notes,
+                    },
+                )
+            ]
+            return decision, events
+        return decision, None
 
     def _detect_oscillation(self) -> bool:
         """Detect A→B→A→B pattern indicating infinite loop."""

@@ -96,3 +96,62 @@ class TestStopRoute:
         # without firing anything twice.
         assert api.post("/api/agent/stop/run").json()["stopped"] is True
 
+
+class TestMidturnArrivals:
+    def test_text_while_busy_steers_instead_of_queueing_a_turn(self, monkeypatch):
+        agent = _busy_agent()
+        api = _client(monkeypatch, agent)
+        r = api.post("/api/agent/message", json={"message": "also check the logs"})
+        assert r.status_code == 200
+        assert _sse_types(r.text) == ["steer_accepted"]
+        # The text rode the single replace-not-grow slot for the RUNNING
+        # turn's session, not the arrival's own id.
+        assert agent._pending_steer == {"run": "also check the logs"}
+
+    def test_a_second_arrival_replaces_the_slot(self, monkeypatch):
+        agent = _busy_agent()
+        api = _client(monkeypatch, agent)
+        api.post("/api/agent/message", json={"message": "first"})
+        r = api.post("/api/agent/message", json={"message": "second"})
+        events = [
+            json.loads(line[6:])
+            for line in r.text.splitlines()
+            if line.startswith("data: ")
+        ]
+        assert events[0]["type"] == "steer_accepted"
+        assert events[0]["replaced"] is True
+        assert agent._pending_steer == {"run": "second"}
+
+    def test_stop_while_busy_cancels_with_existing_event_vocabulary(self, monkeypatch):
+        agent = _busy_agent()
+        api = _client(monkeypatch, agent)
+        r = api.post("/api/agent/message", json={"message": "/stop"})
+        assert _sse_types(r.text) == ["cancelled", "session_ended"]
+        assert agent.cancelled["run"] is True
+
+    def test_stop_while_a_tool_batch_is_in_flight_demotes_to_steer(self, monkeypatch):
+        agent = _busy_agent(state=AgentState.READING)
+        api = _client(monkeypatch, agent)
+        r = api.post("/api/agent/message", json={"message": "/stop"})
+        events = [
+            json.loads(line[6:])
+            for line in r.text.splitlines()
+            if line.startswith("data: ")
+        ]
+        assert events[0]["type"] == "steer_accepted"
+        assert events[0]["demoted"] is True
+        assert agent._pending_steer == {"run": "/stop"}
+        assert agent.cancelled == {}      # the tool was never killed
+
+    def test_an_arrival_with_images_keeps_the_queue_a_turn_path(self, monkeypatch):
+        # Images ride the per-turn context; there is no mid-turn seam for
+        # them yet, so they are not steered — the arrival falls through to
+        # an ordinary (queued) turn.
+        agent = _busy_agent()
+        api = _client(monkeypatch, agent)
+        agent._turn_lock._locked = False   # let the queued turn actually run
+        r = api.post("/api/agent/message", json={"message": "look at this", "images": ["x"]})
+        types = _sse_types(r.text)
+        assert "steer_accepted" not in types
+        assert "session_started" in types
+        assert agent._pending_steer == {}
