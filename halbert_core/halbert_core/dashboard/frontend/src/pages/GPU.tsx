@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 /**
- * GPU Page - GPU hardware detection and driver management.
- * 
+ * GPU Page - GPU hardware detection, driver management, and AI accelerators.
+ *
  * Phase 14: GPU Driver Assistant
- * Shows GPU hardware, current drivers, and provides AI-powered recommendations.
+ * GPU-1 (2026-09-07): Universal GPU + AI accelerator awareness.
+ * Supports discrete GPUs (NVIDIA/AMD/Intel), unified-memory architectures
+ * (Apple Silicon, NVIDIA RTX Spark, AMD Strix Halo), and AI accelerators
+ * (Coral TPU, Hailo, MemryX, Intel/AMD NPU, Apple ANE).
  */
 
 import { useEffect, useState } from 'react'
@@ -26,6 +29,10 @@ import {
   Monitor,
   HelpCircle,
   Download,
+  Apple,
+  CircuitBoard,
+  Microchip,
+  Activity,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { apiUrl } from '@/lib/apiBase'
@@ -37,19 +44,27 @@ import { AIAnalysisPanel } from '@/components/AIAnalysisPanel'
 interface GPUInfo {
   vendor: string
   model: string
-  vram_mb: number
+  vram_mb: number | null
   driver_version: string | null
-  driver_type: string | null  // 'nvidia', 'nvidia-open', 'nouveau', 'amdgpu', 'radeon', 'i915', etc.
+  driver_type: string | null
   cuda_version: string | null
   pci_id: string
-  role: 'auto' | 'display' | 'compute'  // GPU role for multi-GPU systems
-  // Runtime stats (if nvidia-smi available)
+  role: 'auto' | 'display' | 'compute'
+  // Runtime stats
   temperature_c: number | null
   power_draw_w: number | null
   power_limit_w: number | null
   utilization_percent: number | null
   memory_used_mb: number | null
   memory_total_mb: number | null
+  // GPU-1 normalized fields
+  memory_architecture: 'discrete' | 'unified' | 'integrated'
+  unified_memory_gb: number | null
+  gpu_memory_ceiling_gb: number | null
+  gpu_memory_in_use_gb: number | null
+  core_count: number | null
+  compute_api: string | null  // 'cuda' | 'metal' | 'rocm' | 'directml' | 'opencl'
+  memory_source_label: string  // 'VRAM' | 'Unified Memory' | 'System RAM'
 }
 
 interface GPUData {
@@ -57,16 +72,65 @@ interface GPUData {
   has_nvidia: boolean
   has_amd: boolean
   has_intel: boolean
+  has_apple?: boolean
   nvidia_smi_available: boolean
   recommended_driver: string | null
   driver_status: 'optimal' | 'outdated' | 'missing' | 'unknown'
   issues: string[]
 }
 
-const vendorIcons: Record<string, string> = {
-  nvidia: '🟢',
-  amd: '🔴',
-  intel: '🔵',
+interface AcceleratorInfo {
+  type: 'tpu' | 'npu' | 'ane'
+  vendor: string
+  model: string
+  form_factor: string | null
+  device_node: string | null
+  tops: number | null
+  driver_loaded: boolean
+  driver_name: string | null
+  driver_version: string | null
+  firmware_version: string | null
+  temperature_c: number | null
+  utilization_percent: number | null
+  power_draw_w: number | null
+  runtime_available: boolean
+  runtime_version: string | null
+  status: 'active' | 'idle' | 'missing_driver' | 'missing_runtime' | 'not_detected'
+}
+
+interface AcceleratorData {
+  accelerators: AcceleratorInfo[]
+  has_tpu: boolean
+  has_npu: boolean
+  has_ane: boolean
+  total_tops: number | null
+  issues: string[]
+}
+
+/** Vendor icon (lucide, no emoji per project rules). */
+function VendorIcon({ vendor, className }: { vendor: string; className?: string }) {
+  const v = vendor.toLowerCase()
+  if (v === 'nvidia') return <CircuitBoard className={cn('text-success', className)} />
+  if (v === 'amd') return <CircuitBoard className={cn('text-error', className)} />
+  if (v === 'intel') return <CircuitBoard className={cn('text-info', className)} />
+  if (v === 'apple') return <Apple className={className} />
+  if (v === 'google') return <Microchip className={className} />
+  if (v === 'hailo') return <Microchip className={className} />
+  if (v === 'memryx') return <Microchip className={className} />
+  return <CircuitBoard className={className} />
+}
+
+/** Compute API display label. */
+function computeApiLabel(api: string | null): string {
+  if (!api) return 'Unknown'
+  const labels: Record<string, string> = {
+    cuda: 'CUDA',
+    metal: 'Metal',
+    rocm: 'ROCm',
+    directml: 'DirectML',
+    opencl: 'OpenCL',
+  }
+  return labels[api] || api
 }
 
 /** Diagnostic prompt for the shared AI analysis panel (specialist tier, host scope). */
@@ -74,17 +138,25 @@ const GPU_DIAGNOSTIC_MESSAGE = `Analyze my GPU setup on this system for driver a
 
 export function GPU() {
   const [gpuData, setGpuData] = useState<GPUData | null>(null)
+  const [accelData, setAccelData] = useState<AcceleratorData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [refreshing, setRefreshing] = useState(false)
 
   const loadGPUData = async () => {
     try {
-      const response = await fetch(apiUrl('/api/gpu/info'))
-      if (!response.ok) throw new Error('Failed to load GPU info')
-      const data = await response.json()
+      const [gpuRes, accelRes] = await Promise.all([
+        fetch(apiUrl('/api/gpu/info')),
+        fetch(apiUrl('/api/gpu/accelerators')),
+      ])
+      if (!gpuRes.ok) throw new Error('Failed to load GPU info')
+      const data = await gpuRes.json()
       setGpuData(data)
       setError(null)
+      if (accelRes.ok) {
+        const accel = await accelRes.json()
+        setAccelData(accel)
+      }
     } catch (err) {
       setError('Failed to load GPU information')
       console.error(err)
@@ -96,7 +168,6 @@ export function GPU() {
 
   useEffect(() => {
     loadGPUData()
-    // Refresh every 5 seconds for live stats
     const interval = setInterval(loadGPUData, 5000)
     return () => clearInterval(interval)
   }, [])
@@ -111,6 +182,7 @@ export function GPU() {
     if (model.includes('nvidia') || gpu.vendor.toLowerCase().includes('nvidia')) return 'nvidia'
     if (model.includes('amd') || model.includes('radeon') || gpu.vendor.toLowerCase().includes('amd')) return 'amd'
     if (model.includes('intel') || gpu.vendor.toLowerCase().includes('intel')) return 'intel'
+    if (model.includes('apple') || gpu.vendor.toLowerCase().includes('apple')) return 'apple'
     return 'unknown'
   }
 
@@ -160,13 +232,15 @@ export function GPU() {
     )
   }
 
+  const allIssues = [...(gpuData.issues || []), ...(accelData?.issues || [])]
+
   return (
     <div className="space-y-6">
       {/* Header */}
       <PageHeader
         icon={<Cpu className="h-8 w-8" />}
         title="GPU"
-        description={`${gpuData.gpus.length} GPU${gpuData.gpus.length !== 1 ? 's' : ''} detected`}
+        description={`${gpuData.gpus.length} GPU${gpuData.gpus.length !== 1 ? 's' : ''} detected${accelData && accelData.accelerators.length > 0 ? ` · ${accelData.accelerators.length} AI accelerator${accelData.accelerators.length !== 1 ? 's' : ''}` : ''}`}
         scanning={refreshing}
         onScan={handleRefresh}
         scanText="Refresh"
@@ -174,7 +248,7 @@ export function GPU() {
       />
 
       {/* Issues Alert */}
-      {gpuData.issues.length > 0 && (
+      {allIssues.length > 0 && (
         <Card className="border-warning/50 bg-warning/5">
           <CardContent className="pt-6">
             <div className="flex items-start gap-3">
@@ -182,7 +256,7 @@ export function GPU() {
               <div>
                 <h3 className="font-medium text-warning dark:text-warning">Issues Detected</h3>
                 <ul className="mt-2 space-y-1 text-sm text-muted-foreground">
-                  {gpuData.issues.map((issue, i) => (
+                  {allIssues.map((issue, i) => (
                     <li key={i}>• {issue}</li>
                   ))}
                 </ul>
@@ -197,50 +271,65 @@ export function GPU() {
         {gpuData.gpus.map((gpu, index) => {
           const vendor = getVendor(gpu)
           const hasStats = gpu.temperature_c !== null || gpu.utilization_percent !== null
-          
+          const isUnified = gpu.memory_architecture === 'unified'
+          const isIntegrated = gpu.memory_architecture === 'integrated'
+          const isApple = vendor === 'apple'
+          const memoryLabel = gpu.memory_source_label || (isUnified ? 'Unified Memory' : isIntegrated ? 'System RAM' : 'VRAM')
+
           return (
             <Card key={index}>
               <CardHeader>
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
                     <div className={cn(
-                      "w-10 h-10 rounded-lg flex items-center justify-center text-xl",
-                      vendor === 'nvidia' && "bg-success/10",
-                      vendor === 'amd' && "bg-error/10",
-                      vendor === 'intel' && "bg-info/10",
+                      'w-10 h-10 rounded-lg flex items-center justify-center',
+                      vendor === 'nvidia' && 'bg-success/10',
+                      vendor === 'amd' && 'bg-error/10',
+                      vendor === 'intel' && 'bg-info/10',
+                      vendor === 'apple' && 'bg-muted',
                     )}>
-                      {vendorIcons[vendor] || '🎮'}
+                      <VendorIcon vendor={vendor} className="h-5 w-5" />
                     </div>
                     <div>
                       <CardTitle className="text-lg">{gpu.model}</CardTitle>
-                      <CardDescription>{gpu.vendor} • {gpu.pci_id}</CardDescription>
+                      <CardDescription>
+                        {gpu.vendor}
+                        {gpu.core_count && ` · ${gpu.core_count} cores`}
+                        {gpu.compute_api && ` · ${computeApiLabel(gpu.compute_api)}`}
+                      </CardDescription>
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
-                    {/* GPU Role Selector */}
-                    <Select
-                      size="sm"
-                      value={gpu.role || 'auto'}
-                      onChange={async (e) => {
-                        const newRole = e.target.value
-                        const pciIdSafe = gpu.pci_id.replace(/:/g, '-')
-                        try {
-                          const res = await fetch(apiUrl(`/api/gpu/role/${pciIdSafe}?role=${newRole}`), { method: 'PUT' })
-                          if (res.ok) {
-                            loadGPUData() // Refresh to show new role
+                    {/* GPU Role Selector — hidden for Apple (single-GPU SoC) */}
+                    {!isApple && (
+                      <Select
+                        size="sm"
+                        value={gpu.role || 'auto'}
+                        onChange={async (e) => {
+                          const newRole = e.target.value
+                          const pciIdSafe = gpu.pci_id.replace(/:/g, '-')
+                          try {
+                            const res = await fetch(apiUrl(`/api/gpu/role/${pciIdSafe}?role=${newRole}`), { method: 'PUT' })
+                            if (res.ok) {
+                              loadGPUData()
+                            }
+                          } catch (err) {
+                            console.error('Failed to set GPU role:', err)
                           }
-                        } catch (err) {
-                          console.error('Failed to set GPU role:', err)
-                        }
-                      }}
-                      title="Set GPU role for multi-GPU systems"
-                    >
-                      <option value="auto">Auto</option>
-                      <option value="display">Display</option>
-                      <option value="compute">Compute</option>
-                    </Select>
+                        }}
+                        title="Set GPU role for multi-GPU systems"
+                      >
+                        <option value="auto">Auto</option>
+                        <option value="display">Display</option>
+                        <option value="compute">Compute</option>
+                      </Select>
+                    )}
                     <Badge variant="outline" className="text-xs">
-                      {gpu.vram_mb ? `${(gpu.vram_mb / 1024).toFixed(0)} GB VRAM` : 'Unknown VRAM'}
+                      {isUnified && gpu.unified_memory_gb
+                        ? `${gpu.unified_memory_gb} GB Unified`
+                        : gpu.vram_mb
+                          ? `${(gpu.vram_mb / 1024).toFixed(0)} GB ${memoryLabel}`
+                          : `Unknown ${memoryLabel}`}
                     </Badge>
                     <WhyBrain
                       itemId={`gpu:${gpu.pci_id}`}
@@ -262,8 +351,10 @@ export function GPU() {
                           driver_type: gpu.driver_type,
                           driver_version: gpu.driver_version,
                           cuda_version: gpu.cuda_version,
+                          memory_architecture: gpu.memory_architecture,
+                          compute_api: gpu.compute_api,
                         },
-                        context: `GPU: ${gpu.model}\nVendor: ${gpu.vendor}\nDriver: ${gpu.driver_type || 'Unknown'} ${gpu.driver_version || ''}\nVRAM: ${gpu.vram_mb ? (gpu.vram_mb / 1024).toFixed(0) + ' GB' : 'Unknown'}\nCUDA: ${gpu.cuda_version || 'N/A'}`,
+                        context: `GPU: ${gpu.model}\nVendor: ${gpu.vendor}\nDriver: ${gpu.driver_type || 'Unknown'} ${gpu.driver_version || ''}\nMemory: ${gpu.vram_mb ? (gpu.vram_mb / 1024).toFixed(0) + ' GB ' + memoryLabel : 'Unknown'}\nCompute API: ${computeApiLabel(gpu.compute_api)}\nCUDA: ${gpu.cuda_version || 'N/A'}`,
                       }}
                       size="sm"
                     />
@@ -289,13 +380,35 @@ export function GPU() {
                   )}
                   {gpu.memory_total_mb && (
                     <div className="space-y-1">
-                      <p className="text-xs text-muted-foreground">Memory</p>
+                      <p className="text-xs text-muted-foreground">{memoryLabel}</p>
                       <p className="font-medium">
                         {((gpu.memory_used_mb || 0) / 1024).toFixed(1)} / {(gpu.memory_total_mb / 1024).toFixed(1)} GB
                       </p>
                     </div>
                   )}
                 </div>
+
+                {/* Unified memory detail for unified architectures */}
+                {isUnified && gpu.unified_memory_gb && (
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-4 border-t pt-4">
+                    <div className="space-y-1">
+                      <p className="text-xs text-muted-foreground">Total Unified Pool</p>
+                      <p className="font-medium">{gpu.unified_memory_gb} GB</p>
+                    </div>
+                    {gpu.gpu_memory_ceiling_gb && (
+                      <div className="space-y-1">
+                        <p className="text-xs text-muted-foreground">GPU Working-Set Ceiling</p>
+                        <p className="font-medium">{gpu.gpu_memory_ceiling_gb} GB</p>
+                      </div>
+                    )}
+                    {gpu.gpu_memory_in_use_gb !== null && (
+                      <div className="space-y-1">
+                        <p className="text-xs text-muted-foreground">GPU Memory In Use</p>
+                        <p className="font-medium">{gpu.gpu_memory_in_use_gb} GB</p>
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {/* Live Stats (if available) */}
                 {hasStats && (
@@ -319,7 +432,7 @@ export function GPU() {
                           <div className="flex items-center justify-between text-sm">
                             <span className="flex items-center gap-1.5">
                               <MemoryStick className="h-4 w-4 text-muted-foreground" />
-                              VRAM
+                              {memoryLabel}
                             </span>
                             <span className="font-medium">{Math.round((gpu.memory_used_mb / gpu.memory_total_mb) * 100)}%</span>
                           </div>
@@ -334,19 +447,19 @@ export function GPU() {
                               Temp
                             </span>
                             <span className={cn(
-                              "font-medium",
-                              gpu.temperature_c > 80 && "text-error",
-                              gpu.temperature_c > 70 && gpu.temperature_c <= 80 && "text-warning",
+                              'font-medium',
+                              gpu.temperature_c > 80 && 'text-error',
+                              gpu.temperature_c > 70 && gpu.temperature_c <= 80 && 'text-warning',
                             )}>
                               {gpu.temperature_c}°C
                             </span>
                           </div>
-                          <Progress 
-                            value={Math.min(100, (gpu.temperature_c / 100) * 100)} 
+                          <Progress
+                            value={Math.min(100, (gpu.temperature_c / 100) * 100)}
                             className={cn(
-                              "h-2",
-                              gpu.temperature_c > 80 && "[&>div]:bg-error",
-                              gpu.temperature_c > 70 && gpu.temperature_c <= 80 && "[&>div]:bg-warning",
+                              'h-2',
+                              gpu.temperature_c > 80 && '[&>div]:bg-error',
+                              gpu.temperature_c > 70 && gpu.temperature_c <= 80 && '[&>div]:bg-warning',
                             )}
                           />
                         </div>
@@ -368,10 +481,16 @@ export function GPU() {
                         </div>
                       )}
                     </div>
+                    {/* Note for unified architectures where temp/power require elevated privileges */}
+                    {isUnified && gpu.temperature_c === null && gpu.power_draw_w === null && (
+                      <p className="text-xs text-muted-foreground mt-3">
+                        Temperature and power require elevated privileges on this platform.
+                      </p>
+                    )}
                   </div>
                 )}
 
-                {/* Quick Links */}
+                {/* Quick Links — vendor-specific, hidden for Apple (no driver downloads) */}
                 {vendor === 'nvidia' && (
                   <div className="border-t pt-4 flex gap-2">
                     <Button variant="outline" size="sm" asChild>
@@ -407,15 +526,106 @@ export function GPU() {
         })}
       </div>
 
+      {/* AI Accelerators Section */}
+      {accelData && accelData.accelerators.length > 0 && (
+        <div className="space-y-4">
+          <div className="flex items-center gap-2">
+            <Activity className="h-5 w-5 text-muted-foreground" />
+            <h2 className="text-xl font-semibold">AI Accelerators</h2>
+            {accelData.total_tops && (
+              <Badge variant="outline" className="text-xs">
+                {accelData.total_tops} TOPS total
+              </Badge>
+            )}
+          </div>
+          <div className="grid gap-4 md:grid-cols-2">
+            {accelData.accelerators.map((acc, index) => (
+              <Card key={index}>
+                <CardHeader>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-lg flex items-center justify-center bg-muted">
+                        <VendorIcon vendor={acc.vendor} className="h-5 w-5" />
+                      </div>
+                      <div>
+                        <CardTitle className="text-base">{acc.model}</CardTitle>
+                        <CardDescription>
+                          {acc.vendor}
+                          {acc.tops && ` · ${acc.tops} TOPS`}
+                          {acc.form_factor && ` · ${acc.form_factor}`}
+                        </CardDescription>
+                      </div>
+                    </div>
+                    <Badge
+                      variant={acc.status === 'active' ? 'default' : 'destructive'}
+                      className="text-xs"
+                    >
+                      {acc.status === 'active' && <CheckCircle className="h-3 w-3 mr-1" />}
+                      {acc.status === 'missing_driver' && <AlertTriangle className="h-3 w-3 mr-1" />}
+                      {acc.status === 'missing_runtime' && <AlertTriangle className="h-3 w-3 mr-1" />}
+                      {acc.status}
+                    </Badge>
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid grid-cols-2 gap-4 text-sm">
+                    <div className="space-y-1">
+                      <p className="text-xs text-muted-foreground">Driver</p>
+                      <p className="font-medium">
+                        {acc.driver_loaded
+                          ? `${acc.driver_name || 'Loaded'}${acc.driver_version ? ` ${acc.driver_version}` : ''}`
+                          : 'Not loaded'}
+                      </p>
+                    </div>
+                    <div className="space-y-1">
+                      <p className="text-xs text-muted-foreground">Runtime</p>
+                      <p className="font-medium">
+                        {acc.runtime_available
+                          ? acc.runtime_version || 'Available'
+                          : 'Not available'}
+                      </p>
+                    </div>
+                    {acc.firmware_version && (
+                      <div className="space-y-1">
+                        <p className="text-xs text-muted-foreground">Firmware</p>
+                        <p className="font-medium">{acc.firmware_version}</p>
+                      </div>
+                    )}
+                    {acc.device_node && (
+                      <div className="space-y-1">
+                        <p className="text-xs text-muted-foreground">Device</p>
+                        <p className="font-medium font-mono text-xs">{acc.device_node}</p>
+                      </div>
+                    )}
+                    {acc.temperature_c !== null && (
+                      <div className="space-y-1">
+                        <p className="text-xs text-muted-foreground">Temperature</p>
+                        <p className="font-medium">{acc.temperature_c}°C</p>
+                      </div>
+                    )}
+                    {acc.utilization_percent !== null && (
+                      <div className="space-y-1">
+                        <p className="text-xs text-muted-foreground">Utilization</p>
+                        <p className="font-medium">{acc.utilization_percent}%</p>
+                      </div>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* No GPU Detected */}
-      {gpuData.gpus.length === 0 && (
+      {gpuData.gpus.length === 0 && (!accelData || accelData.accelerators.length === 0) && (
         <Card>
           <CardContent className="pt-6">
             <div className="text-center py-8">
               <Monitor className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
-              <h3 className="font-medium mb-2">No Dedicated GPU Detected</h3>
+              <h3 className="font-medium mb-2">No GPU Detected</h3>
               <p className="text-sm text-muted-foreground">
-                This system appears to be using integrated graphics or no GPU was found.
+                This system appears to have no detectable GPU or AI accelerator.
               </p>
             </div>
           </CardContent>
