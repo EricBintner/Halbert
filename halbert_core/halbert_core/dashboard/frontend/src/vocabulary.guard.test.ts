@@ -77,6 +77,13 @@ describe('ratified vocabulary', () => {
         // This file names the retired terms in order to ban them.
         if (file.endsWith('/vocabulary.guard.test.ts')) continue
         stripComments(SOURCES[file]).split('\n').forEach((line, i) => {
+          // A line that asserts the term is ABSENT has to name it. Exempting
+          // the assertion rather than the file keeps the guard's teeth: a
+          // vocabulary test that starts *using* the retired term is still an
+          // offender, which is the failure this guard exists for — two of
+          // them had been edited to match the drift, so the drift looked
+          // verified.
+          if (/\bnot\.(toMatch|toContain|toHaveTextContent)\b/.test(line)) return
           if (bad.test(line)) offenders.push(`${file}:${i + 1}`)
         })
       }
