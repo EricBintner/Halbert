@@ -9,6 +9,8 @@ Based on research5.md Part 6.
 
 from __future__ import annotations
 import asyncio
+import hashlib
+import json
 import logging
 import re
 import time
@@ -3182,6 +3184,51 @@ class AgentStateMachine:
         # Always proceed to responding after reflection
         yield await self._transition(AgentState.RESPONDING)
 
+    @staticmethod
+    def _echo_guard_egress(
+        text: str, *, session_id: str, request_id: Optional[str] = None
+    ) -> str:
+        """Echo guard at the outbound seam — warn-and-redact (Packet 05 B2).
+
+        The guard's window set holds the material Halbert deliberately
+        egressed through the acknowledged config path (noted at that site).
+        A reply that reproduces a long verbatim chunk of it means the model
+        echoed context it should have paraphrased: log a structured warning
+        carrying only a HASH of the matched material (never the material),
+        then redact the reply through the variant registry. The reply is
+        never dropped — single-user assistant; the warning is the review
+        signal and may be upgraded to suppression later.
+
+        Non-fatal by construction: a guard failure must never cost the user
+        their answer.
+        """
+        try:
+            from ..security.echo_guard import get_global_echo_guard
+            from ..ingestion.redaction_registry import get_global_registry
+
+            matched = get_global_echo_guard().find_match(text)
+            if matched is None:
+                return text
+            logger.warning(
+                json.dumps(
+                    {
+                        "event": "echo_guard_flagged",
+                        "session_id": session_id,
+                        "request_id": request_id,
+                        "match_sha256": hashlib.sha256(
+                            matched.encode("utf-8")
+                        ).hexdigest(),
+                        "matched_chars": len(matched),
+                        "reply_chars": len(text),
+                        "redacted": True,
+                    }
+                )
+            )
+            return get_global_registry().redact_text(text)
+        except Exception as e:
+            logger.debug(f"echo guard scan skipped (non-fatal): {e}")
+            return text
+
     async def _handle_responding(self) -> AsyncIterator[StreamEvent]:
         """
         RESPONDING state: Generate final response.
@@ -3354,6 +3401,22 @@ class AgentStateMachine:
         # the Haloysius line written when a thread closes, replace
         # memory.store_interaction. Storing every Q/A made each turn a global
         # memory that leaked into unrelated threads.
+
+        # Echo guard at the outbound seam (Packet 05 B2). This commit is
+        # the single point the turn's final text passes on its way to every
+        # user-visible surface: response_complete (the frontend adopts
+        # this content as the rendered bubble), _end_turn's persisted
+        # assistant row (it joins ctx.response_chunks, which from here on
+        # is exactly this text), and the modality demux below (display,
+        # speech, TTS egress). Redacting here covers all of them at once.
+        # The live response_chunk stream above is a transient draft the
+        # frontend replaces with the committed text — the guard
+        # deliberately operates on the committed state, not the drafts.
+        clean_response = self._echo_guard_egress(
+            clean_response,
+            session_id=self.ctx.session_id,
+            request_id=getattr(self.ctx, "request_id", None),
+        )
 
         # Commit the stripped text as the session's final response text
         self.ctx.response_chunks.clear()

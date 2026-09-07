@@ -44,6 +44,7 @@ from .secure_response import describe_secret
 from .secret_correlation import describe_with_correlations
 from .snapshot import CANON_DIR, SNAP_DIR
 from ..ingestion.redaction_registry import get_global_registry
+from ..security.echo_guard import get_global_echo_guard
 from ..utils.paths import data_dir
 
 logger = logging.getLogger(__name__)
@@ -341,13 +342,22 @@ def get_config_value(
             # behave differently for different key classes. Only this
             # code path may set the marker — see security_constants.
             result[EGRESS_ACK_FIELD] = True
-            # Variant registration (Packet 05 A2): the moment a secret is
-            # deliberately egressed, every encoded form of it (URL-encoded,
-            # JSON-escaped) becomes known-dangerous everywhere else. The
-            # acked value itself still crosses raw here — the escape is the
-            # escape — but any OTHER response that echoes the value in any
-            # form is now redacted by the registry pass on the boundary.
-            get_global_registry().register(value)
+            # Variant registration (Packet 05 A2) + echo-guard note (B2):
+            # the moment a secret is deliberately egressed, every encoded
+            # form of it (URL-encoded, JSON-escaped) becomes
+            # known-dangerous everywhere else, and its text is noted as
+            # injected material so an assistant reply reproducing a long
+            # verbatim chunk of it is flagged at the outbound seam. The
+            # acked value itself still crosses raw here — the escape is
+            # the escape — but any OTHER response that echoes the value
+            # in any form is now caught by the registry pass and the echo
+            # guard. Both layers are text-only by construction
+            # (redact_text / chunk windows); a non-string value has no
+            # text form to register and previously crashed register() —
+            # a YAML ``password: 12345`` raised TypeError here.
+            if isinstance(value, str):
+                get_global_registry().register(value)
+                get_global_echo_guard().note_injected(value)
         else:  # local_only (default)
             result["description"] = describe_with_correlations(key, value, path)
             result["redacted"] = True
