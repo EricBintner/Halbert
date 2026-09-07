@@ -15,6 +15,14 @@ Schema (documentation/design/model-picker-independent-2026-08-26.md §4)::
       specialist_model: {enabled, endpoint_id, model}
       vision_model:     {enabled, endpoint_id, model}
       secure_model:     {enabled, endpoint_id, model}  # local-only enforced
+      utility_model:    {enabled, endpoint_id, model}  # optional; internal side tasks
+
+``utility_model`` is D-7's fifth slot: the operator may pin a cheap model for
+internal side work (summarization, titling, future TTS summarization). It is
+optional and empty by default — when unset, :mod:`model.utility_slot`
+resolves a model through its ladder (whose floor is the chat slot) and
+callers fall back to the chat slot itself. It is a backend slot: the picker
+UI does not offer it, and no surface names whatever model fills it.
 
 Callers that change a slot send the whole slot dict (all three keys).
 ``CHAT_CAPABLE_PROVIDERS`` is imported lazily from :mod:`model.client` so the
@@ -61,7 +69,7 @@ from .config_locator import find_models_config, write_models_config
 
 logger = logging.getLogger("halbert.model.llm_config")
 
-SLOTS = ("chat_model", "specialist_model", "vision_model", "secure_model")
+SLOTS = ("chat_model", "specialist_model", "vision_model", "secure_model", "utility_model")
 LEGACY_KEYS = ("orchestrator", "specialist", "vision", "saved_endpoints")
 DROPPED_KEYS = (
     "embedding", "small_model", "large_model", "code_model", "coordinator_model",
@@ -156,6 +164,7 @@ def default_llm_config() -> Dict[str, Any]:
         "specialist_model": _empty_slot(),
         "vision_model": _empty_slot(),
         "secure_model": _empty_slot(),
+        "utility_model": _empty_slot(),
     }
 
 
