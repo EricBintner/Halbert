@@ -49,6 +49,13 @@ describe('EntityIdentityCard vocabulary', () => {
     expect(screen.getByText('Independent Node')).toBeTruthy()
   })
 
+  it('does not invent a third name for a mode', () => {
+    const { container } = render(
+      <EntityIdentityCard state={STATE} onRefresh={() => {}} />
+    )
+    expect(container.textContent).not.toMatch(/Independent Body/i)
+  })
+
   it('calls the machine a body', () => {
     const { container } = render(
       <EntityIdentityCard state={STATE} onRefresh={() => {}} />
