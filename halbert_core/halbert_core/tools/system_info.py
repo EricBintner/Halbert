@@ -10,9 +10,40 @@ from __future__ import annotations
 import asyncio
 import os
 import logging
+import re
 from typing import Dict, Any, List
 
 logger = logging.getLogger('halbert.tools.system_info')
+
+
+#: A systemd unit name, as strictly as systemd itself will accept one. Anchored,
+#: and deliberately excluding a leading '-' so a unit name can never be read as
+#: an option by the binary we hand it to.
+_UNIT_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9:_.@-]{0,255}$")
+
+
+async def _run(*argv: str, timeout: float = 15.0) -> tuple[int, str, str]:
+    """Run a command as an argv list and return (returncode, stdout, stderr).
+
+    SEC-2: every call site in this module used ``create_subprocess_shell`` with an
+    f-string. One of them interpolated a *model-supplied* service name
+    (``get_service_status``), so a tool call was a shell. There is no argument for
+    a shell here — none of these commands need globbing, pipes or expansion that
+    Python cannot do itself — so the shell is gone rather than escaped. Escaping
+    is a thing you get wrong once.
+    """
+    proc = await asyncio.create_subprocess_exec(
+        *argv,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    try:
+        out, err = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.wait()
+        raise
+    return proc.returncode or 0, out.decode(errors="replace"), err.decode(errors="replace")
 
 
 async def get_disk_usage(args: Dict) -> str:
@@ -133,13 +164,15 @@ async def get_network_info(args: Dict) -> str:
                 # Get IP address
                 ip = "No IP"
                 try:
-                    proc = await asyncio.create_subprocess_shell(
-                        f"ip addr show {iface} | grep 'inet ' | awk '{{print $2}}'",
-                        stdout=asyncio.subprocess.PIPE,
-                        stderr=asyncio.subprocess.PIPE
-                    )
-                    stdout, _ = await proc.communicate()
-                    ip = stdout.decode().strip() or "No IP"
+                    _rc, out, _err = await _run("ip", "addr", "show", iface)
+                    # The grep|awk pipeline this replaces existed only to pull
+                    # the inet field out; Python can do that without a shell.
+                    addrs = [
+                        parts[1]
+                        for parts in (line.split() for line in out.splitlines())
+                        if len(parts) > 1 and parts[0] == "inet"
+                    ]
+                    ip = " ".join(addrs) or "No IP"
                 except:
                     pass
                 
@@ -165,22 +198,22 @@ async def get_network_info(args: Dict) -> str:
 async def get_process_list(args: Dict) -> str:
     """Get running processes sorted by CPU or memory."""
     sort_by = args.get("sort", "cpu")  # cpu or memory
-    limit = args.get("limit", 10)
-    
+    # The model supplies `limit`, and it reached an f-string. Coerce and bound it
+    # rather than trusting the type: `head -n <whatever the model said>` is not a
+    # thing to find out about later.
     try:
-        if sort_by == "memory":
-            cmd = f"ps aux --sort=-%mem | head -n {limit + 1}"
-        else:
-            cmd = f"ps aux --sort=-%cpu | head -n {limit + 1}"
-        
-        proc = await asyncio.create_subprocess_shell(
-            cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
-        )
-        stdout, _ = await proc.communicate()
-        
-        return f"Top {limit} processes by {sort_by}:\n{stdout.decode()}"
+        limit = max(1, min(int(args.get("limit", 10)), 200))
+    except (TypeError, ValueError):
+        limit = 10
+
+    try:
+        sort_key = "-%mem" if sort_by == "memory" else "-%cpu"
+        _rc, out, _err = await _run("ps", "aux", f"--sort={sort_key}")
+        # `| head -n N` in Python, so there is no pipeline and so no shell.
+        lines = out.splitlines()
+        trimmed = "\n".join(lines[: limit + 1])
+
+        return f"Top {limit} processes by {sort_by}:\n{trimmed}"
         
     except Exception as e:
         return f"Error getting process list: {e}"
@@ -193,13 +226,10 @@ async def get_service_status(args: Dict) -> str:
     if not service:
         # List failed services
         try:
-            proc = await asyncio.create_subprocess_shell(
-                "systemctl list-units --state=failed --no-pager --no-legend",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
+            _rc, out, _err = await _run(
+                "systemctl", "list-units", "--state=failed", "--no-pager", "--no-legend"
             )
-            stdout, _ = await proc.communicate()
-            output = stdout.decode().strip()
+            output = out.strip()
             
             if not output:
                 return "No failed services"
@@ -207,19 +237,25 @@ async def get_service_status(args: Dict) -> str:
         except Exception as e:
             return f"Error listing services: {e}"
     
-    # Get specific service status
-    try:
-        proc = await asyncio.create_subprocess_shell(
-            f"systemctl status {service} --no-pager",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
+    # Get specific service status.
+    #
+    # SEC-2 (F5/F15): this was f"systemctl status {service} --no-pager" through a
+    # shell, with `service` supplied by the model — so any text that reached the
+    # model and produced this tool call was arbitrary command execution. It was
+    # also never seen by the command classifier, which only inspects run_command.
+    if not _UNIT_NAME.match(service):
+        return (
+            f"'{service}' is not a unit name I will pass to systemctl. "
+            f"Unit names start with a letter or digit and contain only "
+            f"letters, digits and . _ - : @"
         )
-        stdout, stderr = await proc.communicate()
-        
-        if proc.returncode != 0 and not stdout:
-            return f"Service '{service}' not found or error: {stderr.decode()}"
-        
-        return stdout.decode()
+    try:
+        rc, out, err = await _run("systemctl", "status", service, "--no-pager")
+
+        if rc != 0 and not out:
+            return f"Service '{service}' not found or error: {err}"
+
+        return out
         
     except Exception as e:
         return f"Error getting service status: {e}"
