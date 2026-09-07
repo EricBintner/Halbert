@@ -261,6 +261,10 @@ class SqliteConversationStore:
         self._lock = threading.RLock()
         self._conn: Optional[sqlite3.Connection] = None
         self._fts_ok = False
+        # FTS fail-open breadcrumb (packet 08 A2): True from the moment an
+        # index write failed until ``rebuild_fts()`` clears it. Persisted in
+        # ``store_meta`` so a reopen inherits it.
+        self._fts_degraded = False
         try:
             if self._db_path != ":memory:":
                 Path(self._db_path).parent.mkdir(parents=True, exist_ok=True)
@@ -387,6 +391,14 @@ class SqliteConversationStore:
                 )
                 cur.execute(
                     "CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)"
+                )
+                # FTS fail-open breadcrumb store (packet 08 A2): the durable
+                # half of the degradation flag -- see ``_enter_fts_fail_open``.
+                cur.execute(
+                    """CREATE TABLE IF NOT EXISTS store_meta (
+                        key   TEXT PRIMARY KEY,
+                        value TEXT NOT NULL
+                    )"""
                 )
                 # Opt-in LLM summaries (spec §8, §14): the table ships in Plan A
                 # with no writers — compaction stays default-off until a later plan.
@@ -554,6 +566,17 @@ class SqliteConversationStore:
                 # re-verified (A1 review finding 2, the mirror of finding 3's
                 # False-latch bug).
                 self._fts_ok = fts_ready
+                # FTS fail-open breadcrumb (packet 08 A2): a past fail-open
+                # persisted its flag in ``store_meta``. While it stands the
+                # index has a gap of unknown extent, so a reopen must not
+                # trust it -- ``_fts_recover`` stays refused and only
+                # ``rebuild_fts()`` clears the flag.
+                breadcrumb = cur.execute(
+                    "SELECT value FROM store_meta WHERE key = 'fts_degraded'"
+                ).fetchone()
+                if breadcrumb is not None and str(breadcrumb[0]) == "1":
+                    self._fts_degraded = True
+                    self._fts_ok = False
             except Exception as e:
                 self._conn.rollback()
                 logger.warning(f"SqliteConversationStore schema failed: {e}")
@@ -613,6 +636,14 @@ class SqliteConversationStore:
         """
         if self._fts_ok or self._conn is None:
             return self._fts_ok
+        if self._fts_degraded:
+            # Fail-open contract (packet 08 A2): while the breadcrumb stands
+            # the index has a gap of unknown extent, so ordinary recovery
+            # (CREATE IF NOT EXISTS + a NOT-IN backfill) must not re-arm it.
+            # Only ``rebuild_fts()`` clears the flag. Silent by design -- the
+            # single ``fts_fail_open`` WARNING at the moment of degradation
+            # already said why; this branch runs on every read.
+            return False
         try:
             with self._lock:
                 nested = self._conn.in_transaction
@@ -644,6 +675,159 @@ class SqliteConversationStore:
         except sqlite3.OperationalError as e:
             logger.warning(f"FTS5 still unavailable, staying in LIKE-only fallback: {e}")
         return self._fts_ok
+
+    # ------------------------------------------------------------------
+    # FTS fail-open (packet 08 A2)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _is_fts_write_corruption_error(exc: Exception) -> bool:
+        """Whether an index-write failure means the index *structure* is
+        unusable -- the only class fail-open exists for.
+
+        Mirrors Hermes ``_is_fts_write_corruption_error`` (SQLITE_CORRUPT_VTAB,
+        or an ``fts5: ... corrupt structure`` message on older builds; a bare
+        malformed image is structural), widened for Halbert's direct-insert
+        sync: a dropped or shape-broken index table surfaces here as
+        ``no such table`` / ``no column named`` on ``messages_fts``.
+
+        Deliberately NOT fail-open: a constraint rejection (an FTS copy
+        refusing a row on CHECK/NOT NULL -- ``IntegrityError``) is not
+        corruption; that failure still fails and rolls back the whole
+        append, the atomicity contract ``test_failed_append_rolls_back_and_
+        returns_none`` pins.
+        """
+        code = getattr(exc, "sqlite_errorcode", None)
+        if code is not None and code == getattr(sqlite3, "SQLITE_CORRUPT_VTAB", 267):
+            return True
+        msg = str(exc).lower()
+        if "corrupt structure" in msg or "malformed" in msg:
+            return True
+        return isinstance(exc, sqlite3.OperationalError) and (
+            "no such table: messages_fts" in msg
+            or ("no column named" in msg and "messages_fts" in msg)
+        )
+
+    @property
+    def fts_degraded(self) -> bool:
+        """Whether the fail-open breadcrumb stands: an index write failed, the
+        sync path is disarmed, and the index holds a gap of unknown extent.
+
+        The only way back is ``rebuild_fts()`` -- nothing else may re-arm the
+        index (see ``_reinstall_fts_triggers``). ``search``/``search_receipts``
+        keep serving through their LIKE fallbacks while this is True.
+        """
+        return self._fts_degraded
+
+    def _enter_fts_fail_open(self, exc: Exception) -> None:
+        """Declare the FTS index untrustworthy and keep the write alive.
+
+        Called from inside an already-open write transaction (``append_message``,
+        ``update_message``, ``forget_request``) with the exception an index
+        write raised. In that same transaction it persists the stale
+        breadcrumb in ``store_meta``, so the degradation survives a reopen;
+        the in-memory flag flips immediately. Callers never re-raise: the
+        canonical write continues and search serves through the LIKE
+        fallback. Exactly one ``fts_fail_open`` WARNING is logged -- the
+        moment of degradation is the only place the reason exists.
+        """
+        try:
+            self._conn.execute(
+                "INSERT INTO store_meta(key, value) VALUES ('fts_degraded', '1') "
+                "ON CONFLICT(key) DO UPDATE SET value = '1'"
+            )
+        except Exception as e:
+            logger.warning(f"fts_fail_open breadcrumb persist failed: {e}")
+        self._fts_degraded = True
+        self._fts_ok = False
+        logger.warning(
+            "fts_fail_open: FTS index write failed (%s); index sync disarmed "
+            "in the same transaction and LIKE fallback serves; full rebuild "
+            "required before the index is trusted again",
+            exc,
+        )
+
+    def _reinstall_fts_triggers(self) -> bool:
+        """Re-arm the index sync path after a fail-open. Refused while degraded.
+
+        Hermes guards this exact gate with triggers (``hermes_state_fts.py``):
+        once its sync triggers are dropped, rows written during the degraded
+        window are missing from the index and nobody may reinstall the
+        triggers without a full rebuild. Halbert's sync is direct gated
+        INSERTs rather than triggers, so the equivalent gate is this method:
+        while the breadcrumb stands there is a gap of unknown extent in the
+        index, and re-arming the sync over it would make the backfill look
+        like proof of health. Only ``rebuild_fts()`` -- which rewrites the
+        whole index from ``messages`` -- may clear the flag first.
+        """
+        if self._fts_degraded:
+            raise RuntimeError(
+                "fts index has an unknown gap after fail-open; a full rebuild "
+                "is required before the sync path may be re-armed"
+            )
+        return True
+
+    def rebuild_fts(self) -> bool:
+        """Rebuild both FTS indexes from their canonical tables.
+
+        The only sanctioned exit from ``fts_degraded``: drop and recreate
+        ``messages_fts`` (and ``receipts_fts``) from ``messages`` /
+        ``conversations``, clear the ``store_meta`` breadcrumb, and go
+        healthy in one transaction. Returns False (after a WARNING) when the
+        rebuild itself fails; the store stays degraded and keeps serving
+        search through LIKE.
+        """
+        if self._conn is None:
+            return False
+        try:
+            with self._lock, self._conn:
+                self._conn.execute("DROP TABLE IF EXISTS messages_fts")
+                self._conn.execute(
+                    "CREATE VIRTUAL TABLE messages_fts USING fts5("
+                    "conversation_id UNINDEXED, content, "
+                    "tokenize='porter unicode61')"
+                )
+                self._conn.execute(
+                    "INSERT INTO messages_fts(rowid, conversation_id, content) "
+                    "SELECT id, conversation_id, content FROM messages"
+                )
+                self._conn.execute("DROP TABLE IF EXISTS receipts_fts")
+                self._conn.execute(
+                    "CREATE VIRTUAL TABLE receipts_fts USING fts5("
+                    "thread_id UNINDEXED, title, receipt, "
+                    "tokenize='porter unicode61')"
+                )
+                self._conn.execute(
+                    "INSERT INTO receipts_fts(thread_id, title, receipt) "
+                    "SELECT id, title, receipt FROM conversations "
+                    "WHERE receipt != ''"
+                )
+                self._conn.execute("DELETE FROM store_meta WHERE key = 'fts_degraded'")
+                self._fts_degraded = False
+                self._fts_ok = True
+            logger.info("fts rebuild complete; index re-armed from messages/conversations")
+            return True
+        except Exception as e:
+            logger.warning(f"rebuild_fts failed: {e}")
+            self._fts_ok = False
+            return False
+
+    def _corrupt_fts_for_test(self) -> None:
+        """TEST-ONLY (packet 08 A2): simulate a derived index whose write
+        path raises, so the fail-open contract can be pinned end to end.
+
+        Ships deliberately -- it is how ``tests/test_fts_fail_open.py`` holds
+        the contract -- but it must never be called outside a test. It
+        replaces ``messages_fts`` with an ordinary table that cannot accept
+        the sync INSERT: every index write raises ``OperationalError``, the
+        ``IF NOT EXISTS`` recovery cannot heal it, and ``rebuild_fts()`` can.
+        """
+        with self._lock, self._conn:
+            self._conn.execute("DROP TABLE IF EXISTS messages_fts")
+            # An ordinary table squatting on the index name: the sync INSERT
+            # names ``conversation_id``/``content`` columns it does not have,
+            # so the write raises instead of silently skipping the index.
+            self._conn.execute("CREATE TABLE messages_fts (decoy INTEGER)")
 
     # ------------------------------------------------------------------
     # Legacy CRUD (Conversation dataclass shape)
@@ -802,6 +986,31 @@ class SqliteConversationStore:
                 results = [r[0] for r in rows]
             except Exception as e:
                 logger.warning(f"sqlite FTS search failed (LIKE fallback only): {e}")
+        if self._fts_degraded:
+            # Fail-open (packet 08 A2): the FTS pass above is refused while
+            # the breadcrumb stands, so message-content search would go
+            # silent. Serve it with a LIKE scan instead -- slow, but the
+            # canonical content is exactly what a degraded search must not
+            # lose. Same visibility rule as ``search_snippets``: only
+            # rewound (``visible_in_timeline = 0``) rows hide.
+            try:
+                with self._lock:
+                    for term in terms[:6]:
+                        crows = self._conn.execute(
+                            """SELECT DISTINCT m.conversation_id
+                               FROM messages m
+                               JOIN conversations c ON c.id = m.conversation_id
+                               WHERE lower(m.content) LIKE ?
+                                 AND m.visible_in_timeline = 1
+                                 AND (? IS NULL OR c.user_id = ?)
+                               LIMIT ?""",
+                            (f"%{term.lower()}%", user_id, user_id, limit),
+                        ).fetchall()
+                        for r in crows:
+                            if r[0] not in results:
+                                results.append(r[0])
+            except Exception as e:
+                logger.warning(f"sqlite content LIKE fallback failed: {e}")
         try:
             with self._lock:
                 trows = self._conn.execute(
@@ -901,11 +1110,24 @@ class SqliteConversationStore:
                     # above) -- a plain INSERT would then collide on rowid
                     # with what recovery already wrote (same content either
                     # way, so replacing is a no-op in substance).
-                    self._conn.execute(
-                        "INSERT OR REPLACE INTO messages_fts(rowid, conversation_id, content) "
-                        "VALUES (?, ?, ?)",
-                        (message_id, thread_id, text),
-                    )
+                    try:
+                        self._conn.execute(
+                            "INSERT OR REPLACE INTO messages_fts(rowid, conversation_id, content) "
+                            "VALUES (?, ?, ?)",
+                            (message_id, thread_id, text),
+                        )
+                    except sqlite3.DatabaseError as e:
+                        # Fail-open (packet 08 A2): a corrupt derived index
+                        # must never block the canonical write. Without this
+                        # catch the exception rolled the whole transaction
+                        # back -- the message row and the ``updated_at``
+                        # stamp with it -- and ``append_message`` reported
+                        # None as though the write had never happened.
+                        # Constraint rejections are not corruption: re-raise.
+                        if self._is_fts_write_corruption_error(e):
+                            self._enter_fts_fail_open(e)
+                        else:
+                            raise
                 # MAX(...): agrees with save()'s ON CONFLICT clause (A1 review
                 # finding 3) so the two write paths can't rewind each other.
                 # agents/migrations.py backfills messages with an explicit,
@@ -973,14 +1195,23 @@ class SqliteConversationStore:
                         "SELECT conversation_id, content FROM messages WHERE id = ?",
                         (message_id,),
                     ).fetchone()
-                    self._conn.execute(
-                        "DELETE FROM messages_fts WHERE rowid = ?", (message_id,)
-                    )
-                    self._conn.execute(
-                        "INSERT INTO messages_fts(rowid, conversation_id, content) "
-                        "VALUES (?, ?, ?)",
-                        (message_id, row["conversation_id"], row["content"]),
-                    )
+                    try:
+                        self._conn.execute(
+                            "DELETE FROM messages_fts WHERE rowid = ?", (message_id,)
+                        )
+                        self._conn.execute(
+                            "INSERT INTO messages_fts(rowid, conversation_id, content) "
+                            "VALUES (?, ?, ?)",
+                            (message_id, row["conversation_id"], row["content"]),
+                        )
+                    except sqlite3.DatabaseError as e:
+                        # Fail-open (packet 08 A2): same contract as
+                        # ``append_message`` -- the canonical UPDATE above
+                        # must survive an index that cannot be written.
+                        if self._is_fts_write_corruption_error(e):
+                            self._enter_fts_fail_open(e)
+                        else:
+                            raise
             return True
         except Exception as e:
             logger.warning(f"update_message {message_id} failed: {e}")
@@ -1426,7 +1657,17 @@ class SqliteConversationStore:
             if not ids:
                 return 0
             marks = ",".join("?" * len(ids))
-            self._conn.execute(f"DELETE FROM messages_fts WHERE rowid IN ({marks})", ids)
+            try:
+                self._conn.execute(f"DELETE FROM messages_fts WHERE rowid IN ({marks})", ids)
+            except sqlite3.DatabaseError as e:
+                # Fail-open (packet 08 A2): a "forget that session" is a
+                # canonical write -- a corrupt index must not roll the row
+                # deletion back, and a rolled-back forget that was reported
+                # as performed is the worst outcome available here.
+                if self._is_fts_write_corruption_error(e):
+                    self._enter_fts_fail_open(e)
+                else:
+                    raise
             self._conn.execute(f"DELETE FROM messages WHERE id IN ({marks})", ids)
         logger.info("Forgot %d message(s) written under %s", len(ids), request_id)
         return len(ids)
