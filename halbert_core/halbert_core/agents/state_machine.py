@@ -496,6 +496,20 @@ class AgentStateMachine:
         else:
             turn_speaker_role = "unknown"
 
+        # Packet 04 B1: the per-turn mutation digest. Bound on the
+        # ContextVar so a write-plane success anywhere in this turn
+        # (tools execute in tasks spawned inside it, which copy the
+        # context) records into the turn's own digest — and cleared in
+        # the finally below so no effect ever lands in a LATER turn.
+        digest_token = None
+        turn_digest = None
+        try:
+            from ..security.turn_digest import TurnDigest, current_turn_digest
+            turn_digest = TurnDigest()
+            digest_token = current_turn_digest.set(turn_digest)
+        except Exception as e:
+            logger.debug(f"turn digest not bound (non-fatal): {e}")
+
         try:
             # Generation params live on the one shared LLM adapter, so they
             # are only safe to write once this turn owns it. The route used
@@ -531,6 +545,7 @@ class AgentStateMachine:
                 modality=turn_modality,
                 speaker_name=speaker_name or None,
                 claim_source=claim_source or None,
+                turn_digest=turn_digest,
             )
 
             # Phase 3: Run intake pipeline before cognitive tick
@@ -633,6 +648,16 @@ class AgentStateMachine:
             # above: a consumer that goes away exactly there would otherwise
             # leave the session registered.
             self._settle_turn(session_id)
+            # Packet 04 B1: the turn's digest binding dies with the turn,
+            # whichever way it ended — an effect recorded after this point
+            # belongs to no turn and is dropped rather than attributed to
+            # the next one.
+            if digest_token is not None:
+                try:
+                    from ..security.turn_digest import current_turn_digest
+                    current_turn_digest.reset(digest_token)
+                except Exception as e:
+                    logger.debug(f"turn digest unbind failed (non-fatal): {e}")
             self.turn_lock.release()
 
     def _supersede_paused_turn(self, session_id: str) -> None:
@@ -3480,6 +3505,50 @@ class AgentStateMachine:
                             f"Emitted {len(spoken_segments)} "
                             f"speech segments for voice delivery"
                         )
+                        # Packet 04 B1: the turn's mutation digest tail —
+                        # accountability for what this spoken command did,
+                        # spoken while the user can still hear it. Voice
+                        # turns only; a typed turn's effects stay in the
+                        # audit chain and the receipt. The same line is
+                        # appended to the hash-chained audit log: this is a
+                        # turn-scoped rollup of records the write plane
+                        # already wrote, not a new audit channel.
+                        try:
+                            from ..security.turn_digest import spoken_tail
+                            tail = spoken_tail(
+                                getattr(self.ctx, "turn_digest", None),
+                                getattr(self.ctx, "modality", "text"),
+                            )
+                        except Exception as e:
+                            logger.debug(f"turn digest tail skipped (non-fatal): {e}")
+                            tail = None
+                        if tail:
+                            spoken_segments.append((tail, 1.0))
+                            yield StreamEvent(
+                                type="speech_segment",
+                                session_id=self.ctx.session_id,
+                                data={
+                                    "text": tail,
+                                    "role": "persona",
+                                    "prosody": {
+                                        "rate": 1.0,
+                                        "volume": 1.0,
+                                        "whisper": False,
+                                    },
+                                },
+                            )
+                            try:
+                                from ..obs.audit import write_audit
+                                write_audit(
+                                    tool="turn_digest",
+                                    mode="rollup",
+                                    request_id=self.ctx.request_id,
+                                    ok=True,
+                                    summary=tail,
+                                    reason="voice turn mutation digest",
+                                )
+                            except Exception as e:
+                                logger.debug(f"turn digest audit rollup failed (non-fatal): {e}")
                         # Voice mode (O3): stream the same spoken segments to
                         # any browser subscribed to this session's audio on
                         # /api/audio/tts. Strictly optional — the turn is

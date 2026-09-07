@@ -284,6 +284,13 @@ class StateContext:
     # deep pass (PACKET-02 Phase B / A2).
     claim_source: Optional[str] = None
 
+    # Packet 04 B1: the per-turn mutation digest — the rollup of this
+    # turn's successful write-plane effects, (tool, redacted target)
+    # pairs only, never raw args. Created by process(), read at turn
+    # finalize; a voice turn speaks it as a tail and the audit log
+    # carries the same line. None only before process() runs.
+    turn_digest: Optional[Any] = None
+
     # Phase 2 modality wiring: the user query with <speech>/<text>/
     # <modality_context> control tags stripped (spec 5.11), resolved in
     # RESPONDING and consumed by _build_messages. It lives here, on the
