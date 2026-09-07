@@ -496,6 +496,27 @@ class AgentStateMachine:
         else:
             turn_speaker_role = "unknown"
 
+        # Packet 04 A2: claim strength at the voice gate — recorded, not
+        # enforced (RoleGate never reads this; enforcement is the D-6
+        # permission-system pass). A voice turn's claim_source maps
+        # through the PACKET-02 strength ladder; a source the ladder
+        # does not know — or an absent one — fails closed to UNVERIFIED,
+        # never to a stronger reading. Typed turns record no claim here:
+        # absent request fields must keep today's behavior exactly (the
+        # packet's regression gate), and a typed turn's identity rides
+        # the dashboard session.
+        turn_identifier_claim = None
+        if turn_modality == "voice":
+            try:
+                from ..persona.claims import claim_from_source
+                turn_identifier_claim = claim_from_source(claim_source, value=speaker_name)
+            except Exception as e:
+                logger.debug(f"identifier claim not derived (non-fatal): {e}")
+        claim_strength_label = (
+            turn_identifier_claim.strength.name.lower()
+            if turn_identifier_claim is not None else "none"
+        )
+
         # Packet 04 B1: the per-turn mutation digest. Bound on the
         # ContextVar so a write-plane success anywhere in this turn
         # (tools execute in tasks spawned inside it, which copy the
@@ -545,6 +566,7 @@ class AgentStateMachine:
                 modality=turn_modality,
                 speaker_name=speaker_name or None,
                 claim_source=claim_source or None,
+                identifier_claim=turn_identifier_claim,
                 turn_digest=turn_digest,
             )
 
@@ -587,9 +609,10 @@ class AgentStateMachine:
             # Halbert's to keep.
             logger.info(
                 "Starting agent processing: session=%s, query_chars=%d, "
-                "modality=%s, speaker_role=%s, claim_source=%s",
+                "modality=%s, speaker_role=%s, claim_source=%s, claim_strength=%s",
                 session_id, len(query or ""),
                 turn_modality, turn_speaker_role, claim_source or "none",
+                claim_strength_label,
             )
 
             yield StreamEvent.session_started(session_id, request_id)
