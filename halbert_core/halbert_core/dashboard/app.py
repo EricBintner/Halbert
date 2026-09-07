@@ -244,6 +244,32 @@ def register_proactive_jobs(executor, *, load_config=None) -> Dict[str, str]:
         outcome['detector_sweep'] = 'scheduled'
     except Exception as e:
         logger.warning(f"Failed to schedule detector sweep: {e}")
+
+    # CD-5 kept 90 days of event-ledger retention. TimelineStore prunes when
+    # it is constructed, which covers every daemon start -- this covers the
+    # machine that stays up for months, which is the one that actually grows.
+    try:
+        def _prune_timeline() -> None:
+            from ..integrations.cognition_wiring import get_timeline_store
+
+            store = get_timeline_store()
+            if store is None:
+                logger.debug("Timeline retention: no ledger, nothing to prune")
+                return
+            removed = store.cleanup(max_age_days=store.RETENTION_DAYS)
+            logger.info("Timeline retention: pruned %s row(s)", removed)
+
+        executor.schedule_cron_job(
+            job_id='timeline_retention',
+            task_func=_prune_timeline,
+            cron_expr={'hour': 4, 'minute': 37},
+            description='Event ledger retention sweep (90 days)',
+        )
+        logger.info("Timeline retention sweep scheduled daily")
+        outcome['timeline_retention'] = 'scheduled'
+    except Exception as e:
+        logger.warning(f"Failed to schedule timeline retention: {e}")
+        outcome['timeline_retention'] = f'error: {e}' 
         outcome['detector_sweep'] = f'error: {e}'
 
     # T7d.2: daily morning report per being.yml

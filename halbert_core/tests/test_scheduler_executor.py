@@ -200,9 +200,17 @@ def test_dashboard_proactive_jobs_register(executor):
         executor,
         load_config=lambda: BeingConfig(morning_report={"enabled": True, "time": "07:45"}),
     )
-    assert outcome == {"detector_sweep": "scheduled", "morning_report": "scheduled"}
+    assert outcome == {
+        "detector_sweep": "scheduled",
+        "morning_report": "scheduled",
+        # CD-5's 90-day event-ledger retention. The exact-dict assertion is
+        # the point: a job appearing here unannounced should fail this test.
+        "timeline_retention": "scheduled",
+    }
     scheduled = {j["id"]: j for j in executor.get_scheduled_jobs()}
-    assert set(scheduled) == {"detector_sweep", "morning_report"}
+    assert set(scheduled) == {
+        "detector_sweep", "morning_report", "timeline_retention",
+    }
     assert "hour='7'" in scheduled["morning_report"]["trigger"]
     assert "minute='45'" in scheduled["morning_report"]["trigger"]
 
@@ -229,8 +237,16 @@ def test_dashboard_proactive_jobs_disabled_report_is_skipped(executor):
     outcome = dashboard_app.register_proactive_jobs(
         executor, load_config=lambda: BeingConfig(morning_report={"enabled": False}),
     )
-    assert outcome == {"detector_sweep": "scheduled", "morning_report": "disabled"}
-    assert {j["id"] for j in executor.get_scheduled_jobs()} == {"detector_sweep"}
+    assert outcome == {
+        "detector_sweep": "scheduled",
+        "morning_report": "disabled",
+        "timeline_retention": "scheduled",
+    }
+    # Retention is not the report: turning the morning report off must not
+    # stop the ledger being pruned.
+    assert {j["id"] for j in executor.get_scheduled_jobs()} == {
+        "detector_sweep", "timeline_retention",
+    }
 
 
 def test_dashboard_proactive_jobs_never_raise(executor):

@@ -22,6 +22,21 @@ from bs4 import BeautifulSoup
 logger = logging.getLogger('halbert')
 
 
+def _web_egress_allowed() -> bool:
+    """The CAP_WEB switch, as every egress path is supposed to check it.
+
+    ``web/search_config.is_web_search_enabled()`` resolves the capability
+    registry including the being.yml override, and reads as off on any
+    failure -- which is the behaviour wanted here: a lookup that breaks must
+    not open the network.
+    """
+    try:
+        from ..web.search_config import is_web_search_enabled
+        return bool(is_web_search_enabled())
+    except Exception:
+        return False
+
+
 @dataclass
 class SourceInfo:
     """Information about a source domain."""
@@ -531,7 +546,17 @@ class RAGIngestionEngine:
             IngestResult with success/failure details
         """
         result = IngestResult(success=False, url=url)
-        
+
+        # Fetching a URL is egress, whoever asked for it. Checked before the
+        # source registry so a "blocked source" message cannot stand in for a
+        # switched-off network and hide which one actually stopped it.
+        if not _web_egress_allowed():
+            result.error = (
+                "Web egress is switched off (CAP_WEB). Turn web access on in "
+                "Settings to add a source by URL."
+            )
+            return result
+
         # Step 1: Check source (blocklist, whitelist, auto-detect)
         source_info, blocked_reason = self.registry.check_source(url)
         
