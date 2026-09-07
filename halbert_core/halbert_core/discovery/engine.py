@@ -131,6 +131,7 @@ class DiscoveryEngine:
             LaunchdScanner, HomebrewScanner, MacThermalScanner,
             MacNetworkScanner, MacStorageScanner, MacSecurityScanner,
             TimeMachineScanner, HomebrewAppScanner, MacAppStoreScanner,
+            MacSharingScanner,
         )
 
         self.register_scanner(LaunchdScanner())       # SERVICE
@@ -142,6 +143,7 @@ class DiscoveryEngine:
         self.register_scanner(HomebrewAppScanner())    # PACKAGE (apps)
         self.register_scanner(MacAppStoreScanner())    # PACKAGE (App Store)
         self.register_scanner(MacThermalScanner())     # HARDWARE
+        self.register_scanner(MacSharingScanner())     # SHARING
     
     # ─────────────────────────────────────────────────────────────
     # Scanner Management
