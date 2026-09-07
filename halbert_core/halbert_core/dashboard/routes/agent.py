@@ -1732,12 +1732,35 @@ if FASTAPI_AVAILABLE:
             agent = get_agent()
         except Exception as e:
             raise HTTPException(500, f"Agent not available: {e}")
-        
+
         if agent.cancel_session(session_id):
             return {"cancelled": True, "session_id": session_id}
-        
+
         raise HTTPException(404, "Session not found")
-    
+
+    @router.post("/stop/{session_id}")
+    async def stop_turn(session_id: str, req: Request):
+        """Generation-claimed stop of the running turn (Packet 07 B1).
+
+        Unlike ``/cancel``, which raises the flag unconditionally, the stop
+        claims the turn's activity generation: a stop issued as the turn
+        completes declines ("turn completed, stop declined") instead of
+        firing on a turn that already delivered — and never both, never a
+        retry. Always 200 with the outcome; the stopped turn's own stream
+        is the one that ends with the ``cancelled`` event.
+        """
+        try:
+            agent = get_agent()
+        except Exception as e:
+            raise HTTPException(500, f"Agent not available: {e}")
+
+        outcome = agent.request_stop(session_id)
+        return {
+            "stopped": outcome == "stopped",
+            "outcome": outcome,
+            "session_id": session_id,
+        }
+
     @router.get("/health")
     async def health():
         """Health check for agent service."""

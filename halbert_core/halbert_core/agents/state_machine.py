@@ -18,6 +18,7 @@ from typing import AsyncIterator, Dict, List, Optional, Callable, Any, TYPE_CHEC
 from .blocks import content_to_text
 from .states import AgentState, StateContext, CRAGAction, ToolCall, PlanStep, ConversationStatus
 from .events import StreamEvent
+from .turn_activity import TurnActivity
 from ..streaming.terminal_bridge import get_terminal_event_bus
 from ..tools.safety import THREAD_META_TOOLS
 
@@ -304,6 +305,17 @@ class AgentStateMachine:
         # Cancellation tracking for session interruption
         self.cancelled: Dict[str, bool] = {}
 
+        # Packet 07: the interrupt algebra. ``turn_activity`` carries the
+        # running turn's activity generation (B1): a stop claims it, so an
+        # abort that loses the race to a finishing turn declines instead of
+        # double-firing. ``_turn_generation`` is the generation the running
+        # turn stamped at its start — the generation a stop observes. A
+        # plain cross-request surface in ``cancel_session``'s discipline:
+        # it never takes the turn lock, which a mid-turn arrival can never
+        # own.
+        self.turn_activity = TurnActivity()
+        self._turn_generation: Optional[int] = None
+
         # Voice mode (O3): the PiperTTS instance behind the Haloysius voice
         # backend, cached once resolved so every egress turn shares one model
         # load. None until a turn needs it (and stays None without a seam).
@@ -479,6 +491,14 @@ class AgentStateMachine:
             for event in self._turn_lock_timeout_events(session_id):
                 yield event
             return
+
+        # Packet 07 B1: the turn's activity generation, stamped at the
+        # first sync step under the lock (no await separates the acquire
+        # from here, so no other request can observe the sliver). A stop
+        # issued against this turn observes and claims this generation;
+        # the RESPONDING finalize stamp below is what makes such a claim
+        # stale once the turn's answer is committed.
+        self._turn_generation = self.turn_activity.stamp()
 
         # Packet 04 A1: typed voice ingress. Exactly one door
         # (/api/agent/message) serves typed and spoken turns, so the turn
@@ -1307,6 +1327,10 @@ class AgentStateMachine:
             # A stop pressed while the confirmation dialog was open must not
             # cancel the turn the user has just approved.
             self.cancelled.pop(session_id, None)
+            # Packet 07 B1: the resumed turn is new activity — stamp it, so
+            # a stop issued against the resumed turn claims this generation
+            # and not the one the original half of the turn ran under.
+            self._turn_generation = self.turn_activity.stamp()
 
             if not self.ctx.pending_confirmation:
                 yield StreamEvent.error(session_id, "No pending confirmation")
@@ -1438,6 +1462,67 @@ class AgentStateMachine:
         """
         lock = self._turn_lock
         return bool(lock is not None and lock.locked())
+
+    # ------------------------------------------------------------------
+    # Packet 07: the interrupt algebra at the machine edge
+    # ------------------------------------------------------------------
+
+    def request_stop(self, session_id: str) -> str:
+        """Generation-claimed stop of the running turn (Packet 07 B1).
+
+        Returns ``"stopped"`` or ``"turn completed, stop declined"`` —
+        never both, never a retry. The stop carries the generation the
+        running turn stamped at its start (Hermes ``require_generation``);
+        the claim executes only while that generation is still current,
+        exactly once. The RESPONDING finalize stamp is the final mutation
+        edge: once the turn's answer is committed the claim is stale, and a
+        stop that loses that race declines instead of firing on a turn
+        that already delivered.
+
+        A turn paused on a confirmation (its stream already closed) is
+        stopped through ``cancel_session``'s teardown — nothing is racing,
+        no claim is needed. Like ``cancel_session``, this runs on a
+        different request while the turn is mid-flight: it touches only
+        the ``cancelled`` flag and the user-facing status, never the
+        turn's own writes, which the turn's finally owns.
+        """
+        if session_id not in self.active_sessions:
+            return "turn completed, stop declined"
+        if not self._turn_in_flight():
+            # Paused on a confirmation, or a turn whose finally has not
+            # run yet: the teardown cancel_session owns is the whole stop.
+            self.cancel_session(session_id)
+            return "stopped"
+        generation = self._turn_generation
+        if generation is None:
+            # Defensive: a turn in flight is stamped at its first sync
+            # step under the lock, so this cannot happen on the normal
+            # path. Decline rather than fire a claim nobody can vouch for.
+            return "turn completed, stop declined"
+
+        def _abort() -> bool:
+            # The same flag _drive polls between steps and between
+            # events; the turn's own finally does the teardown and names
+            # the turn cancelled. The claim's single-shot lock is what
+            # keeps two stops from both firing on one turn.
+            self.cancelled[session_id] = True
+            ctx = self.active_sessions.get(session_id)
+            if ctx is not None and not ctx.conversation_status.is_terminal():
+                try:
+                    ctx.conversation_status.transition(ConversationStatus.CANCELLED)
+                except ValueError:
+                    pass
+            return True
+
+        if self.turn_activity.claim(generation, _abort) is None:
+            # Stale (the turn finalized between observation and claim) or
+            # already claimed (another stop got there first and its flag
+            # is up). Either way this caller stopped nothing new; say
+            # "stopped" when the turn is already stopping, else decline.
+            if self.cancelled.get(session_id):
+                return "stopped"
+            return "turn completed, stop declined"
+        return "stopped"
 
     def _detect_oscillation(self) -> bool:
         """Detect A→B→A→B pattern indicating infinite loop."""
@@ -3358,6 +3443,13 @@ class AgentStateMachine:
         # Commit the stripped text as the session's final response text
         self.ctx.response_chunks.clear()
         self.ctx.response_chunks.append(clean_response)
+
+        # Packet 07 B1: the final mutation edge. The committed answer is
+        # the turn's last mutation; from here a stop declines ("turn
+        # completed, stop declined") instead of firing on a turn that
+        # already delivered. Mid-stream stops still work: they claim the
+        # start generation, which stays current until this stamp.
+        self.turn_activity.stamp()
 
         # B1: the cognitive tick must run exactly once per turn. Turns that
         # reach RESPONDING without passing REFLECTING (max-loop / oscillation
