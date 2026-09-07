@@ -17,8 +17,21 @@
 > leaks are closed (`841697cf`), as are subject-scoped occupancy erasure, the
 > daily retention job and `DOCS-1`.
 >
-> **Still open, in dependency order:** branch 3 (A3/A4/A5) → branch 4 (C0/C1a)
-> → the `CD-1` gate → branches 5 and 6 → §8 and §9. `RQ-1..9` gate §9 only.
+> **2026-09-07 — branch 3 is merged (`21a52e61`).** A3, A4 and A5 are done;
+> full suite `5667 passed, 14 skipped`. Two things the work settled that the
+> spec left implicit: motion is event-only (a moment, not a condition), and
+> both observation headers are now paid for only once a line fits under them,
+> which the pre-A4 code did not need and the split does.
+>
+> **Still open, in dependency order:** branch 4 (C0/C1a) → the `CD-1` gate →
+> branches 5 and 6 → §8 and §9. `RQ-1..9` gate §9 only. `C4-07` and `C2-03`
+> are still unratified and gate branch 6 and C2.
+>
+> **Not in a branch:** A3 registered the HA predicates as re-observable, but
+> nothing yet *consults* `decide()` on the answering path — so a stale lock
+> row is correctly classified PROBE and no caller acts on it. Defining PROBE
+> for an HA subject as a live Home Assistant fetch is the remaining half, and
+> it belongs with whoever owns the answering path.
 >
 > **Highest-value thing not in any branch:** §11's first two rows. Two egress paths
 > reach the network with no `CAP_WEB` gate, against a stated invariant that every
