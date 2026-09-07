@@ -1,0 +1,961 @@
+<title>Halbert Security Audit</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&display=swap">
+<style>
+:root{
+  --ground:#F6F7F9; --surface:#FFFFFF; --surface-2:#EFF2F6;
+  --ink:#131820; --ink-2:#4A5462; --ink-3:#6E7887;
+  --rule:#DCE1E8; --rule-2:#C6CDD8;
+  --accent:#2D5D86; --accent-soft:#E7EEF5;
+  --crit:#96182B; --crit-bg:#FBECEE;
+  --high:#A05213; --high-bg:#FBF0E6;
+  --med:#63603F; --med-bg:#F4F3EA;
+  --low:#4F5A6B; --low-bg:#EEF1F5;
+  --ok:#2F6B4F;
+  --sans:"IBM Plex Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+  --serif:"Source Serif 4",Georgia,"Times New Roman",serif;
+  --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+  --col:68ch; --wide:1180px;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --ground:#0E1217; --surface:#161B22; --surface-2:#1C222B;
+    --ink:#E4E9F0; --ink-2:#A3AEBD; --ink-3:#7D8899;
+    --rule:#242C36; --rule-2:#333D4A;
+    --accent:#79AFDA; --accent-soft:#182633;
+    --crit:#E88A99; --crit-bg:#2A171B;
+    --high:#DFA268; --high-bg:#271D13;
+    --med:#BEB68F; --med-bg:#22211A;
+    --low:#9AA6B6; --low-bg:#1A1F26;
+    --ok:#7BC3A0;
+  }
+}
+:root[data-theme="dark"]{
+  --ground:#0E1217; --surface:#161B22; --surface-2:#1C222B;
+  --ink:#E4E9F0; --ink-2:#A3AEBD; --ink-3:#7D8899;
+  --rule:#242C36; --rule-2:#333D4A;
+  --accent:#79AFDA; --accent-soft:#182633;
+  --crit:#E88A99; --crit-bg:#2A171B;
+  --high:#DFA268; --high-bg:#271D13;
+  --med:#BEB68F; --med-bg:#22211A;
+  --low:#9AA6B6; --low-bg:#1A1F26;
+  --ok:#7BC3A0;
+}
+*{box-sizing:border-box}
+body{background:var(--ground);color:var(--ink);font-family:var(--serif);
+  font-size:17px;line-height:1.62;-webkit-font-smoothing:antialiased}
+.wrap{max-width:var(--wide);margin:0 auto;padding:0 28px 96px}
+.col{max-width:var(--col);margin-left:auto;margin-right:auto}
+h1,h2,h3,h4,.ui{font-family:var(--sans)}
+h2,h3,h4{text-wrap:balance;line-height:1.22}
+code,.mono{font-family:var(--mono);font-size:.86em;font-variant-ligatures:none}
+code{background:var(--surface-2);padding:.08em .34em;border-radius:3px;color:var(--ink)}
+a{color:var(--accent)}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:2px}
+
+/* ---- masthead ---- */
+.mast{border-bottom:1px solid var(--rule);padding:56px 0 30px;margin-bottom:44px}
+.eyebrow{font-family:var(--mono);font-size:11.5px;letter-spacing:.13em;text-transform:uppercase;
+  color:var(--ink-3);margin:0 0 18px}
+h1{font-size:clamp(34px,5.4vw,52px);font-weight:600;letter-spacing:-.022em;margin:0 0 16px;line-height:1.06}
+.standfirst{font-size:20px;line-height:1.5;color:var(--ink-2);margin:0 0 26px;max-width:60ch}
+.meta{font-family:var(--mono);font-size:12.5px;color:var(--ink-3);display:flex;flex-wrap:wrap;gap:8px 20px}
+
+/* ---- counters ---- */
+.counts{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:1px;
+  background:var(--rule);border:1px solid var(--rule);margin:34px 0 0}
+.count{background:var(--surface);padding:16px 18px}
+.count .n{font-family:var(--sans);font-size:31px;font-weight:600;letter-spacing:-.02em;
+  font-variant-numeric:tabular-nums;line-height:1.1}
+.count .l{font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--ink-3);margin-top:5px}
+.count.c .n{color:var(--crit)} .count.h .n{color:var(--high)}
+.count.m .n{color:var(--med)} .count.l2 .n{color:var(--low)}
+
+/* ---- sections ---- */
+section{margin:0 0 68px;scroll-margin-top:20px}
+h2{font-size:12px;font-weight:600;letter-spacing:.15em;text-transform:uppercase;
+  font-family:var(--mono);color:var(--accent);margin:0 0 6px}
+.h2sub{font-family:var(--sans);font-size:29px;font-weight:600;letter-spacing:-.018em;
+  margin:0 0 20px;line-height:1.16}
+h3{font-size:20px;font-weight:600;margin:36px 0 10px;letter-spacing:-.012em}
+h4{font-size:15.5px;font-weight:600;margin:26px 0 6px}
+p{margin:0 0 17px}
+.lede{font-size:19px;color:var(--ink-2)}
+ul,ol{margin:0 0 17px;padding-left:1.25em}
+li{margin-bottom:7px}
+
+/* ---- toc ---- */
+.toc{background:var(--surface);border:1px solid var(--rule);padding:22px 26px;margin:0 0 60px}
+.toc ol{list-style:none;padding:0;margin:0;columns:2;column-gap:36px;font-family:var(--sans);font-size:14.5px}
+.toc li{margin-bottom:6px;break-inside:avoid}
+.toc a{text-decoration:none;color:var(--ink-2)}
+.toc a:hover{color:var(--accent);text-decoration:underline}
+.toc .num{font-family:var(--mono);font-size:11px;color:var(--ink-3);margin-right:9px}
+@media(max-width:640px){.toc ol{columns:1}}
+
+/* ---- tables ---- */
+.scroll{overflow-x:auto;margin:0 0 22px;border:1px solid var(--rule);background:var(--surface)}
+table{border-collapse:collapse;width:100%;font-family:var(--sans);font-size:13.5px;line-height:1.45}
+th,td{text-align:left;padding:10px 14px;border-bottom:1px solid var(--rule);vertical-align:top}
+thead th{font-size:10.5px;letter-spacing:.09em;text-transform:uppercase;color:var(--ink-3);
+  font-weight:600;background:var(--surface-2);white-space:nowrap;position:sticky;top:0}
+tbody tr:last-child td{border-bottom:none}
+td.n,th.n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+table code{font-size:12px;background:none;padding:0;color:var(--ink-2)}
+.matrix td:first-child{font-weight:600;white-space:nowrap}
+.matrix td{min-width:130px}
+.grant td:first-child{font-family:var(--mono);font-size:12px;white-space:nowrap}
+.grant td:not(:first-child){text-align:center;white-space:nowrap}
+.y{color:var(--ok);font-weight:600} .n0{color:var(--ink-3)}
+.ask{color:var(--high);font-weight:600;font-family:var(--mono);font-size:11.5px}
+
+/* ---- severity chips ---- */
+.chip{display:inline-block;font-family:var(--mono);font-size:10px;letter-spacing:.09em;
+  text-transform:uppercase;padding:2px 7px;border-radius:2px;font-weight:600;white-space:nowrap}
+.chip.crit{background:var(--crit-bg);color:var(--crit)}
+.chip.high{background:var(--high-bg);color:var(--high)}
+.chip.med{background:var(--med-bg);color:var(--med)}
+.chip.low{background:var(--low-bg);color:var(--low)}
+.chip.actor{background:var(--surface-2);color:var(--ink-2)}
+
+/* ---- findings ---- */
+.find{border-left:3px solid var(--crit);padding:0 0 0 20px;margin:0 0 30px}
+.find .idx{font-family:var(--mono);font-size:11px;color:var(--ink-3);letter-spacing:.08em}
+.find h4{margin:3px 0 8px;font-size:17.5px;line-height:1.3}
+.find .tags{display:flex;gap:7px;flex-wrap:wrap;margin:0 0 9px}
+.find .loc{font-family:var(--mono);font-size:12px;color:var(--ink-2);margin:0 0 9px;word-break:break-all}
+.find p{margin:0 0 9px;font-size:16px;line-height:1.55}
+.find p:last-child{margin-bottom:0}
+.find .lab{font-family:var(--sans);font-size:11px;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--ink-3);font-weight:600;margin-right:7px}
+.find.w{border-left-color:var(--rule-2)}
+
+/* ---- callout ---- */
+.note{background:var(--surface);border:1px solid var(--rule);border-left:3px solid var(--accent);
+  padding:18px 22px;margin:0 0 24px}
+.note p:last-child{margin-bottom:0}
+.note .t{font-family:var(--sans);font-weight:600;font-size:15px;margin:0 0 7px;display:block}
+.note.warn{border-left-color:var(--crit)}
+
+/* ---- gates ---- */
+.gate{border-top:1px solid var(--rule);padding:20px 0 4px;display:grid;
+  grid-template-columns:64px 1fr;gap:22px}
+.gate .g{font-family:var(--mono);font-size:11px;letter-spacing:.09em;color:var(--accent);
+  text-transform:uppercase;padding-top:4px}
+.gate h4{margin:0 0 7px;font-size:18px}
+.gate p{font-size:15.5px;margin-bottom:8px}
+@media(max-width:640px){.gate{grid-template-columns:1fr;gap:6px}}
+
+/* ---- profiles ---- */
+.profiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:1px;
+  background:var(--rule);border:1px solid var(--rule);margin:0 0 26px}
+.prof{background:var(--surface);padding:20px 22px;display:flex;flex-direction:column;gap:9px}
+.prof.sel{background:var(--accent-soft)}
+.prof .nm{font-family:var(--sans);font-size:19px;font-weight:600;letter-spacing:-.01em}
+.prof .badge{font-family:var(--mono);font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--accent);font-weight:600}
+.prof p{font-size:15px;line-height:1.48;margin:0;color:var(--ink-2)}
+.prof .cost{font-size:13.5px;color:var(--ink-3);font-family:var(--sans);border-top:1px solid var(--rule);
+  padding-top:9px;margin-top:auto}
+
+/* ---- screens ---- */
+.screen{border:1px solid var(--rule);background:var(--surface);padding:18px 22px;margin:0 0 14px}
+.screen .sn{font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--ink-3);margin:0 0 8px}
+.screen .say{font-family:var(--sans);font-size:16px;line-height:1.45;color:var(--ink);margin:0 0 8px}
+.screen .say strong{font-weight:600}
+.screen .an{font-size:14.5px;color:var(--ink-2);margin:0}
+
+/* ---- rows ---- */
+.rows{font-family:var(--sans);font-size:14.5px}
+.row{display:grid;grid-template-columns:82px 1fr;gap:18px;padding:13px 0;border-top:1px solid var(--rule)}
+.row .id{font-family:var(--mono);font-size:12px;color:var(--accent);font-weight:500;padding-top:1px}
+.row .b strong{font-weight:600;display:block;margin-bottom:2px}
+.row .b span{color:var(--ink-2);font-size:13.5px;line-height:1.45;display:block}
+@media(max-width:560px){.row{grid-template-columns:1fr;gap:3px}}
+
+.tier{font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--ink-3);margin:30px 0 2px;font-weight:600}
+
+footer{border-top:1px solid var(--rule);padding-top:26px;margin-top:20px;
+  font-family:var(--sans);font-size:14px;color:var(--ink-2)}
+footer code{font-size:12.5px}
+hr{border:none;border-top:1px solid var(--rule);margin:44px 0}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+
+<div class="wrap">
+
+<header class="mast">
+  <p class="eyebrow">Security &amp; control audit</p>
+  <h1>Halbert Security Audit</h1>
+  <p class="standfirst">A machine that identifies as its host, given cameras, microphones, the screen,
+  the filesystem and a shell — audited through two lenses, and redesigned around a permission model
+  that can be shown to someone hostile.</p>
+  <div class="meta">
+    <span>2026-09-06</span><span>branch <code>feat/attunement-halbert</code></span>
+    <span>3 adversarial passes · 205 agents</span><span>28 candidates refuted</span>
+  </div>
+  <div class="counts">
+    <div class="count c"><div class="n">12</div><div class="l">Critical</div></div>
+    <div class="count h"><div class="n">50</div><div class="l">High</div></div>
+    <div class="count m"><div class="n">95</div><div class="l">Medium</div></div>
+    <div class="count l2"><div class="n">29</div><div class="l">Low</div></div>
+    <div class="count"><div class="n">186</div><div class="l">Confirmed</div></div>
+  </div>
+</header>
+
+<nav class="toc col" aria-label="Contents">
+  <ol>
+    <li><span class="num">01</span><a href="#verdict">The verdict</a></li>
+    <li><span class="num">02</span><a href="#threat">Threat model</a></li>
+    <li><span class="num">03</span><a href="#crit">The twelve criticals</a></li>
+    <li><span class="num">04</span><a href="#spread">Where the findings sit</a></li>
+    <li><span class="num">05</span><a href="#lever">One door</a></li>
+    <li><span class="num">06</span><a href="#matrix">Cross-platform matrix</a></li>
+    <li><span class="num">07</span><a href="#profiles">The three profiles</a></li>
+    <li><span class="num">08</span><a href="#firstrun">First run</a></li>
+    <li><span class="num">09</span><a href="#controls">Live controls</a></li>
+    <li><span class="num">10</span><a href="#gates">The five gates</a></li>
+    <li><span class="num">11</span><a href="#plan">The plan</a></li>
+    <li><span class="num">12</span><a href="#decisions">Your calls</a></li>
+    <li><span class="num">13</span><a href="#honest">Corrections owed</a></li>
+    <li><span class="num">14</span><a href="#docs">Where it all lives</a></li>
+  </ol>
+</nav>
+
+<section id="verdict" class="col">
+  <h2>01 — Verdict</h2>
+  <p class="h2sub">The capability is not the problem. The absence of a boundary around it is.</p>
+  <p class="lede">Halbert is built to hold more of a machine than an application normally does, and that
+  is the product, not a defect. What the audit found is that almost none of that capability sits behind
+  a door — and that the doors which exist mostly do not close.</p>
+  <p>Three findings carry the rest. <strong>About 315 of 334 HTTP routes have no authentication of any
+  kind</strong>, including the one that spawns a PTY. The single authorization primitive in the tree,
+  <code>require_local_admin</code>, is a loopback source-IP check — which every co-resident process
+  already satisfies, and which a rebound browser tab satisfies too, because nothing validates the Host
+  header. And the permission surface the user can actually see — the Tool Permissions tab — is consulted
+  by exactly two tools, <em>neither of which the agent's executor registers</em>, and writes to a path
+  the enforcement engine never reads.</p>
+  <p>That last one is the shape of the whole UI-and-control lens. The audit kept finding controls that
+  are true in the interface and false in the process: a microphone master switch that writes a file and
+  never stops the running pipeline; a Vision Autonomy card whose <code>senses</code> key is silently
+  discarded by the endpoint that receives it; redaction that returns the unmodified frame on any host
+  without the macOS Vision backend while still labelling the capture redacted. A control that lies is
+  worse than a missing one, because the user stops looking.</p>
+  <p>On macOS the sensors cannot legally work at all as packaged. There are <strong>no
+  <code>NSUsageDescription</code> strings</strong>, so TCC kills the process rather than prompting;
+  <code>entitlements</code> and <code>signingIdentity</code> are both <code>null</code>, so an ad-hoc
+  signature changes every build and no grant would persist anyway; and the capture code runs in a Python
+  sidecar that resolves an interpreter out of a user-writable <code>$HOME</code> path. Meanwhile the app
+  process holds a system-wide <em>active</em> <code>CGEventTap</code> that can read and delete any
+  keystroke on the machine, alongside <code>security.csp: null</code>.</p>
+  <p>None of this needs a rewrite. It needs a boundary, applied by construction rather than by memory,
+  and a consent model that records what was granted instead of storing a boolean. Both are designed
+  below, and the work is sequenced into twenty rows.</p>
+</section>
+
+<section id="threat" class="col">
+  <h2>02 — Threat model</h2>
+  <p class="h2sub">Four actors, because breadth alone is not a finding.</p>
+  <p>Halbert is <em>designed</em> to be given the screen and the shell. So the test applied to every
+  candidate finding was not "can it do something powerful" but: is this access gated by an explicit,
+  informed, revocable owner decision, and is it reachable by anyone who is not the owner. There is no
+  written threat model in the repository today; this is the one the audit ran against, and it should
+  become <code>documentation/legal/THREAT-MODEL.md</code>.</p>
+  <div class="scroll">
+    <table>
+      <thead><tr><th>Actor</th><th>Who they are</th><th class="n">Findings</th></tr></thead>
+      <tbody>
+        <tr><td><span class="chip actor">T1</span></td><td><strong>Local co-resident.</strong> Another
+          app or user account on this machine reaching the loopback API, the MCP socket or data at rest,
+          and inheriting every OS permission Halbert holds.</td><td class="n">68</td></tr>
+        <tr><td><span class="chip actor">T2</span></td><td><strong>Network adjacent.</strong> A LAN
+          attacker, or a web page in the owner's own browser — CORS does not cover WebSockets, and
+          nothing validates Host, so DNS rebinding grants same-origin access.</td><td class="n">41</td></tr>
+        <tr><td><span class="chip actor">T3</span></td><td><strong>Indirect prompt injection.</strong>
+          Attacker text arriving through web results, the RAG corpus, screen OCR, filenames, log lines,
+          Home Assistant entity names or MCP output — then driving a privileged tool call.</td><td class="n">35</td></tr>
+        <tr><td><span class="chip actor">T4</span></td><td><strong>Agent overstep.</strong> Autonomous
+          or approved-once action exceeding what the owner intended: the scheduler, download autonomy,
+          config writes, capture retention.</td><td class="n">42</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>Findings split <strong>123 code-security / 63 UI-and-control-security</strong>, which is roughly
+  the ratio you would want: the control-surface lens was not a garnish on the code audit, it produced a
+  third of the total and nearly all of the T4 set.</p>
+</section>
+
+<section id="crit">
+  <div class="col">
+    <h2>03 — The twelve criticals</h2>
+    <p class="h2sub">Each survived three independent verifiers trying to kill it.</p>
+    <p>Every finding below was checked by adversaries working three separate lenses — does the cited
+    code actually say this, is the path reachable on a default install, and is this a defect rather
+    than deliberately-granted product capability. Twenty-eight candidates did not survive and are not
+    here. Two of the twelve are Windows-only and therefore unreachable today; they are included because
+    the code ships now and the Windows target is still named.</p>
+  </div>
+
+  <div class="col">
+    <div class="find">
+      <div class="idx">01</div>
+      <h4>Zero authentication on ~315 of 334 dashboard routes</h4>
+      <div class="tags"><span class="chip crit">Critical</span><span class="chip actor">T1 · local</span></div>
+      <div class="loc">halbert_core/halbert_core/dashboard/routes/terminal.py:247</div>
+      <p><span class="lab">What</span><code>create_app()</code> installs exactly one middleware —
+      CORS — and all 40 <code>include_router</code> calls omit <code>dependencies</code>. The 24 auth
+      dependencies that exist are confined to five federation files.</p>
+      <p><span class="lab">Path</span>Any second process on the machine POSTs a command to
+      <code>/api/terminal/exec</code> and gets a PTY under Halbert's uid — which by design holds Full
+      Disk Access, camera, microphone and Screen Recording. The safety gate is a content filter, not an
+      identity check, and only its BLOCKED tier stops anything.</p>
+    </div>
+
+    <div class="find">
+      <div class="idx">02</div>
+      <h4>No Host-header validation anywhere: DNS rebinding gives any website the whole API</h4>
+      <div class="tags"><span class="chip crit">Critical</span><span class="chip actor">T2 · network</span></div>
+      <div class="loc">halbert_core/halbert_core/dashboard/app.py:574</div>
+      <p><span class="lab">Path</span>A page the owner visits rebinds its own hostname to 127.0.0.1.
+      The browser now treats the attacker's origin as same-origin with the dashboard, so CORS is
+      irrelevant and the page reads and writes every route. This is what turns "it's only bound to
+      loopback" from a mitigation into a false sense of one.</p>
+    </div>
+
+    <div class="find">
+      <div class="idx">03</div>
+      <h4>PTY stdin is written with no auth and no safety gate after spawn</h4>
+      <div class="tags"><span class="chip crit">Critical</span><span class="chip actor">T1 · local</span></div>
+      <div class="loc">dashboard/routes/terminal.py:357 · routes/websocket.py:118</div>
+      <p><span class="lab">What</span><code>_gate_command</code> runs once, at spawn. Every subsequent
+      write — over HTTP <code>/input</code>, over the WebSocket, or via <code>/stage</code> — goes
+      straight into the live PTY ungated. The session list is readable unauthenticated, so a caller can
+      find someone else's session and type into it.</p>
+    </div>
+
+    <div class="find">
+      <div class="idx">04</div>
+      <h4>Shipped deploy units bind the unauthenticated dashboard to 0.0.0.0</h4>
+      <div class="tags"><span class="chip crit">Critical</span><span class="chip actor">T2 · network</span><span class="chip low">Linux</span></div>
+      <div class="loc">deploy/halbert-host.service:24 · deploy/halbert-home.service</div>
+      <p><span class="lab">What</span>Both units set <code>HALBERT_HOST=0.0.0.0</code> and pass
+      <code>--host 0.0.0.0</code>, with no hardening directives at all — no
+      <code>NoNewPrivileges</code>, no <code>ProtectSystem</code>, no
+      <code>CapabilityBoundingSet</code>. Arbitrary host file read and write, and a PTY, offered to the
+      LAN. Nothing refuses a non-loopback bind without a token.</p>
+    </div>
+
+    <div class="find">
+      <div class="idx">05</div>
+      <h4>Arbitrary file write, escalating to root through a prefix-only allowlist</h4>
+      <div class="tags"><span class="chip crit">Critical</span><span class="chip actor">T1 · local</span></div>
+      <div class="loc">dashboard/routes/editor.py:379 · packaging/polkit/halbert-file-helper:31</div>
+      <p><span class="lab">What</span>Route validation is literally
+      <code>path.startswith('/')</code>. The privileged helper it calls allowlists by unnormalized
+      string prefix against <code>/etc/</code>, <code>/usr/lib/systemd/</code>, <code>/var/lib/</code>
+      and then runs <code>cat &gt; "$FILE_PATH"</code> as root — so
+      <code>/etc/../root/.ssh/authorized_keys</code> passes. The helper is resolved from the repo
+      working tree on a source install, and falls back to plain <code>sudo -n tee</code> when pkexec is
+      absent, which skips the allowlist entirely.</p>
+    </div>
+
+    <div class="find">
+      <div class="idx">06</div>
+      <h4>Any command the regex table does not recognise runs with no confirmation</h4>
+      <div class="tags"><span class="chip crit">Critical</span><span class="chip actor">T3 · injection</span></div>
+      <div class="loc">halbert_core/halbert_core/tools/safety.py:671</div>
+      <p><span class="lab">What</span>The classifier is a denylist whose default is MEDIUM, and only
+      HIGH prompts the user. So one injected command the table has never seen executes silently.
+      Adjacent: <code>find … -exec &lt;any program&gt;</code> is classified <em>SAFE</em> — "directory
+      listing" — because the SAFE rule is a bare prefix match, which also means anything named
+      <code>ls*</code>, <code>dir*</code>, <code>find*</code> or <code>locate*</code> clears every
+      role cap.</p>
+    </div>
+
+    <div class="find">
+      <div class="idx">07</div>
+      <h4>The sensitive-path gate reads the raw argument; the handler expands the tilde</h4>
+      <div class="tags"><span class="chip crit">Critical</span><span class="chip actor">T3 · injection</span></div>
+      <div class="loc">halbert_core/halbert_core/tools/safety.py:681</div>
+      <p><span class="lab">What</span><code>write_file(path="~/.ssh/authorized_keys")</code> is
+      MEDIUM and runs; the byte-identical call spelled <code>/Users/you/.ssh/authorized_keys</code> is
+      HIGH and stops for confirmation. The gate depends on spelling. <code>cwd</code> is never
+      classified at all, so <code>rm grub.cfg</code> with <code>cwd=/boot</code> is MEDIUM.</p>
+    </div>
+
+    <div class="find">
+      <div class="idx">08</div>
+      <h4>Home Assistant's confirm and forbid tiers are dead code</h4>
+      <div class="tags"><span class="chip crit">Critical</span><span class="chip actor">T4 · overstep</span><span class="chip low">Home Assistant</span></div>
+      <div class="loc">integrations/home_assistant/ha_governance.py:41</div>
+      <p><span class="lab">What</span>Levels 2 and 3 key on domain names Home Assistant does not
+      have. The garage-door tier and the forbidden tier never match anything, so the entries that were
+      supposed to protect locks, alarms and valves protect nothing.</p>
+    </div>
+
+    <div class="find">
+      <div class="idx">09</div>
+      <h4>Unknown HA domain defaults to auto-execute</h4>
+      <div class="tags"><span class="chip crit">Critical</span><span class="chip actor">T3 · injection</span><span class="chip low">Home Assistant</span></div>
+      <div class="loc">integrations/home_assistant/ha_governance.py:125</div>
+      <p><span class="lab">What</span>Thirteen device domains are classified; everything else returns
+      Level 1 — act, log only. That set includes <code>notify</code>,
+      <code>shell_command</code>, <code>python_script</code> and <code>hassio</code>. The one
+      entity-level check that does exist is bypassed by putting the entity id in the
+      <code>data</code> dict instead of the <code>entity_id</code> argument.</p>
+    </div>
+
+    <div class="find">
+      <div class="idx">10</div>
+      <h4>Wyoming audio ingress binds 0.0.0.0 with no token, and a bare transcript becomes an admin turn</h4>
+      <div class="tags"><span class="chip crit">Critical</span><span class="chip actor">T2 · network</span></div>
+      <div class="loc">halbert_core/halbert_core/audio/ingress/wyoming_ingress.py:128</div>
+      <p><span class="lab">What</span>The sibling agent transport refuses a non-loopback bind without
+      <code>WYOMING_TOKEN</code>; the audio ingress does not. Anyone on the LAN writes one JSONL line
+      and it is processed as an authenticated turn — because the dashboard voice path discards the
+      biometric speaker role and runs every spoken turn as <code>admin</code>.</p>
+    </div>
+
+    <div class="find w">
+      <div class="idx">11 · 12</div>
+      <h4>The command classifier is entirely POSIX — every Windows-native destructive command falls through</h4>
+      <div class="tags"><span class="chip crit">Critical</span><span class="chip actor">T3 · injection</span><span class="chip low">Windows · not yet reachable</span></div>
+      <div class="loc">tools/safety.py:320 · dashboard/routes/terminal.py:133</div>
+      <p><span class="lab">What</span>Both safety tiers return SAFE or MEDIUM for Windows destructive
+      and persistence commands, and <code>streaming/sandbox.py</code> returns the command
+      <em>unwrapped</em> on any platform that is neither Linux nor Darwin. No Windows build exists, so
+      nothing is exploitable today — but the permissive fallthrough is already written, and a Windows
+      build would inherit it silently. This is the archetype of the pattern the audit calls
+      <em>permissive fallthrough</em>, and it appears in at least four other places.</p>
+    </div>
+  </div>
+</section>
+
+<section id="spread">
+  <div class="col">
+    <h2>04 — Where the findings sit</h2>
+    <p class="h2sub">A third of everything, and nearly half the criticals, on the HTTP surface.</p>
+  </div>
+  <div class="scroll">
+    <table>
+      <thead><tr><th>Subsystem</th><th class="n">Crit</th><th class="n">High</th><th class="n">Med</th><th class="n">Low</th><th class="n">Total</th></tr></thead>
+      <tbody>
+        <tr><td>HTTP / WebSocket API</td><td class="n">5</td><td class="n">23</td><td class="n">28</td><td class="n">7</td><td class="n">63</td></tr>
+        <tr><td>Tool safety and command execution</td><td class="n">3</td><td class="n">6</td><td class="n">12</td><td class="n">4</td><td class="n">25</td></tr>
+        <tr><td>Home Assistant</td><td class="n">2</td><td class="n">3</td><td class="n">4</td><td class="n">0</td><td class="n">9</td></tr>
+        <tr><td>Sensors: vision and audio</td><td class="n">1</td><td class="n">4</td><td class="n">1</td><td class="n">1</td><td class="n">7</td></tr>
+        <tr><td>Packaging, deployment and install</td><td class="n">1</td><td class="n">3</td><td class="n">6</td><td class="n">1</td><td class="n">11</td></tr>
+        <tr><td>Stores, config and persistence</td><td class="n">0</td><td class="n">8</td><td class="n">17</td><td class="n">9</td><td class="n">34</td></tr>
+        <tr><td>Tauri desktop shell</td><td class="n">0</td><td class="n">2</td><td class="n">5</td><td class="n">0</td><td class="n">7</td></tr>
+        <tr><td>Autonomy and approval</td><td class="n">0</td><td class="n">1</td><td class="n">5</td><td class="n">2</td><td class="n">8</td></tr>
+        <tr><td>Egress, federation and MCP</td><td class="n">0</td><td class="n">0</td><td class="n">9</td><td class="n">3</td><td class="n">12</td></tr>
+        <tr><td>Dashboard UI</td><td class="n">0</td><td class="n">0</td><td class="n">8</td><td class="n">2</td><td class="n">10</td></tr>
+        <tr><td><strong>Total</strong></td><td class="n"><strong>12</strong></td><td class="n"><strong>50</strong></td><td class="n"><strong>95</strong></td><td class="n"><strong>29</strong></td><td class="n"><strong>186</strong></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="col">
+    <p>Two rows are worth reading against each other. <strong>Stores, config and persistence</strong>
+    has no criticals but 34 findings — it is where file modes, real deletion, and "the store failed so
+    the gate opened" live, and it is the quiet tier that a data-protection review reads first.
+    <strong>Dashboard UI</strong> has no criticals either, because a lying toggle is never critical on
+    its own; it is critical in combination with the route behind it, and the audit scored it where the
+    enforcement was missing rather than where the lie was displayed.</p>
+    <p>Counts are the audit's own labels after adversarial re-scoring. The second pass moved a great
+    many candidates <em>down</em> a tier once a verifier had read the whole file, which is the
+    behaviour you want from a verification stage.</p>
+  </div>
+</section>
+
+<section id="lever" class="col">
+  <h2>05 — One door</h2>
+  <p class="h2sub">A single change closes thirty findings and reframes fifty-eight more.</p>
+  <p>Applying authentication and Host/Origin validation <em>by construction</em> to every listener —
+  a default-deny router factory wrapping the 40 bare <code>include_router</code> calls, so a new route
+  is authenticated by omission rather than by somebody remembering — closes 30 findings outright,
+  including 5 of the 12 criticals and 17 of the 50 highs.</p>
+  <p>A further 58 findings name an unauthenticated route or a cross-origin page somewhere in their
+  attack path. Authentication does not close those; most keep a same-uid local-process route. But it
+  converts them from <em>"any website the owner visits"</em> to <em>"a process already running as the
+  owner"</em>, which is a materially different severity conversation.</p>
+  <div class="note warn">
+    <span class="t">The fail-open, in its own words</span>
+    <p><code>federation/peer_middleware.py:228</code> — the only authorization primitive in the
+    product:</p>
+    <p class="mono" style="font-size:13px;color:var(--ink-2)">if not host:<br>
+    &nbsp;&nbsp;&nbsp;&nbsp;# No peer address at all … treat as local.<br>
+    &nbsp;&nbsp;&nbsp;&nbsp;return True</p>
+    <p>Verified not reachable through the shipped uvicorn TCP server — a real request always carries a
+    client host — so this is filed low rather than dropped. It is one deployment change away from
+    mattering, and the comment is the whole problem in three lines: the gate returns
+    <em>yes</em> when it cannot tell.</p>
+  </div>
+</section>
+
+<section id="matrix">
+  <div class="col">
+    <h2>06 — Cross-platform matrix</h2>
+    <p class="h2sub">What each operating system actually gives the user.</p>
+    <p>The columns describe only what the <em>OS</em> supplies. <span class="mono">C✓</span> a real
+    consent moment · <span class="mono">C✗</span> none · <span class="mono">I✓</span> a real indicator ·
+    <span class="mono">I✗</span> none. Halbert must draw its own indicator on every platform for every
+    open grant, because on four of these six columns the OS draws nothing.</p>
+  </div>
+  <div class="scroll">
+    <table class="matrix">
+      <thead><tr><th>Capability</th><th>macOS Pro</th><th>macOS App Store</th><th>Linux Wayland</th><th>Linux X11</th><th>Home Assistant</th><th>Windows (planned)</th></tr></thead>
+      <tbody>
+        <tr><td>Screen, on demand</td>
+          <td><code>kTCCServiceScreenCapture</code> · <b>C✓ I✗</b></td>
+          <td>— no entitlement exists</td>
+          <td>portal ScreenCast picker · <b>C✓ I✓</b></td>
+          <td><code>XGetImage</code> on root · <b>C✗ I✗</b></td>
+          <td>—</td>
+          <td>WGC + rescap · <b>C✓ I✓</b> yellow border</td></tr>
+        <tr><td>Screen, continuous</td>
+          <td>same grant; 15+ re-prompts · <b>C✓ I✗</b></td><td>—</td>
+          <td>restore token, <code>persist_mode=2</code> · <b>C✓ I✓</b></td>
+          <td><b>C✗ I✗</b> — our switch is the only gate</td><td>—</td>
+          <td><b>C✓ I✓</b> border every frame</td></tr>
+        <tr><td>Camera, local</td>
+          <td>TCC + usage string + entitlement · <b>C✓ I✓</b></td>
+          <td><code>device.camera</code>, single-shot only · <b>C✓ I✓</b></td>
+          <td>portal Camera + PipeWire fd · <b>C✓ I✗</b></td>
+          <td><code>/dev/video*</code> group — permanent, invisible · <b>C✗ I✗</b></td>
+          <td>—</td><td>Privacy toggle · <b>C✓ I✓</b></td></tr>
+        <tr><td>Microphone</td>
+          <td>TCC + <code>device.audio-input</code> · <b>C✓ I✓</b></td>
+          <td>same · <b>C✓ I✓</b></td>
+          <td>PipeWire socket, coarse · <b>C✗ I✗</b></td>
+          <td><b>C✗ I✗</b> — Snap strict is Linux's only real prompt</td>
+          <td>satellite · <b>C✗ I✗</b></td><td>capability · <b>C✓ I✓</b></td></tr>
+        <tr><td>Voiceprint (biometric)</td>
+          <td><b>no OS service anywhere</b> — rides the mic grant</td>
+          <td><b>not on the ceiling</b></td><td><b>C✗ I✗</b></td><td><b>C✗ I✗</b></td>
+          <td><b>C✗ I✗</b></td><td><b>C✗ I✗</b></td></tr>
+        <tr><td>Files — user data</td>
+          <td>per-folder TCC, each revocable · <b>C✓ I✗</b></td>
+          <td>user-selected + bookmarks · <b>C✓ I✗</b></td>
+          <td>portal FileChooser · <b>C✓ I✗</b></td>
+          <td>plain DAC · <b>C✗ I✗</b></td><td>—</td>
+          <td><code>broadFileSystemAccess</code> · <b>C✓ I✗</b></td></tr>
+        <tr><td>Full Disk Access</td>
+          <td><b>no API, no prompt, no per-folder revoke — excluded from every profile</b></td>
+          <td>—</td><td>no analogue</td><td>no analogue</td><td>—</td><td>subsumed</td></tr>
+        <tr><td>System config write</td>
+          <td><b>root, not TCC</b>; <code>sudo -n tee</code> can never succeed here</td>
+          <td>— barred by review</td>
+          <td>polkit, re-auth per mutation · <b>C✓ I✗</b></td>
+          <td>same · <b>C✓ I✗</b></td><td>—</td>
+          <td>broker service, verb-enum IPC</td></tr>
+        <tr><td>Terminal / PTY</td>
+          <td>no TCC — <b>children inherit every grant Halbert holds</b></td>
+          <td>— barred by review</td>
+          <td>fork/exec inside systemd sandbox</td><td>same</td><td>—</td>
+          <td>AppContainer + Job Object</td></tr>
+        <tr><td>Inbound listener</td>
+          <td>ours alone · <b>C✗ I✗</b></td>
+          <td><code>network.server</code> not requested — structurally impossible, a win</td>
+          <td>none · <b>C✗ I✗</b></td><td>none · <b>C✗ I✗</b></td>
+          <td>token + pinned TLS</td>
+          <td>Defender prompt; <b>WFP does not filter loopback</b></td></tr>
+        <tr><td>Global hotkey</td>
+          <td><code>RegisterEventHotKey</code> — <b>no TCC grant at all</b></td>
+          <td>same</td><td>portal shortcut · <b>C✓ I✗</b></td><td><code>XGrabKey</code> · <b>C✗ I✗</b></td>
+          <td>—</td><td><code>RegisterHotKey</code>, never a hook</td></tr>
+        <tr><td>Egress</td><td colspan="6">None. No OS anywhere gates this — it is entirely ours, and
+          it is consented per destination, never by profile.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="col">
+    <div class="note">
+      <span class="t">Two rulings the matrix forces</span>
+      <p><strong>Remove the CGEventTap.</strong> Its actual goal is stopping a bare Esc or Space
+      falling through while the HUD is visible — not summoning it.
+      <code>RegisterEventHotKey</code> plus overriding <code>canBecomeKeyWindow</code> achieves that
+      completely, and <em>neither requires any TCC grant</em>. Halbert drops off the Accessibility list
+      entirely, which is the row a journalist leads with.</p>
+      <p><strong>Full Disk Access is in no profile.</strong> It has no API, no prompt and no
+      per-folder revoke — and because PTY children are responsibility-attributed to Halbert, FDA is a
+      whole-system grant for every command the agent runs. Per-folder TCC rows cost real capability
+      and are worth it: each one is individually revocable in the Privacy pane.</p>
+    </div>
+  </div>
+</section>
+
+<section id="profiles">
+  <div class="col">
+    <h2>07 — The three profiles</h2>
+    <p class="h2sub">The line between them is one testable sentence: whether anyone asked.</p>
+    <p>A profile is a named set of proposals, not a runtime object. Accepting one writes N individual
+    consent records, each stamped <code>via: "profile:attentive"</code>. No code path anywhere asks
+    "which profile am I" — the name is provenance, and every grant stays individually visible and
+    individually revocable.</p>
+  </div>
+  <div class="col profiles">
+    <div class="prof">
+      <div class="nm">Reserved</div>
+      <p>I answer questions and read my own state. I don't watch, I don't listen, and nothing on this
+      machine changes because of me.</p>
+      <div class="cost">Costs you: the job. It exists for evaluation, for a shared machine, and as the
+      one-click floor on the review screen.</div>
+    </div>
+    <div class="prof sel">
+      <div class="badge">Preselected</div>
+      <div class="nm">Attentive</div>
+      <p>I look after this machine. I read its logs and its configuration, I change things when you
+      approve the exact change, I look at your screen when you ask me to, and I hear you while you hold
+      the talk button. I never watch on my own, and nothing leaves this computer.</p>
+      <div class="cost">Costs you: you have to ask. It won't spot the error on your screen by itself,
+      won't answer to its name across the room, and doesn't know which of you is speaking.</div>
+    </div>
+    <div class="prof">
+      <div class="nm">Present</div>
+      <p>I'm awake in the room. I listen for my name, I keep an eye on the screen and the cameras
+      you've set up, and I can act on the house. This is the setting where other people — guests,
+      family, anyone who walks in — can be recorded. Choose it deliberately.</p>
+      <div class="cost">Costs you, in these words on the card: the privacy of this room, for you and
+      for everyone else in it.</div>
+    </div>
+  </div>
+  <div class="col">
+    <p><strong>Attentive holds only capabilities that open inside a turn a person started, hold for
+    that turn, and close with it. Present holds the loops that run when nobody is there.</strong> Every
+    row below can be checked against that sentence, and it is the sentence to put in front of a
+    journalist.</p>
+  </div>
+  <div class="scroll">
+    <table class="grant">
+      <thead><tr><th>Capability</th><th>Reserved</th><th>Attentive</th><th>Present</th></tr></thead>
+      <tbody>
+        <tr><td>sensor.journal · config_watch</td><td class="n0">✗</td><td class="y">✓</td><td class="y">✓</td></tr>
+        <tr><td>sensor.screen</td><td class="n0">✗</td><td class="y">✓ redacted, named target, receipt</td><td class="y">✓</td></tr>
+        <tr><td>sensor.screen.continuous</td><td class="n0">✗</td><td class="n0">✗</td><td class="y">✓ 4 h session lease</td></tr>
+        <tr><td>sensor.camera</td><td class="n0">✗</td><td class="n0">✗</td><td class="y">✓</td></tr>
+        <tr><td>sensor.mic.push_to_talk</td><td class="n0">✗</td><td class="y">✓</td><td class="y">✓</td></tr>
+        <tr><td>sensor.mic.continuous</td><td class="n0">✗</td><td class="n0">✗</td><td class="y">✓</td></tr>
+        <tr><td>sensor.voiceprint</td><td class="n0">✗</td><td class="n0">✗</td><td class="n0"><b>✗ never, by any profile</b></td></tr>
+        <tr><td>reach.config.write</td><td class="n0">✗</td><td class="ask">ask — literal diff + backup</td><td class="ask">ask</td></tr>
+        <tr><td>reach.terminal</td><td class="n0">✗</td><td class="y">✓ sandboxed, classified, logged</td><td class="y">✓</td></tr>
+        <tr><td>reach.privileged</td><td class="n0">✗</td><td class="ask">ask, fresh OS re-auth every time</td><td class="ask">ask, fresh OS re-auth every time</td></tr>
+        <tr><td>reach.home</td><td>—</td><td class="n0">✗</td><td class="y">T0/T1 ✓ · T2 per entity · T4 deny</td></tr>
+        <tr><td>egress.* (all)</td><td class="n0">✗</td><td class="n0"><b>✗</b></td><td class="n0"><b>✗</b></td></tr>
+        <tr><td>auto.scheduler</td><td class="n0">✗</td><td class="y">✓ nightly sweep + morning summary</td><td class="y">✓</td></tr>
+        <tr><td>auto.observe</td><td class="n0">✗</td><td class="n0">✗</td><td class="y">✓</td></tr>
+        <tr><td>auto.capture_on_intent</td><td class="n0">✗</td><td class="n0"><b>✗</b></td><td class="n0">offered, off</td></tr>
+        <tr><td>auto.act (autonomy_level)</td><td>observe</td><td><b>suggest</b></td><td><b>suggest</b></td></tr>
+        <tr><td>surface.lan_api · surface.mcp</td><td class="n0">✗</td><td class="n0">✗</td><td class="n0">✗</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="col">
+    <h3>Five bright lines no profile crosses</h3>
+    <ol>
+      <li><strong>No profile grants egress.</strong> A profile is a statement about this machine's own
+      body. It can never be the reason something left.</li>
+      <li><strong>No profile grants <code>auto.act</code>.</strong> Approval is never granted in bulk —
+      act and orchestrate are individual typed-phrase grants with their own records.</li>
+      <li><strong>No profile grants a biometric.</strong> Voiceprint enrolment is always an individual
+      act with its own disclosure and a 400-day default TTL. That is the whole GDPR Article 9 and BIPA
+      answer, and it costs one line in the profile compiler.</li>
+      <li><strong><code>reach.privileged</code> re-authenticates every time</strong>, including in
+      Present. Today <code>com.halbert.editor.policy</code> sets <code>auth_admin_keep</code> on all
+      three actions including write and exec; it belongs on the read-only diagnostic set alone.</li>
+      <li><strong>Neither Full Disk Access nor Accessibility is ever requested.</strong> Those are the
+      two rows a reviewer reads first, and Halbert should simply not be on either list.</li>
+    </ol>
+    <h3>Four shipped defaults this reverses</h3>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Setting</th><th>Ships as</th><th>Becomes</th><th>Why</th></tr></thead>
+        <tbody>
+          <tr><td><code>auto.capture_on_intent</code><br><code>being_config.py:174</code></td><td>True, and rendered pre-checked</td><td>denied</td><td>The only sensor default in the product that ships on. It grabs the active window plus OCR with no tool call, no user turn, no message and no indicator. Silent capture is not a default.</td></tr>
+          <tr><td><code>redaction.enabled</code><br><code>vision/config.py:57</code></td><td>False</td><td>required</td><td>The default posture today is unredacted screenshots reaching a model.</td></tr>
+          <tr><td><code>autonomy_level</code></td><td>observe</td><td>suggest</td><td><code>observe</code> is not the safe default, it is the useless one — it is why the product feels inert. <code>suggest</code> proposes and waits, which is the entire product.</td></tr>
+          <tr><td>Wyoming bind<br><code>audio/config.py:52</code></td><td>0.0.0.0</td><td>127.0.0.1</td><td>Already ratified in DECISIONS on 2026-09-01; the code never followed.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>On the sandboxed App Store channel only Reserved and Attentive are offered, and
+    <strong>the subject of the profile is the paired body, not this Mac</strong> — same three names,
+    same words, same codepath, different subject line. A capability the channel cannot deliver is
+    <em>not rendered</em>: no greyed switches, no padlocks, no upsell. A greyed switch teaches the user
+    they are missing something broken; an honest shorter list teaches them what this machine is.</p>
+  </div>
+</section>
+
+<section id="firstrun" class="col">
+  <h2>08 — First run</h2>
+  <p class="h2sub">Seven screens, and nothing privileged starts before them.</p>
+  <p>Today onboarding is 373 lines — welcome, name, user type, scan, done. It names no capability,
+  offers no decline, and <em>every privileged subsystem has already started in the FastAPI startup
+  event before the dialog can render</em>. That last fact is why the fix is a two-phase boot, not a new
+  dialog: Phase 0 reads the halt flag and the consent ledger and starts nothing else.</p>
+
+  <div class="screen">
+    <p class="sn">Screen 0 — What I already am</p>
+    <p class="say"><strong>I'm the software this computer now runs.</strong> Not an app running on it —
+    I speak as the machine you're sitting at. That makes me useful in a way an assistant isn't, and it
+    means I'm asking for more than an app usually does.<br><br>
+    Right now I can see: <strong>MacBook Pro · M3 Max · 64 GB · 2 TB, 61% free · up 4 days.</strong><br><br>
+    That's all of it. I have no eyes, no ears, and no permission to change anything.</p>
+    <p class="an">It demonstrates the boundary instead of asserting it, before asking for anything.
+    Not a modal — "Just look around" is a real decline that drops into conversation with no records
+    committed. Where the OS reports more than one login-capable account it adds: <em>"Other people use
+    this computer. What you allow here applies to everyone who uses it."</em> That sentence is a
+    compliance artefact, and the account count goes into the consent record.</p>
+  </div>
+
+  <div class="screen">
+    <p class="sn">Screens 1–4 — Names, then how much should I notice</p>
+    <p class="an">The machine asks what to call you and what it should answer to. Then the three
+    profile cards, then the Reach roots — which directories, which displays. Screen 4 states plainly
+    what Attentive leaves off, so the user knows what they are <em>not</em> getting. Screen 4b appears
+    only when there is no local model, and routes straight into the per-destination egress decision
+    rather than leaving a user with a machine that cannot answer.</p>
+  </div>
+
+  <div class="screen">
+    <p class="sn">Screen 5 — The review</p>
+    <p class="say">Here is everything you're about to allow.<br><br>
+    <strong>On my own, while you're away</strong><br>
+    · Read this machine's system logs and hardware sensors, continuously<br>
+    · Read the configuration under <code>/etc</code> and keep dated copies, so I can tell you what changed<br>
+    · Run a nightly check and write you a morning summary<br><br>
+    <strong>When you ask me to</strong><br>
+    · Run a command in a terminal, under your user account<br>
+    · Change a configuration file, after showing you the exact difference<br>
+    · Take one picture of a display or a window, with passwords and keys blanked out first<br>
+    · Hear you while you hold the talk button</p>
+    <p class="an">One screen, the whole grant, nothing committed, every line carrying a Change link.
+    This is the artefact an outside reviewer screenshots — and the one the user actually reads, because
+    it is the only place the whole thing sits in one column.</p>
+  </div>
+
+  <p style="margin-top:22px"><strong>OS permissions are requested at first use, never at setup.</strong>
+  A wall of system dialogs during onboarding is a wall the user clicks through. Asking for the camera at
+  the moment they ask the machine to look at something is the only time the request explains itself.</p>
+</section>
+
+<section id="controls" class="col">
+  <h2>09 — Live controls</h2>
+  <p class="h2sub">Stop, indicators, ledger, activity, export, destroy.</p>
+  <h3>Stop everything</h3>
+  <p>There is no such control today. <code>autonomy/guardrails.py</code> writes
+  <code>Path("data/safe_mode_active.flag")</code> — CWD-relative, so a service started from
+  <code>/</code> writes to <code>/data/</code> or fails — shared between four unconnected enforcer
+  instances, with no UI at all, and cleared by an endpoint that takes no auth and no body.</p>
+  <p>What replaces it is one action that writes <code>&lt;data_dir&gt;/runtime/halt.json</code> at
+  mode <code>0600</code>, atomically, flock-guarded, <strong>read in Phase 0 of boot before any
+  subsystem starts</strong> — so surviving a restart is structural rather than a check somebody
+  remembered. It halts every open grant mid-frame, the scheduler, tool execution, the agent's own PTY
+  sessions, audio ingress, HA actuation at every tier, all egress, MCP dispatch and TTS mid-utterance.
+  It leaves the user's own shells alone.</p>
+  <p>It does <em>not</em> halt the UI, the conversation, Settings, the activity log or export. The
+  machine can still talk, so it can tell you it is stopped:</p>
+  <div class="note">
+    <p style="font-family:var(--sans)"><em>"I'm stopped. Nothing I do will take effect until you start
+    me again — but ask me anything."</em></p>
+    <p style="margin-top:9px">A machine that goes mute when halted is a machine people are afraid to
+    halt.</p>
+  </div>
+  <h3>Indicators that cannot drift</h3>
+  <p>There is no live indicator for screen or webcam capture at all today, and the one audio indicator
+  is driven by a config snapshot rather than the capture state — so it can say "off" while the
+  microphone is open. In the new model every indicator renders from the set of open grants, naming the
+  <em>target</em> rather than the class: "watching Display 2", not "screen capture on". The test is
+  symmetric — for every open grant exactly one indicator row, and no indicator row without a grant.</p>
+  <h3>The consent ledger</h3>
+  <p>Consent today is a bare boolean in YAML. It records nothing about when it was granted, from which
+  surface, by whom, or against what words — and nothing logs a flip. Every grant record in the new
+  model carries the principal, the authentication, the surface, the channel, the build, the OS grant
+  state, and <code>text_shown_sha256</code>: the digest of the exact words the person read. That last
+  field is what lets you answer, two years later, what a specific user consented to in a specific
+  release. Erasure writes its own ledger event <em>before</em> acting.</p>
+</section>
+
+<section id="gates" class="col">
+  <h2>10 — The five gates</h2>
+  <p class="h2sub">Falsifiable, each blocking every channel, ordered by what is bypassable without the one above it.</p>
+
+  <div class="gate"><div class="g">Gate 1</div><div>
+    <h4>One door</h4>
+    <p><code>require_owner</code> on every mutating route, applied by a default-deny router factory so
+    a new route is authenticated by omission. Host allowlist. Origin checks on all four WebSocket
+    handlers. The <code>_is_local_client</code> fail-open inverted. A non-loopback bind that refuses
+    without a token.</p>
+    <p><span class="lab">Proof</span><code>tests/test_route_auth_census.py</code> fails CI when any
+    route lacks an auth dependency; an integration test drives curl and a simulated rebound origin at
+    three routes and gets 403 from all three.</p>
+  </div></div>
+
+  <div class="gate"><div class="g">Gate 2</div><div>
+    <h4>Nothing captures, executes or egresses without a lease</h4>
+    <p>Every capture, exec and egress primitive takes a <code>Lease</code> positionally; the
+    constructor is module-private and the only mint is <code>require()</code>. Redaction fails closed
+    on the capability, so a host with no working backend cannot open a redaction-required lease at
+    all.</p>
+    <p><span class="lab">Proof</span>A deny-all canary boots with an empty ledger, drives every tool,
+    route and startup path, and records zero captures, zero subprocesses, zero outbound sockets. A
+    permissive-fallthrough lint closes the sandbox, config, discovery and redaction fallthroughs in one
+    rule.</p>
+  </div></div>
+
+  <div class="gate"><div class="g">Gate 3</div><div>
+    <h4>Stop works, survives a kill, and is visible</h4>
+    <p>One action halting capture, scheduler and execution together, reachable from tray, every page,
+    voice-at-ingress, hotkey, CLI and an HA switch. Resume requires an owner with OS re-auth.</p>
+    <p><span class="lab">Proof</span>A test <code>SIGKILL</code>s the process mid-capture and asserts
+    that on restart nothing perceives and the halt banner renders.</p>
+  </div></div>
+
+  <div class="gate"><div class="g">Gate 4</div><div>
+    <h4>Consent resolves to specific words in a specific release</h4>
+    <p>A capability with no record is denied. Every capability has committed copy; shipped digests
+    match. <code>granted: true</code> is refused unless the principal is an owner on an authenticated
+    surface.</p>
+    <p><span class="lab">Proof</span>A test attempts a widening as the agent, as a peer, as MCP and as
+    an unauthenticated loopback caller, and gets four refusals.</p>
+  </div></div>
+
+  <div class="gate"><div class="g">Gate 5</div><div>
+    <h4>The agent cannot rewrite its own permissions, and the published documents are true</h4>
+    <p>No governed path is writable by the agent through any write primitive. Skills load only from
+    the manifest, only on a digest match. <code>THREAT-MODEL.md</code> exists.</p>
+    <p><span class="lab">Proof</span><code>tests/test_agent_cannot_touch_itself.py</code> — every
+    registered tool × every governed path × every write primitive — and
+    <code>tests/test_security_md_claims.py</code>, which pins each published claim to an assertion.
+    Everyone rewrites the security document once; only the test keeps it true.</p>
+  </div></div>
+
+  <p style="margin-top:26px">Plus one release gate for macOS: Developer ID signature, hardened runtime,
+  notarized and stapled, usage strings present, sidecar frozen inside the bundle, CGEventTap gone, CSP
+  set, updater configured. <strong>Until every one of those is true, every macOS sensor row reads
+  "can't tell — this build isn't signed", never "on".</strong></p>
+</section>
+
+<section id="plan">
+  <div class="col">
+    <h2>11 — The plan</h2>
+    <p class="h2sub">Twenty rows, and a hard sequencing rule.</p>
+    <p><strong>SEC-1 → SEC-2/3/4 → SEC-5 + SEC-8 → SEC-7 → SEC-6 ship as one train and nothing else
+    lands first.</strong> No channel work, no signing work, no release notes. SEC-8 is inside that set
+    deliberately — the three things a user can <em>see</em> must arrive with the three that make them
+    true, or nobody can check the design.</p>
+  </div>
+  <div class="col">
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Tier</th><th>Rows</th><th class="n">Findings</th><th class="n">Crit</th><th class="n">High</th></tr></thead>
+        <tbody>
+          <tr><td><strong>P0</strong> ship-blocking</td><td>SEC-1 · 2 · 3 · 4 · 5 · 6 · 8 · 9</td><td class="n">103</td><td class="n">8</td><td class="n">31</td></tr>
+          <tr><td><strong>P1</strong> before "secure" is said publicly</td><td>SEC-7 · 10 · 11 · 12 · 14 · 15 · 17</td><td class="n">40</td><td class="n">0</td><td class="n">5</td></tr>
+          <tr><td><strong>P2</strong> the reviewer bar</td><td>SEC-13 · 16 · 20</td><td class="n">28</td><td class="n">0</td><td class="n">9</td></tr>
+          <tr><td><strong>P3</strong> hardening</td><td>SEC-18 · 19</td><td class="n">15</td><td class="n">2</td><td class="n">3</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p class="tier">P0 — exploitable now</p>
+    <div class="rows">
+      <div class="row"><div class="id">SEC-1</div><div class="b"><strong>One door: every listener authenticates</strong><span>Default-deny router factory, Host allowlist, WebSocket Origin checks, MCP bearer, Wyoming to loopback, the deploy units' 0.0.0.0 removed. Closes 30 findings.</span></div></div>
+      <div class="row"><div class="id">SEC-2</div><div class="b"><strong>Command classification and execution containment</strong><span>Allowlist-shaped classification with a deny default, normalization before the sensitive-path check, cwd classified, the sandbox applied to the agent's own commands.</span></div></div>
+      <div class="row"><div class="id">SEC-3</div><div class="b"><strong>Path containment and the privileged write path</strong><span>Realpath-resolved containment everywhere, the sudo fallback deleted, the shell helpers replaced by a typed broker with per-action polkit ids.</span></div></div>
+      <div class="row"><div class="id">SEC-4</div><div class="b"><strong>One enforcing approval gate; the policy engine deleted</strong><span>The <code>reach.*</code> grants become the per-tool policy. One evaluator at all times, never zero.</span></div></div>
+      <div class="row"><div class="id">SEC-5</div><div class="b"><strong>The capability gate and the Lease</strong><span>Capability split from consent; lease-typed constructors make ungated capture a <code>TypeError</code> rather than a review problem.</span></div></div>
+      <div class="row"><div class="id">SEC-6</div><div class="b"><strong>Two-phase boot and first run</strong><span>Nothing privileged starts before consent exists. The seven screens.</span></div></div>
+      <div class="row"><div class="id">SEC-8</div><div class="b"><strong>Stop everything, and live indicators</strong><span>Ships with SEC-5, never after.</span></div></div>
+      <div class="row"><div class="id">SEC-9</div><div class="b"><strong>Home Assistant governance</strong><span>Default-deny unknown domains, tiers keyed on domains that exist, the entity check moved where it cannot be routed around.</span></div></div>
+    </div>
+
+    <p class="tier">P1 — before the product is described publicly as secure</p>
+    <div class="rows">
+      <div class="row"><div class="id">SEC-7</div><div class="b"><strong>The consent ledger</strong><span>Records, not booleans. Provenance, principal, surface, and the digest of the words shown.</span></div></div>
+      <div class="row"><div class="id">SEC-10</div><div class="b"><strong>Speaker authority and the voice path</strong><span>Spoken turns stop running as admin.</span></div></div>
+      <div class="row"><div class="id">SEC-11</div><div class="b"><strong>The egress choke point</strong><span>One place anything can leave, consented per destination.</span></div></div>
+      <div class="row"><div class="id">SEC-12</div><div class="b"><strong>Remote surfaces propose, never commit</strong><span>MCP, peers and the HA component lose the ability to execute.</span></div></div>
+      <div class="row"><div class="id">SEC-14</div><div class="b"><strong>The self-modification fence and skills</strong><span>Manifest plus digest match; a dropped file no longer rewrites the system prompt.</span></div></div>
+      <div class="row"><div class="id">SEC-15</div><div class="b"><strong>Prompt-injection containment</strong><span>Untrusted content structurally separated from instructions, not concatenated as markdown.</span></div></div>
+      <div class="row"><div class="id">SEC-17</div><div class="b"><strong>Settings IA: the lying controls deleted, the missing ones shipped</strong><span>Every security control shows real state, confirms the dangerous direction, and is reachable in two steps.</span></div></div>
+    </div>
+
+    <p class="tier">P2 — the reviewer bar · P3 — hardening</p>
+    <div class="rows">
+      <div class="row"><div class="id">SEC-13</div><div class="b"><strong>Data at rest, erasure and export</strong><span>File modes, encryption for the biometric store, real deletion, and the export counterpart that does not exist yet.</span></div></div>
+      <div class="row"><div class="id">SEC-16</div><div class="b"><strong>Packaging, signing and the install chain</strong><span>Developer ID, notarization, a signed updater, the frozen sidecar, the unregistered PyPI name, the classic-confinement Snap root daemon.</span></div></div>
+      <div class="row"><div class="id">SEC-20</div><div class="b"><strong>The paper: threat model, honest documents, test gates</strong><span>Including the test that pins every published security claim to an assertion.</span></div></div>
+      <div class="row"><div class="id">SEC-18</div><div class="b"><strong>Windows: the empty ceiling</strong><span>The app refuses to start rather than degrading permissively. W1–W13 before that reverses.</span></div></div>
+      <div class="row"><div class="id">SEC-19</div><div class="b"><strong>Sensor-input trust and retention hygiene</strong><span>Host content an unprivileged process can influence stops flowing unscrubbed into prompts and findings.</span></div></div>
+    </div>
+  </div>
+</section>
+
+<section id="decisions" class="col">
+  <h2>12 — Your calls</h2>
+  <p class="h2sub">Twelve decisions, each with the default the work will assume if no answer comes.</p>
+  <p>These are written in the shape of the <code>DECISIONS.md</code> "Open — founder calls" section.
+  Four matter most, and one is a hard block.</p>
+  <div class="scroll">
+    <table>
+      <thead><tr><th>Id</th><th>Question</th><th>Default assumed</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">SEC-D1</td><td><strong>Does the App Store channel ship at all?</strong> The sandbox forbids Screen Recording, the PTY, <code>/etc</code> writes and a privileged helper.</td><td>Ship it as the <em>companion</em> — the profile's subject is the paired body, not this Mac. That is also what keeps "Sensitive Info → Not Collected" a compile-time property rather than a promise.</td></tr>
+        <tr><td class="mono">SEC-D2</td><td><strong>X11 screen capture — supported or refused?</strong> On X11 any client can already read the screen; our switch would be the only gate.</td><td>Support it, degraded and labelled. The <em>row</em> degrades, not the profile, and it carries the sentence verbatim on the row itself.</td></tr>
+        <tr><td class="mono">SEC-D3</td><td><strong>Voiceprint retention.</strong> Special-category data under GDPR Article 9, covered by BIPA, CUBI and MHMDA. Today: no TTL, no expiry, unencrypted, world-readable.</td><td>Never granted by a profile; individual enrolment with its own disclosure; 400-day TTL renewed by use; encrypted at <code>0600</code>; "unenrolled" is a permanent valid state, never a gap to fill.</td></tr>
+        <tr><td class="mono">SEC-D4</td><td><strong>Bystander policy.</strong> Present records guests, family, children, a delivery driver on a doorbell camera.</td><td>A bystander is a subject. Everything about an unrecognised person is turn-scoped — no memory write, no ledger row, no voiceprint. Spoken disclosure on first contact with an unknown voice.</td></tr>
+        <tr><td class="mono">SEC-D10</td><td><strong>Bundle identifier reconcile.</strong> <code>platforms.yml</code> and <code>DECISIONS FDR-03</code> disagree, and the per-channel ceiling is keyed on it.</td><td><code>platforms.yml</code> wins; FDR-03 is superseded. <strong>Hard block on SEC-5</strong> either way — it must be settled before the ceiling compiles.</td></tr>
+        <tr><td class="mono">SEC-D11</td><td><strong>Delete the policy engine, or repair it?</strong></td><td>Delete. It ships default-allow, default-allows on exception, is consulted by two tools the executor never registers, and is written to a path the engine never reads. Its job is subsumed by the <code>reach.*</code> grants.</td></tr>
+        <tr><td class="mono">SEC-D12</td><td><strong>The one deliberate fail-open.</strong> "Forget the last ten minutes", spoken by any voice in the room, unauthenticated, always succeeds.</td><td>Keep it. Erasure at a bystander's request needs no privilege, and a household member who cannot retract what a machine overheard is not consenting to anything. It erases; it cannot read, grant or execute.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>The remaining five — profile naming and preselection, the <code>observe → suggest</code> default,
+  Full Disk Access and Accessibility, whether Windows stays a named target, and whether a missing
+  integrity dependency should halt boot — are in the plan document with the same structure.</p>
+</section>
+
+<section id="honest" class="col">
+  <h2>13 — Corrections owed</h2>
+  <p class="h2sub">The published security policy makes claims the code contradicts.</p>
+  <p>At a "defensible to an outside reviewer" bar this is its own finding, and it is the cheapest one
+  to fix. <code>documentation/legal/SECURITY.md</code> currently states:</p>
+  <div class="scroll">
+    <table>
+      <thead><tr><th>Published claim</th><th>What the code does</th></tr></thead>
+      <tbody>
+        <tr><td>"Default policy requires approval for: service restarts, configuration file modifications, scheduled task creation, file deletions"</td><td><code>config/policy.yml</code> ships <code>default_allow: true</code> with <code>write_config</code> and <code>schedule_cron</code> both explicitly allowed, and the loader returns default-allow on any exception.</td></tr>
+        <tr><td>"Dashboard — Localhost only — Bound to 127.0.0.1"</td><td>True of the default, but <code>HALBERT_HOST</code> and <code>--host</code> override it with no guard, and the two shipped <code>deploy/*.service</code> units set <code>0.0.0.0</code>.</td></tr>
+        <tr><td>"All data stays local — No external API calls"</td><td>Web search sends query text to third-party public SearXNG instances; cloud model slots send prompt and retrieved context; <code>/api/rag/trending</code> sends a fingerprint of the host's toolchain to <code>api.github.com</code> with no capability check.</td></tr>
+        <tr><td>"Audit logging — All operations are logged with context"</td><td><code>run_command</code> is outside the ledger entirely, and audit-log erase destroys records while <code>verify_audit()</code> still reports "No tampering detected".</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>The full list, including <code>PRIVACY.md</code>, is section D of the plan. The durable fix is
+  <code>tests/test_security_md_claims.py</code>, which pins each published claim to an assertion —
+  everyone rewrites the security document once, but only a test keeps it true.</p>
+</section>
+
+<section id="docs" class="col">
+  <h2>14 — Where it all lives</h2>
+  <p class="h2sub">Three documents in the repository, on the current branch.</p>
+  <div class="rows">
+    <div class="row"><div class="id">Findings</div><div class="b"><strong><code>.handoff/SECURITY-AUDIT-FINDINGS-2026-09-06.md</code></strong><span>All 186 confirmed findings with evidence, attack path, impact and fix, grouped by subsystem. Machine-readable companion at <code>.handoff/security-audit-findings-2026-09-06.json</code>.</span></div></div>
+    <div class="row"><div class="id">Design</div><div class="b"><strong><code>documentation/design/PERMISSION-AND-CONSENT-SYSTEM-2026-09-06.md</code></strong><span>The full design — capability model, profiles, first-run copy, live controls, settings IA, self-modification rule, and the five per-platform permission matrices as appendices.</span></div></div>
+    <div class="row"><div class="id">Plan</div><div class="b"><strong><code>.handoff/SECURITY-IMPLEMENTATION-PLAN-2026-09-06.md</code></strong><span>Triage and dependency graph, the twenty SEC rows in ROADMAP table format, the twelve founder calls, the disclosure list, and the test gates.</span></div></div>
+  </div>
+  <footer>
+    <p>Method: three adversarial passes — 16 finder dimensions across both lenses over a six-surface
+    recon, then per-subsystem adjudication against the real files, then a completeness critic and a
+    sweep of the packages no dimension had touched. 205 agents, 205 completed. Every finding here
+    survived verifiers whose instruction was to refute it and to default to refuted when they could not
+    confirm the claim from code. 28 candidates did not survive; they are recorded as checked rather
+    than dropped.</p>
+  </footer>
+</section>
+
+</div>
