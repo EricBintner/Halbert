@@ -2,32 +2,39 @@
 # Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 """Measure recall quality as the thread store grows (handoff R5).
 
-Two pieces:
+Two pieces here:
 
-``ReceiptIndex`` — a reference FTS5 index over receipts, matching the shape Plan A
-specifies (``receipts_fts``, ``porter unicode61``, query tokenised and quoted with
-a LIKE fallback). It stands in for the real search until Plan A merges, and then
-becomes the control to compare the real one against.
+``ReceiptIndex`` / ``evaluate`` / ``cumulative_curve`` — retrieval-precision
+decay as the store grows. Every score is computed from structured output, so
+the numbers are reproducible and a change in them means a change in retrieval.
 
-``evaluate`` / ``cumulative_curve`` — the measurement. No LLM anywhere: every
-score is computed from structured output, so the numbers are reproducible and a
-change in them means a change in retrieval.
+``question_bank`` / ``answer_prompt`` / ``judge_score`` / ``run_exam`` — the
+Hermes compaction-exam protocol (the R5 gate the Consolidator's LLM pass waits
+on): questions are generated from the region a consolidation policy will
+destroy and cached by content hash so every arm answers the identical exam;
+the answerer is closed-book with a forced NOT-IN-CONTEXT option; the judge
+sees gold and scores hedged guesses as partial.
 
-The metric that matters is not hit-rate, which stays high. It is **candidates** —
-how many receipts match at all. That is the noise the model must disambiguate,
-and it is what grows with the store.
+No LLM anywhere: every number below is computed from structured output.
 """
 
 from __future__ import annotations
 
+import json
 import re
 import sqlite3
-from dataclasses import dataclass
-from typing import Dict, List, Optional, Sequence, Tuple
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Dict, List, Optional, Sequence, Tuple, Union
 
-from .corpus import SyntheticThread, generate_corpus
+from .corpus import PlantedFact, SyntheticThread, generate_corpus
 
-__all__ = ["ReceiptIndex", "RecallMetrics", "evaluate", "cumulative_curve", "format_curve"]
+__all__ = [
+    "ReceiptIndex", "RecallMetrics", "evaluate", "cumulative_curve", "format_curve",
+    # R5 exam protocol
+    "LLM_JUDGE_ENABLED", "QuestionRow", "ExamVerdict", "ExamResult",
+    "question_bank", "answer_prompt", "judge_score", "run_exam", "context_answerer",
+]
 
 _WORD = re.compile(r"[A-Za-z0-9_/.:-]+")
 
@@ -164,3 +171,177 @@ def format_curve(rows: Sequence[RecallMetrics]) -> str:
     head = ("     N |   hit@1 |   hit@5 |    MRR | candidates | cross-domain\n"
             "-------+---------+---------+--------+------------+-------------")
     return "\n".join([head] + [r.as_row() for r in rows])
+
+
+# ---------------------------------------------------------------------------
+# R5 exam protocol — question-bank invariance + closed-book answering
+# ---------------------------------------------------------------------------
+#
+# The Hermes compaction-eval rules this implements:
+#   (1) questions come FROM the region the policy will destroy/merge and are
+#       cached by content hash — every arm answers the identical exam;
+#   (2) the answerer is closed-book with a forced NOT IN CONTEXT option, so
+#       hallucination and recall are measured by one instrument;
+#   (3) the judge sees gold; a hedged guess scores partial (2 correct /
+#       1 partial / 0 wrong).
+
+#: Flag-off hook, never consulted on the deterministic path. An LLM judge —
+#: for free-text answer variance a regex cannot score — would sit behind this
+#: flag and must route through the model-picker's existing slots, never a new
+#: provider path. The synthetic corpus never needs it: ``judge_score`` below
+#: is fully programmatic.
+LLM_JUDGE_ENABLED = False
+
+#: Hedging vocabulary. Recorded here so the (flag-off) LLM judge and the
+#: programmatic judge agree on what "hedged" means; the programmatic judge
+#: itself only needs the gold-substring rule.
+_HEDGES = ("not in context", "possibly", "maybe", "perhaps", "i think",
+           "might be", "not sure", "could be")
+
+QuestionRow = Dict[str, object]
+
+
+def question_bank(thread_digest: str, facts: Sequence[PlantedFact],
+                  cache_dir: Optional[Union[str, Path]] = None) -> List[QuestionRow]:
+    """One factual question per planted fact, cached by content digest.
+
+    Template-based, no LLM: each planted fact already carries its question
+    and gold. The cache is the invariance guarantee — two calls with the
+    same digest return the identical bank (the second from disk), so every
+    arm of a policy matrix provably answers the same exam. ``cache_dir=None``
+    generates without persisting (single-run use).
+    """
+    if cache_dir is not None:
+        path = Path(cache_dir) / f"questions-{thread_digest[:10]}.json"
+        if path.exists():
+            return json.loads(path.read_text(encoding="utf-8"))
+    bank: List[QuestionRow] = [
+        {"question": f.question, "gold": f.gold, "source_turn": f.source_turn}
+        for f in facts
+    ]
+    if cache_dir is not None:
+        path = Path(cache_dir) / f"questions-{thread_digest[:10]}.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(bank, indent=2, sort_keys=True), encoding="utf-8")
+    return bank
+
+
+def answer_prompt(context: Union[str, Sequence[str]], question: str) -> str:
+    """Closed-book instructions with the forced NOT IN CONTEXT phrasing.
+
+    This is the prompt an LLM answerer arm would receive; the deterministic
+    harness answers programmatically, but the protocol — including the forced
+    refusal-with-guess option — is defined once, here.
+    """
+    if not isinstance(context, str):
+        context = "\n".join(str(part) for part in context)
+    return (
+        "Answer the question using ONLY the context below.\n"
+        "If the answer is not present in the context, you MUST reply\n"
+        "'NOT IN CONTEXT — <your best guess>' — a hedged guess, never a\n"
+        "confident answer the context does not support.\n\n"
+        f"Context:\n{context}\n\n"
+        f"Question: {question}"
+    )
+
+
+def judge_score(gold: str, answer: str) -> int:
+    """Programmatic judge: 2 correct / 1 partial / 0 wrong.
+
+    Exact match is correct; gold appearing inside a longer, hedged answer
+    ("NOT IN CONTEXT — possibly 47-29 based on the pattern") is partial —
+    the knowledge survived but the answerer would not commit; anything else
+    is wrong. Free-text variance beyond this is the flag-off LLM judge's
+    job, not this harness's.
+    """
+    if not answer or not gold:
+        return 0
+    if answer.strip() == gold:
+        return 2
+    if gold.lower() in answer.lower():
+        return 1
+    return 0
+
+
+@dataclass
+class ExamVerdict:
+    """One question, one answer, one score."""
+
+    question: str
+    gold: str
+    answer: str
+    score: int
+
+    def as_dict(self) -> Dict[str, object]:
+        return {"question": self.question, "gold": self.gold,
+                "answer": self.answer, "score": self.score}
+
+
+@dataclass
+class ExamResult:
+    """Per-question verdicts plus the summary the scorecard reports."""
+
+    verdicts: List[ExamVerdict] = field(default_factory=list)
+
+    def summary(self) -> Dict[str, float]:
+        n = len(self.verdicts)
+        correct = sum(1 for v in self.verdicts if v.score == 2)
+        partial = sum(1 for v in self.verdicts if v.score == 1)
+        wrong = sum(1 for v in self.verdicts if v.score == 0)
+        refused = sum(1 for v in self.verdicts
+                      if v.score == 0 and v.answer.strip().upper().startswith("NOT IN CONTEXT"))
+        recall = (2 * correct + partial) / (2 * n) if n else 0.0
+        return {"n": n, "correct": correct, "partial": partial, "wrong": wrong,
+                "refused": refused, "recall": recall}
+
+
+def run_exam(questions: Sequence[QuestionRow],
+             answer_fn) -> ExamResult:
+    """Ask every question against whatever ``answer_fn`` closes the book on.
+
+    ``answer_fn`` receives the bank row and returns a free-text answer; it
+    never sees gold — that is the closed-book constraint, and it is why the
+    answerer is constructed from the retained context, not from the exam.
+    """
+    verdicts: List[ExamVerdict] = []
+    for row in questions:
+        question = row["question"]
+        gold = row["gold"]
+        answer = answer_fn(row)
+        verdicts.append(ExamVerdict(
+            question=str(question),
+            gold=str(gold),
+            answer=answer,
+            score=judge_score(str(gold), answer),
+        ))
+    return ExamResult(verdicts=verdicts)
+
+
+def context_answerer(context: Union[str, Sequence[str]]):
+    """The deterministic closed-book answerer for the synthetic corpus.
+
+    Reads only the retained context it is handed. For a template question
+    ("what is the garage keypad code?") it searches the context for the
+    planted statement's value and answers it; when the context does not
+    contain the statement it refuses with the forced NOT IN CONTEXT option.
+    A wrong-but-confident answer is impossible by construction — which is
+    why the hallucination half of the instrument only becomes live with an
+    LLM answerer arm.
+    """
+    if not isinstance(context, str):
+        context = "\n".join(str(part) for part in context)
+
+    def answer(row: QuestionRow) -> str:
+        subject = str(row["question"]).strip().rstrip("?")
+        prefix = "what is the "
+        if subject.lower().startswith(prefix):
+            subject = subject[len(prefix):]
+        match = re.search(
+            r"\bthe " + re.escape(subject.strip().lower()) + r" is (\d{2}-\d{2})",
+            context,
+        )
+        if match:
+            return match.group(1)
+        return "NOT IN CONTEXT"
+
+    return answer
