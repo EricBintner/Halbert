@@ -4,6 +4,8 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import path from 'path'
+import fs from 'fs'
+import os from 'os'
 
 /**
  * The dev proxy target.
@@ -20,12 +22,44 @@ const API_PORT = process.env.HALBERT_API_PORT ?? '8000'
 const HTTP_TARGET = `http://127.0.0.1:${API_PORT}`
 const WS_TARGET = `ws://127.0.0.1:${API_PORT}`
 
+/**
+ * SEC-1: the dev proxy authenticates as the owner.
+ *
+ * Every backend route requires a credential. In the Tauri desktop app the Rust
+ * shell injects the token into the webview; in a browser the session cookie
+ * from /auth/enter does the work. But the Vite dev server is neither — it is a
+ * same-machine dev tool that proxies to the sidecar, and without a credential
+ * every request comes back 401 and the dashboard is unusable.
+ *
+ * Reading the token file here is the dev equivalent of what the Tauri shell
+ * does: the dev server runs as the owner on the same machine, so it can read
+ * the token exactly as the owner's code always can. An explicit env override
+ * (HALBERT_API_TOKEN) wins, matching the backend's own load_or_create_token.
+ */
+function devApiToken(): string | null {
+  const env = process.env.HALBERT_API_TOKEN
+  if (env) return env
+  // Mirror halbert_core/utils/paths.py state_dir() — XDG_STATE_HOME or default.
+  const xdgState = process.env.XDG_STATE_HOME || path.join(os.homedir(), '.local', 'state')
+  const tokenFile = path.join(xdgState, 'halbert', 'api-token')
+  try {
+    return fs.readFileSync(tokenFile, 'utf-8').trim() || null
+  } catch {
+    return null
+  }
+}
+
+const DEV_TOKEN = devApiToken()
+
+function authHeaders(): Record<string, string> {
+  return DEV_TOKEN ? { 'X-Halbert-Token': DEV_TOKEN } : {}
+}
+
 function proxyTargets() {
-  const http = ['/api', '/global', '/llm', '/embedding', '/compute']
+  const http = ['/api', '/auth', '/global', '/llm', '/embedding', '/compute']
+  const common = { target: HTTP_TARGET, changeOrigin: true, headers: authHeaders() }
   return {
-    ...Object.fromEntries(
-      http.map((prefix) => [prefix, { target: HTTP_TARGET, changeOrigin: true }]),
-    ),
+    ...Object.fromEntries(http.map((prefix) => [prefix, common])),
     '/ws': { target: WS_TARGET, ws: true },
   }
 }
