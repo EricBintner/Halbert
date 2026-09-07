@@ -13,11 +13,15 @@ config tree reaches an external AI client's cloud model.  Internal reads
 not Halbert's internal data flow.
 
 The camera_gate module strips image data from any response that touches
-camera/vision data — but it is NOT currently wired into server.py's
-dispatch (R2-OBS-1): TOOL_HANDLERS registers no frigate/vision/camera
-tool today, so the gate protects nothing yet. This is not presently a
-gap in practice (there is no camera-data-returning tool surface to leak
-through), but it is a landmine for whoever adds one: read camera_gate.py
-and call ``gate_response()`` around the new handler(s) before assuming
-this protection is already active.
+camera/vision data. It IS wired into server.py's dispatch (VIS-1,
+2026-09-06): every tools/call returns through
+``mcp_response(gate_response(tool_name, handler(tool_args)))`` at the
+single choke point — the gate is universal, not per-tool. And the
+wiring is enforced, not documented (R2-OBS-1, Packet 05 C2): a tool
+whose name marks it camera/vision (frigate/vision/camera) cannot be
+registered in TOOL_HANDLERS — or dispatched, if added after import —
+unless the dispatch source still routes handlers through the gate
+(``server._assert_camera_gate_wired``). An edit that drops the gate
+fails loudly at registration/dispatch instead of reopening a silent
+image-data egress path.
 """
