@@ -12,6 +12,13 @@ from typing import Dict, List, Any, Optional
 import time
 import json
 
+# Display-transport seam (Packet 05 addendum): every live tool emission to
+# the Tauri frontend is built by the tool_start/tool_complete factories
+# below, so the redact+cap helper here covers every producer. Wire copies
+# are registry-redacted and hard-capped; the agent context and SQLite keep
+# full fidelity. See security/display_transport.py.
+from ..security.display_transport import verbose_text
+
 
 @dataclass
 class StreamEvent:
@@ -206,17 +213,23 @@ class StreamEvent:
         args: Dict,
         execution_id: str
     ) -> 'StreamEvent':
-        """Emit when tool execution starts."""
+        """Emit when tool execution starts.
+
+        ``args`` crosses the wire as a display copy: registry-redacted and
+        capped (``security.display_transport.verbose_text``). The executor
+        still receives the raw args — this is the UI transport, not an
+        enforcement point.
+        """
         return cls(
             type="tool_start",
             session_id=session_id,
             data={
                 "tool": tool,
-                "args": args,
+                "args": verbose_text(args),
                 "execution_id": execution_id
             }
         )
-    
+
     @classmethod
     def tool_complete(
         cls,
@@ -226,14 +239,22 @@ class StreamEvent:
         result: Any = None,
         error: str = None
     ) -> 'StreamEvent':
-        """Emit when tool execution completes."""
+        """Emit when tool execution completes.
+
+        ``result`` crosses the wire as a display copy: registry-redacted
+        and hard-capped (1000 chars / 16 lines, tail kept with an
+        omitted-lines marker) so no tool output, however large, can blow
+        up the frontend render. The agent context and SQLite keep the full
+        result; the ``error`` field is audit-relevant and short by
+        construction, and is deliberately not capped.
+        """
         return cls(
             type="tool_complete",
             session_id=session_id,
             data={
                 "execution_id": execution_id,
                 "success": success,
-                "result": result,
+                "result": verbose_text(result),
                 "error": error
             }
         )
