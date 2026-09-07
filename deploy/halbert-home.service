@@ -20,10 +20,19 @@ Environment=HALBERT_LOG_DIR=/var/log/halbert-home
 # Ports
 Environment=HALBERT_PORT=8001
 # SEC-1: this unit shipped binding 0.0.0.0 with no authentication at all,
-# which put an arbitrary-file-write API and a PTY on the LAN. The dashboard
-# now refuses a non-loopback bind unless HALBERT_API_TOKEN is set, so if you
-# genuinely want this reachable off-box: set that token here, put TLS in
-# front, and understand that the token then crosses your LAN on every call.
+# which put an arbitrary-file-write API and a PTY on the LAN. It binds loopback
+# now, and every route requires a credential.
+#
+# If you genuinely want this reachable off-box, edit the --host below and
+# understand what you are taking on: the token crosses your LAN in cleartext on
+# every call, so put TLS in front of it.
+#
+# Note what will NOT stop you: `guard_bind` refuses a wide bind without a token,
+# but it lives in `python -m halbert_core.dashboard`, and this unit runs uvicorn
+# against `halbert_core.dashboard.app:app` directly — so the guard never runs
+# here. `Environment=HALBERT_HOST` below is inert for the same reason; only the
+# --host argument is read. Authentication is the control on this path, and it is
+# the only one.
 Environment=HALBERT_HOST=127.0.0.1
 Environment=WYOMING_PORT=10401
 

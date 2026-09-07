@@ -51,7 +51,6 @@ LEVEL_1_LOW_RISK: Set[str] = {
     "input_select",
     "select",
     "number",
-    "scene",
     "text",
     "button",
     "siren",
@@ -70,6 +69,11 @@ LEVEL_2_CONFIRM_REQUIRED: Set[str] = {
     "alarm_control_panel",
     "cover",
     "valve",
+    # `scene.apply` takes an arbitrary states dict and writes it to arbitrary
+    # entities — it is not a "recall a saved scene" verb, and the domain cannot
+    # tell the two apart. A scene that happens to include a lock or an alarm
+    # actuates it.
+    "scene",
     "camera",
     "person",
     "device_tracker",
@@ -124,9 +128,13 @@ class HAGovernancePolicy:
                 requires_confirmation: bool
                 reason: str
         """
-        # Check forbidden entity patterns first
+        # Check forbidden entity patterns first.
+        #
+        # Lowercased because HA matches entity ids case-insensitively, so
+        # `Switch.Life_Support` walked past a rule written in lower case.
+        _eid = (entity_id or "").strip().lower()
         for pattern in FORBIDDEN_ENTITY_PATTERNS:
-            if entity_id.startswith(pattern):
+            if _eid == pattern or _eid.startswith(pattern + "_") or _eid.startswith(pattern + "."):
                 return {
                     "level": 3,
                     "allowed": False,
@@ -177,6 +185,12 @@ class HAGovernancePolicy:
             "level": 2,
             "allowed": True,
             "requires_confirmation": True,
+            # Level 2 auto-executes at the `orchestrate` autonomy level with a
+            # cancel window, so "level 2" alone did not make good on "I will ask".
+            # The gate reads this flag and refuses to auto-execute an unknown
+            # domain at any level: not knowing what something does is not a
+            # reason to do it quickly.
+            "unknown_domain": True,
             "reason": (
                 f"Domain '{domain}' is not one I have been told how to judge, "
                 f"so I will ask before acting on it"

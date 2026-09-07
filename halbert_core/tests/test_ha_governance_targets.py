@@ -90,3 +90,57 @@ class TestGateJudgesTheWholePayload:
         d = gate.evaluate_call("light", "light.kitchen", "turn_on", {"brightness": 200})
         assert d.allowed is True
         assert d.auto_execute is True
+
+
+class TestUnresolvableTargets:
+    """Ways a call names a target the gate cannot check.
+
+    The first version of this fix read `entity_id` and `target.entity_id` and
+    stopped there. Home Assistant's `cv.make_entity_service_schema` merges
+    device_id, area_id, floor_id and label_id into *every* entity service schema,
+    and `ha_client` POSTs `data` verbatim as the service body — so the gate was
+    judging a field the call would not act on.
+    """
+
+    @pytest.fixture
+    def gate(self):
+        return AutonomyGate(autonomy_level="orchestrate", governance=HAGovernancePolicy())
+
+    def test_entity_match_all_is_refused(self, gate):
+        """`entity_id: "all"` is HA's ENTITY_MATCH_ALL — every entity of the platform.
+
+        It starts with none of the forbidden entity prefixes, so it walked past
+        them: `switch.turn_off` with `{"entity_id": "all"}` at `act` autonomy
+        turned off every switch in the house, including switch.life_support.
+        """
+        d = gate.evaluate_call("switch", "", "turn_off", {"entity_id": "all"})
+        assert d.allowed is False
+        assert d.auto_execute is False
+
+    @pytest.mark.parametrize("key", ["device_id", "area_id", "floor_id", "label_id"])
+    def test_registry_selectors_are_refused(self, gate, key):
+        d = gate.evaluate_call("switch", "", "turn_off", {key: "abc123"})
+        assert d.allowed is False, f"{key} should not be waved through"
+        assert d.auto_execute is False
+
+    @pytest.mark.parametrize("key", ["device_id", "area_id"])
+    def test_registry_selectors_inside_target_are_refused(self, gate, key):
+        d = gate.evaluate_call("switch", "", "turn_off", {"target": {key: "abc123"}})
+        assert d.allowed is False
+        assert d.auto_execute is False
+
+    def test_case_does_not_defeat_the_forbidden_list(self, gate):
+        """HA matches entity ids case-insensitively; the gate did not."""
+        d = gate.evaluate_call("switch", "Switch.Life_Support", "turn_off")
+        assert d.allowed is False
+
+    def test_a_named_entity_still_works(self, gate):
+        """The refusal must not swallow the ordinary case."""
+        d = gate.evaluate_call("light", "light.kitchen", "turn_on", {"brightness": 200})
+        assert d.allowed is True
+        assert d.auto_execute is True
+
+    def test_an_empty_selector_is_not_treated_as_present(self, gate):
+        """`{"area_id": ""}` names nothing and must not refuse a valid call."""
+        d = gate.evaluate_call("light", "light.kitchen", "turn_on", {"area_id": ""})
+        assert d.allowed is True

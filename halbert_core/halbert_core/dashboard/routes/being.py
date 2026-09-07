@@ -18,10 +18,11 @@ import json
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Request, HTTPException, Query
+from fastapi import APIRouter, Depends, Request, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+from ..auth import require_owner_stream
 from ...proactive.events import get_event_bus, is_user_facing, ProactiveEvent
 from ...findings.store import FindingStore
 
@@ -41,7 +42,10 @@ def _should_stream(event: ProactiveEvent) -> bool:
     return is_user_facing(event)
 
 
-@router.get("/being/events")
+# EventSource cannot set a header, and in the Tauri webview it cannot use a
+# cookie either, so this one route also accepts ?token=. Router-level
+# require_owner still applies to every other route in this module.
+@router.get("/being/events", dependencies=[Depends(require_owner_stream)])
 async def being_events(request: Request):
     """SSE stream of proactive events.
 

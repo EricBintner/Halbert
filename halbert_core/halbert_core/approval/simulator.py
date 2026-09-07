@@ -171,45 +171,28 @@ class DryRunSimulator:
             if keyword in command:
                 warnings.append(f"DANGER: Command contains '{keyword}'")
         
-        # Try to run with dry-run flag if provided
+        # This function executes nothing, on purpose.
+        #
+        # It used to run `subprocess.run(f"{command} {dry_run_flag}", shell=True)`
+        # — a caller-supplied command and a caller-supplied flag, concatenated
+        # into a shell. That is not a simulation. Nothing can know that an
+        # arbitrary flag means "dry run" for an arbitrary binary, so the branch
+        # was ordinary command execution wearing the name of the thing that
+        # avoids it; and a function called `simulate_` is the worst possible
+        # place for it, because the name is what persuades the caller it is safe.
+        # The only guard was a five-entry substring denylist ('rm -rf', 'dd if=',
+        # …) that any change of spacing walks past.
+        #
+        # SEC-2. Static analysis is what a simulator can honestly offer here.
+        # Real dry-run support belongs in SEC-4's approval pipeline, per binary,
+        # with the flag known to us rather than supplied to us.
         if dry_run_flag:
-            try:
-                result = subprocess.run(
-                    f"{command} {dry_run_flag}",
-                    shell=True,
-                    capture_output=True,
-                    text=True,
-                    timeout=5
-                )
-                
-                output = result.stdout + result.stderr
-                
-                changes = [{
-                    'type': 'command_output',
-                    'command': command,
-                    'dry_run_output': output
-                }]
-                
-                return SimulationResult(
-                    success=True,
-                    action=f"Execute: {command}",
-                    before={},
-                    after={},
-                    changes=changes,
-                    affected_files=[],
-                    affected_services=[],
-                    affected_processes=[],
-                    warnings=warnings,
-                    commands_to_run=[command],
-                    estimated_duration_s=1.0,
-                    reversible=False,
-                    rollback_strategy=None
-                )
-            
-            except Exception as e:
-                logger.warning(f"Dry-run execution failed: {e}")
-        
-        # Fallback: Just show what will run
+            warnings.append(
+                f"I did not run '{command} {dry_run_flag}'. I cannot know that "
+                f"'{dry_run_flag}' means 'dry run' for this program, and running "
+                f"it to find out is the thing a preview is supposed to avoid."
+            )
+
         changes = [{
             'type': 'command',
             'command': command,

@@ -72,10 +72,53 @@ def effective_entity_ids(entity_id: Any = "", data: Optional[Dict[str, Any]] = N
 
     seen, unique = set(), []
     for e in found:
-        if e not in seen:
-            seen.add(e)
-            unique.append(e)
+        # HA matches entity ids case-insensitively; so must we, or `Switch.Freezer`
+        # walks past a forbidden-entity rule written in lower case.
+        lowered = e.lower()
+        if lowered not in seen:
+            seen.add(lowered)
+            unique.append(lowered)
     return unique
+
+
+#: Ways a service call can name a target that the gate cannot resolve to entity
+#: ids without the Home Assistant device, area, floor and label registries.
+#:
+#: ``cv.make_entity_service_schema`` merges all of these into every entity
+#: service schema, and ``ha_client`` POSTs ``data`` verbatim as the service body
+#: — so all of them are live on this path. A gate that reads only ``entity_id``
+#: judges a call that will act on something else entirely.
+_UNRESOLVABLE_TARGET_KEYS = ("device_id", "area_id", "floor_id", "label_id")
+
+#: ``ENTITY_MATCH_ALL``. HA accepts the literal string "all" as a target and
+#: expands it to every entity of the platform. It starts with none of the
+#: forbidden entity prefixes, so it walked straight past them:
+#: ``switch.turn_off`` with ``{"entity_id": "all"}`` at ``act`` autonomy turned
+#: off every switch in the house, including ``switch.life_support``.
+_ENTITY_MATCH_ALL = "all"
+
+
+def unresolvable_target(entity_id: Any = "", data: Optional[Dict[str, Any]] = None) -> Optional[str]:
+    """How this call names a target the gate cannot check, or None.
+
+    The entity-level rules — the forbidden list above all — can only speak about
+    entity ids. When a call names its target some other way, the honest answer is
+    not to guess: it is to say the gate cannot vouch for this one.
+    """
+    blocks = [data if isinstance(data, dict) else {}]
+    target = (data or {}).get("target") if isinstance(data, dict) else None
+    if isinstance(target, dict):
+        blocks.append(target)
+
+    for block in blocks:
+        for key in _UNRESOLVABLE_TARGET_KEYS:
+            if block.get(key):
+                return key
+
+    for candidate in effective_entity_ids(entity_id, data):
+        if candidate == _ENTITY_MATCH_ALL:
+            return "entity_id: all"
+    return None
 
 # Autonomy level → max governance level allowed for auto-execution
 # observe:    nothing auto-executes (max_level = -1)
@@ -138,6 +181,22 @@ class AutonomyGate:
         # Step 1: Classify via governance policy
         gov = self.governance.classify(domain, entity_id, service)
         gov_level = gov["level"]
+
+        # An unknown domain never auto-executes, at any autonomy level.
+        #
+        # Classifying it Level 2 was not enough: `orchestrate` auto-executes
+        # Level 2 with a 30-second cancel window, so "unknown domains now
+        # confirm" was false exactly where autonomy was highest. Not knowing what
+        # something does is not a reason to do it quickly.
+        if gov.get("unknown_domain"):
+            return AutonomyDecision(
+                allowed=True,
+                auto_execute=False,
+                requires_proposal=True,
+                cancel_window_seconds=0,
+                governance_level=gov_level,
+                reason=gov["reason"],
+            )
 
         # Level 3 is always forbidden regardless of autonomy
         if gov_level == 3:
@@ -252,6 +311,27 @@ class AutonomyGate:
         no entity at all is still judged on its domain — ``shell_command`` needs
         no target to be dangerous.
         """
+        # A target the gate cannot resolve is not a target it may wave through.
+        # `entity_id: "all"` expands to every entity of the platform, and a
+        # device_id / area_id / floor_id / label_id names entities only the HA
+        # registries can enumerate — so the entity-level rules, including the
+        # forbidden list, cannot speak about this call at all.
+        unresolved = unresolvable_target(entity_id, data)
+        if unresolved:
+            base = self.evaluate(domain, "", service)
+            return AutonomyDecision(
+                allowed=False,
+                auto_execute=False,
+                requires_proposal=False,
+                cancel_window_seconds=0,
+                governance_level=max(base.governance_level, 2),
+                reason=(
+                    f"This call targets '{unresolved}', which I cannot resolve to "
+                    f"specific entities, so I cannot tell whether it touches "
+                    f"something you have forbidden. Name the entities instead."
+                ),
+            )
+
         targets = effective_entity_ids(entity_id, data)
         if not targets:
             return self.evaluate(domain, "", service)
