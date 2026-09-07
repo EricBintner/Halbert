@@ -401,6 +401,9 @@ class AgentStateMachine:
         history_budget: Optional[int] = None,
         retrieval_scope: Optional[str] = None,
         speaker_role: Optional[str] = None,
+        modality: Optional[str] = None,
+        speaker_name: Optional[str] = None,
+        claim_source: Optional[str] = None,
     ) -> AsyncIterator[StreamEvent]:
         """
         Process a user query through the state machine.
@@ -439,6 +442,15 @@ class AgentStateMachine:
                 to tighten tool-risk classification. Voice ingress passes
                 "unknown" (the satellite protocol verifies no one); absent
                 means the dashboard-chat default "admin" applies.
+            modality: Ingress modality ("voice" for a spoken turn). Absent
+                means a typed turn — today's behavior, unchanged. A voice
+                turn with no speaker_role defaults to "unknown", never to
+                the "admin" a typed turn carries: the RoleGate must not
+                hear the owner's voice in an unidentified speaker's.
+            speaker_name: Who the audio pipeline identified as speaking
+                (CAM++ match name). A claim to record, not a role grant.
+            claim_source: Where the speaker claim came from
+                ("voice_speaker_verification" | "free_text_name" | None).
 
         Yields:
             StreamEvent objects for each state change, tool call, etc.
@@ -467,6 +479,22 @@ class AgentStateMachine:
             for event in self._turn_lock_timeout_events(session_id):
                 yield event
             return
+
+        # Packet 04 A1: typed voice ingress. Exactly one door
+        # (/api/agent/message) serves typed and spoken turns, so the turn
+        # has to carry which it is. Defaulting, in order: an explicit role
+        # always wins; a typed turn keeps today's "admin" (dashboard chat
+        # is session-authenticated); a voice turn with no identified
+        # speaker is "unknown" — never a silent admin default, which is
+        # the security gap this closes. The modality is normalized to the
+        # two ingress values so a client cannot invent a third.
+        turn_modality = "voice" if str(modality or "").strip().lower() == "voice" else "text"
+        if speaker_role:
+            turn_speaker_role = speaker_role
+        elif turn_modality == "text":
+            turn_speaker_role = "admin"
+        else:
+            turn_speaker_role = "unknown"
 
         try:
             # Generation params live on the one shared LLM adapter, so they
@@ -499,7 +527,10 @@ class AgentStateMachine:
                 tier_override=tier_override,
                 history_budget=history_budget or _default_conversation_tokens(),
                 retrieval_scope=retrieval_scope,
-                speaker_role=speaker_role or "admin",
+                speaker_role=turn_speaker_role,
+                modality=turn_modality,
+                speaker_name=speaker_name or None,
+                claim_source=claim_source or None,
             )
 
             # Phase 3: Run intake pipeline before cognitive tick
@@ -540,8 +571,10 @@ class AgentStateMachine:
             # debug a turn; the words are in the transcript when they are
             # Halbert's to keep.
             logger.info(
-                "Starting agent processing: session=%s, query_chars=%d",
+                "Starting agent processing: session=%s, query_chars=%d, "
+                "modality=%s, speaker_role=%s, claim_source=%s",
                 session_id, len(query or ""),
+                turn_modality, turn_speaker_role, claim_source or "none",
             )
 
             yield StreamEvent.session_started(session_id, request_id)
@@ -3151,6 +3184,8 @@ class AgentStateMachine:
             modality_ctx = build_modality_context(
                 user_query=self.ctx.user_query,
                 speaker_role=self.ctx.speaker_role,
+                ingress_modality=getattr(self.ctx, "modality", "text"),
+                speaker_name=getattr(self.ctx, "speaker_name", None),
             )
             if modality_ctx is not None:
                 modality_ctx = resolve_turn_modality(modality_ctx)

@@ -55,7 +55,11 @@ import { Volume2, VolumeX } from 'lucide-react'
 import { useVoiceModeMachine } from '@/hooks/useVoiceModeMachine'
 import type { VoiceModeState } from '@/hooks/useVoiceModeMachine'
 import { useAgentStream } from '@/hooks/useAgentStream'
-import type { ModalityInfo, SpeechSegmentEvent } from '@/hooks/useAgentStream'
+import type {
+  ModalityInfo,
+  SpeechSegmentEvent,
+  VoiceTurnOrigin,
+} from '@/hooks/useAgentStream'
 import { useBeingEvents } from '@/hooks/useBeingEvents'
 import { useHostIdentity } from '@/hooks/useHostIdentity'
 import { acousticWakeEvent } from '@/hooks/voiceModeEvents'
@@ -72,6 +76,15 @@ import { apiUrl } from '@/lib/apiBase'
 
 /** Coarse-state hydration cadence — the same 2s poll as AcousticAuraIndicator. */
 export const STATUS_POLL_MS = 2_000
+
+/**
+ * Empty/failure sentinel (Hermes addendum #4): when the watchdog gives up
+ * waiting for a transcript, the note is a neutral path-marker. It never
+ * mentions STT setup or gives mic advice — Hermes #41603 had
+ * setup-advice text persist into history and the model kept volunteering
+ * it turns later. Plain line, no wrapper phrase.
+ */
+const NO_TRANSCRIPT_NOTE = 'nothing came through'
 
 const EMPTY_SEGMENTS: SpeechSegmentEvent[] = []
 
@@ -111,6 +124,13 @@ export function VoiceMode({ onExitToCanvas }: VoiceModeProps) {
    * mark remounts with an instant static first paint on restore. */
   const [standbyTier, setStandbyTier] = useState<StandbyTier>('full')
   const [speaker, setSpeaker] = useState<SpeakerStatus | null>(null)
+  /**
+   * Echo-back for live STT verification (Hermes addendum #3): the
+   * transcript line itself is the echo, shown as a plain quoted line
+   * while the turn it started is in flight. No wrapper phrase — a
+   * wrapper reads as a meta-instruction (addendum #4).
+   */
+  const [echo, setEcho] = useState<string | null>(null)
   /** The uplink's analyser tap — null whenever capture is not running. */
   const [micTap, setMicTap] = useState<AudioNode | null>(null)
   const [ttsOut, setTtsOut] = useState<GainNode | null>(null)
@@ -124,7 +144,7 @@ export function VoiceMode({ onExitToCanvas }: VoiceModeProps) {
 
   const uplinkRef = useRef<PcmUplink | null>(null)
   // Set from the effect below; see the onTranscript comment in ensureUplink.
-  const submitTurnRef = useRef<((text: string) => void) | null>(null)
+  const submitTurnRef = useRef<((text: string, voice?: VoiceTurnOrigin) => void) | null>(null)
   // Armed at end-of-speech, cleared when the transcript arrives.
   const recognitionTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const ttsRef = useRef<TtsPlaybackClient | null>(null)
@@ -266,10 +286,27 @@ export function VoiceMode({ onExitToCanvas }: VoiceModeProps) {
     const uplink = new PcmUplink({
       onError: (message) => dispatch({ type: 'error', message }),
       // A recognised transcript enters the machine by the same door the
-      // keyboard uses. Through a ref because submitTurn is defined below
-      // this callback and must not be a dependency of it — rebuilding the
-      // uplink on every render would churn the microphone.
-      onTranscript: ({ text }) => submitTurnRef.current?.(text),
+      // keyboard uses — but typed as a VOICE turn carrying the speaker
+      // the audio pipeline identified (packet 04 A1). Without the claim,
+      // the backend cannot tell a spoken turn from dashboard chat and
+      // defaults every spoken command to the owner's role. Through a ref
+      // because submitTurn is defined below this callback and must not be
+      // a dependency of it — rebuilding the uplink on every render would
+      // churn the microphone.
+      onTranscript: ({ text, speakerName, speakerRole }) =>
+        submitTurnRef.current?.(text, {
+          speakerName,
+          speakerRole,
+          // Claim source, derived once here: a role the pipeline matched is
+          // a biometric verification claim; a name without a matched role
+          // is free text; nothing identified means unverified (absent).
+          claimSource:
+            speakerRole && speakerRole !== 'unknown'
+              ? 'voice_speaker_verification'
+              : speakerName
+                ? 'free_text_name'
+                : undefined,
+        }),
     })
     uplinkRef.current = uplink
     await uplink.start()
@@ -280,6 +317,9 @@ export function VoiceMode({ onExitToCanvas }: VoiceModeProps) {
 
   const beginPushToTalk = useCallback(async () => {
     dispatch({ type: 'wake' })
+    // A new utterance begins: the last echo (transcript or the
+    // nothing-came-through sentinel) is spent.
+    setEcho(null)
     if (mutedRef.current) return
     await ensureUplink()
   }, [dispatch, ensureUplink])
@@ -315,7 +355,7 @@ export function VoiceMode({ onExitToCanvas }: VoiceModeProps) {
   // -------------------------------------------------------------------------
 
   const submitTurn = useCallback(
-    (text: string) => {
+    (text: string, voice?: VoiceTurnOrigin) => {
       const trimmed = text.trim()
       if (!trimmed) return
       // A real turn is starting; the recognition watchdog has done its job.
@@ -323,6 +363,9 @@ export function VoiceMode({ onExitToCanvas }: VoiceModeProps) {
         clearTimeout(recognitionTimer.current)
         recognitionTimer.current = null
       }
+      // Echo-back (addendum #3): a spoken transcript is echoed verbatim
+      // for in-the-moment STT verification; a typed turn echoes nothing.
+      setEcho(voice ? trimmed : null)
       const sessionId = crypto.randomUUID()
       // Subscribe BEFORE the turn starts: the egress hub synthesizes only
       // when a subscriber exists for this session id, and the id is
@@ -338,7 +381,7 @@ export function VoiceMode({ onExitToCanvas }: VoiceModeProps) {
       // Both are no-ops where the machine is already past those postures.
       dispatch({ type: 'wake' })
       dispatch({ type: 'vad_end' })
-      agent.sendMessage(trimmed, sessionId)
+      agent.sendMessage(trimmed, sessionId, undefined, undefined, voice)
     },
     [agent.sendMessage, dispatch],
   )
@@ -367,6 +410,10 @@ export function VoiceMode({ onExitToCanvas }: VoiceModeProps) {
     recognitionTimer.current = setTimeout(() => {
       recognitionTimer.current = null
       if (stateRef.current === 'thinking') {
+        // Empty/failure sentinel (addendum #4): no transcript arrived, so
+        // no turn is created — nothing for the agent to guess at. The
+        // note is neutral and never mentions STT setup.
+        setEcho(NO_TRANSCRIPT_NOTE)
         dispatch({ type: 'turn_complete' })
       }
     }, RECOGNITION_TIMEOUT_MS)
@@ -375,6 +422,13 @@ export function VoiceMode({ onExitToCanvas }: VoiceModeProps) {
   const handleMarkTap = useCallback(() => {
     switch (stateRef.current) {
       case 'speaking':
+        // PACKET-07 rule note (Hermes addendum #5 — recorded here for the
+        // barge-in steering integration, deliberately NOT built in this
+        // packet): when interrupt steering lands, the interrupt must carry
+        // the in-flight TRANSCRIPT, never a placeholder — and duplicate
+        // transcripts must be suppressed before they become turns
+        // (SequenceMatcher >= 0.95 within a short window; VAD re-emits
+        // duplicates). Today's tap cancels playback only.
         ttsRef.current?.cancel()
         dispatch({ type: 'interrupt' })
         break
@@ -473,6 +527,17 @@ export function VoiceMode({ onExitToCanvas }: VoiceModeProps) {
           )}
         </button>
       </main>
+
+      {/* Echo-back (packet 04 / addendum #3): the transcript line itself is
+       * the echo — a plain quoted line, no wrapper phrase. */}
+      {echo && (
+        <p
+          className="truncate px-6 pb-2 text-center text-sm text-canvas/70"
+          aria-live="polite"
+        >
+          &ldquo;{echo}&rdquo;
+        </p>
+      )}
 
       <SubtitleRibbon segments={speechSegments} active={state === 'speaking'} />
 

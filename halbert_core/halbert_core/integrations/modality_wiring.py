@@ -248,12 +248,15 @@ def build_modality_context(
     audio_features: Optional[bytes] = None,
     query_risk: str = "safe",
     emotional_state: Optional[tuple] = None,
+    ingress_modality: str = "text",
+    speaker_name: Optional[str] = None,
 ) -> Any:
     """Build a ModalityContext for the current turn.
 
     Assembles the per-turn context from:
     - Channel capability (from the seam — Tauri desktop / Wyoming state)
-    - Speaker identity (from the VoiceAuthGate — CAM++ biometrics)
+    - Speaker identity (from the VoiceAuthGate — CAM++ biometrics — or the
+      turn's carried claim for a voice turn identified out-of-band)
     - Cognitive state (PAD emotional state, query risk)
     - Quiet hours policy
     - Voice policy (Tier 0 for Halbert)
@@ -272,6 +275,14 @@ def build_modality_context(
             'critical'). Defaults to 'safe'.
         emotional_state: Optional (valence, arousal, dominance) tuple from
             the cognitive state. Defaults to (0.0, 0.0, 0.0).
+        ingress_modality: 'voice' when the turn arrived spoken. The audio
+            pipeline already ran CAM++ speaker identification before the
+            turn existed (the transcript reaches the HTTP door with the
+            identified name/role attached), so a voice turn carries that
+            result as an *unverified claim* here — never a role grant.
+        speaker_name: The identified speaker's name for a voice turn (the
+            CAM++ profile name). Recorded on the claim, not used for
+            authorization.
 
     Returns:
         A ModalityContext, or None if the engine is not installed.
@@ -298,6 +309,22 @@ def build_modality_context(
                 speaker = gate.identify_speaker(audio_features)
         except Exception as e:
             logger.debug(f"Speaker identification skipped: {e}")
+    elif ingress_modality == "voice" and speaker_role and speaker_role != "unknown":
+        # Packet 04 A1: a voice turn whose speaker the audio pipeline
+        # identified out-of-band. There are no PCM bytes to re-verify
+        # here (transcribe-once: the pipeline's single identification
+        # rides the turn), so the result is carried as an UNVERIFIED
+        # claim — the engine treats unverified speakers as role
+        # "unknown" and applies the most restrictive policy. A verified
+        # claim needs the claim-strength ladder (PACKET-02 Phase B /
+        # 04-A2), which is the permission-system deep pass, not this
+        # wiring.
+        speaker = SpeakerIdentity(
+            speaker_id=speaker_name or None,
+            speaker_role=speaker_role,
+            confidence=0.0,
+            verified=False,
+        )
     else:
         # Text turn: set the role from the authenticated session.
         # speaker=None opts out of biometric risk hobble (decision 51).

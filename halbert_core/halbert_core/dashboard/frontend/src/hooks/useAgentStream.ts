@@ -213,6 +213,28 @@ export interface ModelSelection {
   endpointId?: string;
 }
 
+/**
+ * Packet 04 A1: what a spoken turn carries into the typed ingress.
+ *
+ * A voice turn reaches the same /api/agent/message door as a typed one
+ * (browser-relayed STT), so without these fields the backend cannot tell
+ * the two apart — and defaulted every spoken command to the owner's role.
+ * The fields are omitted entirely on typed turns, so a typed request is
+ * byte-identical to before.
+ */
+export interface VoiceTurnOrigin {
+  /** Speaker name from the STT relay (CAM++ match, empty when unmatched). */
+  speakerName?: string;
+  /** Identified role ('admin' | 'member' | 'guest' | 'restricted' | 'unknown'). */
+  speakerRole?: string;
+  /**
+   * Where the claim came from: a role the audio pipeline matched is
+   * 'voice_speaker_verification'; a name with no matched role is
+   * 'free_text_name'; absent means unverified.
+   */
+  claimSource?: string;
+}
+
 export interface UseAgentStreamOptions {
   onStateChange?: (state: AgentState, previousState: AgentState | null) => void;
   onToolStart?: (tool: string, args: Record<string, unknown>) => void;
@@ -254,7 +276,13 @@ export interface UseAgentStreamReturn {
    * `sessionId` names ONE TURN, not a conversation to reopen: the server
    * resolves the subject thread. Omit it and a fresh id is minted per send.
    */
-  sendMessage: (message: string, sessionId?: string, selection?: ModelSelection, images?: string[]) => void;
+  sendMessage: (
+    message: string,
+    sessionId?: string,
+    selection?: ModelSelection,
+    images?: string[],
+    voice?: VoiceTurnOrigin,
+  ) => void;
   confirmAction: (actionId: string, confirmed: boolean) => void;
   applyDiff: (diffId: string) => void;
   rejectDiff: (diffId: string) => void;
@@ -972,7 +1000,7 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
     });
   }, []);
 
-  const sendMessage = useCallback((message: string, sessionId?: string, selection?: ModelSelection, images?: string[]) => {
+  const sendMessage = useCallback((message: string, sessionId?: string, selection?: ModelSelection, images?: string[], voice?: VoiceTurnOrigin) => {
     // Close existing connection
     eventSourceRef.current?.close();
     
@@ -1056,6 +1084,12 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
           ? { tier: selection.tier }
           : {}),
         ...(selection?.endpointId ? { endpoint_id: selection.endpointId } : {}),
+        // Packet 04 A1: a spoken turn carries its modality and speaker
+        // claim; omitted entirely on typed turns (byte-identical body).
+        ...(voice ? { modality: 'voice' } : {}),
+        ...(voice?.speakerName ? { speaker_name: voice.speakerName } : {}),
+        ...(voice?.speakerRole ? { speaker_role: voice.speakerRole } : {}),
+        ...(voice?.claimSource ? { claim_source: voice.claimSource } : {}),
       }),
       signal: controller.signal
     }).then(async (response) => {
