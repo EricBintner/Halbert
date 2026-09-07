@@ -4,7 +4,7 @@
 **Domain:** Authentication boundary, Home Assistant governance, command classification, path containment, sandboxing
 **Date:** 2026-09-07
 **Branch:** `worktree-sec-1-one-door` (git worktree at `.claude/worktrees/sec-1-one-door`), base `7719fff1`
-**Status:** Ready for review. Three commits landed and green. Two design decisions deliberately **not** landed and referred to you.
+**Status:** Ready for review. Five commits landed and green. Two design decisions deliberately **not** landed and referred to you.
 
 ---
 
@@ -41,9 +41,10 @@ The token boundary added in SEC-1 stops another *user account* on the machine, a
 | `152f10c5` | **SEC-1** — one door: every listener authenticates | `dashboard/auth.py` (new), `dashboard/app.py`, `routes/websocket.py`, `federation/peer_middleware.py`, `mcp/server.py`, `audio/config.py`, `deploy/*.service`, `src-tauri/src/lib.rs`, `src/lib/apiBase.ts`, `components/AuthGate.tsx` |
 | `3cd680db` | **SEC-9** — Home Assistant governance stops being decorative | `integrations/home_assistant/ha_governance.py`, `autonomy_gate.py`, `ha_tool.py`, `mcp/server.py`, `routes/home.py` |
 | `75e3f47c` | **SEC-2/3 front half** — remove the shell, stop names becoming paths | `tools/system_info.py`, `persona/memory_purge.py`, `routes/editor.py` |
-| *(uncommitted at time of writing)* | Pager escape + credential-read gate — see §4.4 | `streaming/pty.py`, `tools/safety.py` |
+| `79dca611` | Two holes the audit missed — pager escape, credential reads (§4.4) | `streaming/pty.py`, `tools/safety.py` |
+| `fcb381d3` | Acting on the self-review of all of the above (§5.4) | `autonomy_gate.py`, `ha_governance.py`, `apiBase.ts`, `useBeingEvents.ts`, `auth.py`, `memory_purge.py`, `simulator.py`, `cognitive_loop.py`, `deploy/*.service` |
 
-Diff against base: **39 files, +2411 / −182** as of `75e3f47c`.
+Suite at `fcb381d3`: **Python 5711 passed / 0 failed**, frontend 986 passed, `tsc` and `cargo check` clean.
 
 ---
 
@@ -73,7 +74,7 @@ Both SEC-9 criticals were **dead code**, not misconfiguration. Levels 2 and 3 ke
 
 ### 4.4 Two findings the 186-finding audit missed
 
-Both were found by adversarial critics reviewing the *proposed* SEC-2 work, and both are live in the current tree. Fixes are uncommitted at time of writing.
+Both were found by adversarial critics reviewing the *proposed* SEC-2 work, and both were live in the tree. Fixed in `79dca611`; both regression tests were confirmed to fail without their fix.
 
 **(a) A pager is a shell escape.** `git log -1` classifies MEDIUM and **auto-runs with no confirmation**. It spawns a pager, and `git`/`systemctl`/`man` execute `$GIT_PAGER`/`$SYSTEMD_PAGER`/`$MANPAGER` *as a shell command*; `less` offers `!command` interactively. Writes into a live session's stdin are never re-classified (F128), so the pager is the bridge between "the classifier waved this through as read-only" and "there is a shell here now". Verified end to end through the real `PTYSession` on this machine — the pager ran as uid 501.
 
@@ -163,7 +164,7 @@ Platform facts verified on this machine: `O_TMPFILE`, `os.linkat` and `os.openat
 After landing SEC-1, SEC-9 and the SEC-2/3 front half, a 24-agent adversarial pass was run against
 those commits: did they close what they claim, can the new controls be bypassed, what did they break,
 and **are the commit messages true**. It raised 81 issues; 17 were serious and put to independent
-verifiers. **Zero were refuted.** Ten are fixed in `<commit>`; the rest are below.
+verifiers. **Zero were refuted.** Ten are fixed in `fcb381d3`; the rest are below.
 
 That pass is the most useful thing in this packet, because four of the seventeen were in code that had
 already been reviewed, tested, committed and described as done.
