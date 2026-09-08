@@ -525,3 +525,123 @@ class TestTheRouterScoresTheQuestion:
         answering path has to score the same text for the two to agree."""
         assert agent_routes._answering_model(TRIVIAL) == GUIDE[0]
         assert agent_routes._answering_model(COMPLEX) == SPECIALIST[0]
+
+
+class TestSecureGateRejectsCloudTaggedModels:
+    """SEC-21: a ``:cloud`` model on ``localhost:11434`` is a cloud model.
+
+    The gate decided locality from the URL. Ollama's ``:cloud`` models sit on
+    the loopback port and are proxied to ollama.com at inference time, so a
+    secure turn -- one the context assembler flagged as carrying secrets --
+    passed the gate and left the machine.
+
+    This is the founder's live configuration, not a construction: the guide
+    is ``deepseek-v4-flash:cloud`` and the specialist ``deepseek-v4-pro:cloud``,
+    both on ``localhost:11434``, and the secure slot points at a port nothing
+    listens on. Every secure turn today ends at ollama.com.
+    """
+
+    CLOUD_GUIDE = ("deepseek-v4-flash:cloud", "http://localhost:11434", "ollama")
+    CLOUD_SPEC = ("deepseek-v4-pro:cloud", "http://localhost:11434", "ollama")
+
+    @pytest.fixture
+    def secure_slot(self, slots, monkeypatch):
+        import halbert_core.model.client as client
+        holder = {"secure": None}
+        monkeypatch.setattr(client, "get_secure_model",
+                            lambda: holder["secure"] or (None, "", ""))
+        return holder
+
+    @pytest.fixture
+    def secure_cap_on(self, capability_registry):
+        capability_registry.set_capability("secure_model", True)
+
+    # -- the locality helper itself, with the model in hand --------------
+
+    def test_endpoint_is_local_takes_the_model_into_account(self):
+        from halbert_core.dashboard.routes.agent import _endpoint_is_local
+        assert _endpoint_is_local("ollama", "http://localhost:11434", "llama3.2:3b")
+        assert not _endpoint_is_local("ollama", "http://localhost:11434",
+                                      "deepseek-v4-flash:cloud")
+
+    def test_endpoint_is_local_without_a_model_is_conservative(self):
+        # A caller that cannot name the model has not proven locality. The
+        # old signature defaulted to "the URL says so"; that default is the
+        # bug, so absence must not read as local.
+        from halbert_core.dashboard.routes.agent import _endpoint_is_local
+        assert not _endpoint_is_local("ollama", "http://localhost:11434")
+
+    # -- the fallback: the exact path that fired on this machine ---------
+
+    def test_fallback_refuses_a_cloud_tagged_guide_on_localhost(self, slots, secure_slot):
+        from halbert_core.dashboard.routes.agent import TurnModel, _fallback_to_guide
+        slots["guide"] = self.CLOUD_GUIDE
+        dead = TurnModel("apple-foundation-3b", "http://127.0.0.1:11435",
+                         "apple-foundation", "guide", False, False, "secure")
+        assert _fallback_to_guide(dead, "apple-foundation-3b", secure=True) is None, (
+            "the guide is cloud-bound through a loopback relay; falling back "
+            "to it ships the secrets the secure slot existed to protect"
+        )
+
+    def test_fallback_still_allows_a_genuinely_local_guide(self, slots, secure_slot):
+        from halbert_core.dashboard.routes.agent import TurnModel, _fallback_to_guide
+        dead = TurnModel("apple-foundation-3b", "http://127.0.0.1:11435",
+                         "apple-foundation", "guide", False, False, "secure")
+        guide = _fallback_to_guide(dead, "apple-foundation-3b", secure=True)
+        assert guide is not None and guide.model == GUIDE[0]
+
+    def test_a_non_secure_turn_may_still_fall_back_to_a_cloud_guide(self, slots, secure_slot):
+        # The tag rule is the secure gate's rule. An ordinary turn that chose
+        # a cloud model is allowed to be answered by another cloud model.
+        from halbert_core.dashboard.routes.agent import TurnModel, _fallback_to_guide
+        slots["guide"] = self.CLOUD_GUIDE
+        dead = TurnModel("dead-model", "http://localhost:11434", "ollama",
+                         "guide", False, False, "dead")
+        assert _fallback_to_guide(dead, "dead-model", secure=False) is not None
+
+    # -- the primary gate ------------------------------------------------
+
+    def test_a_cloud_tagged_guide_fails_closed_on_a_secure_turn(self, slots, secure_slot):
+        from halbert_core.dashboard.routes.agent import _SecureContentBlocked
+        slots["guide"] = self.CLOUD_GUIDE
+        slots["specialist"] = self.CLOUD_SPEC
+        with pytest.raises(_SecureContentBlocked):
+            _resolve_turn_model(COMPLEX, secure=True)
+
+    def test_a_cloud_tagged_pin_is_redirected_to_a_local_guide(self, slots, secure_slot):
+        # Same shape as the existing cloud-pin test, but the pin is a :cloud
+        # tag on localhost rather than an https endpoint.
+        turn = _resolve_turn_model(TRIVIAL, secure=True,
+                                   model_override="deepseek-v4-flash:cloud")
+        assert turn.model == GUIDE[0]
+        assert "cloud-bound" in turn.reason
+
+    def test_a_local_guide_still_answers_a_secure_turn(self, slots, secure_slot):
+        turn = _resolve_turn_model(TRIVIAL, secure=True)
+        assert turn.model == GUIDE[0]
+
+    # -- the dedicated slot returned before the gate ---------------------
+
+    def test_a_cloud_tagged_secure_slot_is_never_used_for_secrets(
+        self, slots, secure_slot, secure_cap_on
+    ):
+        # The dedicated-slot branch returns without passing gate(). If the
+        # slot itself holds a :cloud tag, nothing anywhere checks it.
+        secure_slot["secure"] = ("glm-5.3:cloud", "http://localhost:11434", "ollama")
+        turn = _resolve_turn_model(TRIVIAL, secure=True)
+        assert turn.model != "glm-5.3:cloud"
+        assert turn.model == GUIDE[0], "falls through to the local guide"
+
+    def test_a_cloud_tagged_secure_slot_with_a_cloud_guide_fails_closed(
+        self, slots, secure_slot, secure_cap_on
+    ):
+        from halbert_core.dashboard.routes.agent import _SecureContentBlocked
+        secure_slot["secure"] = ("glm-5.3:cloud", "http://localhost:11434", "ollama")
+        slots["guide"] = self.CLOUD_GUIDE
+        with pytest.raises(_SecureContentBlocked):
+            _resolve_turn_model(TRIVIAL, secure=True)
+
+    def test_a_genuinely_local_secure_slot_still_wins(self, slots, secure_slot, secure_cap_on):
+        secure_slot["secure"] = ("secure-local:8b", "http://localhost:11434", "ollama")
+        turn = _resolve_turn_model(TRIVIAL, secure=True)
+        assert turn.model == "secure-local:8b"

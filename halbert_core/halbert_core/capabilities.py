@@ -251,10 +251,19 @@ def _probe_local_llm() -> bool:
     and a ``peer://`` endpoint is the workstation's governed surface.
     """
     try:
-        from .model.llm_config import _is_local_url, resolve
+        from .model.llm_config import is_local_model, resolve
         for slot in ("chat_model", "specialist_model", "secure_model"):
             model = resolve(slot)
-            if model and model.url and _is_local_url(str(model.url)):
+            # SEC-21: the model and provider, not the URL alone. A :cloud
+            # tag on loopback made this read as a local LLM, and
+            # ``sys.local_llm`` in the persona permission layer with it.
+            # getattr with defaults: an older caller may hand over an object
+            # with only a url, and a missing field must read as unproven.
+            if model and is_local_model(
+                getattr(model, "model", None),
+                getattr(model, "url", None),
+                getattr(model, "provider", None),
+            ):
                 return True
         return False
     except Exception:
@@ -267,11 +276,16 @@ def _probe_secure_model() -> bool:
     Checks the secure_model slot for an enabled, local URL.
     """
     try:
-        from .model.llm_config import resolve, _is_local_url
+        from .model.llm_config import is_local_model, resolve
         model = resolve("secure_model")
-        if model and model.url and _is_local_url(model.url):
-            return True
-        return False
+        # SEC-21: this capability is what lets _resolve_turn_model try the
+        # dedicated slot at all, so it must not report a :cloud model on
+        # loopback as a local-only secure endpoint.
+        return bool(model) and is_local_model(
+            getattr(model, "model", None),
+            getattr(model, "url", None),
+            getattr(model, "provider", None),
+        )
     except Exception:
         return False
 

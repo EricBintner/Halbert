@@ -77,8 +77,10 @@ CHAT_CAPABLE_PROVIDERS = frozenset(
 )
 
 # Providers that contend for the local GPU and therefore need the advisory
-# lock. lm-studio serves models from the same VRAM Ollama does.
-LOCAL_GPU_PROVIDERS = frozenset({"ollama", "llamacpp", "mlx", "lm-studio"})
+# lock. lm-studio serves models from the same VRAM Ollama does. Defined in
+# llm_config so the secure gate, the capability probes and normalise share
+# it without importing this module (SEC-21); re-exported here for the lock.
+from .llm_config import LOCAL_RUNTIME_PROVIDERS as LOCAL_GPU_PROVIDERS
 
 _ANTHROPIC_VERSION = "2023-06-01"
 

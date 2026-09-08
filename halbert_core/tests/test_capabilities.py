@@ -644,3 +644,53 @@ class TestLocalLlmProbeLocalUrl:
         with patch("halbert_core.model.llm_config.resolve",
                    return_value=self._resolve("http://192.168.1.10:11434")):
             assert _probe_local_llm() is False
+
+
+class TestProbesRejectCloudTaggedModels:
+    """SEC-21, in the capability registry.
+
+    ``CAP_SECURE_MODEL`` meant "a local-only secure endpoint is configured",
+    and it is what lets ``_resolve_turn_model`` try the dedicated slot at all.
+    Both probes decided it from the URL, so a ``:cloud`` model on loopback
+    made the capability read as present -- and ``sys.local_llm``, which the
+    persona permission layer maps from ``CAP_LOCAL_LLM``, likewise.
+    """
+
+    def _resolved(self, model, url="http://localhost:11434", provider="ollama"):
+        from halbert_core.model.llm_config import ResolvedModel
+        return ResolvedModel(model=model, url=url, provider=provider)
+
+    def test_secure_model_probe_is_false_for_a_cloud_tag_on_loopback(self):
+        from halbert_core.capabilities import _probe_secure_model
+        with patch("halbert_core.model.llm_config.resolve",
+                   return_value=self._resolved("glm-5.3:cloud")):
+            assert _probe_secure_model() is False
+
+    def test_secure_model_probe_is_true_for_a_local_model(self):
+        from halbert_core.capabilities import _probe_secure_model
+        with patch("halbert_core.model.llm_config.resolve",
+                   return_value=self._resolved("qwen3:8b")):
+            assert _probe_secure_model() is True
+
+    def test_local_llm_probe_is_false_when_every_slot_is_a_cloud_tag(self):
+        from halbert_core.capabilities import _probe_local_llm
+        with patch("halbert_core.model.llm_config.resolve",
+                   return_value=self._resolved("deepseek-v4-flash:cloud")):
+            assert _probe_local_llm() is False
+
+    def test_local_llm_probe_is_true_when_any_slot_is_genuinely_local(self):
+        from halbert_core.capabilities import _probe_local_llm
+        seq = {"chat_model": self._resolved("deepseek-v4-flash:cloud"),
+               "specialist_model": self._resolved("deepseek-v4-pro:cloud"),
+               "secure_model": self._resolved("qwen3:8b")}
+        with patch("halbert_core.model.llm_config.resolve",
+                   side_effect=lambda slot, *a, **k: seq.get(slot)):
+            assert _probe_local_llm() is True
+
+    def test_probes_tolerate_a_resolved_model_without_a_provider(self):
+        # Older callers and some tests hand the probe an object with only a
+        # url. Missing fields must read as "not proven local", never raise.
+        from halbert_core.capabilities import _probe_secure_model
+        bare = MagicMock(spec=["url"]); bare.url = "http://localhost:11434"
+        with patch("halbert_core.model.llm_config.resolve", return_value=bare):
+            assert _probe_secure_model() is False

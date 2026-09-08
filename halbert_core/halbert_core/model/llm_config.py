@@ -140,6 +140,84 @@ def _empty_slot() -> Dict[str, Any]:
     return {"enabled": False, "endpoint_id": "", "model": ""}
 
 
+#: Providers that run the model on this machine's own runtime. Membership is
+#: necessary for locality, not sufficient: an "ollama" provider can front a
+#: remote host, and -- the case SEC-21 was found by -- a ``:cloud`` tag on a
+#: loopback Ollama is proxied to ollama.com at inference time.
+#:
+#: Defined here rather than in ``client.py`` because the secure gate, the
+#: capability probes and ``normalise`` all need it and none of them may import
+#: ``client``. ``client.LOCAL_GPU_PROVIDERS`` re-exports this.
+LOCAL_RUNTIME_PROVIDERS = frozenset({"ollama", "llamacpp", "mlx", "lm-studio"})
+
+#: Providers with no network egress by construction. The URL, when there is
+#: one, is a local IPC detail and is not consulted -- but the tag clause below
+#: still applies, so a mislabelled provider cannot launder a cloud model.
+ON_DEVICE_PROVIDERS = frozenset({"mlx", "apple-foundation"})
+
+#: Ollama's convention for a model served through the local daemon but run
+#: by ollama.com. Verified on Ollama 0.32.15: across all 33 models on the
+#: founder's machine the suffix agreed exactly with the absence of a
+#: modelfile in ``/api/show``, and the ``remote_host`` field the issue
+#: proposed checking does not exist in this version. The suffix is the
+#: documented, stable signal; this is where it is decided.
+CLOUD_MODEL_SUFFIX = ":cloud"
+
+
+def is_cloud_tagged(model: object) -> bool:
+    """True when ``model`` carries Ollama's ``:cloud`` tag.
+
+    Case-insensitive and whitespace-tolerant, because the value comes from a
+    YAML file a person edited and Ollama's own tag matching is
+    case-insensitive. Only the *tag* counts: ``mycloud:8b`` and
+    ``cloud-thinking:latest`` are local models whose names happen to contain
+    the word.
+    """
+    if not isinstance(model, str):
+        return False
+    return model.strip().lower().endswith(CLOUD_MODEL_SUFFIX)
+
+
+def is_local_model(model: object, url: object, provider: object) -> bool:
+    """The one locality verdict, as ``being_config.py`` states the rule.
+
+    Three clauses, all of which must hold:
+
+    1. **No cloud tag.** A ``:cloud`` model is a cloud model wherever it is
+       served from. Absolute -- checked before anything else and not
+       overridden by the provider.
+    2. **A local provider.** Outside :data:`LOCAL_RUNTIME_PROVIDERS` and
+       :data:`ON_DEVICE_PROVIDERS` the answer is no, whatever the URL says.
+    3. **A loopback URL**, unless the provider is on-device and has no
+       network path at all. The URL is a necessary condition here, never the
+       deciding one -- "the URL is loopback, therefore local" is the exact
+       inference this replaces.
+
+    Never raises, and unknown reads as *not* local: on the secure gate a
+    default that reads as local is the whole bug.
+    """
+    try:
+        # An unnamed model cannot be proven local: it might be a :cloud tag.
+        # The gate must not pass on the strength of the URL alone, which is
+        # what a missing name would otherwise amount to.
+        if not isinstance(model, str) or not model.strip():
+            return False
+        if is_cloud_tagged(model):
+            return False
+        prov = provider.strip().lower() if isinstance(provider, str) else ""
+        if not prov:
+            return False
+        if prov in ON_DEVICE_PROVIDERS:
+            return True
+        if prov not in LOCAL_RUNTIME_PROVIDERS:
+            return False
+        if not isinstance(url, str) or not url:
+            return False
+        return _is_local_url(url)
+    except Exception:
+        return False
+
+
 def _is_local_url(url: str) -> bool:
     """True when ``url`` points at a loopback or unspecified address.
 
@@ -424,10 +502,19 @@ def normalise(llm: Any) -> Dict[str, Any]:
             )
             enabled = False
         if enabled and slot == "secure_model":
-            ep_url = by_id[endpoint_id]["url"]
-            if not _is_local_url(ep_url):
+            ep = by_id[endpoint_id]
+            # SEC-21: judged on the model and provider as well as the URL. A
+            # ``:cloud`` tag on a loopback Ollama used to save as an enabled
+            # secure model, and the turn-time gate trusted the slot -- so a
+            # misconfiguration that should have been refused at the picker
+            # was enforced nowhere. Disabled, not erased: the UI should be
+            # able to show what was configured and why it will not be used.
+            if not is_local_model(model, ep["url"], ep["provider"]):
                 logger.warning(
-                    "secure_model endpoint %r is not local; slot disabled", ep_url,
+                    "secure_model %r @ %r (%s) is not a local model; slot "
+                    "disabled (a ':cloud' tag or non-loopback endpoint is "
+                    "cloud-bound whatever the URL says)",
+                    model, ep["url"], ep["provider"],
                 )
                 enabled = False
         cfg[slot] = {"enabled": enabled, "endpoint_id": endpoint_id, "model": model}
@@ -950,9 +1037,12 @@ def ensure_apple_foundation_endpoint() -> str:
     """Id of the Apple Intelligence endpoint; creates it if absent.
 
     The endpoint points at the Swift FoundationModels bridge on loopback
-    port 11435. It is registered even when the bridge is not running: the
-    host is *eligible* for Apple Intelligence and the endpoint is inert
-    until the bridge is bundled and started.
+    port 11435. ``auto_provision_apple_intelligence`` only calls this once
+    the bridge has answered a probe, and ``reconcile_apple_intelligence``
+    clears any slot assignment when it stops answering (APPLE-1) -- the
+    endpoint itself stays registered across both, because eligibility does
+    not change when reachability does. As of 2026-09-08 the bridge has
+    never been built; see the APPLE-1 issue for the integration options.
     """
     return ensure_endpoint(
         APPLE_FOUNDATION_URL,

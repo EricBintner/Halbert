@@ -204,7 +204,7 @@ What changes on our side:
 |---|---|
 | `rag/trending_discovery.py` sends the detected stack to `api.github.com` on Knowledge-tab open; `rag/freshness.py` calls HuggingFace — both ungated by `CAP_WEB` despite "every egress path gated" | `TRUST-1` |
 | `add_url` fetches with no `CAP_WEB` check; `POST /api/rag/add` has no token dependency beyond loopback convention | `TRUST-1`, `KNOW-1` |
-| `_is_local_url` is URL-only; no `:cloud` tag assertion exists in `model/` although `being_config.py` states the rule | `TRUST-1` (before any scheduled model call) |
+| ~~`_is_local_url` is URL-only; no `:cloud` tag assertion exists in `model/` although `being_config.py` states the rule~~ — **fixed as SEC-21, 2026-09-08**: `is_local_model()` at five sites; it had fired live (both chat and specialist were `:cloud`) | `TRUST-1` |
 | The scheduler's `enable_llm=False` is a dead flag nothing reads | `MIND-1` |
 | `knowledge_scope` is parsed and composed but consumed nowhere; keep for the research scope binding or remove | `KNOW-1` |
 | ~~`_check_skill_safety` substring fallback over-blocks (`man mkfs` → CRITICAL)~~ — **fixed** `875d8f95` | `SKILL-1` B3 |

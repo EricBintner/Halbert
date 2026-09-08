@@ -118,6 +118,7 @@ Independent of SEC-1 in code; reachable through SEC-1's door.
 - [ ] **SEC-13** · Data at rest, erasure and export — 16 findings (H6)
 - [ ] **SEC-16** · Packaging, signing and the install chain — 12 findings (H3)
 - [ ] **SEC-20** · Threat model, honest documents, test gates — 0 primary, depends on all above
+- [x] **SEC-21** · `:cloud` suffix bypassed the secure-model gate — **fixed 2026-09-08**; `is_local_model()` at five sites; APPLE-1 reconcile at boot. Filed as SEC-15 (collision); see `ISSUE-SEC-15-CLOUD-SUFFIX-BYPASSES-SECURE-GATE-2026-09-07.md`
 
 ## P3 — hardening (15 findings · 2 crit · 3 high)
 
