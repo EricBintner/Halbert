@@ -23,8 +23,12 @@ Pinned here:
     claim is unchanged, and a TYPED turn is byte-identical to today
     (no claim is ever bound for typed turns);
   * MUTABLE behaves like UNVERIFIED — both sit below the ASSERTED floor;
-  * the state machine binds the claim for voice turns only, and unbinds
-    it when the turn ends.
+  * the state machine binds the claim for voice turns and (C5, the
+    founder's terminal ruling) terminal turns, and unbinds it when the
+    turn ends. A terminal turn's claim is the channel's own
+    dashboard-token stamp — always ASSERTED — so the cap composes as a
+    no-op: the gate hears the terminal turn's admin role exactly as
+    stated.
 """
 from __future__ import annotations
 
@@ -315,3 +319,59 @@ class TestTurnBindsTheClaim:
         finally:
             await stream.aclose()
         assert bound is None
+
+
+# ---------------------------------------------------------------------------
+# C5: the terminal talk channel composes with the cap — as a no-op
+# ---------------------------------------------------------------------------
+
+class TestTheTerminalTurnComposesWithTheCap:
+
+    @pytest.mark.asyncio
+    async def test_terminal_turn_binds_the_channels_asserted_token_claim(self):
+        """C5 (founder ruling 2026-09-07: the terminal is a third talk
+        channel, ASSERTED via the dashboard token): a terminal turn
+        binds the channel's own claim on the executor's ContextVar —
+        ASSERTED, derived from the channel's stamp, never from the
+        wire's word — and unbinds it when the turn ends."""
+        agent = _make_agent()
+        stream = agent.process(
+            query="hello", session_id="s-cap-3", modality="terminal",
+        )
+        bound = None
+        try:
+            async for _event in stream:
+                bound = current_turn_claim.get()
+                break
+        finally:
+            await stream.aclose()
+        assert bound is not None
+        assert bound.strength == ClaimStrength.ASSERTED
+        assert current_turn_claim.get() is None
+
+    @pytest.mark.asyncio
+    async def test_the_cap_is_a_no_op_for_an_asserted_admin_terminal_turn(self, caplog):
+        """The dispatch's required pin, at the consumption point: the
+        terminal turn's bound dashboard-token claim flows through the
+        same effective_voice_role composition as a voice claim, and at
+        ASSERTED the ceiling is admin — the gate hears the terminal
+        turn's admin role exactly as stated, with no capped line. The
+        cap composes; for the ruling's terminal it changes nothing."""
+        executor, gate = _executor_with_gate()
+        token = _bound_claim("dashboard_token", value=None)
+        try:
+            with caplog.at_level(logging.WARNING, logger="halbert.tools.role_gate"):
+                result = await executor.execute(
+                    "run_command", dict(_CRITICAL_ARGS), speaker_role="admin"
+                )
+        finally:
+            current_turn_claim.reset(token)
+        assert gate.seen_roles == ["admin"]
+        assert not [
+            r for r in caplog.records if "voice_role_capped" in r.getMessage()
+        ]
+        # Critical-classified for admin, refused on the base risk axis —
+        # the same shape as the typed-turn pin (the claim axis added
+        # nothing and removed nothing).
+        assert result.success is False
+        assert "speaker role" not in (result.error or "")

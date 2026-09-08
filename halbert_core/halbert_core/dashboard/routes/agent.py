@@ -87,7 +87,7 @@ class SendMessageRequest(BaseModel):
     # the wire sets can therefore never raise the claim strength the
     # ladder sees. The frontend contract is unchanged — an honest relay
     # turn threads exactly as before.
-    modality: Optional[str] = Field(None, description="'voice' when this turn arrived spoken; absent (or 'text') means typed. Resolves the ingress channel; an unregistered value is refused")
+    modality: Optional[str] = Field(None, description="'voice' when this turn arrived spoken; 'terminal' when it was typed at the machine's terminal surface (C5); absent (or 'text') means typed. Resolves the ingress channel; an unregistered value is refused")
     speaker_name: Optional[str] = Field(None, description="Speaker identified by the audio pipeline (CAM++ match name) for a voice turn. Display label only")
     speaker_role: Optional[str] = Field(None, description="Identified speaker role for a voice turn (admin/member/guest/restricted/unknown). Never inferred, never authoritative: honored on voice turns as the stated label the claim-strength cap applies to, ignored on the dashboard channel")
     claim_source: Optional[str] = Field(None, description="Where the speaker claim came from ('voice_speaker_verification' | 'free_text_name'). A hint only: the server stamps the claim from the resolved channel, clamped to its ceiling")
@@ -1673,10 +1673,12 @@ if FASTAPI_AVAILABLE:
         #   (stamped_claim_source): over the dashboard door every
         #   declared claim clamps to the channel's own token, over the
         #   voice channel a declared source above the ceiling clamps
-        #   down to speaker verification. A forged
+        #   down to speaker verification, and over the terminal channel
+        #   (C5) everything clamps to the same dashboard token the door
+        #   validated. A forged
         #   "voice_speaker_verification" on a typed request can no longer
         #   mint an ASSERTED speaker claim, and a declared "device_cert"
-        #   can no longer record VERIFIED on either channel.
+        #   can no longer record VERIFIED on any channel.
         # - speaker_role is ignored over the dashboard door (the
         #   channel's own admin default applies -- the dashboard session
         #   is authenticated, so the wire naming a different role was
@@ -1684,7 +1686,13 @@ if FASTAPI_AVAILABLE:
         #   role a property of the channel). Over the voice channel the
         #   identified speaker's stated role still threads -- as the
         #   label D-6's claim-strength cap applies to, never as
-        #   self-granted authority.
+        #   self-granted authority. The terminal channel ignores it for
+        #   the dashboard door's reason exactly (C5: its credential is
+        #   the same dashboard token), and its claim likewise carries
+        #   that token whether the wire declared a source or none --
+        #   the channel's identity is not absent-able, it is what the
+        #   server validated on the request; there is no pre-C5
+        #   terminal turn whose bytes need preserving.
         # - speaker_name rides as a display label only; it never feeds
         #   authorization (the ladder hashes it into the claim's value,
         #   and a typed turn records no claim at all).
@@ -1695,11 +1703,27 @@ if FASTAPI_AVAILABLE:
         if channel.id == "voice":
             stamped_modality = "voice"
             stamped_speaker_role = request.speaker_role
+        elif channel.id == "terminal":
+            # C5: the turn arrives at process() as "terminal" so the
+            # state machine resolves the same channel for provenance
+            # (metadata.channel) and derives the turn's claim from the
+            # channel's own stamp.
+            stamped_modality = "terminal"
+            stamped_speaker_role = None
         else:
             stamped_modality = None
             stamped_speaker_role = None
-        from ...agents.channels import stamped_claim_source
+        from ...agents.channels import CHANNEL_CLAIM_STAMP, stamped_claim_source
         stamped_claim = stamped_claim_source(channel, request.claim_source)
+        if channel.id == "terminal" and not stamped_claim:
+            # The founder ruling made the terminal's claim the dashboard
+            # token unconditionally (ASSERTED via the existing token --
+            # no local_console source exists): an absent claim_source
+            # neither weakens nor omits it. stamped_claim_source keeps
+            # its "nothing declared stamps nothing" contract for the two
+            # channels that predate it; the terminal channel's identity
+            # is stamped here instead.
+            stamped_claim = CHANNEL_CLAIM_STAMP["terminal"]
 
         async def event_stream():
             """Generate SSE events from agent processing."""
