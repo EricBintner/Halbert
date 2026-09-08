@@ -63,6 +63,7 @@ import type {
 import { useBeingEvents } from '@/hooks/useBeingEvents'
 import { useHostIdentity } from '@/hooks/useHostIdentity'
 import { acousticWakeEvent } from '@/hooks/voiceModeEvents'
+import { useDashboardTurnReflection } from '@/hooks/useDashboardTurnReflection'
 import { SpeakerBadge } from '@/components/voice/SpeakerBadge'
 import type { SpeakerStatus } from '@/components/voice/SpeakerBadge'
 import { StandbyController } from '@/components/voice/StandbyController'
@@ -113,6 +114,11 @@ export interface VoiceModeProps {
 
 export function VoiceMode({ onExitToCanvas }: VoiceModeProps) {
   const { state, dispatch, visualState } = useVoiceModeMachine()
+  // C4 (turn-event tee), the first consumer: a turn running at ANOTHER
+  // surface (typed at the dashboard, or at the terminal) reflected here
+  // as one subtle line — observe-only, and the reduced payloads carry no
+  // content, so the words being typed over there never reach this page.
+  const dashboardTurn = useDashboardTurnReflection()
   const [keyboardOpen, setKeyboardOpen] = useState(false)
   const [muted, setMuted] = useState(false)
   /** The standby tier (P1), mirrored from the controller so the page can
@@ -523,6 +529,19 @@ export function VoiceMode({ onExitToCanvas }: VoiceModeProps) {
           )}
         </button>
       </main>
+
+      {/* C4: a turn from another surface, reflected (the tee's first
+       * consumer). One line, no content — the dashboard's words stay at
+       * the dashboard. */}
+
+      {dashboardTurn.active && (
+        <p
+          className="truncate px-6 pb-2 text-center text-xs uppercase tracking-wide text-canvas/40"
+          aria-live="polite"
+        >
+          working on a typed question
+        </p>
+      )}
 
       {/* Echo-back (packet 04 / addendum #3): the transcript line itself is
        * the echo — a plain quoted line, no wrapper phrase. */}

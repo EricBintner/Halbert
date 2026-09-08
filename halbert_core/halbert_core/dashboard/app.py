@@ -1000,9 +1000,39 @@ def create_app(enable_cors: bool = True) -> FastAPI:
     
     # WebSocket connection manager
     manager = ConnectionManager()
-    
+
     # Store in app state
     app.state.ws_manager = manager
+
+    # C4 (turn-event tee) — the first consumer's bridge. The state
+    # machine publishes a REDUCED turn-event set (state transitions,
+    # statuses, tool/block markers, the busy-mode verdicts) to the
+    # process-wide tee; this bridge re-broadcasts each payload on the
+    # dashboard's authenticated /ws fan-out as {'type': 'turn_event'},
+    # so the voice HUD (and any second screen in the room) can reflect a
+    # turn it did not post — observe-only: the tee carries no verb, and
+    # the /ws socket was already receive-only. The tee scrubs payload
+    # strings through the echo-guard seam before this bridge ever sees
+    # them. The bridge schedules its own broadcast task (tee callbacks
+    # are sync by contract; the turn must never await a slow subscriber).
+    try:
+        from ..agents.turn_event_tee import get_turn_event_tee
+
+        def _bridge_turn_event(payload) -> None:
+            try:
+                loop = asyncio.get_event_loop()
+                loop.create_task(manager.broadcast(
+                    {"type": "turn_event", "data": payload}
+                ))
+            except RuntimeError:
+                # No running loop (startup edge): the event is dropped —
+                # the tee is observation, never delivery.
+                pass
+
+        get_turn_event_tee().subscribe(_bridge_turn_event)
+        logger.info("Turn-event tee bridged to the /ws fan-out")
+    except Exception as e:
+        logger.warning(f"Turn-event tee bridge not wired (non-fatal): {e}")
     
     # SEC-1 — one door.
     #

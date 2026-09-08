@@ -503,6 +503,11 @@ class AgentStateMachine:
             yield StreamEvent.turn_queued(
                 session_id, waiting_for="previous turn"
             )
+            # C4: the tee hears the queue too (reduced set) — the voice
+            # HUD can say "answering, and another turn is waiting".
+            self._tee_publish(
+                "turn_queued", session_id, waiting_for="previous turn"
+            )
 
         # One turn at a time (spec §12). Everything below, including the
         # finally, runs under the lock; asyncio.Lock is not task-bound, so
@@ -730,6 +735,11 @@ class AgentStateMachine:
             )
 
             yield StreamEvent.session_started(session_id, request_id)
+            # C4 (turn-event tee): the reduced set's lifecycle head. The
+            # channel is already bound (above), so subscribers learn
+            # whose turn started — the voice HUD's reflect-vs-ignore
+            # question — without any content.
+            self._tee_publish("turn_started", session_id)
 
             # Plan A: persist the user row and resolve the thread before any
             # model call (spec §4.1-§4.4), under the lock so thread
@@ -984,8 +994,13 @@ class AgentStateMachine:
         if self.current_state == AgentState.AWAITING_CONFIRMATION:
             return
         self.current_state = AgentState.IDLE
-        self.active_sessions.pop(session_id, None)
+        # C4: publish the turn's END once — the repeated settle calls
+        # (process()'s outer finally) find the session already gone and
+        # stay silent.
+        ended = self.active_sessions.pop(session_id, None) is not None
         self.cancelled.pop(session_id, None)
+        if ended:
+            self._tee_publish("turn_ended", session_id)
         # Packet 07 B2: a steer that never found a batch boundary (the turn
         # ended, errored or was stopped first) leaves the slot here. The
         # arrival's own response already confirmed it (steer_accepted), so
@@ -1800,6 +1815,13 @@ class AgentStateMachine:
         )
         if decision.verb == Verdict.STOP:
             outcome = self.request_stop(self.ctx.session_id)
+            # C4: the verdict rides the tee with the arrival's session id
+            # (the arrival's own stream answers its sender; the tee tells
+            # the room). "stopped" is the outcome word, never the words.
+            self._tee_publish(
+                "stop_outcome", session_id,
+                outcome=outcome, running_turn=self.ctx.session_id,
+            )
             if outcome == "stopped":
                 # Existing vocabulary only: the arrival's stream closes
                 # the way the stopped turn's own stream closes.
@@ -1820,6 +1842,14 @@ class AgentStateMachine:
             return decision, events
         if decision.verb in (Verdict.STEER, Verdict.REDIRECT):
             steer = self.request_steer(text)
+            # C4: the steer verdict rides the tee — flags only, never the
+            # steered text itself (the room does not need the words).
+            self._tee_publish(
+                "steer_accepted", session_id,
+                running_turn=self.ctx.session_id,
+                replaced=bool(steer.get("replaced")),
+                demoted="interrupt_demoted_to_steer" in decision.notes,
+            )
             events = [
                 StreamEvent(
                     type="steer_accepted",
@@ -1867,6 +1897,14 @@ class AgentStateMachine:
 
         logger.debug(f"State transition: {old_state.value} → {new_state.value}")
 
+        # C4 (turn-event tee): the reduced set's backbone — state
+        # transitions, without any content.
+        self._tee_publish(
+            "state_change",
+            self.ctx.session_id,
+            **{"from": old_state.value, "to": new_state.value},
+        )
+
         return StreamEvent.state_change(
             self.ctx.session_id,
             new_state.value,
@@ -1883,6 +1921,15 @@ class AgentStateMachine:
         blocked_action / waiting_for context (A2c).
         """
         self.ctx.conversation_status.transition(new_status, **kwargs)
+        # C4 (turn-event tee): user-facing statuses are part of the
+        # reduced set — the waiting/blocked/in-progress line a second
+        # screen would want.
+        self._tee_publish(
+            "conversation_status",
+            self.ctx.session_id,
+            status=self.ctx.conversation_status.current(),
+            waiting_for=self.ctx.conversation_status.waiting_for(),
+        )
         return StreamEvent.conversation_status(
             self.ctx.session_id,
             self.ctx.conversation_status.current(),
@@ -1923,6 +1970,15 @@ class AgentStateMachine:
             await get_event_bus().publish(pe)
         except Exception as e:
             logger.debug(f"Proactive somatic publish failed (non-fatal): {e}")
+        # C4 (turn-event tee): terminal-block markers are in the reduced
+        # set — type and status only, never the block's content.
+        self._tee_publish(
+            "somatic_block",
+            self.ctx.session_id,
+            block_type=event.data["block_type"],
+            block_id=event.data["block_id"],
+            status=event.data["status"],
+        )
         return event
 
     # ------------------------------------------------------------------
@@ -3048,6 +3104,13 @@ class AgentStateMachine:
             {"path": file_path},
             exec_id
         )
+        # C4: the tool-call marker, reduced — the name, never the args
+        # (args carry paths and material the tee's consumers do not
+        # need).
+        self._tee_publish(
+            "tool_start", self.ctx.session_id,
+            tool="read_file", execution_id=exec_id,
+        )
         
         if self.tools:
             result = await self.tools.execute("read_file", {"path": file_path})
@@ -3058,6 +3121,11 @@ class AgentStateMachine:
                 result.success,
                 result.result[:500] if result.result else None,
                 result.error
+            )
+            # C4: the completion marker — success only, never the result.
+            self._tee_publish(
+                "tool_complete", self.ctx.session_id,
+                execution_id=exec_id, success=result.success,
             )
             
             if result.success:
@@ -3263,6 +3331,11 @@ class AgentStateMachine:
             tool_args,
             exec_id
         )
+        # C4: the tool-call marker, reduced — the name, never the args.
+        self._tee_publish(
+            "tool_start", self.ctx.session_id,
+            tool=tool_name, execution_id=exec_id,
+        )
         
         tool_call.started_at = __import__('time').time()
         
@@ -3319,6 +3392,11 @@ class AgentStateMachine:
                 result.success,
                 result.result,
                 result.error
+            )
+            # C4: the completion marker — success only, never the result.
+            self._tee_publish(
+                "tool_complete", self.ctx.session_id,
+                execution_id=exec_id, success=result.success,
             )
             
             if result.success:
@@ -3621,6 +3699,33 @@ class AgentStateMachine:
         except Exception as e:
             logger.debug(f"echo guard scan skipped (non-fatal): {e}")
             return text
+
+    def _tee_publish(self, event: str, session_id: str, **fields: Any) -> None:
+        """Publish one reduced event to the turn-event tee (C4).
+
+        The tee is observe-only fan-out: a subscriber in the room sees
+        what the answer stream was cleared to show (the hub scrubs
+        payload strings through the echo-guard seam itself), and a
+        failing subscriber never costs the turn. Non-fatal end to end —
+        the tee is an observation of this turn, never a step in it, so
+        any failure here is logged at debug and forgotten. The channel
+        rides from the turn's bound ``current_turn_channel`` so a second
+        screen can tell whose turn it is watching (the voice HUD's
+        "mine or the dashboard's" question).
+        """
+        try:
+            from .channels import current_turn_channel
+            from .turn_event_tee import get_turn_event_tee
+
+            channel = current_turn_channel.get()
+            get_turn_event_tee().publish({
+                "event": event,
+                "session_id": session_id,
+                "channel": channel.id if channel is not None else None,
+                **fields,
+            })
+        except Exception as e:
+            logger.debug(f"tee publish skipped (non-fatal): {e}")
 
     async def _handle_responding(self) -> AsyncIterator[StreamEvent]:
         """
