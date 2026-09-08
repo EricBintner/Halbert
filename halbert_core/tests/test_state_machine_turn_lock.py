@@ -177,13 +177,19 @@ class TestTurnLock:
         assert second_events[0].type == "conversation_status"
         assert second_events[0].session_id == "B"
         assert second_events[0].data["status"] == "waiting"
-        assert len(second_events) == 1              # nothing else until A releases the lock
+        # C3 (busy-mode unification): the honest queued-turn event rides
+        # with the waiting badge — exactly these two, nothing else until
+        # A releases the lock.
+        assert [e.type for e in second_events] == [
+            "conversation_status", "turn_queued",
+        ]
+        assert second_events[1].data["waiting_for"] == "previous turn"
 
         async for _ in first:
             pass
         await asyncio.wait_for(task, timeout=5)
         types = [e.type for e in second_events]
-        assert types[:2] == ["conversation_status", "session_started"]
+        assert types[:3] == ["conversation_status", "turn_queued", "session_started"]
         assert "session_ended" in types and "error" not in types
         assert not agent.turn_lock.locked()
 
@@ -427,9 +433,13 @@ class TestReviewFollowUps:
         await asyncio.wait_for(task, timeout=5)
 
         types = [e.type for e in second_events]
-        assert types[:3] == ["conversation_status", "session_started", "conversation_status"]
+        # C3: the turn_queued event rides right after the waiting badge.
+        assert types[:4] == [
+            "conversation_status", "turn_queued", "session_started",
+            "conversation_status",
+        ]
         assert second_events[0].data["status"] == "waiting"
-        assert second_events[2].data["status"] == "in_progress"
+        assert second_events[3].data["status"] == "in_progress"
         # …and it is cleared before any work, not at the end of the turn.
         assert types.index("state_change") > 2
         assert "session_ended" in types and "error" not in types
@@ -453,14 +463,19 @@ class TestReviewFollowUps:
         assert (await first.__anext__()).type == "session_started"
 
         events = [e async for e in agent.process("two", session_id="B")]
+        # C3: turn_queued rides with the waiting badge (the honest
+        # queued-turn event) and the rest is the give-up path unchanged.
         assert [e.type for e in events] == [
-            "conversation_status", "conversation_status", "error", "session_ended",
+            "conversation_status", "turn_queued",
+            "conversation_status", "error", "session_ended",
         ]
         # The badge this caller set to "waiting" before blocking has to be
         # cleared by the give-up path too: the reducer keeps the last status
         # string and neither error nor session_ended touches it.
-        assert [e.data["status"] for e in events[:2]] == ["waiting", "error"]
-        assert events[2].data["recoverable"] is True
+        assert [e.data["status"] for e in events if e.type == "conversation_status"] == [
+            "waiting", "error",
+        ]
+        assert events[3].data["recoverable"] is True
         assert "B" not in agent.active_sessions
         assert agent.ctx.session_id == "A"   # the running turn is untouched
 
