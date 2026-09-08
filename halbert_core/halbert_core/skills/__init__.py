@@ -3,6 +3,12 @@
 """Role-scoped skills: domain expertise bundled with retrieval scope,
 safety constraints, model tier, and context budget."""
 
+from .catalog import (
+    CATALOG_BUDGET_CHARS,
+    CatalogEntry,
+    display_location,
+    render_available_skills,
+)
 from .composer import (
     ComposedSkills,
     compose,
@@ -48,4 +54,6 @@ __all__ = [
     "is_reserved_skill_name", "reserved_skill_names",
     "SkillSidecar", "SkillSidecarError", "load_sidecar",
     "verify_sidecar_join",
+    "CATALOG_BUDGET_CHARS", "CatalogEntry", "display_location",
+    "render_available_skills",
 ]
