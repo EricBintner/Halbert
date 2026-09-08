@@ -63,3 +63,4 @@ Nothing is blocked, but for the record: the program's commits ride whichever ses
 - **D-5: P3c first, then the index.** Land the atomic get-or-open + a v5 heal for legacy duplicate rows, then the one-leaf partial unique index lands as one statement. No lost rows, no bricked stores.
 - **D-2 (F-3): still open** — the joint curated-core session remains unscheduled; 01-B and EN-6 stay gated until it rules.
 - **D-6: standing as written** — push after each merge pass (observed practice), sec-branch merge-or-close at the founder's convenience.
+- **Decay (task-follow-up): RATIFIED accept-and-document** — the founder continued ("continue this work") under the stated silence-ratifies rule. Dormancy decay stays on write-path/frozen timestamps; the honest semantics stay documented in the engine docstrings with their pinned tests.
