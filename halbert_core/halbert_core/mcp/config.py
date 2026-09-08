@@ -65,8 +65,16 @@ Fail TIGHT, not loose: an invalid level name (``risk_override: extreme``,
 whole server entry with a warning. The loader's rule for every other
 validation failure (unknown transport, missing command) is "the server
 contributes nothing"; a typo'd risk level must not silently downgrade a
-server the operator meant to fence — and in production a skipped server
-connects to nothing, so its tools are absent entirely, never MEDIUM.
+server the operator meant to fence — and at agent start a skipped server
+connects to nothing, so its tools are absent entirely. (Mid-process,
+classification itself fails closed on the skip — see
+tools/mcp_safety.py.)
+
+Sanitized-name collisions: two servers whose names sanitize to the same
+registered namespace (``my-fs`` and ``my_fs``; also a case-only
+difference, since override matching is case-insensitive) would make
+classification depend on config order, so the loader keeps the FIRST and
+skips the later colliding entry with a warning naming both raw names.
 
 Entries that fail validation are skipped with a warning, never raise —
 a corrupt config means "no servers", not a dead agent.
@@ -82,6 +90,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import yaml
 
 from ..tools.safety import RiskLevel
+from .registry import sanitize_component
 
 logger = logging.getLogger("halbert.mcp.config")
 
@@ -229,8 +238,20 @@ class MCPServerConfig:
 
 @dataclass
 class MCPClientConfig:
-    """The whole mcp_config.yml, re-read on every use."""
+    """The whole mcp_config.yml, re-read on every use.
+
+    B3 diagnostics, so a fail-closed classification can say WHY a
+    registered tool's server is absent (see tools/mcp_safety.py):
+    ``skipped_servers`` names the entries dropped by validation (only
+    entries that had a name at all); ``load_error`` says why nothing
+    could be read — missing file, unparseable YAML, wrong shape —
+    redacted, never raw file content. Both are empty when the config is
+    merely empty: no servers and no problems are different states, and
+    the refusal reason should not claim a problem that is not there.
+    """
     servers: List[MCPServerConfig] = field(default_factory=list)
+    skipped_servers: List[str] = field(default_factory=list)
+    load_error: str = ""
 
     def server(self, name: str) -> Optional[MCPServerConfig]:
         for s in self.servers:
@@ -421,19 +442,19 @@ def load_config() -> MCPClientConfig:
     """
     path = config_path()
     if not path.exists():
-        return MCPClientConfig()
+        return MCPClientConfig(load_error="config file missing")
     try:
         with open(path) as f:
             data = yaml.safe_load(f)
     except Exception as e:
         logger.warning("MCP config: failed to load %s (%s); no servers", path, e)
-        return MCPClientConfig()
+        return MCPClientConfig(load_error=f"unparseable: {_redact(str(e))}")
 
     if data is None:
         return MCPClientConfig()  # empty file — the shipped default
     if not isinstance(data, dict):
         logger.warning("MCP config: %s is not a mapping; no servers", path)
-        return MCPClientConfig()
+        return MCPClientConfig(load_error="file is not a mapping")
 
     # Scrub literal tokens out of every warning below — the user may
     # have written one into the file despite token_env being preferred.
@@ -445,7 +466,7 @@ def load_config() -> MCPClientConfig:
         logger.warning(
             "MCP config: 'servers' is not a list; no servers (%s)",
             _scrub(repr(raw_servers)[:200], secrets))
-        return MCPClientConfig()
+        return MCPClientConfig(load_error="'servers' is not a list")
 
     try:
         default_timeout = float(data.get("timeout_seconds", DEFAULT_TIMEOUT_SECONDS))
@@ -453,16 +474,41 @@ def load_config() -> MCPClientConfig:
         default_timeout = DEFAULT_TIMEOUT_SECONDS
 
     servers: List[MCPServerConfig] = []
-    seen: set = set()
+    skipped: List[str] = []
+    seen: set = set()                    # raw names (the classic dup rule)
+    seen_sanitized: Dict[str, str] = {}  # sanitized+lower key -> raw name
     for index, entry in enumerate(raw_servers):
         parsed = _parse_server(entry, index, default_timeout)
         if parsed is None:
+            # B3 diagnostic: name what was dropped, so a fail-closed
+            # classification can say "dropped by validation: fs" instead
+            # of a bare "absent". Entries with no name cannot be named.
+            if isinstance(entry, dict):
+                dropped = str(entry.get("name", "") or "").strip()
+                if dropped:
+                    skipped.append(dropped)
             continue
         if parsed.name in seen:
             logger.warning(
                 "MCP config: duplicate server name '%s', keeping the first",
                 parsed.name)
             continue
+        sanitized_key = sanitize_component(parsed.name).lower()
+        if sanitized_key in seen_sanitized:
+            # B3: ``my-fs`` and ``my_fs`` (and a case-only difference)
+            # sanitize to the SAME registered namespace, so keeping both
+            # would make classification order-dependent — the first
+            # matching config entry would win. Keep the first, name both.
+            logger.warning(
+                "MCP config: server '%s' sanitizes to the same name as "
+                "server '%s' (both become tools named 'mcp__%s__…'); "
+                "keeping the first, skipping '%s' — otherwise "
+                "classification would depend on config order",
+                parsed.name, seen_sanitized[sanitized_key], sanitized_key,
+                parsed.name)
+            continue
         seen.add(parsed.name)
+        seen_sanitized[sanitized_key] = parsed.name
         servers.append(parsed)
-    return MCPClientConfig(servers=servers)
+    return MCPClientConfig(
+        servers=servers, skipped_servers=skipped)

@@ -26,6 +26,8 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+import yaml  # noqa: E402
+
 from halbert_core.mcp.client import (
     MCPConnectionError,
     MCPDisconnectedError,
@@ -34,6 +36,22 @@ from halbert_core.mcp.client import (
     MCPToolError,
 )
 from halbert_core.tools.executor import ToolExecutor
+
+
+@pytest.fixture(autouse=True)
+def _mcp_safety_config(tmp_path, monkeypatch):
+    """B3: classification reads mcp_config.yml on every call, and a
+    registered tool whose server is ABSENT from it fails closed. These
+    tests fake the CLIENT, but in production registration is
+    config-driven — a registered tool's server was in the config. Give
+    the fakes the same contract: an isolated config naming every server
+    they pretend to be, with no overrides (the MEDIUM default), so the
+    assertions below keep testing the BRIDGE, not classification."""
+    monkeypatch.setenv("HALBERT_CONFIG_DIR", str(tmp_path))
+    (tmp_path / "mcp_config.yml").write_text(yaml.safe_dump({"servers": [
+        {"name": "fs", "transport": "stdio", "command": "x"},
+        {"name": "fakesrv", "transport": "stdio", "command": "x"},
+    ]}))
 
 
 # =============================================================================

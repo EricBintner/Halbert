@@ -13,11 +13,18 @@ HIGH confirmation, RoleGate) every native tool goes through.
 
 These tests pin:
 
-* the MEDIUM default (a server with no override, a server absent from
-  the config entirely);
+* the MEDIUM default — for a server PRESENT in the config with no
+  override (a registered tool whose server is ABSENT from the config
+  fails CLOSED instead, spec review Issue 1: removed, renamed, dropped
+  by a typo'd override, or a deleted/corrupt config must never
+  silently downgrade a live tool to auto-execute);
 * per-server overrides in both directions (raise to HIGH/CRITICAL,
   lower to SAFE);
-* per-tool overrides beating per-server ones;
+* per-tool overrides beating per-server ones, with case-insensitive
+  key matching (``Delete_File`` fences the registered ``delete_file``)
+  and a bridge warning for keys that match nothing (Issue 2);
+* sanitized server-name collisions rejected by the loader, so
+  classification is deterministic regardless of config order (Issue 3);
 * per-call config freshness — flip the file mid-process, no restart, no
   re-registration, the NEXT call gates differently;
 * the executor chain end-to-end: HIGH requires confirmation, CRITICAL
@@ -132,21 +139,6 @@ class TestMediumDefault:
         assert result.risk_level == RiskLevel.MEDIUM
         assert result.allowed
         assert not result.requires_confirmation
-
-    async def test_server_absent_from_config_is_medium(self, config_dir):
-        """A bridged tool whose server has vanished from the config (or
-        was never in it) still classifies, never crashes: MEDIUM."""
-        write_config(config_dir, [stdio_server("some-other-server")])
-        safety = ToolSafetyFramework()
-        result = safety.classify("mcp__fs__read_file", {})
-        assert result.risk_level == RiskLevel.MEDIUM
-        assert result.allowed
-
-    async def test_no_config_file_at_all_is_medium(self, config_dir):
-        safety = ToolSafetyFramework()
-        result = safety.classify("mcp__fs__read_file", {})
-        assert result.risk_level == RiskLevel.MEDIUM
-        assert result.allowed
 
     async def test_medium_executes_through_the_executor(self, config_dir):
         """The acceptance shape: MEDIUM executes (with the framework's
@@ -432,6 +424,212 @@ class TestConfirmationMessage:
         result = safety.classify("mcp__fs__odd", None)
         message = safety.get_confirmation_message("mcp__fs__odd", None, result)
         assert "fs" in message
+
+
+# ---------------------------------------------------------------------------
+# Absent server fails closed (spec review, Issue 1)
+# ---------------------------------------------------------------------------
+
+class TestAbsentServerFailsClosed:
+    """A REGISTERED ``mcp__`` tool can only exist because its server was
+    in the config at registration time. So when the same tool's server is
+    ABSENT from the freshly-read config, that is never the
+    never-configured case — it always means removed, renamed, or dropped
+    by validation. Classification fails closed (blocked, not MEDIUM):
+    per-call freshness must not turn a config accident into a silent
+    downgrade of a live, registered tool to auto-execute."""
+
+    async def _registered_under_critical(self, config_dir):
+        write_config(config_dir, [stdio_server("fs", risk_override="critical")])
+        return await bridged_executor()
+
+    async def test_typo_written_mid_process_blocks(self, config_dir, caplog):
+        """"critcal" drops the server from the parsed config; the live
+        registered tool must not fall to MEDIUM and execute."""
+        executor, client = await self._registered_under_critical(config_dir)
+        result = await executor.execute(
+            "mcp__fs__read_file", {"path": "/tmp/x"})
+        assert result.success is False  # still blocked under the old config
+
+        write_config(config_dir, [stdio_server("fs", risk_override="critcal")])
+        result = await executor.execute(
+            "mcp__fs__read_file", {"path": "/tmp/x"}, confirmed=True)
+        assert not result.success
+        assert result.risk_level == RiskLevel.CRITICAL
+        assert "fs" in (result.error or "")
+        assert "validation" in (result.error or "")
+        assert client.calls == []
+
+    async def test_deleted_config_file_blocks(self, config_dir):
+        executor, client = await self._registered_under_critical(config_dir)
+        (config_dir / "mcp_config.yml").unlink()
+        result = await executor.execute(
+            "mcp__fs__read_file", {"path": "/tmp/x"}, confirmed=True)
+        assert not result.success
+        assert "fs" in (result.error or "")
+        assert client.calls == []
+
+    async def test_corrupt_yaml_blocks(self, config_dir):
+        executor, client = await self._registered_under_critical(config_dir)
+        (config_dir / "mcp_config.yml").write_text(
+            "servers: [ {name: fs,,\n  broken yaml {{{")
+        result = await executor.execute(
+            "mcp__fs__read_file", {"path": "/tmp/x"}, confirmed=True)
+        assert not result.success
+        assert "fs" in (result.error or "")
+        assert client.calls == []
+
+    async def test_server_renamed_away_blocks_the_old_tool(
+            self, config_dir):
+        """The server is now "my fs": its entry is valid, but the tool
+        registered under the old name classifies against a server that no
+        longer exists for it — blocked."""
+        executor, client = await self._registered_under_critical(config_dir)
+        write_config(config_dir, [stdio_server("my fs", risk_override="safe")])
+        result = await executor.execute(
+            "mcp__fs__read_file", {"path": "/tmp/x"}, confirmed=True)
+        assert not result.success
+        assert result.risk_level == RiskLevel.CRITICAL
+        assert "fs" in (result.error or "")
+        assert client.calls == []
+
+    async def test_in_config_no_override_still_medium(self, config_dir):
+        """The fail-closed rule must not swallow the legitimate default:
+        a server PRESENT with no override still classifies MEDIUM."""
+        write_config(config_dir, [stdio_server("fs")])
+        executor, client = await bridged_executor()
+        result = await executor.execute(
+            "mcp__fs__delete_file", {"path": "/tmp/x"})
+        assert result.success
+        assert result.risk_level == RiskLevel.MEDIUM
+
+    def test_absent_server_reason_names_the_state(self, config_dir):
+        """The refusal is diagnosable: it names the server and what the
+        config read saw (skipped entries, load failure)."""
+        write_config(config_dir, [
+            {"name": "fs", "transport": "stdio", "command": "x",
+             "risk_override": "critcal"},
+        ])
+        safety = ToolSafetyFramework()
+        result = safety.classify("mcp__fs__read_file", {})
+        assert not result.allowed
+        assert not result.requires_confirmation
+        assert "fs" in result.reason
+        assert "validation" in result.reason
+
+
+# ---------------------------------------------------------------------------
+# Override-key matching (spec review, Issue 2)
+# ---------------------------------------------------------------------------
+
+class TestOverrideKeyMatching:
+
+    async def test_per_tool_key_matches_case_insensitively(self, config_dir):
+        """sanitize_component preserves case, so a key written
+        "Delete_File" would never match a registered "delete_file" if
+        the comparison were case-sensitive — and a CRITICAL fence would
+        silently degrade to auto-execute. Matching compares
+        sanitized-lowercased on both sides."""
+        write_config(config_dir, [stdio_server(
+            "fs", risk_override="medium",
+            tool_risk={"Delete_File": "critical"})])
+        safety = ToolSafetyFramework()
+        result = safety.classify("mcp__fs__delete_file", {})
+        assert result.risk_level == RiskLevel.CRITICAL
+        assert not result.allowed
+
+    async def test_server_name_matches_case_insensitively(self, config_dir):
+        write_config(config_dir, [stdio_server("FS", risk_override="high")])
+        safety = ToolSafetyFramework()
+        result = safety.classify("mcp__fs__read_file", {})
+        assert result.risk_level == RiskLevel.HIGH
+
+    async def test_typo_key_still_warns_and_degrades_visibly(
+            self, config_dir, caplog):
+        """A key that matches nothing (a real typo, not a case variant)
+        cannot match — but the operator hears about it: the bridge warns
+        per unmatched key at registration, and the tool still classifies
+        on its real path (per-server / MEDIUM here)."""
+        write_config(config_dir, [stdio_server(
+            "fs", tool_risk={"dlete_file": "critical"})])
+        tool_executor = ToolExecutor(web_search=False)
+        with caplog.at_level(
+                logging.WARNING, logger="halbert.mcp.bridge"):
+            await discover_and_register(tool_executor, RecordingClient())
+        assert any(
+            "dlete_file" in r.message and "fs" in r.message
+            for r in caplog.records)
+
+        result = await tool_executor.execute(
+            "mcp__fs__delete_file", {"path": "/tmp/x"})
+        assert result.success  # MEDIUM default — the typo'd fence warned
+        assert result.risk_level == RiskLevel.MEDIUM
+
+    async def test_matched_keys_do_not_warn(self, config_dir, caplog):
+        write_config(config_dir, [stdio_server(
+            "fs", tool_risk={"delete_file": "critical"})])
+        tool_executor = ToolExecutor(web_search=False)
+        with caplog.at_level(
+                logging.WARNING, logger="halbert.mcp.bridge"):
+            await discover_and_register(tool_executor, RecordingClient())
+        assert not any(
+            "matches no advertised tool" in r.message
+            for r in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# Sanitized server-name collisions (spec review, Issue 3)
+# ---------------------------------------------------------------------------
+
+class TestSanitizedServerCollision:
+    """``my-fs`` and ``my_fs`` sanitize to the same registered namespace.
+    If both were kept, classification of ``mcp__my_fs__…`` would depend on
+    config order — so the loader keeps the first and rejects the later
+    colliding entry, exactly like the raw duplicate-name rule."""
+
+    def test_collision_keeps_first_and_names_both(self, config_dir, caplog):
+        write_config(config_dir, [
+            stdio_server("my-fs"),
+            stdio_server("my_fs", risk_override="critical"),
+        ])
+        with caplog.at_level(logging.WARNING, logger="halbert.mcp.config"):
+            cfg = load_config()
+        assert [s.name for s in cfg.servers] == ["my-fs"]
+        assert any(
+            "my-fs" in r.message and "my_fs" in r.message
+            for r in caplog.records)
+
+    def test_case_only_collision_is_rejected_too(self, config_dir):
+        """Matching is case-insensitive, so FS/fs would collide at
+        classification; the loader must reject the pair for the same
+        order-dependence reason."""
+        write_config(config_dir, [
+            stdio_server("FS"),
+            stdio_server("fs", risk_override="critical"),
+        ])
+        cfg = load_config()
+        assert [s.name for s in cfg.servers] == ["FS"]
+
+    async def test_classification_deterministic_regardless_of_order(
+            self, config_dir):
+        """Whichever entry survives, the SAME config classifies the SAME
+        call identically every time (no order flip mid-process)."""
+        write_config(config_dir, [
+            stdio_server("my-fs"),
+            stdio_server("my_fs", risk_override="critical"),
+        ])
+        safety = ToolSafetyFramework()
+        for _ in range(3):
+            result = safety.classify("mcp__my_fs__delete_file", {})
+            assert result.risk_level == RiskLevel.MEDIUM  # my-fs survives
+
+        write_config(config_dir, [
+            stdio_server("my_fs", risk_override="critical"),
+            stdio_server("my-fs"),
+        ])
+        for _ in range(3):
+            result = safety.classify("mcp__my_fs__delete_file", {})
+            assert result.risk_level == RiskLevel.CRITICAL  # my_fs wins
 
 
 # ---------------------------------------------------------------------------

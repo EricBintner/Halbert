@@ -216,6 +216,51 @@ async def _collect_server_tools(
     return [s for s in schemas if isinstance(s, dict)]
 
 
+def _warn_unmatched_tool_risk_keys(
+    server_name: str,
+    tool_schemas: List[Dict[str, Any]],
+) -> None:
+    """B3: warn per ``tool_risk`` key that matches no advertised tool.
+
+    A per-tool override key that matches nothing is almost certainly a
+    typo, and the failure direction is the worst one — a CRITICAL fence
+    silently degrades to the per-server level or auto-execute MEDIUM.
+    The config itself cannot know the server's tool list, so this is
+    said HERE, the one place both sides are in hand at once. Matching is
+    the classifier's own rule (sanitized, case-insensitive), so a key
+    this check accepts is a key classification will apply.
+
+    Never raises (the bridge's contract); a config that cannot be read
+    simply skips the check — classification's absent-server fail-closed
+    covers that state.
+    """
+    try:
+        from .config import load_config
+        from .registry import sanitize_component
+
+        server = load_config().server(server_name)
+        if server is None or not server.tool_risk:
+            return
+        advertised = {
+            sanitize_component(s.get("name")).lower()
+            for s in tool_schemas
+            if isinstance(s, dict) and s.get("name")
+        }
+        for key in server.tool_risk:
+            if sanitize_component(key).lower() not in advertised:
+                logger.warning(
+                    "MCP config: server '%s' tool_risk key '%s' matches "
+                    "no advertised tool (advertised: %s) — the override "
+                    "applies to nothing; if this is a typo, the tool "
+                    "classifies on its per-server or default path",
+                    server_name, key,
+                    ", ".join(sorted(advertised)) or "(none)")
+    except Exception as e:
+        logger.debug(
+            "MCP tool_risk unmatched-key check skipped for server '%s': %s",
+            server_name, e)
+
+
 def _register_server_tools(
     tool_executor,
     mcp_client,
@@ -225,6 +270,7 @@ def _register_server_tools(
 ) -> int:
     """Namespace, convert and register one server's tools. Returns how
     many landed on the executor."""
+    _warn_unmatched_tool_risk_keys(server_name, tool_schemas)
     count = len(tool_schemas)
     if count > MAX_TOOLS_PER_SERVER:
         logger.warning(
