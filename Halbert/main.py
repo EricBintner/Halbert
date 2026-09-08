@@ -393,6 +393,108 @@ def cmd_audit_verify(args):
     _sys.exit(0 if result.ok else 1)
 
 
+def cmd_consent_verify(args):
+    """Check the consent ledger for tampering (chain + projection).
+
+    Mirrors ``audit-verify``'s exit contract: 1 tampered, 2 cannot-check,
+    ``--json`` for machine-readable output. The projection disagreement
+    is part of the verdict — the log is authoritative, so a projection
+    that disagrees with the chain is tampering or corruption, not noise.
+    """
+    import sys as _sys
+    try:
+        from halbert_core.halbert_core.consent.store import ConsentStore
+        from halbert_core.halbert_core.consent.denials import ConsentUnavailable
+    except Exception as e:
+        print(f'consent ledger not available: {e}')
+        _sys.exit(2)
+
+    store = ConsentStore(data_dir=args.data_dir, config_dir=args.config_dir)
+    try:
+        result = store.verify()
+        status = store.projection_status()
+    except (ConsentUnavailable, Exception) as e:
+        # Exit 2, not 1: "I could not check" must not be reported with the
+        # same code as "I checked and found tampering".
+        print(f'cannot check the consent ledger: {e}')
+        _sys.exit(2)
+
+    ok = result.ok and status != 'disagrees'
+    if args.json:
+        import json as _json
+        print(_json.dumps({
+            'ok': ok,
+            'checked': result.checked,
+            'signed': result.signed,
+            'problems': [str(p) for p in result.problems],
+            'projection': status,
+        }, indent=2, ensure_ascii=False))
+        _sys.exit(0 if ok else 1)
+
+    if result.checked == 0 and not result.problems:
+        print('No records in the consent ledger -- nothing to check.')
+        print('An empty ledger is not a clean ledger: it is a ledger that has'
+              ' not been written to yet.')
+        if status == 'disagrees':
+            print('  The projection disagrees with the (empty) chain.')
+            _sys.exit(1)
+        _sys.exit(0)
+
+    if result.ok:
+        # The §3.5 discipline: never "verified" -- the ledger and anything
+        # that could vouch for it share one disk.
+        print('No tampering detected since this ledger began.')
+        print(f'  records checked: {result.checked}')
+    else:
+        print('TAMPERING DETECTED since this ledger began.')
+        print(f'  records checked: {result.checked}')
+        for problem in result.problems:
+            print(f'  {problem}')
+    if status == 'disagrees':
+        print('  The consent-state projection disagrees with the chain --'
+              ' this is a Stop, not a warning.')
+    elif status == 'absent':
+        print('  No projection yet: run consent-rebuild to write one.')
+    _sys.exit(0 if ok else 1)
+
+
+def cmd_consent_rebuild(args):
+    """Reproject consent-state.json from the authoritative ledger.
+
+    Mirrors ``vault-rebuild``: the projection is generated, rebuildable,
+    and never read back as truth. Refuses to run on a chain that does
+    not verify — a rebuild from a tampered log would launder the
+    tampering into a clean-looking projection.
+    """
+    import sys as _sys
+    try:
+        from halbert_core.halbert_core.consent.store import ConsentStore
+        from halbert_core.halbert_core.consent.denials import ConsentUnavailable
+    except Exception as e:
+        print(f'consent ledger not available: {e}')
+        _sys.exit(2)
+
+    store = ConsentStore(data_dir=args.data_dir, config_dir=args.config_dir)
+    try:
+        result = store.rebuild()
+    except (ConsentUnavailable, Exception) as e:
+        message = str(e)
+        if 'does not verify' in message:
+            # Exit 1: the chain was checked and it is tampered.
+            print(f'cannot rebuild: {e}')
+            _sys.exit(1)
+        # Exit 2: the rebuild could not run at all.
+        print(f'cannot rebuild the consent projection: {e}')
+        _sys.exit(2)
+
+    if args.json:
+        import json as _json
+        print(_json.dumps(result, indent=2, ensure_ascii=False))
+        return
+    print(f"projection: {result['path']}")
+    print(f"  {result['records']} record(s) -> {result['capabilities']} capability(ies)")
+
+
 def cmd_scheduler_add(args):
     if SchedulerEngine is None or Job is None:
         print('scheduler not available')
@@ -1883,6 +1985,22 @@ def main():
         help='Reproject the change ledger into the Markdown vault (generated; overwrites edits)')
     p_vault.add_argument('--json', action='store_true', help='Emit machine-readable JSON')
     p_vault.set_defaults(func=cmd_vault_rebuild)
+
+    p_consent_verify = sub.add_parser(
+        'consent-verify',
+        help='Check the consent ledger for tampering (chain + projection)')
+    p_consent_verify.add_argument('--data-dir', help='Data dir (default: the resolved data dir)')
+    p_consent_verify.add_argument('--config-dir', help='Config dir (default: the resolved config dir)')
+    p_consent_verify.add_argument('--json', action='store_true', help='Emit machine-readable JSON')
+    p_consent_verify.set_defaults(func=cmd_consent_verify)
+
+    p_consent_rebuild = sub.add_parser(
+        'consent-rebuild',
+        help='Reproject consent-state.json from the authoritative ledger (generated; refuses a tampered chain)')
+    p_consent_rebuild.add_argument('--data-dir', help='Data dir (default: the resolved data dir)')
+    p_consent_rebuild.add_argument('--config-dir', help='Config dir (default: the resolved config dir)')
+    p_consent_rebuild.add_argument('--json', action='store_true', help='Emit machine-readable JSON')
+    p_consent_rebuild.set_defaults(func=cmd_consent_rebuild)
 
     p_sched_add = sub.add_parser('scheduler-add', help='Add a job to the scheduler queue (Phase 2)')
     p_sched_add.add_argument('--id', required=True, help='Job ID')
