@@ -25,6 +25,7 @@ from ..streaming.terminal_bridge import (
 
 if TYPE_CHECKING:
     from .base import BaseTool
+    from ..persona.claims import IdentifierClaim
 
 logger = logging.getLogger('halbert.tools.executor')
 
@@ -36,6 +37,18 @@ logger = logging.getLogger('halbert.tools.executor')
 #: looser, which a re-defaulted role would be.
 current_speaker_role: ContextVar[Optional[str]] = ContextVar(
     "halbert_current_speaker_role", default=None
+)
+
+#: The identifier claim of the turn whose tool call is running. Bound by
+#: the state machine for VOICE turns only (a typed turn's identity rides
+#: the dashboard session, so nothing is bound and text behavior is
+#: byte-identical). D-6 wave 3: at the RoleGate consumption point in
+#: ``execute()`` below, a claim below ASSERTED caps the effective speaker
+#: role at member-class — an unverified voice claiming to be the owner
+#: must not wield owner-class tools. Same copy-down-the-task mechanism
+#: as ``current_turn_digest``.
+current_turn_claim: ContextVar[Optional["IdentifierClaim"]] = ContextVar(
+    "halbert_current_turn_claim", default=None
 )
 
 
@@ -434,7 +447,10 @@ class ToolExecutor:
             speaker_role: The verified role of the speaker
                 ('admin', 'member', 'guest', 'restricted', 'unknown').
                 Text/chat turns default to 'admin' (already authenticated).
-                Voice turns set this from speaker_id verification.
+                Voice turns set this from speaker_id verification. On a
+                voice turn whose identifier claim is bound (below), a
+                claim below ASSERTED caps the effective role the gate
+                hears at member-class (role_gate.effective_voice_role).
 
         Returns:
             ExecutionResult with success status and result/error
@@ -529,9 +545,25 @@ class ToolExecutor:
             )
 
         # Classify risk — use RoleGate if configured (can tighten, never loosen)
+        #
+        # D-6 wave 3: a voice turn's claim strength caps the effective
+        # role the gate hears — enforcement at the consumption point, not
+        # just the turn's record. The claim ContextVar is bound for voice
+        # turns only, so typed turns keep today's behavior exactly. The
+        # capped role (never the stated one) is what current_speaker_role
+        # binds below, so nested per-call dispatch (execute_code scripts)
+        # inherits the cap too — never looser, which a re-defaulted role
+        # would be.
+        effective_role = speaker_role
         if self.role_gate is not None:
+            turn_claim = current_turn_claim.get()
+            if turn_claim is not None:
+                from .role_gate import effective_voice_role
+                effective_role = effective_voice_role(
+                    speaker_role, turn_claim.strength
+                )
             safety_result = self.role_gate.classify(
-                tool_name, args, speaker_role=speaker_role
+                tool_name, args, speaker_role=effective_role
             )
         else:
             safety_result = self.safety.classify(tool_name, args)
@@ -569,7 +601,7 @@ class ToolExecutor:
         # the handler (notably _run_command) can therefore publish terminal
         # lifecycle events to the right SSE stream. See streaming/terminal_bridge.
         session_token = current_agent_session.set(session_id)
-        role_token = current_speaker_role.set(speaker_role)
+        role_token = current_speaker_role.set(effective_role)
         try:
             handler = self.tools[tool_name]
 

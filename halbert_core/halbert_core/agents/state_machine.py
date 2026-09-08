@@ -522,9 +522,10 @@ class AgentStateMachine:
         else:
             turn_speaker_role = "unknown"
 
-        # Packet 04 A2: claim strength at the voice gate — recorded, not
-        # enforced (RoleGate never reads this; enforcement is the D-6
-        # permission-system pass). A voice turn's claim_source maps
+        # Packet 04 A2: claim strength at the voice gate — recorded on the
+        # turn context, and (D-6 wave 3) bound for the tool executor to
+        # enforce: a claim below ASSERTED caps the effective role
+        # RoleGate hears at member-class. A voice turn's claim_source maps
         # through the PACKET-02 strength ladder; a source the ladder
         # does not know — or an absent one — fails closed to UNVERIFIED,
         # never to a stronger reading. Typed turns record no claim here:
@@ -542,6 +543,20 @@ class AgentStateMachine:
             turn_identifier_claim.strength.name.lower()
             if turn_identifier_claim is not None else "none"
         )
+
+        # D-6 wave 3: bind the claim where the executor consumes it. The
+        # tools this turn spawns copy this context, so the RoleGate
+        # consumption point in ToolExecutor.execute() sees the voice
+        # turn's claim and caps the effective role (voice turns only —
+        # nothing bound for a typed turn). Dies with the turn, in the
+        # finally below, so no claim ever bleeds into a LATER turn.
+        claim_token = None
+        if turn_identifier_claim is not None:
+            try:
+                from ..tools.executor import current_turn_claim
+                claim_token = current_turn_claim.set(turn_identifier_claim)
+            except Exception as e:
+                logger.debug(f"turn claim not bound (non-fatal): {e}")
 
         # Packet 04 B1: the per-turn mutation digest. Bound on the
         # ContextVar so a write-plane success anywhere in this turn
@@ -707,6 +722,15 @@ class AgentStateMachine:
                     current_turn_digest.reset(digest_token)
                 except Exception as e:
                     logger.debug(f"turn digest unbind failed (non-fatal): {e}")
+            # D-6 wave 3: the voice claim binding dies with the turn, the
+            # same rule as the digest — a claim read after this point
+            # belongs to no turn and must not gate the next one's tools.
+            if claim_token is not None:
+                try:
+                    from ..tools.executor import current_turn_claim
+                    current_turn_claim.reset(claim_token)
+                except Exception as e:
+                    logger.debug(f"turn claim unbind failed (non-fatal): {e}")
             self.turn_lock.release()
 
     def _supersede_paused_turn(self, session_id: str) -> None:

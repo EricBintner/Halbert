@@ -33,6 +33,7 @@ import logging
 from typing import Dict, Optional
 
 from .safety import ToolSafetyFramework, RiskLevel, SafetyCheckResult, _RISK_ORDER
+from ..persona.claims import ClaimStrength
 from ..persona.guest_tools import WRITE_PLANE_TOOLS
 from ..persona.policy import (
     AskPolicy,
@@ -138,6 +139,62 @@ def effective_policy(
     if session is not None:
         layers.append(session)
     return merge_policies(layers)
+
+
+# ---------------------------------------------------------------------------
+# Voice claim ceiling (D-6 wave 3 — enforcement, not just recording)
+# ---------------------------------------------------------------------------
+
+def voice_role_ceiling(claim_strength: ClaimStrength) -> str:
+    """The strongest role-class a voice turn's claim can earn.
+
+    Packet 04 A2 recorded the turn's identifier claim; this is the
+    enforcement half. ASSERTED or stronger (speaker verification matched,
+    or a credential the server validates): the stated role stands — the
+    current behavior. Below ASSERTED (UNVERIFIED — claimed but
+    uncorroborated; MUTABLE — a free-text name the speaker chose
+    themselves): member is the strongest class the claim can earn, so an
+    unverified voice claiming to be the owner never wields owner-class
+    tools.
+
+    Typed turns never consult this — the executor only applies the
+    ceiling when a voice turn's claim is bound on its context, so text
+    behavior is byte-identical to before.
+    """
+    if claim_strength >= ClaimStrength.ASSERTED:
+        return "admin"
+    return "member"
+
+
+def effective_voice_role(speaker_role: str, claim_strength: ClaimStrength) -> str:
+    """The role RoleGate should hear for a voice turn with this claim.
+
+    Applies ``voice_role_ceiling`` to the stated role. The ceiling caps,
+    never grants: a stated role already at or below member (member,
+    guest, unknown, restricted) stands as stated — the claim axis never
+    lifts a speaker out of its own class. Composition rule: this cap is
+    about the *voice identity claim*, a different axis from persona
+    fronting — a guest persona's own gate list (persona/guest_tools.py)
+    stays authoritative for guests whether or not a claim is bound.
+
+    When the cap downgrades the stated role, one structured line
+    (``voice_role_capped``) records old role, capped role, and claim
+    strength, so the audit surface shows why a tool was gated.
+    """
+    ceiling = voice_role_ceiling(claim_strength)
+    # "Stronger role" = the higher risk cap ROLE_MAX_RISK allows it; the
+    # effective role is the weaker of the two, by that order.
+    stated_order = _RISK_ORDER[ROLE_MAX_RISK.get(speaker_role, "medium")]
+    ceiling_order = _RISK_ORDER[ROLE_MAX_RISK.get(ceiling, "medium")]
+    if ceiling_order < stated_order:
+        logger.warning(
+            "voice_role_capped: stated_role=%s capped_role=%s claim_strength=%s",
+            speaker_role,
+            ceiling,
+            ClaimStrength(claim_strength).name.lower(),
+        )
+        return ceiling
+    return speaker_role
 
 
 class RoleGate:
