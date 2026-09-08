@@ -132,6 +132,16 @@ class IntakePipeline:
         self._model_config = model_config
         self._skill_matcher = skill_matcher
 
+    @property
+    def skill_registry(self):
+        """The matcher's registry, or None when no matcher is wired.
+
+        SK-2's catalog renders from this (the state machine reads it at
+        `_build_messages`), so the registry stays reachable without the
+        pipeline re-exporting the whole matcher.
+        """
+        return getattr(self._skill_matcher, "registry", None)
+
     def analyze(self, message: str, *,
                 explicit_skills: Optional[Sequence[str]] = None) -> MessageIntake:
         """Run the full intake pipeline on a message.

@@ -2235,6 +2235,59 @@ class AgentStateMachine:
                            exc_info=True)
             return ""
 
+    def _catalog_block(self) -> str:
+        """The ``<available_skills>`` catalog, or "" without a registry.
+
+        Track B disclosure (skills SK-2, design §2.1): every consultable
+        skill is listed by name, description and location so the model can
+        read one on demand. Rendered from the registry's structured
+        snapshot -- keyed to its snapshot_version, never re-parsed from
+        this prompt -- and the skills matched this turn are passed as
+        protected, so the truncation ladder cuts them last. Never raises:
+        a catalog that cannot render costs the turn its disclosure, not
+        its answer.
+        """
+        try:
+            pipeline = getattr(self, "intake", None)
+            registry = getattr(pipeline, "skill_registry", None) if pipeline else None
+            if registry is None:
+                return ""
+            turn = getattr(self.ctx, "intake", None)
+            protected = getattr(turn, "active_skill_names", None) or ()
+            from ..skills.catalog import render_available_skills
+
+            return render_available_skills(registry, protected=protected)
+        except Exception:
+            logger.warning("rendering the skills catalog failed; continuing",
+                           exc_info=True)
+            return ""
+
+    def _stable_head(self, identity: str, catalog: str,
+                     skills_block: str) -> str:
+        """The cache-stable head of messages[0], closed by the boundary.
+
+        §2.2: identity, catalog and bound bodies are a pure function of
+        versioned inputs, assembled through `build_stable_prefix` and
+        followed by the literal CACHE_BOUNDARY marker; everything volatile
+        -- receipt block, folded history rows, the turn prompt -- is
+        appended below it by `_build_messages`. The join is sha-keyed and
+        memoized; a failure here falls back to the plain join rather than
+        costing the turn the head at all.
+        """
+        try:
+            from ..prompts.agent_prompts import (
+                CACHE_BOUNDARY_MARKER,
+                build_stable_prefix,
+            )
+            stable = build_stable_prefix(identity, catalog, skills_block)
+        except Exception:
+            logger.warning("stable-prefix assembly failed; joining plainly",
+                           exc_info=True)
+            stable = "\n\n".join(p for p in (identity, catalog, skills_block) if p)
+        if not stable:
+            return ""
+        return f"{stable}\n\n{CACHE_BOUNDARY_MARKER}"
+
     def _build_messages(
         self, prompt: str, tail: str = "", response_modality: str = "text",
     ) -> List[Dict[str, Any]]:
@@ -2287,7 +2340,12 @@ class AgentStateMachine:
         # sent on both LLM calls of a turn, so it is paid for twice; it is
         # capped in the composer for that reason.
         skills_block = self._composed_prompt_block()
-        head = "\n\n".join(p for p in (identity, skills_block) if p)
+        # SK-2: the <available_skills> catalog rides between identity and
+        # the bound bodies, and the whole head is closed by the literal
+        # CACHE_BOUNDARY marker (§2.2) -- everything above it versioned,
+        # everything below it volatile.
+        catalog = self._catalog_block()
+        head = self._stable_head(identity, catalog, skills_block)
         content = f"{head}\n\n{prompt}" if head else prompt
         messages: List[Dict[str, Any]] = [{"role": "system", "content": content}]
         if self.ctx.thread_receipt_block:

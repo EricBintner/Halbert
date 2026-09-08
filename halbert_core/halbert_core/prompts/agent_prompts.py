@@ -9,11 +9,89 @@ Based on research5.md Part 14.
 
 from typing import Dict, List, Any, Optional
 from urllib.parse import urlparse
+import functools
+import hashlib
 import logging
 import platform
 import re
 
 logger = logging.getLogger('halbert.prompts.agent')
+
+#: The literal cache boundary (design DESIGN-SKILLS-SYSTEM-2026-09-07
+#: §2.2). Everything above this marker in ``messages[0]`` — identity,
+#: catalog, bound-skill bodies — is a pure function of versioned inputs;
+#: everything volatile (the receipt block, folded history rows, the turn
+#: prompt, the continuity hint) sits below it. A downstream cache
+#: consumer (provider prompt-prefix caching; D-1's compaction, which owns
+#: what a compacted session re-renders) hashes the text above the marker
+#: and treats any change as a full-key rotation.
+CACHE_BOUNDARY_MARKER = (
+    "<!-- CACHE_BOUNDARY: everything above this line is versioned and "
+    "stable across turns -->"
+)
+
+#: Bump when any template rendered ABOVE the boundary changes shape. The
+#: stable-prefix key folds it in, so one bump retires every memoized
+#: prefix in the process — that is its whole job.
+PROMPT_TEMPLATE_VERSION = 1
+
+#: How many stable prefixes the memo holds. Each turn renders at most two
+#: (PLANNING and RESPONDING share one when nothing above the boundary
+#: moved), and the inputs that matter most (the skill snapshot version)
+#: change rarely, so a small LRU covers a full day of turns.
+_STABLE_PREFIX_CACHE = 16
+
+
+def stable_prefix_key(identity_text: str, catalog_text: str,
+                      bound_skills_text: str, *,
+                      user_rules_version: str = "") -> str:
+    """The sha256 over (template version, the prefix's component texts,
+    a user-rules version) — design §2.2's key, exposed for the consumers
+    that hash the stable prefix (the catalog render brings its own
+    snapshot_version in through *catalog_text*; the memo keyed on this
+    digest is what keeps repeated turns from re-rendering what did not
+    move).
+
+    ``user_rules_version`` is reserved for the user-rules surface the key
+    names: no prompt block carries user rules on this path today, so the
+    parameter defaults to the empty string and moves nothing.
+    """
+    material = "\x00".join((
+        str(PROMPT_TEMPLATE_VERSION),
+        identity_text or "",
+        catalog_text or "",
+        bound_skills_text or "",
+        user_rules_version or "",
+    ))
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()
+
+
+@functools.lru_cache(maxsize=_STABLE_PREFIX_CACHE)
+def _stable_join(key: str, identity_text: str, catalog_text: str,
+                 bound_skills_text: str) -> str:
+    parts = [p for p in (identity_text, catalog_text, bound_skills_text) if p]
+    return "\n\n".join(parts)
+
+
+def build_stable_prefix(identity_text: str, catalog_text: str,
+                        bound_skills_text: str = "", *,
+                        user_rules_version: str = "") -> str:
+    """The versioned, cache-stable head of ``messages[0]`` (§2.2).
+
+    Identity first, then the ``<available_skills>`` catalog, then the
+    matched skills' bound bodies — the design's order, all of it above
+    ``CACHE_BOUNDARY_MARKER``. The join is memoized on the sha256 key:
+    the components are already-rendered text (each with its own caching
+    at its own seam — the personality renderer, the version-keyed catalog
+    render), so what the memo buys is small and what the *key* buys is
+    the discipline — one hash names the exact prefix a turn reused, which
+    is what a cache consumer downstream needs.
+    """
+    key = stable_prefix_key(
+        identity_text, catalog_text, bound_skills_text,
+        user_rules_version=user_rules_version,
+    )
+    return _stable_join(key, identity_text, catalog_text, bound_skills_text)
 
 #: Header of the block that carries the receipts of subjects recalled this
 #: turn. ``state_machine`` appends the same block, rendered by the same
