@@ -140,6 +140,7 @@ class DiscoveryEngine:
         )
         from .scanners.gpu import GpuScanner
         from .scanners.ai_accelerator import AiAcceleratorScanner
+        from .scanners.scriptable_apps import ScriptableAppsScanner
 
         self.register_scanner(LaunchdScanner())       # SERVICE
         self.register_scanner(MacStorageScanner())     # STORAGE
@@ -154,6 +155,8 @@ class DiscoveryEngine:
         # GPU-1: Universal GPU + AI accelerator scanners
         self.register_scanner(GpuScanner())            # GPU
         self.register_scanner(AiAcceleratorScanner())  # AI_ACCELERATOR
+        # A3: scriptable apps (embedded .sdef dictionaries)
+        self.register_scanner(ScriptableAppsScanner())  # APP
     
     # ─────────────────────────────────────────────────────────────
     # Scanner Management

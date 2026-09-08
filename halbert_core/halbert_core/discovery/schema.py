@@ -35,6 +35,7 @@ class DiscoveryType(str, Enum):
     FILESYSTEM = "filesystem"                     # 04
     SERVICE = "service"                           # 05
     PACKAGE = "package"                           # 06
+    APP = "app"                                   # A3: scriptable macOS apps (.sdef)
     SECURITY = "security"                         # 07
     DESKTOP = "desktop"                           # 08
     
