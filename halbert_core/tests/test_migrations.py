@@ -312,7 +312,11 @@ class TestPartialWrites:
 
         migrate_legacy_conversations(store, agent_dir=agent_dir, legacy_dir=legacy_dir)
         half = store.get_thread("agent-1")
-        assert half is not None and half["status"] == "open"
+        # The remnant is born closed (D-5 one-leaf: the import must never
+        # open a second leaf against the live conversation), and the
+        # repair's ownership proofs (migrated_from marker, row prefix
+        # match) never keyed on its status.
+        assert half is not None and half["status"] == "closed"
         assert len(store.recent_messages("agent-1", limit=50)) == 1
 
         monkeypatch.undo()
@@ -361,7 +365,7 @@ class TestPartialWrites:
         self._fail_second_append(store, monkeypatch)
         monkeypatch.setattr(store, "delete", lambda *a, **k: False)  # kill -9
         migrate_legacy_conversations(store, agent_dir=agent_dir, legacy_dir=legacy_dir)
-        assert store.get_thread("agent-1")["status"] == "open"
+        assert store.get_thread("agent-1")["status"] == "closed"  # born closed (D-5)
         monkeypatch.undo()
 
         (agent_dir / "agent-1.json").unlink()

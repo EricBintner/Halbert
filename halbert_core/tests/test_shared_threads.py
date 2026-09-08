@@ -175,7 +175,8 @@ class TestConcurrentAccess:
         store_a = SqliteConversationStore(str(db))
         store_b = SqliteConversationStore(str(db))
         store_a.create_thread("t1", "Shared")
-        store_b.create_thread("t2", "Shared")
+        # One open leaf per store (D-5): t2 is a write target, not a leaf.
+        store_b.create_thread("t2", "Shared", status="closed")
 
         errors = []
         per_thread_writes, threads_per_store = 10, 4

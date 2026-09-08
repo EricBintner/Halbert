@@ -11,17 +11,22 @@ from halbert_core.agents.conversation_sqlite import SqliteConversationStore
 @pytest.fixture
 def store():
     s = SqliteConversationStore(":memory:")
-    # seed conversations (append_message is the only message write path)
-    s.create("disk-conv", "u1")
-    s.append_message("disk-conv", "user", "my disk is filling up on /var")
-    s.append_message("disk-conv", "assistant", "run du -sh /var/log", origin="assistant")
+    # seed conversations (append_message is the only message write path).
+    # One open leaf per store (D-5): the seeds are historical subjects, so
+    # each closes as it lands -- the router only reads (get/search), which
+    # are status-blind.
+    def seed(cid, *messages):
+        s.create(cid, "u1")
+        s.update_thread(cid, status="closed")
+        for role, content in messages:
+            s.append_message(cid, role, content,
+                             origin="assistant" if role == "assistant" else "human")
 
-    s.create("network-conv", "u1")
-    s.append_message("network-conv", "user", "the nginx firewall is blocking traffic")
-    s.append_message("network-conv", "assistant", "check ufw status", origin="assistant")
-
-    s.create("cpu-conv", "u1")
-    s.append_message("cpu-conv", "user", "cpu load is very high")
+    seed("disk-conv", ("user", "my disk is filling up on /var"),
+         ("assistant", "run du -sh /var/log"))
+    seed("network-conv", ("user", "the nginx firewall is blocking traffic"),
+         ("assistant", "check ufw status"))
+    seed("cpu-conv", ("user", "cpu load is very high"))
     yield s
     s.close()
 

@@ -7,10 +7,13 @@ transaction primitive (§1.2), and ``update_thread`` gains the title CAS
 ladder (§1.4). Zero reader change, zero writer change for every existing
 caller.
 
-The one-leaf partial unique index (§1.2) is deliberately NOT here: landing
-it as speced conflicts with merged reality (the P3d shared-store race and
-the A6b-era duplicate rows), so it is held for the founder's Q3 answer
-rather than improvised around -- see the T1 report.
+The one-leaf partial unique index (§1.2) landed as v5, per the founder's
+D-5 ruling ("P3c first, then the index"): P3c's atomic get-or-open closes
+the P3d shared-store race at the writer, the v5 heal demotes A6b-era
+duplicate-open rows on open, and only then does
+``idx_one_open_leaf ON conversations(status) WHERE status='open'`` make
+two open threads structurally impossible. The v5 heal tests live at the
+bottom of this file.
 
 Test shapes are the packet-08 patterns the design §6 test strategy names:
 old-shape upgrade in place with zero data loss, reference-decl pins,
@@ -101,9 +104,10 @@ class TestOldShapeUpgrade:
     def test_plan_a_era_db_upgrades_in_place_with_zero_data_loss(self, tmp_path):
         db = str(tmp_path / "conv.db")
         store = cs.SqliteConversationStore(db)
-        assert store.create_thread("leafy", "Samba share") is True
+        # One open leaf (D-5): "old" is paused before "leafy" opens.
         assert store.create_thread("old", "NAS swap") is True
         assert store.update_thread("old", status="paused", paused_at=1.0) is True
+        assert store.create_thread("leafy", "Samba share") is True
         a = store.append_message(thread_id="leafy", role="user", content="survivor")
         b = store.append_message(thread_id="old", role="user", content="also survives")
         assert a is not None and b is not None
@@ -207,9 +211,8 @@ class TestMoveLeaf:
     def pair(self, tmp_path):
         store = cs.SqliteConversationStore(":memory:")
         store.create_thread("old", "Samba share")
-        store.update_thread("old", status="open")
-        store.create_thread("new", "Scanner share")
-        store.update_thread("new", status="paused", paused_at=5.0)
+        # One open leaf (D-5): the move target starts paused.
+        store.create_thread("new", "Scanner share", status="paused")
         yield store
         store.close()
 
@@ -390,3 +393,82 @@ class TestTitleCas:
     def test_unknown_title_source_is_refused(self, store):
         assert store.update_thread("t", title="x", title_source="mystery") is False
         assert store.get_thread("t")["title"] == "add a samba share"
+
+
+# ---------------------------------------------------------------------------
+# v5 (founder ruling D-5: "P3c first, then the index"): the one-leaf heal +
+# the partial unique index. A store carrying A6b-era duplicate opens heals on
+# open -- the winner is exactly what current_open_thread() answers with,
+# every other open row is demoted to paused with all data preserved -- and
+# only then does idx_one_open_leaf land, so the open never bricks.
+# ---------------------------------------------------------------------------
+
+class TestOneLeafIndex:
+    def test_a6b_era_duplicate_opens_heal_on_open(self, tmp_path, caplog):
+        """A legacy (schema_version 4) store with two open threads -- the
+        A6b orphan shape, written by a pre-index writer -- opens cleanly:
+        the heal demotes the duplicate, the index then lands, and both rows
+        keep every message they had."""
+        import logging as _logging
+
+        db = str(tmp_path / "legacy.db")
+        builder = cs.SqliteConversationStore(db)
+        # Write the A6b shape: 'first' is the older open leaf; 'second' is
+        # the orphan a racing writer left beside it. The rows are written
+        # the only way they ever came to exist -- by a writer with no
+        # one-leaf index -- so simulate that era: drop the index, add the
+        # duplicate, and stamp the file as v4.
+        assert builder.create_thread("first", "Samba share", created_at=1.0) is True
+        assert builder.append_message("first", "user", "add a samba share") is not None
+        builder._conn.execute("DROP INDEX idx_one_open_leaf")
+        builder._conn.commit()
+        assert builder.create_thread("second", "Scanner share", created_at=2.0) is True
+        assert builder.append_message("second", "user", "now the scanner share") is not None
+        # Pin updated_at so the heal's winner is deterministic: append_message
+        # advances it to the wall clock, and 'second' must be the newer leaf.
+        builder._conn.execute("UPDATE conversations SET updated_at = 1.0 WHERE id = 'first'")
+        builder._conn.execute("UPDATE conversations SET updated_at = 2.0 WHERE id = 'second'")
+        builder._conn.execute("DELETE FROM schema_version")
+        builder._conn.execute("INSERT INTO schema_version(version) VALUES (4)")
+        builder._conn.commit()
+        builder.close()
+
+        with caplog.at_level(_logging.WARNING, logger="halbert.agents.conversation_sqlite"):
+            healed = cs.SqliteConversationStore(db)
+        try:
+            # The heal ran at open and said so.
+            assert any("one-leaf heal" in r.message for r in caplog.records)
+            # Exactly one open thread, and it is the one
+            # current_open_thread() always answered with: newest
+            # updated_at wins (the A6b orphan could never be picked again).
+            assert healed.current_open_thread()["thread_id"] == "second"
+            assert [t["thread_id"] for t in healed.list_threads(status="open")] == ["second"]
+            # The demoted row keeps every piece of data it had; only the
+            # lifecycle stamps moved (paused, paused_at set).
+            first = healed.get_thread("first")
+            assert first["status"] == "paused"
+            assert first["paused_at"] is not None
+            assert first["title"] == "Samba share"
+            assert [m["content"] for m in healed.list_messages("first")] == [
+                "add a samba share"]
+            # And the store opened cleanly: the invariant is now structural
+            # (a second open is refused by the index, absorbed to False).
+            assert healed.create_thread("third", "Another") is False
+            assert healed.get_or_open_thread("fourth", "Joined")["thread_id"] == "second"
+            # schema_version advanced.
+            assert healed._conn.execute(
+                "SELECT MAX(version) FROM schema_version").fetchone()[0] == 5
+        finally:
+            healed.close()
+
+    def test_fresh_store_never_heals_and_writes_the_index(self, tmp_path):
+        db = str(tmp_path / "fresh.db")
+        store = cs.SqliteConversationStore(db)
+        try:
+            assert store._conn.execute(
+                "SELECT MAX(version) FROM schema_version").fetchone()[0] == 5
+            indexes = {r[1] for r in store._conn.execute(
+                "PRAGMA index_list(conversations)").fetchall()}
+            assert "idx_one_open_leaf" in indexes
+        finally:
+            store.close()

@@ -21,8 +21,9 @@ def store():
 # ---------------------------------------------------------------------------
 
 class TestSchemaMigration:
-    def test_schema_version_is_4(self):
-        assert SCHEMA_VERSION == 4
+    def test_schema_version_is_5(self):
+        # v4 -> v5: the one-leaf heal + idx_one_open_leaf (founder ruling D-5)
+        assert SCHEMA_VERSION == 5
 
     def test_terminal_blocks_table_exists(self, store):
         tables = store._conn.execute(
@@ -91,7 +92,7 @@ class TestSchemaMigration:
         s = SqliteConversationStore(db)
         assert s._conn is not None
         version = s._conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
-        assert version == 4
+        assert version == SCHEMA_VERSION  # v5: one-leaf heal + index (D-5)
         # New tables exist
         assert s.list_terminal_blocks() == []
         assert s.list_terminal_sessions() == []

@@ -316,7 +316,10 @@ class TestUpdateMessage:
         assert store._conn.execute("SELECT rowid FROM messages_fts WHERE messages_fts MATCH '\"old\"'").fetchone() is None
 
     def test_update_thread_id_moves_row(self, store):
-        store.create("t1"); store.create("t2")
+        store.create("t1")
+        # Second thread is created non-open (D-5 one-leaf: only one open
+        # row exists per store).
+        store.create_thread("t2", "T2", status="closed")
         mid = store.append_message("t1", "user", "moving")
         assert store.update_message(mid, thread_id="t2") is True
         assert store._conn.execute("SELECT conversation_id FROM messages WHERE id = ?", (mid,)).fetchone()[0] == "t2"
@@ -353,7 +356,7 @@ class TestUpdateMessage:
         ).fetchone()[0] == "t1"  # FTS entry not moved either
         assert store.search("nowhere") == ["t1"]
         # the store is still usable afterwards for a real move
-        store.create("t2")
+        store.create_thread("t2", "T2", status="closed")
         assert store.update_message(mid, thread_id="t2") is True
 
 
@@ -588,8 +591,12 @@ class TestThreadReaders:
         assert store.get_thread("nope") is None
 
     def test_list_threads_and_current_open(self, store):
-        for tid in ("a", "b", "c"):
-            store.create_thread(tid, tid.upper())
+        # One open leaf (D-5): "a" and "b" are created in their resting
+        # statuses; "c" is the open one. The update_thread calls below still
+        # exercise the same setters as before.
+        store.create_thread("a", "A", status="closed")
+        store.create_thread("b", "B", status="paused")
+        store.create_thread("c", "C")
         store.update_thread("a", status="closed", last_active=100.0)
         store.update_thread("b", status="paused", last_active=200.0)
         store.update_thread("c", status="open", last_active=300.0)
@@ -703,7 +710,7 @@ class TestThreadReaders:
         future "scope the timeline to a thread" refactor silently breaking
         the one-conversation model with an otherwise-green suite."""
         store.create_thread("t1", "T1")
-        store.create_thread("t2", "T2")
+        store.create_thread("t2", "T2", status="closed")
         store.append_message("t1", "user", "hello from t1", turn_id="x1", timestamp=1.0)
         store.append_message("t1", "assistant", "reply1", origin="assistant", turn_id="x1", timestamp=2.0)
         store.append_message("t2", "user", "hello from t2", turn_id="x2", timestamp=3.0)
@@ -980,7 +987,7 @@ class TestReceiptsReviewFixes:
     def test_search_receipts_ranks_by_score_then_recency_beyond_limit(self, store):
         for i in range(8):
             tid = f"t{i}"
-            store.create_thread(tid, f"Thread {i}")
+            store.create_thread(tid, f"Thread {i}", status="closed")
             store.update_thread(tid, last_active=float(i))
             extra = " gadget" if i % 2 == 0 else ""
             store.upsert_receipt(tid, f"Thread {i}", f"Entities: widget{extra}")
@@ -1015,7 +1022,7 @@ class TestReceiptsRound2Findings:
         of the per-row loop."""
         for i in range(6):
             tid = f"t{i}"
-            store.create_thread(tid, f"Thread {i}")
+            store.create_thread(tid, f"Thread {i}", status="closed")
             store.upsert_receipt(tid, f"Thread {i}", "Entities: widget")
         calls = []
         original = store._fts_term_hits_map
@@ -1080,7 +1087,7 @@ class TestMergeThread:
         the open loops, terminal blocks and compaction boundaries the merged
         turns produced stop being reachable from the thread that owns them,
         and are never returned again by any query."""
-        store.create_thread("prev", "Samba share")
+        store.create_thread("prev", "Samba share", status="paused")
         store.create_thread("new", "Scanner share")
         store.append_message("new", "user", "now the scanner share", turn_id="t2")
 
@@ -1194,7 +1201,7 @@ class TestPendingNotes:
 
     def test_notes_do_not_leak_between_threads(self, store):
         store.create_thread("t1", "T")
-        store.create_thread("t2", "U")
+        store.create_thread("t2", "U", status="closed")
         store.append_message("t1", "system", "mine", origin="system", visible_in_timeline=False)
         store.append_message("t2", "system", "theirs", origin="system", visible_in_timeline=False)
         assert store.pending_notes("t1") == ["mine"] and store.pending_notes("t2") == ["theirs"]
@@ -1231,7 +1238,7 @@ class TestLastTurnId:
 
     def test_turn_ids_do_not_leak_between_threads(self, store):
         store.create_thread("t1", "T")
-        store.create_thread("t2", "U")
+        store.create_thread("t2", "U", status="closed")
         store.append_message("t1", "user", "mine", origin="human", turn_id="u-mine")
         store.append_message("t2", "user", "theirs", origin="human", turn_id="u-theirs")
         assert store.last_turn_id("t1") == "u-mine"

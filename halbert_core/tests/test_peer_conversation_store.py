@@ -206,7 +206,9 @@ class TestRoundTrips:
     def test_redact_and_merge(self, wired):
         server, store = wired
         store.create_thread("t1", "Secrets")
-        store.create_thread("t2", "Other")
+        # The merge-back shape (D-5 one-leaf): source open, destination
+        # paused; merge_thread reopens the destination.
+        store.create_thread("t2", "Other", status="paused")
         mid = store.append_message("t1", "user", "/srv/clients/acmecorp-payroll.kdbx")
         assert store.redact_message(mid) == "t1"
         assert store.list_messages("t1")[0]["content"] == store.REDACTED

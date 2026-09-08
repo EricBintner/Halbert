@@ -33,7 +33,11 @@ logger = logging.getLogger("halbert.agents.conversation_sqlite")
 _DEFAULT_DB = str(Path.home() / ".halbert" / "conversations.db")
 
 #: Bump when a migration step below must run on existing databases.
-SCHEMA_VERSION = 4
+#: v5: the one-leaf heal -- duplicate-open rows beyond the single
+#: ``current_open_thread()`` winner are demoted to ``paused`` on open, then
+#: the partial unique index ``idx_one_open_leaf`` makes two opens
+#: structurally impossible (P3c first, then the index: founder ruling D-5).
+SCHEMA_VERSION = 5
 
 # Columns added to the legacy tables. ``_ensure_schema`` applies each one
 # with ``ALTER TABLE ... ADD COLUMN`` when ``PRAGMA table_info`` lacks it.
@@ -670,6 +674,47 @@ class SqliteConversationStore:
                 except sqlite3.OperationalError as e:
                     logger.warning(f"FTS5 unavailable, falling back to LIKE: {e}")
                     fts_ready = False
+                # v5 (D-5 ruling: "P3c first, then the index"): the one-leaf
+                # heal, BEFORE the partial unique index below is created --
+                # on an A6b-era store with duplicate opens the CREATE UNIQUE
+                # INDEX would fail and abort the whole open, bricking the
+                # store. P3c's get_or_open_thread guarantees single-open at
+                # the writer, so this heal runs once, on the way past v4.
+                if version < 5:
+                    row = cur.execute(
+                        "SELECT id FROM conversations WHERE status = 'open' "
+                        "ORDER BY updated_at DESC LIMIT 1"
+                    ).fetchone()
+                    # The winner is exactly the row current_open_thread()
+                    # answers with (same predicate, same order); every other
+                    # open row is demoted to paused -- a lifecycle stamp
+                    # (status, paused_at, updated_at), never a content one:
+                    # messages, receipt, title, entities and metadata are
+                    # preserved as they stand, and tick()'s paused sweep can
+                    # now reach the rows (the A6b orphan could never be
+                    # reaped because no sweep looks at 'open').
+                    if row is not None:
+                        demoted = cur.execute(
+                            "UPDATE conversations SET status = 'paused', "
+                            "paused_at = ?, updated_at = ? "
+                            "WHERE status = 'open' AND id != ?",
+                            (time.time(), time.time(), row[0]),
+                        ).rowcount
+                        if demoted:
+                            logger.warning(
+                                "one-leaf heal (v5): demoted %d duplicate open "
+                                "thread(s) to paused; %r stays open",
+                                demoted, row[0],
+                            )
+                # The one-leaf partial unique index (design §1.2, landed per
+                # the D-5 ruling): two open threads stops being a logic bug
+                # and becomes a constraint violation at the exact commit that
+                # caused it. Ungated like every other index (IF NOT EXISTS on
+                # each open), but it must come after the heal above.
+                cur.execute(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS idx_one_open_leaf "
+                    "ON conversations(status) WHERE status = 'open'"
+                )
                 if version < SCHEMA_VERSION:
                     cur.execute("DELETE FROM schema_version")
                     cur.execute(
@@ -1850,11 +1895,10 @@ class SqliteConversationStore:
         T2 rewires topic switching, auto-reopen, explicit ``new_thread`` and
         ``resume_thread`` onto it, and T2 also adds the branch-summary
         minting (design §2.3) inside this same transaction. Until then the
-        leaf invariant stays the writer-discipline one (``_pause_thread`` /
-        ``_reopen_thread`` in threads.py); the design's partial unique index
-        that would make it structural is held for the founder's §7 Q3
-        answer (see the T1 report: it conflicts with the P3d shared-store
-        race and legacy duplicate-open rows as speced).
+        leaf invariant rests on P3c's ``get_or_open_thread`` at the writer
+        plus the one-leaf partial unique index that v5 landed (founder
+        ruling D-5: "P3c first, then the index") -- two open threads is now
+        a constraint violation, not just a logic bug.
 
         Rules, from the design's own text:
 
