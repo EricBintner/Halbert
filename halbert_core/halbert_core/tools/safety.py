@@ -42,7 +42,13 @@ class SafetyRule:
 
 @dataclass
 class SafetyCheckResult:
-    """Result of a safety classification check."""
+    """Result of a safety classification check.
+
+    ``allowed`` is the executor's refusal contract: False means refuse
+    outright, regardless of confirmation — no confirmed=True path may
+    override it (CRITICAL classifications and RoleGate speaker-role
+    blocks both carry allowed=False).
+    """
     risk_level: RiskLevel
     allowed: bool
     requires_confirmation: bool
@@ -745,13 +751,22 @@ class ToolSafetyFramework:
                 f"**Reason:** {result.reason}"
             )
         elif tool_name in ("run_applescript", "run_jxa"):
-            # A2: the script IS the action, so show it verbatim — the
-            # speaker confirms what will actually run, not a summary.
-            script = args.get("script", "")
+            # A2: the script IS the action, so show it — the speaker
+            # confirms what will actually run, not a summary. A PREVIEW,
+            # not the whole script (same shape as write_file's content
+            # preview): an oversized script must not flood the
+            # confirmation surface with megabytes. Non-dict args are
+            # tolerated (the executor's HIGH branch calls this
+            # un-wrapped), mirroring classify_applescript_tool's guard.
+            script = args.get("script", "") if isinstance(args, dict) else ""
             label = "AppleScript (JXA)" if tool_name == "run_jxa" else "AppleScript"
+            preview = script[:1000]
+            omitted = ""
+            if len(script) > 1000:
+                omitted = f"\n… ({len(script)} characters total; truncated)"
             return (
                 f"**Run {label}:**\n"
-                f"```\n{script}\n```\n\n"
+                f"```\n{preview}\n```\n{omitted}\n\n"
                 f"**Risk Level:** {result.risk_level.value.upper()}\n"
                 f"**Reason:** {result.reason}"
             )

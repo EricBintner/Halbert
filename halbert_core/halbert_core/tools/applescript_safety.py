@@ -52,7 +52,12 @@ runtime with the ObjC bridge — no regex can vouch for it as read-only —
 so it never auto-executes, whatever it says.
 
 Fail-closed: if the classifier itself raises, the result is HIGH with a
-classifier-error reason — never an auto-execute.
+classifier-error reason — never an auto-execute. Oversized scripts
+(beyond MAX_SCRIPT_CHARS) are the same refusal-by-confirmation without
+being scanned at all — classification runs synchronously inside async
+execute, so nothing above that bound may be examined: an adversarial
+script arriving via prompt-shaped tool output must not stall the event
+loop.
 """
 
 from __future__ import annotations
@@ -69,6 +74,15 @@ logger = logging.getLogger("halbert.tools.applescript_safety")
 #: in tools/applescript_tools.py). ToolSafetyFramework routes them here
 #: instead of its unknown-tool MEDIUM default.
 APPLESCRIPT_TOOLS = ("run_applescript", "run_jxa")
+
+#: Availability cap (A2 quality review): classification runs
+#: synchronously inside async execute, so an oversized script must never
+#: be scanned — a script this size is not one this classifier can vouch
+#: for anyway, and the HIGH default covers it. The handler
+#: (applescript_tools) refuses scripts past the same bound with a
+#: structured error, so an oversized script cannot execute even after
+#: confirmation. Legitimate scripts are nowhere near this size.
+MAX_SCRIPT_CHARS = 50_000
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -196,38 +210,48 @@ _SAFE_READ = re.compile(
 
 _DO_SHELL = re.compile(r"\bdo\s+shell\s+script\b", re.I)
 
-#: ``do shell script`` payload tokens that mean disk destruction,
-#: recursive deletion, or privilege escalation. CRITICAL — never runs.
+#: ``do shell script`` payload token groups that mean disk destruction,
+#: recursive deletion, remote code execution, or privilege escalation.
+#: CRITICAL — never runs. A group of one pattern matches that pattern; a
+#: group of several means ALL must appear (linear co-occurrence — two
+#: independent searches, never a ``[^\n]*`` bridge regex, which rescans
+#: the rest of the line for every match of the first token and goes
+#: quadratic on adversarial single-line input; measured 320ms at 20KB,
+#: unfinished at 120s for 500KB).
+#:
 #: Conservative by design: these only ever apply INSIDE a `do shell
 #: script` payload, so their words can never flip a SAFE read to
 #: CRITICAL; plain `find`/`curl`/`wget` stay HIGH (only the destructive
 #: combination escalates — see the tests).
-_CRITICAL_SHELL_TOKENS = tuple(
-    re.compile(p, re.I)
-    for p in (
-        r"\brm\b",
-        r"\bsrm\b",
-        r"\bsudo\b",
-        r"\bdd\b",
-        r"\bmkfs(?:\.\w+)?\b",
-        r"\bdiskutil\b",
-        r"\bshred\b",
-        r"\bshutdown\b",
-        r"\breboot\b",
-        r"\bhalt\b",
-        r"\bpoweroff\b",
-        r">\s*/dev/",
-        # find + -delete: as destructive as rm, and never legitimate in
-        # an agent-generated payload; plain `find` is NOT in this list.
-        r"\bfind\b[^\n]*\s-delete\b",
-        # pipe-to-shell remote-code execution
-        r"\b(?:curl|wget)\b[^\n]*\|\s*(?:ba|z|da|k)?sh\b",
-    )
+_CRITICAL_SHELL_TOKENS: Tuple[Tuple[re.Pattern, ...], ...] = (
+    (re.compile(r"\brm\b", re.I),),
+    (re.compile(r"\bsrm\b", re.I),),
+    (re.compile(r"\bsudo\b", re.I),),
+    (re.compile(r"\bdd\b", re.I),),
+    (re.compile(r"\bmkfs(?:\.\w+)?\b", re.I),),
+    (re.compile(r"\bdiskutil\b", re.I),),
+    (re.compile(r"\bshred\b", re.I),),
+    (re.compile(r"\bshutdown\b", re.I),),
+    (re.compile(r"\breboot\b", re.I),),
+    (re.compile(r"\bhalt\b", re.I),),
+    (re.compile(r"\bpoweroff\b", re.I),),
+    (re.compile(r">\s*/dev/", re.I),),
+    # find + -delete: as destructive as rm, and never legitimate in an
+    # agent-generated payload; plain `find` is NOT here.
+    (re.compile(r"\bfind\b", re.I),
+     re.compile(r"\s-delete\b", re.I)),
+    # curl/wget piped into a shell: remote code execution
+    (re.compile(r"\b(?:curl|wget)\b", re.I),
+     re.compile(r"\|\s*(?:ba|z|da|k)?sh\b", re.I)),
 )
 
 #: Statement rules, checked in order (first match wins; CRITICAL-able
 #: rules sit above the generic ones they specialize). A rule's regex
-#: searches anywhere in the statement text.
+#: searches anywhere in the statement text — single-word anchored
+#: patterns only: the two co-occurrence forms (move…to trash,
+#: erase…disk) are handled by the linear pair checks in
+#: ``_classify_statement`` so no rule here bridges tokens with
+#: ``[^\n]*`` (quadratic on adversarial input).
 _STATEMENT_RULES: Tuple[Tuple[re.Pattern, RiskLevel, str, str], ...] = (
     (_DO_SHELL,
      RiskLevel.HIGH,
@@ -241,18 +265,10 @@ _STATEMENT_RULES: Tuple[Tuple[re.Pattern, RiskLevel, str, str], ...] = (
      RiskLevel.HIGH,
      "Deletes objects",
      "applescript.delete"),
-    (re.compile(r"\bmove\b[^\n]*\btrash\b", re.I),
-     RiskLevel.HIGH,
-     "Moves items to the Trash",
-     "applescript.move_to_trash"),
     (re.compile(r"\bsend\b", re.I),
      RiskLevel.HIGH,
      "Send command",
      "applescript.send"),
-    (re.compile(r"\berase\b[^\n]*\b(?:disk|volume|drive)s?\b", re.I),
-     RiskLevel.CRITICAL,
-     "Erases a disk or volume",
-     "applescript.erase_disk"),
     (re.compile(r"\berase\b", re.I),
      RiskLevel.HIGH,
      "Erase command",
@@ -275,12 +291,39 @@ _STATEMENT_RULES: Tuple[Tuple[re.Pattern, RiskLevel, str, str], ...] = (
      "applescript.set"),
 )
 
+#: The linearized co-occurrence pairs (A2 quality review). Two
+#: independent searches per form — order no longer matters, so this is
+#: strictly more conservative than the bridged regexes they replace.
+_MOVE_RE = re.compile(r"\bmove\b", re.I)
+_TRASH_RE = re.compile(r"\btrash\b", re.I)
+_ERASE_RE = re.compile(r"\berase\b", re.I)
+_DISK_RE = re.compile(r"\b(?:disk|volume|drive)s?\b", re.I)
+
 #: Every risky pattern — the guard a "known safe read" must survive.
-_RISK_PATTERNS = tuple([_DO_SHELL] + [rule[0] for rule in _STATEMENT_RULES])
+#: Assumption, enforced by the derivation: every entry here (and every
+#: rule above) classifies MEDIUM or above. A future SAFE/LOW rule added
+#: to _STATEMENT_RULES would be filtered OUT here — otherwise it would
+#: silently make every read permanently non-SAFE through this guard.
+_RISK_PATTERNS = tuple(
+    [_DO_SHELL]
+    + [rule[0] for rule in _STATEMENT_RULES
+       if _RISK_ORDER[rule[1].value] > _RISK_ORDER["low"]]
+)
 
 
 def _risky(text: str) -> bool:
-    return any(p.search(text) for p in _RISK_PATTERNS)
+    """The guard a known-safe read must survive.
+
+    The paired forms are checked as co-occurrences, not components, so
+    a lone 'trash' or 'disk' in a read's literal (``get name of trash``)
+    stays a read.
+    """
+    if any(p.search(text) for p in _RISK_PATTERNS):
+        return True
+    return bool(
+        (_MOVE_RE.search(text) and _TRASH_RE.search(text))
+        or (_ERASE_RE.search(text) and _DISK_RE.search(text))
+    )
 
 
 def _explain(rule_name: str, reason: str, app: Optional[str]) -> str:
@@ -308,18 +351,29 @@ def _classify_statement(stmt: str, app: Optional[str]) -> Tuple[RiskLevel, str, 
     m = _DO_SHELL.search(stmt)
     if m:
         # The shell payload is everything after the verb on this
-        # statement. A destructive token there is CRITICAL, always.
+        # statement. A destructive token group there is CRITICAL, always.
         payload = stmt[m.end():]
-        for token_re in _CRITICAL_SHELL_TOKENS:
-            hit = token_re.search(payload)
-            if hit:
-                token = hit.group(0).strip()
+        for token_group in _CRITICAL_SHELL_TOKENS:
+            hits = [g.search(payload) for g in token_group]
+            if all(h is not None for h in hits):
+                token = " ".join(h.group(0).strip() for h in hits)
                 return (RiskLevel.CRITICAL,
                         f"'do shell script' payload contains '{token}'",
                         "applescript.do_shell_script.critical")
         return (RiskLevel.HIGH,
                 "'do shell script' runs arbitrary shell commands",
                 "applescript.do_shell_script")
+
+    # Linearized co-occurrence checks: every component present, each
+    # found by one independent (linear) search.
+    if _MOVE_RE.search(stmt) and _TRASH_RE.search(stmt):
+        return (RiskLevel.HIGH,
+                _explain("applescript.move_to_trash", "Moves items to the Trash", app),
+                "applescript.move_to_trash")
+    if _ERASE_RE.search(stmt) and _DISK_RE.search(stmt):
+        return (RiskLevel.CRITICAL,
+                "Erases a disk or volume",
+                "applescript.erase_disk")
 
     for pattern, level, reason, rule_name in _STATEMENT_RULES:
         if pattern.search(stmt):
@@ -371,6 +425,20 @@ def classify_applescript(script: str, jxa: bool = False) -> SafetyCheckResult:
                 RiskLevel.HIGH,
                 "Empty or unclassified script — defaulting to HIGH (founder ruling)",
                 "applescript.default_high",
+            )
+
+        # Availability guard (A2 quality review): classification runs
+        # synchronously inside async execute, and the executor's HIGH
+        # branch would embed the script verbatim in a confirmation
+        # message. A script this large is refused on length alone —
+        # HIGH, no scan. Only capability lost is auto-SAFE for an
+        # oversized script, which the HIGH default already covers; the
+        # handler refuses the same bound with a structured error.
+        if len(script) > MAX_SCRIPT_CHARS:
+            return _result(
+                RiskLevel.HIGH,
+                "Script too large to classify — defaulting to HIGH (founder ruling)",
+                "applescript.script_too_large",
             )
 
         app_stack: List[Optional[str]] = []

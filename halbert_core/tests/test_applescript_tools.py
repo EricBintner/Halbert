@@ -100,7 +100,7 @@ def _mock_spawn(monkeypatch, procs):
 
     async def fake_create_subprocess_exec(*argv, **kwargs):
         calls.append(list(argv))
-        return procs.pop(0) if len(procs) > 1 else procs[0]
+        return procs.pop(0)  # an unexpected extra spawn is an IndexError, not silence
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
     return calls
@@ -258,6 +258,21 @@ class TestHandlers:
 
         assert result["success"] is False
         assert "must be a string" in result["error"]
+        assert calls == []
+
+    def test_oversized_script_is_refused_structurally(self, isolated_config, monkeypatch):
+        """Same cap as the classifier (A2 quality review): a script too
+        large to classify never reaches osascript, and the refusal is a
+        structured error the agent can act on."""
+        _write_config(isolated_config, enabled=True)
+        calls = _mock_spawn(monkeypatch, [FakeProc()])
+
+        big = 'tell application "Finder" to get name of home\n' * 3000  # > 50k
+        result = asyncio.run(APPLESCRIPT_TOOL_HANDLERS["run_applescript"](
+            {"script": big}))
+
+        assert result["success"] is False
+        assert "too long" in result["error"].lower()
         assert calls == []
 
     def test_spawn_failure_is_structured_not_a_crash(self, isolated_config, monkeypatch):

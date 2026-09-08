@@ -41,6 +41,7 @@ import platform
 from typing import Any, Dict, List, Optional, Tuple
 
 from ..config import applescript_config
+from .applescript_safety import MAX_SCRIPT_CHARS
 
 logger = logging.getLogger("halbert.tools.applescript")
 
@@ -266,12 +267,17 @@ def _gate_check(cfg: "applescript_config.AppleScriptConfig") -> Optional[Dict[st
 def _script_from_args(args: Dict) -> Tuple[Optional[str], Optional[str]]:
     """Extract the script string. Returns (script, error); error is set
     for missing/empty and non-string input (a list arg must not reach
-    ``str.strip`` and crash the handler)."""
+    ``str.strip`` and crash the handler) and for scripts past
+    MAX_SCRIPT_CHARS — the classifier refuses the same bound, so an
+    oversized script cannot execute even after confirmation."""
     script = args.get("script")
     if script is None or (isinstance(script, str) and not script.strip()):
         return None, "No script provided (empty 'script' argument)."
     if not isinstance(script, str):
         return None, f"'script' must be a string, got {type(script).__name__}."
+    if len(script) > MAX_SCRIPT_CHARS:
+        return None, (f"Script too long ({len(script)} characters; the cap is "
+                      f"{MAX_SCRIPT_CHARS}). Split the work into smaller scripts.")
     return script.strip(), None
 
 
