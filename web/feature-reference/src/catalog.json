@@ -1,0 +1,256 @@
+{
+  "version": 2,
+  "categories": [
+    {
+      "id": "mind-cognitive-engine",
+      "name": "Mind & Cognitive Engine",
+      "description": "Agent state machine, 4-tier model routing, prompt attunement, and SQLite conversation history."
+    },
+    {
+      "id": "host-shell-workspace",
+      "name": "Host Shell & Multimodal Workspace",
+      "description": "3-panel HostShell layout, domain rail, inline terminal tiles, and context stage."
+    },
+    {
+      "id": "system-discovery-hardware",
+      "name": "System Discovery & Hardware Probes",
+      "description": "26 pluggable hardware, storage, and systemd discovery scanners across Linux and macOS."
+    },
+    {
+      "id": "proactive-attention-findings",
+      "name": "Proactive Attention & Findings",
+      "description": "Attention ledger and FindingStore anchoring events to the Four Whys and the proactive dial."
+    },
+    {
+      "id": "safety-autonomy-trust",
+      "name": "Safety, Autonomy & Trust Boundaries",
+      "description": "5-axis permission engine, dry-run simulation, approval workflows, and emergency kill switches."
+    },
+    {
+      "id": "sovereign-knowledge-rag",
+      "name": "Sovereign Knowledge & Documentation RAG",
+      "description": "Hybrid BM25 + dense embedding retrieval over multi-platform manual pages and system documentation."
+    },
+    {
+      "id": "configuration-system-physiology",
+      "name": "Configuration & System Physiology",
+      "description": "Monaco config editor with SEARCH/REPLACE diff preview, automatic backups, and config discovery."
+    },
+    {
+      "id": "acoustics-voice-vision",
+      "name": "Acoustics, Voice & Vision",
+      "description": "Local Sherpa-ONNX speech pipeline, VoiceHUD interface, and visual screenshot/diagram inspection."
+    },
+    {
+      "id": "multi-body-federation",
+      "name": "Multi-Body Federation & Linked Devices",
+      "description": "'One Mind, Many Bodies' architecture, peer pairing, and remote execution proxies."
+    },
+    {
+      "id": "home-physiology-ambient",
+      "name": "Home Physiology & Ambient Operations",
+      "description": "Home Assistant integration, room and entity mapping, and Frigate NVR event ingestion."
+    }
+  ],
+  "features": [
+    {
+      "id": "tier-model-routing",
+      "name": "4-Slot Tiered Model Router",
+      "category": "Mind & Cognitive Engine",
+      "oneLine": "Dynamic turn routing across Guide, Specialist, Vision, and Secure on-device model endpoints.",
+      "status": "shipped",
+      "visibility": "public-ready",
+      "decisionRefs": ["FDR-04", "ROADMAP-08-23"],
+      "gating": "Requires at least one configured LLM endpoint in models.yml",
+      "whatItIs": "Halbert does not route every turn to a single monolithic cloud model. It maintains four dedicated slots: Guide (fast conversational triage), Specialist (complex sysadmin synthesis and code diffing), Vision (image and diagram analysis), and Secure (strictly local, offline on-device inference).",
+      "howItWorks": "Incoming user messages are scored for intent and complexity by intake/pipeline.py. The TierRouter checks available hardware capabilities and configuration before selecting the optimal endpoint pair. If a query touches private credentials or high-tier system configuration, it latches to the Secure slot.",
+      "toolingAndBackend": "halbert_core/halbert_core/model/tier_router.py, halbert_core/halbert_core/model/llm_config.py, packages/model-picker/",
+      "limitsAndInvariants": "Secure slot must never egress prompts over WAN or public cloud APIs. If a secure endpoint is unavailable, sensitive queries fail closed rather than falling back to cloud models.",
+      "subFeatures": [
+        {
+          "id": "tier-secure-latch",
+          "name": "Secure Offline Slot Latch",
+          "category": "Mind & Cognitive Engine",
+          "oneLine": "Hard fail-closed latch ensuring Tier 2 system operations never leak to cloud providers.",
+          "status": "shipped",
+          "visibility": "public-ready",
+          "decisionRefs": ["C3-05"],
+          "whatItIs": "A safety boundary that prevents queries with sensitive configuration files or cryptographic keys from being evaluated by remote third-party APIs.",
+          "howItWorks": "When the classification engine detects sensitive tokens or system file paths, the prompt evaluator locks execution to local loopback endpoints (e.g., Ollama or local Metal/vLLM instances).",
+          "toolingAndBackend": "halbert_core/halbert_core/policy/engine.py",
+          "limitsAndInvariants": "Fails closed: if no local model is available, the turn halts and informs the user rather than silently downgrading to a cloud model."
+        }
+      ]
+    },
+    {
+      "id": "agent-state-machine",
+      "name": "ReAct Agent State Machine",
+      "category": "Mind & Cognitive Engine",
+      "oneLine": "Deterministic finite state machine driving agent planning, tool execution, and reflective verification.",
+      "status": "shipped",
+      "visibility": "public-ready",
+      "decisionRefs": ["ROADMAP-08-23", "C1-01"],
+      "whatItIs": "The cognitive lifecycle engine that orchestrates turns through formal states: IDLE → PLANNING → EXECUTING → EVALUATING → RESPONDING.",
+      "howItWorks": "Each turn advances through a Haloysius loop. In PLANNING, the model selects tools; in EXECUTING, tools are validated against policy and invoked; in EVALUATING, CRAG checks verify tool outputs before generating the user response.",
+      "toolingAndBackend": "halbert_core/halbert_core/agents/state_machine.py, halbert_core/halbert_core/agents/react_agent.py",
+      "limitsAndInvariants": "No infinite tool loops: each turn enforces strict tool call quotas and execution timeouts.",
+      "subFeatures": []
+    },
+    {
+      "id": "host-shell-layout",
+      "name": "3-Panel Host Shell",
+      "category": "Host Shell & Multimodal Workspace",
+      "oneLine": "Integrated workspace featuring navigation rail, center domain inspection, and right-hand conversation.",
+      "status": "shipped",
+      "visibility": "public-ready",
+      "decisionRefs": ["SHELL-REVIEW-09-01"],
+      "whatItIs": "The primary desktop and browser UI shell for Halbert. Keeps system inventory, active diagnostics, and the conversational agent visible side-by-side without modal context switching.",
+      "howItWorks": "Built in React with keyboard shortcuts (Cmd+D for domain rail, Cmd+J for conversation, Cmd+B for context stage). The conversation maintains contextual awareness of whichever domain page the user currently inspects.",
+      "toolingAndBackend": "halbert_core/halbert_core/dashboard/frontend/src/components/shell/HostShell.tsx",
+      "limitsAndInvariants": "Desktop and mobile responsive: on small screens, gracefully transitions from three side-by-side panels to stacked drawer views.",
+      "subFeatures": []
+    },
+    {
+      "id": "inline-terminal-tiles",
+      "name": "Inline Interactive Terminal Tiles",
+      "category": "Host Shell & Multimodal Workspace",
+      "oneLine": "Live terminal execution tiles embedded directly within chat turns for command transparency.",
+      "status": "shipped",
+      "visibility": "public-ready",
+      "decisionRefs": ["W5-TERM-01"],
+      "whatItIs": "When Halbert proposes running a shell command, the command executes inside an inline terminal tile inside the conversation turn, showing live stdout/stderr and return codes.",
+      "howItWorks": "Streams terminal output via WebSocket from the backend PTY session directly into xterm.js-backed inline tiles, preserving exact terminal formatting and color codes.",
+      "toolingAndBackend": "halbert_core/halbert_core/dashboard/frontend/src/components/agent/TerminalTile.tsx, halbert_core/halbert_core/dashboard/routes/terminal.py",
+      "limitsAndInvariants": "Potentially destructive commands require explicit user click approval before execution.",
+      "subFeatures": []
+    },
+    {
+      "id": "pluggable-discovery-scanners",
+      "name": "Pluggable Hardware & OS Scanners",
+      "category": "System Discovery & Hardware Probes",
+      "oneLine": "26 specialized background probes cataloging system posture across Linux and macOS.",
+      "status": "shipped",
+      "visibility": "public-ready",
+      "decisionRefs": ["DISCOVERY-01"],
+      "whatItIs": "An extensible discovery engine that inspects storage volumes, systemd services, thermal sensors, USB devices, GPU accelerators, network interfaces, and installed packages.",
+      "howItWorks": "Scanners run concurrently under an execution budget, parsing native OS sysfs, procfs, systemctl, or macOS ioreg/system_profiler data into strongly-typed Discovery records.",
+      "toolingAndBackend": "halbert_core/halbert_core/discovery/engine.py, halbert_core/halbert_core/discovery/scanners/",
+      "limitsAndInvariants": "Read-only non-destructive operations: discovery scanners never mutate system state or modify filesystem configuration.",
+      "subFeatures": []
+    },
+    {
+      "id": "finding-attention-ledger",
+      "name": "Finding Attention Ledger & Four Whys",
+      "category": "Proactive Attention & Findings",
+      "oneLine": "Unified issue tracking system where every surfaced event carries Why Now, Why Care, Why So, and Why Trust.",
+      "status": "unbuilt",
+      "visibility": "public-ready",
+      "decisionRefs": ["C2-01", "ROADMAP-09-02"],
+      "whatItIs": "Replaces raw discovery alerts with curated Findings. Ensures that before Halbert interrupts the user, it can justify why the issue matters and prove its claims with telemetry.",
+      "howItWorks": "Detector sweeps aggregate low-level scanner anomalies. When an anomaly breaches thresholds, a Finding record is generated with four justification fields and queued in the attention ledger.",
+      "toolingAndBackend": "halbert_core/halbert_core/findings/, halbert_core/halbert_core/dashboard/routes/findings.py",
+      "limitsAndInvariants": "Zero vanity notifications: respects user-defined quiet hours and the proactivity dial.",
+      "subFeatures": []
+    },
+    {
+      "id": "five-axis-permission-engine",
+      "name": "5-Axis Capability & Consent Model",
+      "category": "Safety, Autonomy & Trust Boundaries",
+      "oneLine": "Strict multi-dimensional security evaluation: Ceiling, Affordance, OS Grant, Consent, and Runtime.",
+      "status": "unbuilt",
+      "visibility": "public-ready",
+      "decisionRefs": ["PERMISSION-2026-09-06"],
+      "whatItIs": "Replaces crude variant presets with a verifiable permission model where every privileged action requires explicit OS entitlement and recorded user consent.",
+      "howItWorks": "Before any tool runs, the engine verifies: Is it within channel ceiling? Does hardware afford it? Has the OS granted permission (e.g. TCC)? Did the owner consent? Is runtime active?",
+      "toolingAndBackend": "halbert_core/halbert_core/policy/engine.py, documentation/design/PERMISSION-AND-CONSENT-SYSTEM-2026-09-06.md",
+      "limitsAndInvariants": "Absence of consent fails safe to DENY. Renamed capabilities are never silently re-granted.",
+      "subFeatures": []
+    },
+    {
+      "id": "dry-run-simulation",
+      "name": "Dry-Run Action Simulation",
+      "category": "Safety, Autonomy & Trust Boundaries",
+      "oneLine": "Backend simulation engine previewing file writes, service restarts, and commands before execution.",
+      "status": "hidden",
+      "visibility": "public-ready",
+      "decisionRefs": ["AUTONOMY-SIM-01"],
+      "whatItIs": "Allows the user or agent to simulate the blast radius and side effects of an action before committing changes to disk or running commands.",
+      "howItWorks": "API endpoints (/api/settings/simulate/*) evaluate proposed actions against safety guardrails, producing an impact report without executing mutations.",
+      "toolingAndBackend": "halbert_core/halbert_core/dashboard/routes/settings.py (simulate endpoints)",
+      "limitsAndInvariants": "Backend implementation exists but lacks a dedicated frontend visualizer card.",
+      "subFeatures": []
+    },
+    {
+      "id": "hybrid-rag-pipeline",
+      "name": "SourcePrep Hybrid RAG Pipeline",
+      "category": "Sovereign Knowledge & Documentation RAG",
+      "oneLine": "High-precision retrieval combining BM25 sparse search and dense neural embeddings over system manuals.",
+      "status": "shipped",
+      "visibility": "public-ready",
+      "decisionRefs": ["RAG-DATA-SOURCES-2026-08-24"],
+      "whatItIs": "Local knowledge retrieval system indexing ArchWiki, man pages, FreeBSD handbooks, and system administration guides to ground agent recommendations in authoritative technical docs.",
+      "howItWorks": "Queries are parsed and dispatched concurrently to BM25 exact keyword indexes and dense vector embeddings. Results are merged and reranked using reciprocal rank fusion before prompt injection.",
+      "toolingAndBackend": "halbert_core/halbert_core/rag/pipeline.py, halbert_core/halbert_core/integrations/sourceprep_retrieval_backend.py",
+      "limitsAndInvariants": "Strict licensing compliance: indices only ingest permitted documentation with verified open licenses.",
+      "subFeatures": []
+    },
+    {
+      "id": "monaco-config-editor",
+      "name": "Monaco Config Editor with Diff Proposals",
+      "category": "Configuration & System Physiology",
+      "oneLine": "Full-featured editor supporting SEARCH/REPLACE diff preview, automatic backups, and rollback.",
+      "status": "shipped",
+      "visibility": "public-ready",
+      "decisionRefs": ["EDITOR-01"],
+      "whatItIs": "Allows safe inspection and editing of system configuration files (Netplan, Samba, SSH, systemd units) with AI-assisted proposals.",
+      "howItWorks": "Halbert generates SEARCH/REPLACE blocks. The Monaco editor renders a visual side-by-side diff. Applying the change automatically creates a timestamped backup in ~/.config/halbert/backups.",
+      "toolingAndBackend": "halbert_core/halbert_core/dashboard/routes/editor.py, halbert_core/halbert_core/dashboard/frontend/src/components/editor/",
+      "limitsAndInvariants": "Atomic file writing: failures abort cleanly without leaving partial or corrupted configuration on disk.",
+      "subFeatures": []
+    },
+    {
+      "id": "acoustic-voice-mode",
+      "name": "Sherpa-ONNX Voice Pipeline & VoiceHUD",
+      "category": "Acoustics, Voice & Vision",
+      "oneLine": "Low-latency offline voice conversation with streaming speech-to-text and VoiceHUD visualization.",
+      "status": "shipped",
+      "visibility": "public-ready",
+      "decisionRefs": ["VOICE-01"],
+      "gating": "Requires local microphone access and installed sherpa-onnx runtime",
+      "whatItIs": "Enables voice-driven interaction with Halbert using local, private neural speech recognition and speech synthesis.",
+      "howItWorks": "Captures raw microphone audio via WebAudio/PortAudio, runs real-time VAD (Voice Activity Detection), transcribes audio with Sherpa-ONNX, and presents live conversational feedback in VoiceHUD.",
+      "toolingAndBackend": "halbert_core/halbert_core/audio/pipeline.py, halbert_core/halbert_core/dashboard/frontend/src/pages/VoiceMode.tsx",
+      "limitsAndInvariants": "Push-to-talk by default: continuous ambient listening requires explicit owner opt-in.",
+      "subFeatures": []
+    },
+    {
+      "id": "multi-body-federation",
+      "name": "'One Mind, Many Bodies' Federation",
+      "category": "Multi-Body Federation & Linked Devices",
+      "oneLine": "Pair multiple computers running Halbert into a single unified mind with distributed hardware bodies.",
+      "status": "shipped",
+      "visibility": "public-ready",
+      "decisionRefs": ["SINGULAR-ENTITY-08-31", "W4-01"],
+      "whatItIs": "Allows a user with multiple machines (e.g. an always-on Mac Studio host and a lightweight laptop) to link them so they share memory and context.",
+      "howItWorks": "Machines discover each other via mDNS or direct IP pairing. The Canonical Host acts as the primary memory store, while satellite bodies proxy tool execution and local sensory reads.",
+      "toolingAndBackend": "halbert_core/halbert_core/federation/, halbert_core/halbert_core/dashboard/routes/peers.py",
+      "limitsAndInvariants": "End-to-end authenticated peer pairing: unauthorized devices on the local network cannot execute remote commands.",
+      "subFeatures": []
+    },
+    {
+      "id": "home-assistant-integration",
+      "name": "Ambient Home Physiology & HA Integration",
+      "category": "Home Physiology & Ambient Operations",
+      "oneLine": "Maps smart home rooms, sensors, and Frigate NVR cameras into the host's environmental physiology.",
+      "status": "shipped",
+      "visibility": "public-ready",
+      "decisionRefs": ["HOME-01"],
+      "gating": "Requires configured Home Assistant URL and Long-Lived Access Token",
+      "whatItIs": "Connects Halbert to Home Assistant, allowing the machine to monitor indoor climate, power consumption, occupancy, and physical infrastructure.",
+      "howItWorks": "Syncs Home Assistant entities via WebSocket API into local state caches. Frigate NVR event streams are analyzed to detect meaningful physical environment changes.",
+      "toolingAndBackend": "halbert_core/halbert_core/home/, halbert_core/halbert_core/dashboard/routes/home.py, halbert_core/halbert_core/dashboard/routes/frigate.py",
+      "limitsAndInvariants": "Safe home controls: lock and security boundaries require explicit secondary confirmation before toggling.",
+      "subFeatures": []
+    }
+  ]
+}
