@@ -747,14 +747,40 @@ class ThreadManager:
     # ------------------------------------------------------------------
 
     def _open_new_thread(self, title: str, title_source: str, now: float, *, from_thread_id: Optional[str], reason: str) -> str:
+        """Open the next leaf thread -- or join the one a concurrent body
+        opened first (P3c, founder ruling D-5).
+
+        The predecessor is paused *before* the get-or-open, because a
+        topic switch must not be answered with the thread it is leaving:
+        ``get_or_open_thread`` returns whatever row is open, so pausing
+        first is what makes "open a NEW one" mean what it says. The pause
+        and the create-or-join are still two calls -- the pause is a
+        writer-discipline step (receipt refresh, refined title), not part
+        of the leaf move -- so a body that loses the create race may have
+        paused a predecessor whose ``successor`` metadata then names the
+        proposed id this call never created. That pointer is advisory
+        (``_paused_predecessor`` demands reciprocity before a merge-back),
+        it only ever costs one rare grace-window merge, and the invariant
+        that matters holds: exactly one open thread, no lost rows.
+        """
         new_id = uuid.uuid4().hex
         if from_thread_id:
             self._pause_thread(from_thread_id, now, successor=new_id)
-        self.store.create_thread(
+        thread = self.store.get_or_open_thread(
             new_id, title, title_source=title_source, created_at=now,
             metadata={"reason": reason, "previous_thread_id": from_thread_id},
         )
-        return new_id
+        if thread is None:
+            # Store outage: keep today's documented degraded shape (a
+            # synthesized id no row backs; begin_turn already falls back to
+            # a bare TurnContext and appends land as None).
+            return new_id
+        if not thread.get("created"):
+            logger.info(
+                f"joining open thread {thread['thread_id']} instead of opening "
+                f"a new one (a concurrent body created it first)"
+            )
+        return thread["thread_id"]
 
     def _pause_thread(self, thread_id: str, now: float, *, successor: str) -> None:
         t = self.store.get_thread(thread_id)

@@ -484,7 +484,9 @@ class TestConcurrency:
     @pytest.mark.parametrize(
         "store_method, call",
         [
-            ("create_thread", lambda tm, tid: tm.new_thread("Scanner share", "x", from_thread_id=tid)),
+            # P3c: `_open_new_thread` opens the successor through the atomic
+            # get-or-open, so that is the store call the lock must cover.
+            ("get_or_open_thread", lambda tm, tid: tm.new_thread("Scanner share", "x", from_thread_id=tid)),
             ("get_thread", lambda tm, tid: tm.retract_recall(tid, "gone")),
         ],
         # `tick` moves threads too, but takes the lock once per close rather

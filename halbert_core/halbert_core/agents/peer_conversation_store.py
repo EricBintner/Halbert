@@ -69,7 +69,7 @@ PEER_CONVERSATION_METHODS = frozenset({
     "append_message", "update_message", "mark_in_progress_interrupted",
     "redact_message",
     "create_thread", "update_thread", "get_thread", "list_threads",
-    "current_open_thread",
+    "current_open_thread", "get_or_open_thread",
     "list_messages", "recent_messages", "last_turn_id", "pending_notes",
     "list_turns",
     "upsert_receipt", "search_receipts", "search_snippets",
@@ -346,6 +346,29 @@ class PeerConversationStore:
             "status": status, "title_source": title_source,
             "created_at": created_at, "parent_thread_id": parent_thread_id,
             "metadata": metadata,
+        })
+
+    def get_or_open_thread(
+        self,
+        thread_id: str,
+        title: str,
+        *,
+        title_source: str = "provisional",
+        created_at: Optional[float] = None,
+        parent_thread_id: Optional[str] = None,
+        metadata: Optional[dict] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """One wire call for the server-side atomic get-or-open (P3c).
+
+        Being a single ``invoke`` is the whole point: two bodies racing the
+        cold-start ``begin_turn`` serialize inside the server's one
+        ``BEGIN IMMEDIATE`` instead of racing check-then-create across two
+        wire calls (``current_open_thread`` + ``create_thread``), which is
+        the race P3d sanctioned and D-5 closed.
+        """
+        return self._invoke("get_or_open_thread", [thread_id, title], {
+            "title_source": title_source, "created_at": created_at,
+            "parent_thread_id": parent_thread_id, "metadata": metadata,
         })
 
     def update_thread(self, thread_id: str, **fields: Any) -> bool:

@@ -1589,6 +1589,90 @@ class SqliteConversationStore:
             logger.warning(f"create_thread failed: {e}")
             return False
 
+    def get_or_open_thread(
+        self,
+        thread_id: str,
+        title: str,
+        *,
+        title_source: str = "provisional",
+        created_at: Optional[float] = None,
+        parent_thread_id: Optional[str] = None,
+        metadata: Optional[dict] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """The atomic get-or-open (P3c, founder ruling D-5): find the open
+        thread; if none exists, create ``thread_id``; if a concurrent body
+        created one inside the same transaction window, return THAT one.
+
+        One ``BEGIN IMMEDIATE`` transaction, so the check (find the open
+        row) and the create are a single atomic step across every caller of
+        one database file -- two bodies (or two direct store instances on
+        the same file) that both see "no open thread" serialize here: the
+        first creates, the second gets the first's row back. No lost rows,
+        and exactly one open thread results. ``BEGIN IMMEDIATE`` (not the
+        deferred transaction ``create_thread`` rides) claims the write lock
+        *before* the read, the same discipline ``_ensure_schema`` uses: a
+        deferred read-then-write can return SQLITE_BUSY on the upgrade
+        under WAL instead of waiting out ``busy_timeout``.
+
+        Returns the thread dict (``current_open_thread``'s shape) with one
+        added key, ``created``: ``True`` when this call inserted the row,
+        ``False`` when an existing open thread was returned instead -- in
+        which case nothing was written: the returned thread keeps its own
+        title/metadata, and the proposed ``thread_id``/``metadata`` are
+        never stamped onto another body's thread. ``None`` on failure
+        (``create_thread``'s ``False`` in caller terms: the caller keeps
+        the proposed id, which ``ThreadManager`` already treats as the
+        documented store-outage path).
+
+        Scope: the open-row lookup is today's global one
+        (``current_open_thread``'s ``status='open' ORDER BY updated_at
+        DESC``) -- the ``persona`` column stays reserved for the D-1 Q3/T4
+        scope decision, and the founder's D-5 ruling lands the leaf index
+        unscoped.
+        """
+        if self._conn is None or not thread_id:
+            return None
+        ts = float(created_at) if created_at is not None else time.time()
+        try:
+            with self._lock:
+                self._conn.execute("BEGIN IMMEDIATE")
+                try:
+                    row = self._conn.execute(
+                        _THREAD_SELECT
+                        + " WHERE c.status = 'open' ORDER BY c.updated_at DESC LIMIT 1"
+                    ).fetchone()
+                    if row is None:
+                        self._conn.execute(
+                            """INSERT INTO conversations
+                               (id, user_id, title, created_at, updated_at, metadata,
+                                status, title_source, parent_thread_id)
+                               VALUES (?, NULL, ?, ?, ?, ?, 'open', ?, ?)""",
+                            (thread_id, title, ts, ts, json.dumps(metadata or {}),
+                             title_source, parent_thread_id),
+                        )
+                        row = self._conn.execute(
+                            _THREAD_SELECT + " WHERE c.id = ?", (thread_id,)
+                        ).fetchone()
+                        created = True
+                    else:
+                        created = False
+                    self._conn.commit()
+                except Exception:
+                    self._conn.rollback()
+                    raise
+            thread = self._row_to_thread(row)
+            thread["created"] = created
+            return thread
+        except sqlite3.IntegrityError as e:
+            # ``create_thread`` parity: a colliding id is a warning, not a
+            # raise (with the write lock held, the only way in is an id that
+            # already exists as a non-open row).
+            logger.warning(f"get_or_open_thread: thread {thread_id} already exists: {e}")
+            return None
+        except Exception as e:
+            logger.warning(f"get_or_open_thread failed: {e}")
+            return None
+
     def update_thread(self, thread_id: str, **fields: Any) -> bool:
         """Update thread columns. Lists/dicts are JSON-encoded; flags coerced to 0/1.
 

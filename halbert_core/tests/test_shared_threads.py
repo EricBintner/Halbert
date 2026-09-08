@@ -17,8 +17,10 @@ Covered (the P3d acceptance):
   message lands exactly once, ids stay unique, the store stays healthy
 - two separate store *instances* on the same file (the two-process shape
   WAL was built for) interleave writes without corruption
-- the known check-then-create race in concurrent ``begin_turn`` produces
-  at worst two open threads, never a lost or mangled row
+- the check-then-create race in concurrent ``begin_turn`` is CLOSED (P3c,
+  founder ruling D-5): the atomic server-side get-or-open hands the second
+  body the first body's thread, so both turns persist fully into exactly
+  one open thread — never a lost or mangled row, never two opens
 """
 from __future__ import annotations
 
@@ -208,13 +210,15 @@ class TestConcurrentAccess:
         store_b.close()
 
     def test_concurrent_begin_turn_never_loses_a_row(self, harness):
-        """Known race, bounded damage: two bodies beginning a turn at the
-        same instant can both see 'no open thread' and each open one — the
-        check (current_open_thread) and the create (create_thread) are two
-        wire calls, not one atomic step. What must NEVER happen is a lost
-        or mangled row: both turns persist fully, and at most two open
-        threads exist afterwards. (Collapsing the race needs a server-side
-        atomic get-or-open; out of scope for P3d, noted for P3c.)"""
+        """Race closed, not sanctioned: two bodies beginning a turn at the
+        same instant can both see 'no open thread' — but the check and the
+        create are now ONE atomic server-side step (get_or_open_thread,
+        P3c / founder ruling D-5), so the second body to arrive inside the
+        transaction window is handed the first body's thread instead of
+        opening a second one. Both turns persist fully, and EXACTLY ONE
+        open thread exists afterwards. (The pre-index P3d contract allowed
+        'at most two' open threads; P3c closes the race, and the v5
+        one-leaf index makes two opens structurally impossible.)"""
         ws_a = harness.add_body("workstation-a")
         ws_b = harness.add_body("workstation-b")
         barrier = threading.Barrier(2)
@@ -234,12 +238,18 @@ class TestConcurrentAccess:
         assert not (t1.is_alive() or t2.is_alive())
 
         store = harness.server_store
+        # The closed race: one open thread, not two.
         open_threads = store.list_threads(status="open", limit=10)
-        assert len(open_threads) <= 2
-        for thread_id in results:
-            rows = store.list_messages(thread_id)
-            assert [m["role"] for m in rows] == ["user", "assistant"]
-        # Both turns' rows survived regardless of how the race resolved.
+        assert len(open_threads) == 1
+        # Both turns resolved into that one thread — the loser joined the
+        # winner's thread rather than opening a second.
+        assert set(results) == {open_threads[0]["thread_id"]}
+        # Both turns' rows survived, unmangled, in order of arrival.
+        rows = store.list_messages(open_threads[0]["thread_id"])
+        assert sorted(m["content"] for m in rows if m["role"] == "user") == [
+            "query from a", "query from b"]
+        assert len([m for m in rows if m["role"] == "assistant"]) == 2
+        # And nothing was written anywhere else.
         total = sum(len(store.list_messages(t["thread_id"]))
                     for t in store.list_threads(limit=10))
         assert total == len(results) * 2

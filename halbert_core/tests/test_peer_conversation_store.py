@@ -143,6 +143,20 @@ class TestRoundTrips:
         listed = store.list_threads(status="open")
         assert [t["thread_id"] for t in listed] == ["t1"]
 
+    def test_get_or_open_thread_over_the_wire(self, wired):
+        """P3c's primitive is ONE wire call by design — the cold-start race
+        collapses only if the server's get-or-open transaction is reached
+        as a single invoke, not as current_open_thread + create_thread."""
+        server, store = wired
+        first = store.get_or_open_thread("n1", "First subject", created_at=10.0)
+        assert first is not None and first["created"] is True
+        assert first["thread_id"] == "n1"
+        joined = store.get_or_open_thread("n2", "Second subject")
+        assert joined is not None and joined["created"] is False
+        assert joined["thread_id"] == "n1"
+        assert server.store.get_thread("n2") is None
+        assert server.store.current_open_thread()["thread_id"] == "n1"
+
     def test_messages(self, wired):
         server, store = wired
         store.create_thread("t1", "First thread")
