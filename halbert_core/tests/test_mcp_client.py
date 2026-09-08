@@ -15,6 +15,7 @@ logs/errors, registry collisions.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import os
@@ -58,6 +59,10 @@ MODE = os.environ.get("FAKE_MODE", "normal")
 
 if MODE == "crash":
     sys.exit(1)
+
+if MODE == "slow_init":
+    import time
+    time.sleep(0.3)  # hold the handshake open so lifecycle races are testable
 
 def send(obj):
     sys.stdout.write(json.dumps(obj) + "\n")
@@ -320,6 +325,39 @@ def rpc_result(req_id, result):
     return {"jsonrpc": "2.0", "id": req_id, "result": result}
 
 
+class ExpiringSessionPost:
+    """A scripted Streamable HTTP server with session expiry: any
+    request whose Mcp-Session-Id is not the CURRENT one gets a 404;
+    initialize rotates the session and answers with the new id.
+
+    Deterministic under ANY interleaving — responses key off header
+    content, not call order, so concurrent-expiry tests don't race.
+    `always_expire=True` 404s every request even after recovery (for
+    the double-expiry retype test).
+    """
+
+    def __init__(self, always_expire=False):
+        self.calls = []
+        self.session = "sess-initial"
+        self.always_expire = always_expire
+
+    def __call__(self, url, json=None, headers=None, timeout=None, **kw):
+        self.calls.append({"json": json, "headers": dict(headers or {})})
+        method = json.get("method")
+        if method == "initialize":
+            self.session = f"sess-{len(self.calls)}"
+            return FakeHTTPResponse(
+                json_body=rpc_result(
+                    json["id"], {"protocolVersion": "2024-11-05"}),
+                extra_headers={"Mcp-Session-Id": self.session})
+        if "id" not in json:
+            return FakeHTTPResponse(status_code=202)
+        if (self.always_expire
+                or headers.get("Mcp-Session-Id") != self.session):
+            return FakeHTTPResponse(status_code=404)
+        return FakeHTTPResponse(json_body=rpc_result(json["id"], {"ok": True}))
+
+
 @pytest.fixture
 def http_transport_factory(monkeypatch):
     """Build an HTTPTransport against a FakePost; returns
@@ -546,6 +584,25 @@ class TestStdioTransport:
         assert result["isError"] is True
         assert result["content"][0]["text"] == "something exploded"
 
+    # -- B1 lifecycle review: cancelled connect -------------------------------
+
+    async def test_cancelled_connect_reaps_the_subprocess(
+            self, stdio_transports):
+        """CancelledError is not an MCPClientError — the handshake
+        cleanup must still run, or the transport is left half-alive
+        with an orphaned subprocess no one holds a reference to."""
+        transport = stdio_transports(mode="hang", timeout=5.0)
+        task = asyncio.get_running_loop().create_task(transport.connect())
+        await asyncio.sleep(0.15)  # initialize sent; the server never answers
+        pid = transport._proc.pid
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert not transport.alive
+        assert transport.negotiated_protocol_version is None
+        with pytest.raises(ProcessLookupError):
+            os.kill(pid, 0)  # subprocess reaped, not orphaned
+
 
 # ===========================================================================
 # HTTP transport (Streamable HTTP, mocked — no network)
@@ -719,6 +776,60 @@ class TestHTTPTransport:
         assert tools["tools"][0]["name"] == "after_reconnect"
         # The retried POST carries the NEW session id.
         assert fake.calls[5]["headers"]["Mcp-Session-Id"] == "sess-new"
+
+    async def test_concurrent_expiry_recovers_with_one_rehandshake(
+            self, http_transport_factory):
+        """Two concurrent requests whose session the server expired:
+        exactly ONE re-handshake (serialized recovery; the second
+        waiter sees the rotated session id and just retries), and no
+        spurious MCPDisconnectedError from the not-connected guard."""
+        fake = ExpiringSessionPost()
+        transport = http_transport_factory(fake)
+        await transport.connect()
+        # The server expires the session under both requests' feet.
+        fake.session = "sess-rotated-server-side"
+        results = await asyncio.gather(
+            transport.request("tools/list"),
+            transport.request("ping"),
+        )
+        assert results == [{"ok": True}, {"ok": True}]
+        # Two initialize POSTs total: the original connect + exactly one
+        # recovery handshake — not one per waiter.
+        initialize_posts = [c for c in fake.calls
+                            if c["json"].get("method") == "initialize"]
+        assert len(initialize_posts) == 2
+        assert transport.alive
+
+    async def test_double_expiry_is_retyped_not_internal(
+            self, http_transport_factory):
+        """A session that expires again immediately after recovery is a
+        plain MCPConnectionError — the internal _SessionExpired class
+        never reaches the public surface."""
+        fake = ExpiringSessionPost(always_expire=True)
+        transport = http_transport_factory(fake)
+        await transport.connect()
+        with pytest.raises(MCPConnectionError,
+                           match="expired again") as excinfo:
+            await transport.request("tools/list")
+        from halbert_core.mcp.client import _SessionExpired
+        assert type(excinfo.value) is not _SessionExpired
+        assert type(excinfo.value) is MCPConnectionError
+
+    async def test_202_answer_to_a_request_names_the_mode(
+            self, http_transport_factory):
+        """A request (not a notification) answered 202 means the server
+        answers on a long-lived GET stream — say so, instead of a
+        generic status complaint."""
+        fake = FakePost([
+            FakeHTTPResponse(json_body=rpc_result(
+                1, {"protocolVersion": "2024-11-05"})),
+            FakeHTTPResponse(status_code=202),
+            FakeHTTPResponse(status_code=202),  # a REQUEST answered 202
+        ])
+        transport = http_transport_factory(fake)
+        await transport.connect()
+        with pytest.raises(MCPConnectionError, match="long-lived GET stream"):
+            await transport.request("tools/list")
 
     # -- B1 review: JSON responses must answer the request --------------------
 
@@ -906,6 +1017,20 @@ class TestConfig:
             assert auth.resolve_token() is None
         assert "NO_SUCH_TOKEN_VAR" in caplog.text
 
+    def test_missing_token_env_warns_once_not_per_call(
+            self, monkeypatch, caplog):
+        """resolve_token runs on every HTTP request — one misconfigured
+        variable must produce ONE warning line, not a log flood."""
+        var_name = "NEVER_EVER_SET_TOKEN_VAR_42"
+        monkeypatch.delenv(var_name, raising=False)
+        auth = MCPAuthConfig(type="bearer", token_env=var_name)
+        with caplog.at_level(logging.DEBUG, logger="halbert.mcp.config"):
+            for _ in range(5):
+                assert auth.resolve_token() is None
+        warnings = [r for r in caplog.records
+                    if r.levelno == logging.WARNING and var_name in r.message]
+        assert len(warnings) == 1
+
 
 # ===========================================================================
 # MCPClient — multi-server management + hot reload
@@ -1002,14 +1127,60 @@ class TestMCPClient:
             await client.list_tools("ghost")
 
     async def test_reconnect_uses_the_current_config(
-            self, fake_server_script, config_dir):
+            self, fake_server_script, config_dir, monkeypatch):
+        """reconnect drops the live connection and builds a fresh
+        transport from the CURRENT config — asserted via the transport
+        factory seam, not client internals."""
         config_dir([stdio_server_entry(fake_server_script, mode="normal")])
+        built = []
+        real_build = mcp_client_module.build_transport
+
+        def counting_build(server_config):
+            built.append(server_config.name)
+            return real_build(server_config)
+
+        monkeypatch.setattr(mcp_client_module, "build_transport",
+                            counting_build)
+        client = MCPClient()
+        await client.list_tools("fake")    # builds transport #1
+        await client.reconnect("fake")     # builds transport #2
+        assert built == ["fake", "fake"]
+        assert client.connected_servers() == ["fake"]
+        assert len(await client.list_tools("fake")) == 2  # reused, not #3
+        await client.disconnect()
+
+    # -- B1 lifecycle review: teardown and races ------------------------------
+
+    async def test_removing_a_server_from_config_tears_down_its_subprocess(
+            self, fake_server_script, config_dir):
+        """Deleting a server from mcp_config.yml must kill its stdio
+        subprocess, not just refuse new calls — "deletions take effect
+        without a restart" means the process too."""
+        config_dir([stdio_server_entry(fake_server_script)])
         client = MCPClient()
         await client.list_tools("fake")
-        first_transport = client._connections["fake"].transport
-        await client.reconnect("fake")
-        assert client._connections["fake"].transport is not first_transport
-        assert len(await client.list_tools("fake")) == 2
+        pid = client._connections["fake"].transport._proc.pid
+        config_dir([])  # server deleted from config
+        with pytest.raises(MCPClientError, match="not configured"):
+            await client.list_tools("fake")
+        assert client.connected_servers() == []
+        with pytest.raises(ProcessLookupError):
+            os.kill(pid, 0)  # subprocess reaped
+
+    async def test_disconnect_during_in_flight_connect_does_not_resurrect(
+            self, fake_server_script, config_dir):
+        """disconnect() takes the same per-server lock as _ensure: a
+        connect that lands mid-call cannot resurrect the connection the
+        caller just killed."""
+        config_dir([stdio_server_entry(fake_server_script, mode="slow_init")])
+        client = MCPClient()
+        task = asyncio.get_running_loop().create_task(
+            client.list_tools("fake"))
+        await asyncio.sleep(0.1)  # _ensure mid-handshake (slow server)
+        await client.disconnect()  # must wait for, then beat, the landing
+        with contextlib.suppress(MCPClientError):
+            await task
+        assert client.connected_servers() == []
         await client.disconnect()
 
     async def test_http_server_via_client(

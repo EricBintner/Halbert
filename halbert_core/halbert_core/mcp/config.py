@@ -87,6 +87,13 @@ def redact_url(url: str) -> str:
     return _redact(str(url))
 
 
+#: Variable names already warned about as unset (see
+#: MCPAuthConfig.resolve_token). One warning per misconfigured name,
+#: ever — resolve_token runs on every HTTP request and a repeat warning
+#: per call would flood the log.
+_WARNED_MISSING_TOKEN_ENVS: set = set()
+
+
 @dataclass
 class MCPAuthConfig:
     """How to authenticate to a remote (HTTP) server.
@@ -104,15 +111,25 @@ class MCPAuthConfig:
         Re-resolved on every call — rotating the env var takes effect
         without a restart, same as the rest of the config. A missing env
         var resolves to None (and the server's 401 is the clear error);
-        it is logged as the variable NAME, never a value.
+        it is logged as the variable NAME, never a value — and the
+        warning fires ONCE per variable name, not once per HTTP call
+        (resolve_token runs on every request; a misconfigured variable
+        must not flood the log).
         """
         if self.token:
             return self.token
         if self.token_env:
             value = os.environ.get(self.token_env)
             if not value:
-                logger.warning(
-                    "MCP auth: token env var '%s' is not set", self.token_env)
+                if self.token_env in _WARNED_MISSING_TOKEN_ENVS:
+                    logger.debug(
+                        "MCP auth: token env var '%s' is still not set",
+                        self.token_env)
+                else:
+                    _WARNED_MISSING_TOKEN_ENVS.add(self.token_env)
+                    logger.warning(
+                        "MCP auth: token env var '%s' is not set",
+                        self.token_env)
             return value or None
         return None
 

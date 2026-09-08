@@ -29,8 +29,9 @@ accepted, and a version the client does not support is a clear error.
 with a page cap. A Streamable HTTP server's ``Mcp-Session-Id`` response
 header is captured and echoed on every request; a 404 while holding a
 session id means the session expired and triggers ONE transparent
-re-handshake + retry (a 404 with no session id held is the
-legacy-transport error).
+re-handshake + retry — SERIALIZED, so concurrent expiries recover with a
+single handshake and in-flight requests never see a spurious disconnect
+(a 404 with no session id held is the legacy-transport error).
 
 Security model:
   * Tokens never logged. Config carries env var NAMES (``token_env``);
@@ -133,9 +134,15 @@ class MCPToolError(MCPClientError):
 
 class _SessionExpired(MCPConnectionError):
     """Internal: HTTP 404 while a session id was held — the server
-    expired the session. Not part of the public error surface; the
-    HTTP transport re-handshakes and retries once before anything
-    escapes."""
+    expired the session. Recovery consumes or re-types it (a double
+    expiry becomes a plain MCPConnectionError), so this class never
+    reaches the public error surface. Carries the session id that was
+    rejected, so concurrent recoveries can tell "another coroutine
+    already re-handshook" from "still stale"."""
+
+    def __init__(self, message: str, session_id: Optional[str] = None) -> None:
+        super().__init__(message)
+        self.session_id = session_id
 
 
 def _validate_initialize_result(result: Any, server_name: str) -> str:
@@ -280,6 +287,16 @@ class StdioTransport:
             result = await self.request("initialize", _initialize_params())
             self.negotiated_protocol_version = _validate_initialize_result(
                 result, self.name)
+        except asyncio.CancelledError:
+            # Cancellation is not an MCPClientError — without this branch
+            # the cleanup below never ran and the transport was left
+            # half-alive (reader running, process up, no negotiated
+            # version) with no reference anywhere: _ensure stores the
+            # connection only after connect() returns, so the subprocess
+            # was orphaned, and a later connect() believed itself already
+            # connected. Reap, then re-raise.
+            await self.close()
+            raise
         except MCPClientError as e:
             await self.close()
             raise MCPConnectionError(
@@ -477,7 +494,13 @@ def _parse_sse(body: str, req_id: Any) -> Optional[Dict[str, Any]]:
                     and ("result" in message or "error" in message)):
                 return message
         elif line.startswith("data:"):
-            data_lines.append(line[len("data:"):].lstrip(" "))
+            # Per the SSE spec, strip exactly ONE leading space after
+            # the colon — ``data:  x`` (two spaces) keeps one space of
+            # payload. lstrip() would eat significant whitespace.
+            data = line[len("data:"):]
+            if data.startswith(" "):
+                data = data[1:]
+            data_lines.append(data)
     # A body without a trailing blank line still deserves a look.
     candidate = "\n".join(data_lines)
     if candidate:
@@ -521,6 +544,9 @@ class HTTPTransport:
         #: The protocol version the SERVER answered initialize with (only
         #: set after a validated handshake).
         self.negotiated_protocol_version: Optional[str] = None
+        #: Serializes session-expiry recovery: concurrent 404s must
+        #: produce exactly one re-handshake, not interleaved ones.
+        self._handshake_lock = asyncio.Lock()
 
     @property
     def alive(self) -> bool:
@@ -541,6 +567,12 @@ class HTTPTransport:
         """The synchronous core, run in a worker thread."""
         token = self.token_provider() if self.token_provider else None
         headers = self._headers(token)
+        if message.get("method") == "initialize":
+            # initialize STARTS a session: never echo a stale session id
+            # on it. This also means an initialize POST can never be
+            # misread as session expiry (it carries no session id), so
+            # recovery's internal handshake cannot recurse into recovery.
+            headers.pop("Mcp-Session-Id", None)
         session_sent = "Mcp-Session-Id" in headers
         try:
             response = requests.post(
@@ -568,12 +600,13 @@ class HTTPTransport:
             return {}
 
         if response.status_code == 404 and session_sent:
-            # The endpoint exists (initialize worked) and we hold a
-            # session id — the server expired the session. The transport
-            # re-handshakes and retries once; this never escapes.
+            # The endpoint exists (initialize worked) and we sent a
+            # session id — the server expired the session. Recovery
+            # consumes this before it can escape.
             raise _SessionExpired(
                 f"MCP server '{self.name}': HTTP 404 with a session id "
-                f"held — session expired")
+                f"held — session expired",
+                session_id=self._session_id)
         if response.status_code in (404, 405):
             # Streamable HTTP POSTs to the message endpoint; a server
             # answering 404/405 to the POST is either the wrong URL or a
@@ -590,6 +623,17 @@ class HTTPTransport:
             raise MCPConnectionError(
                 f"MCP server '{self.name}': HTTP {response.status_code} "
                 f"(unauthorized — check the auth token)")
+        if response.status_code == 202 and "id" in message:
+            # 202 Accepted for a REQUEST (not a notification) means the
+            # server answers requests on a long-lived GET stream —
+            # spec-legal server-initiated streaming, but this client
+            # expects each POST to return its own response. Name the
+            # mode instead of a generic status complaint.
+            raise MCPConnectionError(
+                f"MCP server '{self.name}': HTTP 202 for a request — the "
+                f"server appears to answer requests via a long-lived GET "
+                f"stream (server-initiated streaming), which this client "
+                f"does not support")
         if response.status_code != 200:
             raise MCPConnectionError(
                 f"MCP server '{self.name}': unexpected HTTP status "
@@ -644,8 +688,14 @@ class HTTPTransport:
 
     async def _handshake(self) -> None:
         """initialize + initialized notification. Also the re-entry point
-        after a session expiry: the old session id is dropped first."""
-        self._session_id = None
+        after a session expiry.
+
+        The STALE session id is deliberately kept until the initialize
+        response replaces it: requests in flight during a recovery keep
+        sending it, so their 404s read as session expiry (they queue on
+        the recovery lock) instead of the legacy-transport error they
+        would get with no session id at all.
+        """
         result = await self.request("initialize", _initialize_params())
         self.negotiated_protocol_version = _validate_initialize_result(
             result, self.name)
@@ -687,15 +737,10 @@ class HTTPTransport:
             message["params"] = params
         try:
             response = await self._exchange(message)
-        except _SessionExpired:
-            # The server expired our session (404 with a session id
-            # held). Re-handshake ONCE and retry — transparently; a
-            # second expiry propagates as the connection error it is.
-            logger.info(
-                "MCP server '%s': session expired, re-handshaking", self.name)
-            self._connected = False
-            await self._handshake()
-            response = await self._exchange(message)
+        except _SessionExpired as expiry:
+            # 404 with a session id held: the server expired the
+            # session. Recover transparently — serialized.
+            response = await self._recover_session(message, expiry.session_id)
         except asyncio.TimeoutError:
             raise MCPTimeoutError(
                 f"MCP server '{self.name}': no response to '{method}' "
@@ -706,6 +751,44 @@ class HTTPTransport:
                 f"MCP server '{self.name}' rejected '{method}': "
                 f"[{err.get('code', '?')}] {err.get('message', '')}")
         return response.get("result")
+
+    async def _recover_session(
+        self,
+        message: Dict[str, Any],
+        expired_session_id: Optional[str],
+    ) -> Dict[str, Any]:
+        """Recover from an expired session: one re-handshake, then retry
+        the original request — and return its response.
+
+        Serialized by ``_handshake_lock`` so concurrent 404s produce
+        exactly ONE re-handshake: waiters re-check the session id after
+        acquiring the lock and, if another coroutine already rotated it,
+        just retry on the new session. ``_connected`` is never flipped
+        here — in-flight requests must not trip the not-connected guard
+        and fail with a spurious MCPDisconnectedError. A second expiry
+        (immediately after a successful re-handshake) is re-typed to a
+        plain MCPConnectionError, keeping _SessionExpired off the
+        public surface.
+        """
+        async with self._handshake_lock:
+            if self._session_id != expired_session_id:
+                # Another coroutine re-handshook while we queued: the
+                # session was already rotated — just retry.
+                return await self._exchange(message)
+            logger.info(
+                "MCP server '%s': session expired, re-handshaking", self.name)
+            try:
+                await self._handshake()
+            except _SessionExpired as e:
+                raise MCPConnectionError(
+                    f"MCP server '{self.name}': session expired again "
+                    f"during re-handshake ({e})") from None
+            try:
+                return await self._exchange(message)
+            except _SessionExpired as e:
+                raise MCPConnectionError(
+                    f"MCP server '{self.name}': session expired again "
+                    f"immediately after re-handshake ({e})") from None
 
     async def notify(self, method: str) -> None:
         try:
@@ -811,6 +894,15 @@ class MCPClient:
             config = self._load()
             server_config = config.server(server_name)
             if server_config is None:
+                # Removing a server from the config tears down its live
+                # connection, not just future calls — otherwise a stdio
+                # subprocess outlives its own configuration forever.
+                connection = self._connections.pop(server_name, None)
+                if connection is not None:
+                    logger.info(
+                        "MCP server '%s' removed from config, disconnecting",
+                        server_name)
+                    await connection.close()
                 raise MCPClientError(
                     f"MCP server '{server_name}' is not configured "
                     f"(see {__name__}.config.config_path())")
@@ -852,13 +944,23 @@ class MCPClient:
 
     async def disconnect(self, server_name: Optional[str] = None) -> None:
         """Disconnect one server by name, or everything (name=None).
-        Never raises."""
+        Never raises. Takes the same per-server lock as _ensure, so a
+        connect that is in flight cannot land after this call and
+        resurrect the connection it just killed.
+
+        With no name, EVERY server ever touched is torn down — iterating
+        the locks (not just live connections), because a server whose
+        connect is mid-flight is not in ``_connections`` yet but its
+        landing must still be beaten.
+        """
         names = ([server_name] if server_name is not None
-                 else list(self._connections))
+                 else list(self._locks))
         for name in names:
-            connection = self._connections.pop(name, None)
-            if connection is not None:
-                await connection.close()
+            lock = self._locks.setdefault(name, asyncio.Lock())
+            async with lock:
+                connection = self._connections.pop(name, None)
+                if connection is not None:
+                    await connection.close()
 
     async def reconnect(self, server_name: str) -> None:
         """Force-close and re-establish a connection (with the CURRENT
@@ -925,7 +1027,11 @@ class MCPClient:
         when WE serve, not when we call out); B3 owns what happens to it
         next. A result carrying ``isError: true`` is the tool FAILING —
         it raises :class:`MCPToolError` (carrying the content and the
-        raw result) instead of surfacing as a normal result.
+        raw result) instead of surfacing as a normal result. Like every
+        other operation, call_tool may raise ANY MCPClientError subclass
+        (connection/timeout/protocol/disconnected for transport
+        failures, MCPToolError for a failed tool) — B2's UX maps the
+        error type to the user-facing message.
         """
         connection = await self._ensure(server_name)
         result = await connection.transport.request("tools/call", {
