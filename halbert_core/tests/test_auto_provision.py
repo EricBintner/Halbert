@@ -209,3 +209,75 @@ class TestHomeVariantGate:
 
         cfg = store.load_global(use_cache=False)
         assert cfg["secure_model"]["model"] == store.APPLE_FOUNDATION_MODEL
+
+
+class TestReconcileWhenTheBridgeIsDown:
+    """APPLE-1: the endpoint was registered at a boot where the probe passed,
+    and nothing ever looked again.
+
+    The FoundationModels sidecar was never built, so the probe now fails --
+    but ``secure_model`` still points at ``127.0.0.1:11435``, and the boot
+    path skips provisioning entirely once the endpoint exists, so the dead
+    assignment is never revisited. Every secure turn then tries a port with
+    nothing on it and falls back to the guide, which is what exposed SEC-21.
+
+    Reconciling is the symmetric operation to provisioning: provisioning
+    wrote the slot when the bridge answered, so this clears it when the
+    bridge does not, at WARNING, naming the slot. The endpoint itself stays
+    registered -- the host is still eligible and the picker should still
+    list it -- only the *assignment* to a dead endpoint goes.
+    """
+
+    def _provision_then_kill_bridge(self):
+        auto_provision_apple_intelligence(_hw(bridge_running=True))
+        cfg = store.load_global(use_cache=False)
+        assert cfg["secure_model"]["model"] == store.APPLE_FOUNDATION_MODEL
+        return cfg["secure_model"]["endpoint_id"]
+
+    def test_a_dead_bridge_disables_the_secure_slot(self, config_dir, caplog):
+        import logging
+        from halbert_core.model.auto_provision import reconcile_apple_intelligence
+
+        ep_id = self._provision_then_kill_bridge()
+        with caplog.at_level(logging.WARNING):
+            cleared = reconcile_apple_intelligence(_hw(bridge_running=False))
+
+        assert cleared == ["secure_model"]
+        cfg = store.load_global(use_cache=False)
+        assert cfg["secure_model"]["enabled"] is False
+        assert any("secure_model" in r.message and "bridge" in r.message.lower()
+                   for r in caplog.records), "clearing a configured slot must be said out loud"
+        # The endpoint stays: eligibility has not changed, only reachability.
+        assert any(e["id"] == ep_id for e in cfg["saved_endpoints"])
+
+    def test_a_live_bridge_leaves_the_slot_alone(self, config_dir):
+        from halbert_core.model.auto_provision import reconcile_apple_intelligence
+
+        self._provision_then_kill_bridge()
+        assert reconcile_apple_intelligence(_hw(bridge_running=True)) == []
+        assert store.load_global(use_cache=False)["secure_model"]["enabled"] is True
+
+    def test_it_only_touches_slots_that_point_at_the_apple_endpoint(self, config_dir):
+        from halbert_core.model.auto_provision import reconcile_apple_intelligence
+
+        self._provision_then_kill_bridge()
+        # A local Ollama secure model the user chose deliberately must survive
+        # a dead Apple bridge untouched.
+        ollama_id = store.ensure_endpoint("http://localhost:11434", "ollama", "Local Ollama")
+        store.set_slot("secure_model", "qwen3:8b", ollama_id)
+        assert reconcile_apple_intelligence(_hw(bridge_running=False)) == []
+        assert store.load_global(use_cache=False)["secure_model"]["model"] == "qwen3:8b"
+
+    def test_no_apple_endpoint_is_a_no_op(self, config_dir):
+        from halbert_core.model.auto_provision import reconcile_apple_intelligence
+        assert reconcile_apple_intelligence(_hw(bridge_running=False)) == []
+
+    def test_a_dead_bridge_also_clears_a_chat_slot_it_provisioned(self, config_dir):
+        # On a 16-24GB Mac provisioning also fills chat_model. A dead bridge
+        # would otherwise leave the *chat* model pointing at nothing, which
+        # is a worse user experience than an empty slot.
+        from halbert_core.model.auto_provision import reconcile_apple_intelligence
+
+        auto_provision_apple_intelligence(_hw(unified_mem_gb=16, bridge_running=True))
+        cleared = reconcile_apple_intelligence(_hw(unified_mem_gb=16, bridge_running=False))
+        assert set(cleared) == {"secure_model", "chat_model"}

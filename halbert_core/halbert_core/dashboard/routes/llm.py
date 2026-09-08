@@ -245,10 +245,18 @@ def get_llm_config(session_id: Optional[str] = None) -> Dict[str, Any]:
                 ep.get("provider") == _cfg.APPLE_FOUNDATION_PROVIDER
                 for ep in _cfg.load_global(use_cache=False).get("saved_endpoints", [])
             )
-            if not already_provisioned and has_capability(CAP_SECURE_MODEL_ALLOWED):
+            if has_capability(CAP_SECURE_MODEL_ALLOWED):
                 from ...model.hardware_detector import HardwareDetector
                 hw = HardwareDetector().detect()
-                auto_provision_apple_intelligence(hw)
+                if already_provisioned:
+                    # APPLE-1: the endpoint exists from an earlier boot where
+                    # the bridge answered. Look again -- this is the branch
+                    # the old code skipped, which is how a slot stayed
+                    # pointed at a dead port indefinitely.
+                    from ...model.auto_provision import reconcile_apple_intelligence
+                    reconcile_apple_intelligence(hw)
+                else:
+                    auto_provision_apple_intelligence(hw)
         except Exception as e:
             logger.debug(f"Apple Intelligence auto-provisioning skipped: {e}")
 

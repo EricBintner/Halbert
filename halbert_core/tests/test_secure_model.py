@@ -130,3 +130,48 @@ class TestResolveSecureModel:
         file_cfg = {"llm_config": default_llm_config()}
         result = resolve_from(file_cfg, "secure_model")
         assert result is None
+
+
+class TestNormaliseRefusesCloudTaggedSecureModel:
+    """SEC-21, at config-write time.
+
+    ``normalise`` already disables a ``secure_model`` whose endpoint URL is
+    not loopback. It did not look at the model, so ``glm-5.3:cloud`` on
+    ``localhost:11434`` saved as an enabled secure model -- and the turn-time
+    gate, which trusted the slot, never checked it either. Refusing it here
+    means the misconfiguration cannot be saved in the first place, which is
+    earlier and louder than failing a turn.
+    """
+
+    def _cfg(self, model):
+        return {
+            "saved_endpoints": [{
+                "id": "ep_local", "name": "Local Ollama",
+                "provider": "ollama", "url": "http://localhost:11434", "api_key": "",
+            }],
+            "secure_model": {"enabled": True, "endpoint_id": "ep_local", "model": model},
+        }
+
+    def test_a_cloud_tagged_secure_model_is_disabled(self):
+        cfg = normalise(self._cfg("glm-5.3:cloud"))
+        assert cfg["secure_model"]["enabled"] is False
+
+    def test_the_model_name_is_kept_so_the_ui_can_say_why(self):
+        # Disabled, not erased: the picker should show what was configured
+        # and why it will not be used, not a blank slot.
+        cfg = normalise(self._cfg("glm-5.3:cloud"))
+        assert cfg["secure_model"]["model"] == "glm-5.3:cloud"
+
+    def test_a_local_secure_model_on_the_same_endpoint_stays_enabled(self):
+        cfg = normalise(self._cfg("qwen3:8b"))
+        assert cfg["secure_model"]["enabled"] is True
+
+    def test_other_slots_may_still_hold_cloud_tags(self):
+        # The rule is the secure slot's rule. chat_model on a :cloud tag is a
+        # choice the user is allowed to make; the secure gate keeps secrets
+        # away from it per turn.
+        cfg = self._cfg("qwen3:8b")
+        cfg["chat_model"] = {"enabled": True, "endpoint_id": "ep_local",
+                             "model": "deepseek-v4-flash:cloud"}
+        out = normalise(cfg)
+        assert out["chat_model"]["enabled"] is True

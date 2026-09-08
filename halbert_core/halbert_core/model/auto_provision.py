@@ -17,7 +17,7 @@ choice.
 from __future__ import annotations
 
 import logging
-from typing import Optional
+from typing import List, Optional
 
 from . import llm_config as _store
 from .hardware_detector import HardwareCapabilities
@@ -117,3 +117,50 @@ def auto_provision_apple_intelligence(hardware: HardwareCapabilities) -> bool:
     if not changed:
         logger.debug("Apple Intelligence endpoint registered but no empty slots to fill")
     return changed
+
+
+def reconcile_apple_intelligence(hardware: HardwareCapabilities) -> List[str]:
+    """Clear slots that point at the Apple Intelligence endpoint when its
+    bridge is not running. Returns the slots it cleared.
+
+    The symmetric operation to :func:`auto_provision_apple_intelligence`.
+    Provisioning assigns the slot when the FoundationModels bridge answers
+    the probe; nothing ever looked again, and the boot path skips
+    provisioning entirely once the endpoint exists -- so a slot assigned at
+    a boot where the probe passed stayed assigned after the bridge went
+    away. On the founder's machine that was ``secure_model`` pointing at a
+    port nothing listens on (APPLE-1), and every secure turn tried it,
+    failed, and fell back to the guide -- which is how SEC-21 was reached.
+
+    Only the *assignment* goes. The endpoint stays registered: the host is
+    still eligible, the picker should still list it, and provisioning will
+    re-fill an empty slot when the bridge is next seen. Only slots whose
+    ``endpoint_id`` is the Apple one are touched -- a local Ollama secure
+    model the user chose deliberately is not this function's business.
+
+    Logged at WARNING per slot: clearing a configured model must be said out
+    loud, in the same log a person reads when a secure turn fails closed.
+    """
+    if hardware.apple_intelligence_bridge_running:
+        return []
+    cfg = _store.load_global(use_cache=False)
+    apple_ids = {
+        ep.get("id") for ep in cfg.get("saved_endpoints", [])
+        if ep.get("provider") == _store.APPLE_FOUNDATION_PROVIDER
+    }
+    if not apple_ids:
+        return []
+    cleared: List[str] = []
+    for slot in ("secure_model", "chat_model", "specialist_model", "vision_model"):
+        s = cfg.get(slot) or {}
+        if s.get("model") and s.get("endpoint_id") in apple_ids:
+            _store.set_slot(slot, "", s["endpoint_id"])
+            cleared.append(slot)
+            logger.warning(
+                "%s pointed at Apple Intelligence (%s) but the FoundationModels "
+                "bridge is not running — slot disabled until it is. A secure "
+                "turn will fail closed rather than fall back to a cloud model.",
+                slot, s.get("model"),
+            )
+    return cleared
+

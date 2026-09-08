@@ -518,18 +518,23 @@ class TurnModel(NamedTuple):
     reason: str          # human-readable, for the handoff banner and logs
 
 
-def _endpoint_is_local(provider: str, endpoint: str) -> bool:
-    """Locality verdict for the secure gate.
+def _endpoint_is_local(provider: str, endpoint: str, model: str = "") -> bool:
+    """Locality verdict for the secure gate -- of the *model*, not the URL.
 
-    The endpoint URL decides: a provider named "ollama" can still point at a
-    remote host, so provider membership in LOCAL_GPU_PROVIDERS is not proof.
-    On-device providers (MLX, Apple Foundation) have no network egress by
-    construction and pass without a URL check.
+    Until SEC-21 this read only the URL: "loopback, therefore local". Ollama's
+    ``:cloud`` models are the case that breaks it -- served from
+    ``localhost:11434`` and proxied to ollama.com at inference time -- and on
+    the founder's machine both the guide and the specialist were exactly
+    that, so every secure turn that fell back left the machine.
+
+    Delegates to ``llm_config.is_local_model``, the single place the rule
+    ``being_config.py`` states is decided: no ``:cloud`` tag, a local
+    provider, and a loopback URL as a necessary condition rather than the
+    deciding one. A caller that cannot name the model has not proven
+    locality, so the default is *not* local.
     """
-    from ...model.llm_config import _is_local_url
-    if (provider or "") in ("mlx", "apple-foundation"):
-        return True
-    return _is_local_url(endpoint or "")
+    from ...model.llm_config import is_local_model
+    return is_local_model(model, endpoint, provider)
 
 
 def _is_home_variant() -> bool:
@@ -633,18 +638,31 @@ def _resolve_turn_model(
     if secure and _has_secure_cap:
         from ...model.client import get_secure_model
         sec_model, sec_endpoint, sec_provider = get_secure_model()
-        if sec_model:
+        if sec_model and _endpoint_is_local(
+            sec_provider or "ollama", sec_endpoint, sec_model
+        ):
             return TurnModel(
                 sec_model, sec_endpoint, sec_provider or "ollama",
                 "guide", False, False,
                 "Secure content — dedicated local secure model",
             )
+        if sec_model:
+            # This branch used to return without passing gate(), so a :cloud
+            # tag *in the secure slot itself* was checked nowhere. normalise
+            # now refuses to save one, but the slot is also reachable through
+            # older files and the env override, so it is checked here too.
+            # Fall through to the same local-guide / fail-closed chain.
+            logger.error(
+                "Secure content: the secure_model slot holds %s @ %s (%s), "
+                "which is not a local model — ignoring it for this turn",
+                sec_model, sec_endpoint, sec_provider,
+            )
 
     def gate(turn: "TurnModel") -> "TurnModel":
         """Force a secure turn onto a local endpoint or fail closed."""
-        if not secure or _endpoint_is_local(turn.provider, turn.endpoint):
+        if not secure or _endpoint_is_local(turn.provider, turn.endpoint, turn.model):
             return turn
-        if guide_model and _endpoint_is_local(guide_provider, guide_endpoint):
+        if guide_model and _endpoint_is_local(guide_provider, guide_endpoint, guide_model):
             logger.info(
                 "Secure content: %s is cloud-bound (%s @ %s) — local guide answers",
                 turn.model, turn.provider, turn.endpoint,
@@ -786,7 +804,7 @@ def _fallback_to_guide(turn: TurnModel, requested: str,
         return None
     guide_endpoint = get_ollama_endpoint()
     guide_provider = provider_for(guide_endpoint)
-    if secure and not _endpoint_is_local(guide_provider, guide_endpoint):
+    if secure and not _endpoint_is_local(guide_provider, guide_endpoint, guide_model):
         logger.error(
             "Secure turn: %s unreachable and the guide (%s @ %s) is not local — "
             "failing closed rather than answering from a cloud endpoint",
