@@ -4,7 +4,9 @@
 Skill discovery.
 
 Skills are read from four locations, least specific first, so a later
-definition of the same name replaces an earlier one:
+definition of the same name replaces an earlier one (design
+DESIGN-SKILLS-SYSTEM-2026-09-07 §1.3 collapses the two workspace spellings
+into one root):
 
     halbert_core/skills/builtin/<name>/SKILL.md   shipped with Halbert
     ~/.config/halbert/skills/<name>/SKILL.md      the user's own
@@ -14,6 +16,14 @@ definition of the same name replaces an earlier one:
 Both `<name>/SKILL.md` and a bare `<name>.md` are accepted in every location.
 A skill that fails to parse is logged and skipped rather than taking down
 discovery — one malformed user file must not cost the user every built-in.
+
+Every candidate file is read with boundary-safe rules (design §4.2): it must
+resolve under the root it was declared in (a symlink escape is refused — a
+skill root is a trust boundary, and a link pointing outside it is text from
+somewhere else wearing the root's name), and the byte caps and strict-UTF-8
+checks live in `parser.parse_skill_file`. A skill that claims a reserved
+name — a tool, slash-builtin, or persona-handback name (design §2.4) — is
+refused here too, the same posture as the builtin-name refusal.
 """
 
 from __future__ import annotations
@@ -23,6 +33,7 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Optional
 
 from .parser import Skill, SkillParseError, parse_skill_file
+from .reserved import is_reserved_skill_name
 
 logger = logging.getLogger(__name__)
 
@@ -60,21 +71,48 @@ def _builtin_names() -> set:
     return {s.name for s in load_skills_from_dir(BUILTIN_DIR)}
 
 
-def _skill_files(directory: Path) -> Iterable[Path]:
-    """Yield candidate skill files in *directory*, deterministically ordered."""
+def _skill_files(directory: Path) -> List[Path]:
+    """Yield candidate skill files in *directory*, deterministically ordered.
+
+    Each candidate must resolve under the directory it was declared in: a
+    symlinked entry pointing outside the root is refused with a log line,
+    because the root is the trust boundary the refusal reasons about.
+    """
     if not directory.is_dir():
+        return []
+
+    try:
+        root = directory.resolve()
+    except OSError as e:  # pragma: no cover - unreadable root
+        logger.warning("cannot resolve skill directory %s: %s", directory, e)
         return []
 
     found: List[Path] = []
     for entry in sorted(directory.iterdir()):
+        candidate = None
         if entry.is_dir():
-            for candidate in ("SKILL.md", "skill.md"):
-                path = entry / candidate
+            for name in ("SKILL.md", "skill.md"):
+                path = entry / name
                 if path.is_file():
-                    found.append(path)
+                    candidate = path
                     break
         elif entry.is_file() and entry.suffix.lower() == ".md":
-            found.append(entry)
+            candidate = entry
+        if candidate is None:
+            continue
+        try:
+            resolved = candidate.resolve()
+        except OSError as e:
+            logger.warning("skipping unreadable skill %s: %s", candidate, e)
+            continue
+        if root not in resolved.parents:
+            logger.warning(
+                "refusing skill %s: it resolves to %s, outside its "
+                "declaring root %s (symlink escape)",
+                candidate, resolved, root,
+            )
+            continue
+        found.append(candidate)
     return found
 
 
@@ -117,6 +155,28 @@ def load_skills(dirs: Optional[Iterable[Path]] = None,
                     "refusing skill %r from %s: the name is a built-in and "
                     "overriding it would drop its declared safety",
                     skill.name, skill.source_path,
+                )
+                continue
+            if is_reserved_skill_name(skill.name):
+                # Design §2.4: reserved names are refused at load and at
+                # create. A skill claiming a tool's name would be reachable
+                # as `/<name>` once the slash channel lands, and a user
+                # typing it would mean the tool.
+                logger.warning(
+                    "refusing skill %r from %s: the name is reserved "
+                    "(a tool, slash-builtin, or persona-handback name)",
+                    skill.name, skill.source_path,
+                )
+                continue
+            reserved_alias = next(
+                (a for a in skill.aliases if is_reserved_skill_name(a)), None
+            )
+            if reserved_alias is not None:
+                # Aliases address a skill as surely as its name does; a
+                # reserved alias is the same claim with worse ergonomics.
+                logger.warning(
+                    "refusing skill %r from %s: the alias %r is reserved",
+                    skill.name, skill.source_path, reserved_alias,
                 )
                 continue
             if skill.name in resolved:

@@ -1,0 +1,124 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
+"""Reserved names — names a skill may not claim.
+
+Design §2.4: reserved = registered tool names + intake slash builtins +
+persona handback names, "checked at load and at create — refused at
+spec-build, the same posture as the loader's builtin-name refusal." A skill
+claiming a tool's name would be reachable as `/<name>` once the slash channel
+lands, and a user typing it would mean the tool, not the skill.
+
+Skill names spell separators with hyphens while the tool registry uses
+underscores, so the comparison normalizes both spellings — otherwise the
+check is theater.
+
+The tool names are collected lazily (never at import of this package: the
+skills loader must not pull the tools/persona packages into every embedder)
+from the schema registries the tool surface already exports, and cached for
+the process: tool registration is static per process, and the refusal is a
+load-time check anyway.
+"""
+
+from __future__ import annotations
+
+import functools
+import importlib
+import logging
+from typing import FrozenSet, Iterable, Optional
+
+logger = logging.getLogger(__name__)
+
+#: Slash commands Halbert surfaces already claim. The dashboard composer owns
+#: `/model` (dashboard/frontend/src/lib/slashCommands.ts) and the terminal
+#: page owns /explain, /fix and /dryrun with single-letter aliases
+#: (dashboard/frontend/src/pages/Terminal.tsx). The skill slash channel (SK-2)
+#: must not let a skill shadow a command the user already knows.
+RESERVED_SLASH_BUILTINS: FrozenSet[str] = frozenset({
+    "model",
+    "explain", "e",
+    "fix", "f",
+    "dryrun", "d",
+})
+
+#: The executor's unconditional core, registered inline in
+#: `ToolExecutor._register_builtins` (tools/executor.py). Hand-listed because
+#: the executor registers them from literals; `test_skills_reserved` pins
+#: this list against a live executor so drift is caught in CI, not by a
+#: production refusal — or worse, a missing one.
+CORE_TOOL_NAMES: FrozenSet[str] = frozenset({
+    "run_command", "read_file", "write_file", "list_directory",
+    "terminal_blocks", "recall_memory",
+    "new_thread", "recall_thread", "resume_thread",
+    "execute_code",
+})
+
+#: Names registered only while a switch or capability is on, but claimed
+#: surfaces regardless: a skill named after a tool nobody can currently see
+#: is still a name trap.
+CONDITIONAL_TOOL_NAMES: FrozenSet[str] = frozenset({"web_search"})
+
+#: Schema registries (dict of tool name -> schema) and single-name constants
+#: to absorb lazily. A module that fails to import costs its names, never
+#: skill loading — the log says so.
+_SCHEMA_REGISTRIES = (
+    ("halbert_core.tools.system_info", "SYSTEM_TOOL_SCHEMAS"),
+    ("halbert_core.tools.vision_tools", "VISION_TOOL_SCHEMAS"),
+    ("halbert_core.tools.gpu_tools", "GPU_TOOL_SCHEMAS"),
+    ("halbert_core.tools.accelerator_tools", "ACCELERATOR_TOOL_SCHEMAS"),
+    ("halbert_core.persona.guest_tools", "GUEST_ONLY_TOOLS"),
+)
+_TOOL_NAME_CONSTANTS = (
+    ("halbert_core.persona.become_tool", "BECOME_TOOL_NAME"),
+    ("halbert_core.persona.guest_tools", "HANDBACK_TOOL_NAME"),
+)
+
+
+def normalize_skill_name(name: Optional[str]) -> str:
+    """The form reserved names compare in: trimmed, lowered, underscores."""
+    return (name or "").strip().lower().replace("-", "_")
+
+
+def _collect_tool_names() -> FrozenSet[str]:
+    names = set(CORE_TOOL_NAMES) | set(CONDITIONAL_TOOL_NAMES)
+    for module, attr in _SCHEMA_REGISTRIES:
+        try:
+            registry = getattr(importlib.import_module(module), attr, None)
+        except Exception:
+            logger.debug(
+                "reserved skill-name scan: %s did not import; its tool "
+                "names are not reserved this process", module, exc_info=True,
+            )
+            continue
+        if isinstance(registry, dict):
+            names.update(registry)
+        elif isinstance(registry, Iterable):
+            names.update(registry)
+    for module, attr in _TOOL_NAME_CONSTANTS:
+        try:
+            value = getattr(importlib.import_module(module), attr, None)
+        except Exception:
+            logger.debug(
+                "reserved skill-name scan: %s did not import; %s is not "
+                "reserved this process", module, attr, exc_info=True,
+            )
+            continue
+        if isinstance(value, str) and value.strip():
+            names.add(value.strip())
+    return frozenset(names)
+
+
+@functools.lru_cache(maxsize=1)
+def reserved_skill_names() -> FrozenSet[str]:
+    """Every reserved name, normalized for comparison.
+
+    Cached for the process: tool registration is static, and re-collecting
+    on every load would re-import the registries per skill.
+    """
+    tools = {normalize_skill_name(n) for n in _collect_tool_names()}
+    slash = {normalize_skill_name(n) for n in RESERVED_SLASH_BUILTINS}
+    return frozenset(tools | slash)
+
+
+def is_reserved_skill_name(name: Optional[str]) -> bool:
+    """True when *name* (or its underscore spelling) is reserved."""
+    return normalize_skill_name(name) in reserved_skill_names()

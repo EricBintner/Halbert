@@ -102,7 +102,7 @@ def test_the_lens_never_matches_a_topical_turn(matcher):
 
 def test_builtin_tiers_are_current_slot_names(builtins):
     for name, skill in builtins.items():
-        assert skill.model in ("chat", "specialist", "vision"), name
+        assert skill.tier in ("chat", "specialist", "vision"), name
 
 
 # ── Routing ───────────────────────────────────────────────────────────
@@ -130,7 +130,7 @@ def test_a_greeting_activates_nothing(matcher):
 def test_storage_question_routes_to_the_storage_role_and_a_specialist(matcher):
     _, composed = _route(matcher, "why is my zfs pool degraded?")
     assert composed.role == "storage-ops"
-    assert composed.model == "specialist"
+    assert composed.tier == "specialist"
     # Deep analysis asked for more retrieval than the default.
     assert composed.budget_appetite.get("retrieval", 1.0) > 1.0
 
