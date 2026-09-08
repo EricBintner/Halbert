@@ -22,8 +22,11 @@ Gating is layered, OFF by default at every layer:
    off (a stale registration is never a leak — only a stale schema
    offered to the model).
 
-RoleGate (guest persona) integration lands in A2; nothing here executes
-while the config is off regardless.
+RoleGate (guest persona) integration landed in A2: the guest allowlist
+(``persona/guest_tools.py``) structurally denies both tools (a guest runs
+no scripts, period), and script-content risk classification lives in
+``tools/applescript_safety.py`` — wired through ToolSafetyFramework, so
+HIGH waits for confirmation and CRITICAL is blocked before any spawn.
 
 Risks noted in the plan: osascript subprocess overhead (~50-100ms per
 call, acceptable) and unhelpful syntax-error messages — stderr is
@@ -141,16 +144,26 @@ async def _collect_output(proc, limit: int) -> Tuple[bytes, bytes, bool, bool]:
     return out, err, out_trunc, err_trunc
 
 
-async def _execute(argv: List[str]) -> Dict[str, Any]:
+def _truncated_stream_names(out_trunc: bool, err_trunc: bool) -> str:
+    """Which stream(s) hit the output cap — naming BOTH when both capped."""
+    names = [n for n, hit in (("stdout", out_trunc), ("stderr", err_trunc)) if hit]
+    return " and ".join(names)
+
+
+async def _execute(argv: List[str],
+                   cfg: Optional[applescript_config.AppleScriptConfig] = None
+                   ) -> Dict[str, Any]:
     """Run osascript (argv list, no shell) and capture stdout/stderr/exit code.
 
-    The timeout comes from applescript_config.yml (re-read here, per call)
-    and is enforced with asyncio.wait_for: on expiry the process is
-    killed and a structured timeout error is returned — never a hang,
-    never a raise. SEC-2 lesson (tools/system_info.py): the script
-    travels as one ``-e`` argv element, so there is no shell to escape.
+    The timeout comes from applescript_config.yml (``cfg``, or re-read
+    here when the caller has none) and is enforced with asyncio.wait_for:
+    on expiry the process is killed and a structured timeout error is
+    returned — never a hang, never a raise. SEC-2 lesson
+    (tools/system_info.py): the script travels as one ``-e`` argv
+    element, so there is no shell to escape.
     """
-    cfg = applescript_config.load_config()
+    if cfg is None:
+        cfg = applescript_config.load_config()
     timeout = max(1, int(cfg.timeout_seconds))
 
     try:
@@ -188,7 +201,7 @@ async def _execute(argv: List[str]) -> Dict[str, Any]:
         # with a notice, so the model knows the result is partial.
         _kill(proc)
         await _reap(proc)
-        stream = "stdout" if out_trunc else "stderr"
+        stream = _truncated_stream_names(out_trunc, err_trunc)
         logger.warning(f"osascript output exceeded {MAX_OUTPUT_BYTES} bytes; process stopped")
         err_text = err.decode(errors="replace")
         notice = (f"Output exceeded the {MAX_OUTPUT_BYTES} byte cap "
@@ -203,25 +216,38 @@ async def _execute(argv: List[str]) -> Dict[str, Any]:
     # Both pipes hit EOF — the child is done (or closed its output early).
     await _reap(proc)
     exit_code = proc.returncode if proc.returncode is not None else -1
+    err_text = err.decode(errors="replace")
+    if exit_code == -9 and "was killed" not in err_text:
+        # The reaper's grace path SIGKILLed the child: it closed its
+        # pipes early and was still running after the grace period, so
+        # it died mid-action. Say so — success=False with exit -9 and an
+        # EMPTY error gave the agent nothing to self-correct on (A1
+        # residual).
+        note = ("The script was killed before it finished (exit code -9): it "
+                "may have closed its output early or still been mid-action. "
+                "Check for side effects before retrying.")
+        err_text = f"{err_text}\n{note}" if err_text else note
     return _result(exit_code == 0, output=out.decode(errors="replace"),
-                   error=err.decode(errors="replace"), exit_code=exit_code)
+                   error=err_text, exit_code=exit_code)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Tool handlers
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _gate_check() -> Optional[Dict[str, Any]]:
+def _gate_check(cfg: "applescript_config.AppleScriptConfig") -> Optional[Dict[str, Any]]:
     """Config + platform gates shared by both handlers.
 
-    Returns a refusal result when execution must not proceed, or None to
-    go ahead. The config switch is checked FIRST: nothing executes —
-    not even the platform check matters — while the user has the feature
-    off. The switch is re-read on every call (see applescript_config).
+    Takes the config the handler already loaded (one read per call — the
+    gate and the timeout used to each load it, A1 residual). Returns a
+    refusal result when execution must not proceed, or None to go ahead.
+    The config switch is checked FIRST: nothing executes — not even the
+    platform check matters — while the user has the feature off. The
+    file is re-read on every call (see applescript_config).
     """
-    if not applescript_config.is_applescript_enabled():
+    if not cfg.enabled:
         try:
-            where = str(applescript_config._config_path())
+            where = str(applescript_config.config_path())
         except Exception:
             where = "applescript_config.yml"
         return _result(
@@ -251,24 +277,26 @@ def _script_from_args(args: Dict) -> Tuple[Optional[str], Optional[str]]:
 
 async def _run_applescript_handler(args: Dict) -> Dict[str, Any]:
     """Execute an AppleScript string via ``osascript -e``."""
-    refusal = _gate_check()
+    cfg = applescript_config.load_config()  # one read per call (A1 residual)
+    refusal = _gate_check(cfg)
     if refusal is not None:
         return refusal
     script, error = _script_from_args(args)
     if error is not None:
         return _result(False, error=error)
-    return await _execute(["osascript", "-e", script])
+    return await _execute(["osascript", "-e", script], cfg)
 
 
 async def _run_jxa_handler(args: Dict) -> Dict[str, Any]:
     """Execute a JavaScript for Automation string via ``osascript -l JavaScript -e``."""
-    refusal = _gate_check()
+    cfg = applescript_config.load_config()  # one read per call (A1 residual)
+    refusal = _gate_check(cfg)
     if refusal is not None:
         return refusal
     script, error = _script_from_args(args)
     if error is not None:
         return _result(False, error=error)
-    return await _execute(["osascript", "-l", "JavaScript", "-e", script])
+    return await _execute(["osascript", "-l", "JavaScript", "-e", script], cfg)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

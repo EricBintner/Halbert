@@ -24,8 +24,13 @@ import yaml
 logger = logging.getLogger("halbert.config.applescript")
 
 
-def _config_path() -> Path:
-    """Path to applescript_config.yml in the user's config directory."""
+def config_path() -> Path:
+    """Path to applescript_config.yml in the user's config directory.
+
+    Public (A2): callers — notably the disabled-refusal message in
+    tools/applescript_tools.py — use this to tell the user exactly which
+    file to edit, without reaching into a private helper.
+    """
     try:
         from ..utils.platform import get_config_dir
         return get_config_dir() / "applescript_config.yml"
@@ -41,7 +46,7 @@ class AppleScriptConfig:
 
 def load_config() -> AppleScriptConfig:
     """Load applescript config from disk, or defaults if missing/unreadable."""
-    path = _config_path()
+    path = config_path()
     if not path.exists():
         return AppleScriptConfig()
     try:

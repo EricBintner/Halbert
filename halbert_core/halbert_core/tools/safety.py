@@ -522,6 +522,15 @@ class ToolSafetyFramework:
                 requires_confirmation=False,
                 reason="Local vision capture (read-only)"
             )
+        elif tool_name in ("run_applescript", "run_jxa"):
+            # A2: AppleScript/JXA scripts classify by script CONTENT — one
+            # script is the whole machine (Finder deletes, Mail sends, `do
+            # shell script` runs shell). This branch takes precedence over
+            # the unknown-tool MEDIUM default below: the founder ruling is
+            # HIGH for anything not positively identified as read-only
+            # (see tools/applescript_safety.py).
+            from .applescript_safety import classify_applescript_tool
+            return classify_applescript_tool(tool_name, args)
         else:
             # Unknown tools get MEDIUM by default
             return SafetyCheckResult(
@@ -732,6 +741,17 @@ class ToolSafetyFramework:
             return (
                 f"**Execute command:**\n"
                 f"```\n{cmd}\n```\n\n"
+                f"**Risk Level:** {result.risk_level.value.upper()}\n"
+                f"**Reason:** {result.reason}"
+            )
+        elif tool_name in ("run_applescript", "run_jxa"):
+            # A2: the script IS the action, so show it verbatim — the
+            # speaker confirms what will actually run, not a summary.
+            script = args.get("script", "")
+            label = "AppleScript (JXA)" if tool_name == "run_jxa" else "AppleScript"
+            return (
+                f"**Run {label}:**\n"
+                f"```\n{script}\n```\n\n"
                 f"**Risk Level:** {result.risk_level.value.upper()}\n"
                 f"**Reason:** {result.reason}"
             )

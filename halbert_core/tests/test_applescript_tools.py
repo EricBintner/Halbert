@@ -86,9 +86,11 @@ def _write_config(path, enabled, timeout_seconds=10):
 
 @pytest.fixture
 def isolated_config(tmp_path, monkeypatch):
-    """Point the applescript config loader at a temp file (OFF by default)."""
+    """Point the applescript config loader at a temp file (OFF by default).
+    Patches the PUBLIC config_path() helper (A2 residual a): the private
+    _config_path() is gone."""
     path = tmp_path / "applescript_config.yml"
-    monkeypatch.setattr(applescript_config, "_config_path", lambda: path)
+    monkeypatch.setattr(applescript_config, "config_path", lambda: path)
     return path
 
 
@@ -417,3 +419,93 @@ class TestOutputCap:
         assert result["output"] == "small\n"
         assert result["error"] == ""
         assert proc.killed is False
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# A1 residuals folded into A2
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestA1Residuals:
+    def test_config_path_is_public(self, isolated_config):
+        """Residual (a): the public config_path() helper is what callers —
+        including the disabled-refusal message — use; load_config follows
+        whatever it resolves to."""
+        path = applescript_config.config_path()
+        assert path.name == "applescript_config.yml"
+        isolated_config.write_text("enabled: true\n")
+        assert applescript_config.load_config().enabled is True
+
+    def test_refusal_message_uses_the_public_helper(self, isolated_config, monkeypatch):
+        calls = _mock_spawn(monkeypatch, [FakeProc()])
+
+        result = asyncio.run(APPLESCRIPT_TOOL_HANDLERS["run_applescript"](
+            {"script": "return 1"}))
+
+        # the refusal names the resolved config file so the user can act on it
+        assert result["success"] is False
+        assert "applescript_config.yml" in result["error"]
+        assert calls == []
+
+    def test_config_is_loaded_once_per_call(self, isolated_config, monkeypatch):
+        """Residual (b): the handler used to read the config twice per call
+        (gate + timeout). One load, passed through."""
+        _write_config(isolated_config, enabled=True, timeout_seconds=25)
+        real = applescript_config.load_config
+        loads = []
+
+        def counting():
+            loads.append(1)
+            return real()
+
+        monkeypatch.setattr(applescript_config, "load_config", counting)
+        _mock_spawn(monkeypatch, [FakeProc(returncode=0, stdout=b"ok\n")])
+
+        result = asyncio.run(APPLESCRIPT_TOOL_HANDLERS["run_applescript"](
+            {"script": "return 1"}))
+
+        assert result["success"] is True
+        assert len(loads) == 1  # gate + timeout share the same read
+
+    def test_reaped_child_carries_an_explanation(self, isolated_config, monkeypatch):
+        """Residual (c): a child SIGKILLed after closing its pipes early
+        used to return success=False, exit_code=-9, and an EMPTY error.
+        The agent gets a one-line note so it can self-correct."""
+        _write_config(isolated_config, enabled=True)
+        _mock_spawn(monkeypatch, [FakeProc(returncode=-9)])
+
+        result = asyncio.run(APPLESCRIPT_TOOL_HANDLERS["run_applescript"](
+            {"script": "delay 30"}))
+
+        assert result["success"] is False
+        assert result["exit_code"] == -9
+        assert result["error"]  # not empty
+        assert "kill" in result["error"].lower()
+
+    def test_both_streams_capped_names_both(self, isolated_config, monkeypatch):
+        """Residual (d): the truncation notice used to name only stdout.
+        When both streams hit the cap, both are named."""
+        _write_config(isolated_config, enabled=True)
+
+        class GulpStream:
+            """A stream that returns its entire payload in one read, so
+            both pipes hit the cap in the same completion batch."""
+
+            def __init__(self, data):
+                self._data = data
+
+            async def read(self, n):
+                data, self._data = self._data, b""
+                return data
+
+        proc = FakeProc()
+        proc.stdout = GulpStream(b"x" * (MAX_OUTPUT_BYTES + 10))
+        proc.stderr = GulpStream(b"e" * (MAX_OUTPUT_BYTES + 10))
+        _mock_spawn(monkeypatch, [proc])
+
+        result = asyncio.run(APPLESCRIPT_TOOL_HANDLERS["run_applescript"](
+            {"script": "chatter"}))
+
+        assert result["success"] is False
+        assert "truncat" in result["error"].lower()
+        assert "stdout and stderr" in result["error"]
+        assert proc.killed is True

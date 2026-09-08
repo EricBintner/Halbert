@@ -196,6 +196,12 @@ GUEST_DENIED_TOOLS: FrozenSet[str] = frozenset({
     # pinned in tests/tools/test_execute_code.py at every layer: never
     # offered, refused if named, absent from any script's stub set.
     "execute_code",
+    # AppleScript / JXA (A2): one script call is the whole machine —
+    # Finder deletes, Mail sends, `do shell script` runs shell. A guest
+    # scripts nothing on this host; pinned in
+    # tests/test_applescript_safety.py at every layer.
+    "run_applescript",
+    "run_jxa",
     # MCP-surface names, listed so the intent is on record should any of
     # them ever be registered as agent tools
     "get_being_config",
