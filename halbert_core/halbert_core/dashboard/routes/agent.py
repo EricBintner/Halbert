@@ -322,6 +322,16 @@ def get_agent():
             register_accelerator_tools(tool_executor)
         except Exception as e:
             logger.warning(f"Could not register accelerator tools (non-fatal): {e}")
+
+        # AppleScript / JXA tools (A1) — macOS only, CAP_APPLESCRIPT-gated
+        # (register_applescript_tools checks both). The per-call
+        # applescript_config.yml switch still gates every execution, so
+        # registering here only controls whether the schema is offered.
+        try:
+            from ...tools.applescript_tools import register_applescript_tools
+            register_applescript_tools(tool_executor)
+        except Exception as e:
+            logger.warning(f"Could not register AppleScript tools (non-fatal): {e}")
         _agent_instance = AgentStateMachine(
             llm_client=llm_client,
             tool_executor=tool_executor,

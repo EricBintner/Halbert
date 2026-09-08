@@ -44,6 +44,13 @@ Capabilities:
                        default on every variant — C3-08). This is an
                        egress switch, so no preset ever turns it on: only
                        the file (probe) or a being.yml override does.
+  applescript       — the osascript tool surface may register (macOS
+                       only). No probe: a config decision, not runtime
+                       detection. Registration still requires the
+                       platform check, and the per-call
+                       applescript_config.yml switch gates every
+                       execution, so the capability is not by itself an
+                       execution grant.
 
 Design:
 - Probes are cheap (config checks, file existence, not network probes).
@@ -77,6 +84,7 @@ CAP_SECURE_MODEL = "secure_model"
 CAP_SECURE_MODEL_ALLOWED = "secure_model_allowed"
 CAP_AUDIO = "audio"
 CAP_WEB = "web"
+CAP_APPLESCRIPT = "applescript"
 
 ALL_CAPABILITIES: Set[str] = {
     CAP_TERMINAL,
@@ -91,6 +99,7 @@ ALL_CAPABILITIES: Set[str] = {
     CAP_SECURE_MODEL_ALLOWED,
     CAP_AUDIO,
     CAP_WEB,
+    CAP_APPLESCRIPT,
 }
 
 # ---------------------------------------------------------------------------
@@ -110,6 +119,10 @@ _PRESET_SYSADMIN: Dict[str, bool] = {
     CAP_SECURE_MODEL_ALLOWED: True,   # sysadmin may host a secure model
     CAP_AUDIO: True,           # any node can be the voice terminal (probe gates)
     CAP_WEB: False,            # egress: never on by preset (C3-08)
+    # No probe: being on a Mac with the sysadmin preset is the decision.
+    # The per-call applescript_config.yml switch still gates every tool
+    # call, so the capability only controls whether the tools register.
+    CAP_APPLESCRIPT: True,
 }
 
 _PRESET_HOME: Dict[str, bool] = {
@@ -128,6 +141,7 @@ _PRESET_HOME: Dict[str, bool] = {
     CAP_SECURE_MODEL_ALLOWED: False,
     CAP_AUDIO: True,           # any node can be the voice terminal (probe gates)
     CAP_WEB: False,            # egress: never on by preset (C3-08)
+    CAP_APPLESCRIPT: False,    # osascript stays off for the home appliance
 }
 
 
