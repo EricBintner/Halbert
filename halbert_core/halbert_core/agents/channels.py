@@ -28,9 +28,15 @@ against a seam that exists or is being built in this series:
 - ``transcribe_before_command`` — the Hermes voice rule: a command
   arrives as transcript, so the browser-relay seam cannot regress it.
 
-The terminal channel is NOT declared: whether a TTY is a talk channel at
-all is a founder question (design §8 Q1/Q3), and a declared channel is an
-admitted ingress — policy is not written by accident.
+The terminal channel IS declared (C5, founder ruling 2026-09-07: "the
+terminal becomes a third talk channel, ASSERTED via dashboard token" —
+design §8 Q1's recommendation accepted, Q3 answered yes-with-caution).
+It is the talk channel of a terminal-originated *client* — a turn that
+arrives at the one talk door having been typed at the machine's
+terminal surface. The existing terminal subsystem (pty spawn/exec/stage,
+``routes/terminal.py``, the Plan B watched shells and their
+``terminal_blocks``) is a tool surface and stays one: it runs commands,
+it does not talk.
 """
 from __future__ import annotations
 
@@ -92,21 +98,49 @@ VOICE_CHANNEL = ChannelDeclaration(
     transcribe_before_command=True,
 )
 
+#: The terminal talk channel (C5, founder ruling 2026-09-07): a turn
+#: typed at the machine's terminal surface and submitted to the one talk
+#: door. Ceiling ASSERTED via the dashboard token (the ruling accepted
+#: design §8 Q1's recommendation — the same credential the server
+#: validates for any local client); default role admin, the terminal's
+#: own convention: the owner's shell on the owner's machine. Busy verbs
+#: (design §4 table, the C5 row): a CLI user accepts whole-turn queuing
+#: as the first-class mode; steer rides the same slot when a turn is
+#: live — /stop stays unclaimed here, which C3's busy unification
+#: consumes. Delivery is the door's own SSE stream; C4's event tee (the
+#: design names the terminal a tee consumer) extends this set when that
+#: dispatch lands, not before — a channel declares only what it can
+#: honestly receive today. Commands are typed, never transcribed.
+TERMINAL_CHANNEL = ChannelDeclaration(
+    id="terminal",
+    claim_ceiling=ClaimStrength.ASSERTED,
+    default_role="admin",
+    busy_verbs=frozenset({"queue", "steer"}),
+    delivery=frozenset({"sse"}),
+    transcribe_before_command=False,
+)
+
 #: Every admitted ingress. Unknown channel fails closed (below) — an
 #: ingress that resolves to nothing here is refused, never silently
 #: treated as typed.
 CHANNEL_REGISTRY: Dict[str, ChannelDeclaration] = {
     DASHBOARD_CHANNEL.id: DASHBOARD_CHANNEL,
     VOICE_CHANNEL.id: VOICE_CHANNEL,
+    TERMINAL_CHANNEL.id: TERMINAL_CHANNEL,
 }
 
 #: The source the SERVER stamps for each channel — the design §5 table:
 #: what each channel actually is. Used when the wire declares a source
 #: the channel cannot carry: the claim clamps to this, never to anything
-#: the wire named.
+#: the wire named. The terminal's stamp is the SAME dashboard token the
+#: server validated on the request (the founder ruling: ASSERTED via the
+#: existing dashboard token — an OS uid is not a cryptographic device
+#: credential, so no ``local_console`` VERIFIED source exists, per the
+#: ruling's decline of design §8 Q1's alternative).
 CHANNEL_CLAIM_STAMP: Dict[str, str] = {
     "dashboard": "dashboard_token",
     "voice": "voice_speaker_verification",
+    "terminal": "dashboard_token",
 }
 
 
@@ -139,16 +173,20 @@ def resolve_channel(modality: Optional[str]) -> ChannelDeclaration:
     The typed values map to the dashboard door (a typed turn IS a
     dashboard turn: the same authenticated HTTP surface, which is why
     ``"text"`` resolves like an absent modality); ``"voice"`` maps to the
-    voice channel. Normalization matches process()'s own, so the route
-    and the state machine can never disagree about which channel a turn
-    arrived on. Anything else raises :class:`ChannelRefused` — fail
-    closed, in the admission module's shape.
+    voice channel; ``"terminal"`` maps to the terminal talk channel (C5:
+    a turn typed at the machine's terminal surface). Normalization
+    matches process()'s own, so the route and the state machine can
+    never disagree about which channel a turn arrived on. Anything else
+    raises :class:`ChannelRefused` — fail closed, in the admission
+    module's shape.
     """
     normalized = str(modality or "").strip().lower()
     if normalized in ("", "text"):
         return CHANNEL_REGISTRY["dashboard"]
     if normalized == "voice":
         return CHANNEL_REGISTRY["voice"]
+    if normalized == "terminal":
+        return CHANNEL_REGISTRY["terminal"]
     raise ChannelRefused(modality)
 
 
@@ -164,12 +202,17 @@ def stamped_claim_source(
     - Nothing declared stamps nothing: absent fields keep today's
       behavior exactly (04-A1's byte-identical pin) — a typed turn
       records no claim and an unidentified voice turn fails closed to
-      UNVERIFIED in the ladder.
+      UNVERIFIED in the ladder. (The terminal channel's own identity is
+      stamped downstream of this function — see ``CHANNEL_CLAIM_STAMP``
+      and the state machine's C5 branch — so an absent field can no more
+      weaken a terminal turn than a declared one can raise it.)
     - The dashboard door accepts no client-named sources at all: every
       declared claim clamps to the channel's own stamp
       (``dashboard_token``), the one credential the server actually
       validated. A forged ``voice_speaker_verification`` can never mint
-      a speaker claim here.
+      a speaker claim here. The terminal channel holds the same rule
+      (C5): its identity IS the dashboard token, so a declared source
+      over it can only ever clamp to that stamp.
     - The voice channel passes a declared source at or below its ceiling
       through unchanged — an honest relay's claim survives, an unknown
       source keeps the ladder's own fail-closed reading — and a declared
@@ -182,7 +225,7 @@ def stamped_claim_source(
         return None
     strength = CLAIM_SOURCE_STRENGTHS.get(declared, ClaimStrength.UNVERIFIED)
     stamp = CHANNEL_CLAIM_STAMP[channel.id]
-    if channel.id == "dashboard" or strength > channel.claim_ceiling:
+    if channel.id in ("dashboard", "terminal") or strength > channel.claim_ceiling:
         if declared != stamp:
             logger.info(
                 "claim_clamped: channel=%s declared_source=%s stamped_source=%s "

@@ -269,10 +269,12 @@ class StateContext:
     # same /api/agent/message door as a typed one, so without these the
     # turn was indistinguishable from dashboard chat and speaker_role
     # silently defaulted to "admin" — RoleGate then treated every spoken
-    # command as the owner's. modality is ingress ("text" | "voice"),
+    # command as the owner's. modality is ingress ("text" | "voice" |
+    # "terminal" — C5: a turn typed at the machine's terminal surface),
     # defaulting by the same rule as speaker_role: explicit wins, text
     # turns keep today's behavior exactly, voice turns with no identified
-    # speaker are "unknown" — never a silent admin default.
+    # speaker are "unknown" — never a silent admin default — and terminal
+    # turns are admin via the channel's own declaration.
     modality: str = "text"
     # Who the audio pipeline says is speaking (CAM++ match name, "" when
     # unmatched). A name to display and a claim to record — identification

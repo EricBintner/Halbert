@@ -460,15 +460,22 @@ class AgentStateMachine:
                 to tighten tool-risk classification. Voice ingress passes
                 "unknown" (the satellite protocol verifies no one); absent
                 means the dashboard-chat default "admin" applies.
-            modality: Ingress modality ("voice" for a spoken turn). Absent
-                means a typed turn — today's behavior, unchanged. A voice
-                turn with no speaker_role defaults to "unknown", never to
-                the "admin" a typed turn carries: the RoleGate must not
-                hear the owner's voice in an unidentified speaker's.
+            modality: Ingress modality ("voice" for a spoken turn,
+                "terminal" for a turn typed at the machine's terminal
+                surface, C5). Absent means a typed turn — today's
+                behavior, unchanged. A voice turn with no speaker_role
+                defaults to "unknown", never to the "admin" a typed turn
+                carries: the RoleGate must not hear the owner's voice in
+                an unidentified speaker's. A terminal turn defaults to
+                "admin" and carries the channel's own dashboard-token
+                claim (founder ruling 2026-09-07), so the D-6 cap is a
+                no-op for it.
             speaker_name: Who the audio pipeline identified as speaking
                 (CAM++ match name). A claim to record, not a role grant.
             claim_source: Where the speaker claim came from
                 ("voice_speaker_verification" | "free_text_name" | None).
+                Ignored for a terminal turn: its claim is the channel's
+                own stamp.
 
         Yields:
             StreamEvent objects for each state change, tool call, etc.
@@ -508,19 +515,34 @@ class AgentStateMachine:
 
         # Packet 04 A1: typed voice ingress. Exactly one door
         # (/api/agent/message) serves typed and spoken turns, so the turn
-        # has to carry which it is. Defaulting, in order: an explicit role
-        # always wins; a typed turn keeps today's "admin" (dashboard chat
-        # is session-authenticated); a voice turn with no identified
-        # speaker is "unknown" — never a silent admin default, which is
-        # the security gap this closes. The modality is normalized to the
-        # two ingress values so a client cannot invent a third.
-        turn_modality = "voice" if str(modality or "").strip().lower() == "voice" else "text"
+        # has to carry which it is. C5 adds the third ingress value:
+        # "terminal", a turn typed at the machine's terminal surface
+        # (founder ruling 2026-09-07 — the terminal is a talk channel,
+        # ASSERTED via the dashboard token). Defaulting, in order: an
+        # explicit role always wins; otherwise the resolved channel's own
+        # default_role is the answer (design §1: the defaults the route,
+        # the gate list, and a test can all read — typed is admin
+        # (dashboard chat is session-authenticated), voice is "unknown"
+        # — never a silent admin default, the security gap this closes —
+        # and terminal is admin, the owner's shell on the owner's
+        # machine). The modality is normalized to the three enumerated
+        # ingress values so a client cannot invent a fourth; the inline
+        # defaults below are only the registry's non-fatal fallback.
+        normalized_modality = str(modality or "").strip().lower()
+        if normalized_modality in ("voice", "terminal"):
+            turn_modality = normalized_modality
+        else:
+            turn_modality = "text"
         if speaker_role:
             turn_speaker_role = speaker_role
-        elif turn_modality == "text":
-            turn_speaker_role = "admin"
         else:
-            turn_speaker_role = "unknown"
+            try:
+                from .channels import resolve_channel
+                turn_speaker_role = resolve_channel(turn_modality).default_role
+            except Exception:
+                turn_speaker_role = (
+                    "admin" if turn_modality == "text" else "unknown"
+                )
 
         # C1 (channel layer, D-4 design §1): the turn's resolved channel,
         # derived from the same normalized modality through the one
@@ -550,12 +572,34 @@ class AgentStateMachine:
         # never to a stronger reading. Typed turns record no claim here:
         # absent request fields must keep today's behavior exactly (the
         # packet's regression gate), and a typed turn's identity rides
-        # the dashboard session.
+        # the dashboard session. A terminal turn's claim is the channel's
+        # own stamp (the branch below), which is the same dashboard-token
+        # identity a typed turn rides — stated where the voice ladder can
+        # read it, so the D-6 cap composes and is a no-op at ASSERTED.
         turn_identifier_claim = None
         if turn_modality == "voice":
             try:
                 from ..persona.claims import claim_from_source
                 turn_identifier_claim = claim_from_source(claim_source, value=speaker_name)
+            except Exception as e:
+                logger.debug(f"identifier claim not derived (non-fatal): {e}")
+        elif turn_modality == "terminal":
+            # C5 (founder ruling 2026-09-07): the terminal channel's
+            # identity IS the dashboard token the door validated —
+            # ASSERTED, unconditionally. Derived from the channel's own
+            # stamp, never from the wire's field: an absent or forged
+            # claim_source can neither raise nor weaken it (there is no
+            # pre-C5 terminal turn whose bytes need preserving). The
+            # recorded claim_source is normalized to the same stamp so
+            # the turn's record and its derived claim agree, and the
+            # D-6 cap composes as a no-op: an ASSERTED claim's ceiling
+            # is admin, so the executor's effective_voice_role leaves
+            # the terminal turn's admin role exactly as stated.
+            try:
+                from ..persona.claims import claim_from_source
+                from .channels import CHANNEL_CLAIM_STAMP
+                claim_source = CHANNEL_CLAIM_STAMP["terminal"]
+                turn_identifier_claim = claim_from_source(claim_source)
             except Exception as e:
                 logger.debug(f"identifier claim not derived (non-fatal): {e}")
         claim_strength_label = (
