@@ -683,6 +683,18 @@ Use first person ("I", "my") for subjective experience and feelings. Use third p
         Returns:
             System prompt string
         """
+        # A4: scriptable-apps context. The injector gates itself (macOS +
+        # CAP_APPLESCRIPT + applescript config, fail closed) and reads the
+        # stored discovery results without triggering a scan; it returns ""
+        # whenever there is nothing to inject, so an empty block never
+        # reaches the prompt.
+        try:
+            from .applescript_context import AppleScriptContextInjector
+            applescript_block = AppleScriptContextInjector().get_context()
+        except Exception as e:
+            logger.debug(f"Scriptable-apps context injection skipped: {e}")
+            applescript_block = ""
+
         if self.base_builder is not None:
             try:
                 # Build system context from ContextInjector if available
@@ -701,6 +713,8 @@ Use first person ("I", "my") for subjective experience and feelings. Use third p
                     personality_section=self._generate_personality(),
                 )
                 if prompt:
+                    if applescript_block:
+                        prompt = f"{prompt}\n\n{applescript_block}"
                     return prompt
             except Exception as e:
                 logger.warning(f"PromptBuilder delegation failed, using fallback: {e}")
@@ -720,7 +734,10 @@ Use first person ("I", "my") for subjective experience and feelings. Use third p
         if user_preferences:
             pref_section = self._format_preferences(user_preferences)
             parts.append(pref_section)
-        
+
+        if applescript_block:
+            parts.append(applescript_block)
+
         return "\n\n".join(parts)
     
     def build_planning_prompt(
