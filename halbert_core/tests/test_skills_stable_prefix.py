@@ -13,8 +13,6 @@ invalidates exactly the cache entries that must die and no more.
 
 from __future__ import annotations
 
-import pytest
-
 from halbert_core.prompts.agent_prompts import (
     CACHE_BOUNDARY_MARKER,
     PROMPT_TEMPLATE_VERSION,

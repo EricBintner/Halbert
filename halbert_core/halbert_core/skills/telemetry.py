@@ -29,7 +29,6 @@ registry or an unwritable row costs nothing but a log line.
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)

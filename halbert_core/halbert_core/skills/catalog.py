@@ -47,7 +47,7 @@ from pathlib import Path
 from typing import Iterable, Optional, Tuple
 from xml.sax.saxutils import escape as _xml_escape
 
-from .parser import Skill, clamp_description
+from .parser import clamp_description
 from .registry import SkillRegistry
 
 __all__ = [
@@ -59,9 +59,9 @@ __all__ = [
 
 #: The catalog's share of the skill section's budget, in characters. Bound
 #: bodies keep their own composer caps (4k per skill / 8k per turn); this is
-#: the catalog's, sized so the nine bundled skills — whose `<location>`
-#: lines carry the full install path — render in full on a default host and
-#: the ladder engages only when ingested ecosystem packs pile up.
+#: the catalog's, sized so the bundled ops set — whose `<location>` lines
+#: carry the full install path — renders in full on a default host and the
+#: ladder engages only when ingested ecosystem packs pile up.
 CATALOG_BUDGET_CHARS = 4000
 
 _CATALOG_OPEN = "<available_skills>"
