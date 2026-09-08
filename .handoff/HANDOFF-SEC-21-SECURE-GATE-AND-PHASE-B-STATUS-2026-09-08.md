@@ -171,23 +171,46 @@ both the API (a config edit while off is a 409, not a silent no-op) and the
 page. The gap is the `SPA_ROUTES` omission in §4 — the page works by
 navigation, not by URL.
 
-**By the HANDOFF (`HANDOFF-VOICE-ASSISTANT-APP-UI-ACCESS-2026-09-07.md`, which added B6): not complete.**
-B6 — *expose Halbert's tools as an MCP server, wrapping the same `execute` the
-agent uses* — has no commit. The merge title's "MCP client+**server**" refers
-to the pre-existing August server: `mcp/server.py` still exposes only the
-seven read-only `_tool_get_*` handlers and nothing wraps the agent's
-`ToolExecutor` registry. The two `B6` hits in git history are the old
-terminal-pool numbering, not this.
+**By the HANDOFF (`HANDOFF-VOICE-ASSISTANT-APP-UI-ACCESS-2026-09-07.md`, which added B6): not complete — and B6 is not what the first version of this section said.**
+
+> **Correction (same day, follow-up commit).** The first version of this
+> paragraph described B6 as *"expose Halbert's tools as an MCP server — no
+> commit; nothing wraps the agent's `ToolExecutor` registry"* and called it a
+> new surface needing a founder decision. That was the handoff doc's framing;
+> **the founder had already overruled it on 2026-09-07**: the existing
+> `mcp/server.py` *is* the expose-as-server, the plan was wrong to treat it as
+> new, and **B6 = audit that server against the B6 intent — verify redaction
+> and camera-gate coverage, extend only on gaps, do not rebuild.** I also
+> wrote "seven read-only `_tool_get_*` handlers"; a grep on one prefix. The
+> server is 1,879 lines and exposes **18 tools**, and they are not all
+> read-only: `approve_proposal`, `set_autonomy_level`, `ha_call_service` and
+> `run_scanner` act on the machine. Both errors were mine, caught by reading
+> a memory note I should have consulted before assessing.
+
+What is true: **the B6 audit has not happened.** `mcp/server.py` has no commit
+since the B-series began (its last change is the 2026-09-07 camera-gate fix,
+which predates B6's dispatch), and the only documents mentioning both B6 and
+the server are the August REV-02 review and this file. The two `B6` hits in
+git history are the old terminal-pool numbering, not this.
 
 **The "B6 audit → final review" step has not happened.** There is no results
 or review document for app-ui-access; `REVIEW-PACKET-02-MCP-SERVER-AND-BOUNDARY.md`
 is from the August MCP series.
 
 **Recommended order:** (1) the two-line `SPA_ROUTES` fix — closes a real B5
-defect and returns `main` to green; (2) a founder decision on B6 — it was
-added as "NEW, not in original plan", it is a real new surface (Halbert's
-tools reachable by other agents over MCP, so the MCP trust-boundary rulings
-apply in full), and it should not be started unasked; (3) the final review.
+defect and returns `main` to green; (2) **the B6 audit as the founder ruled
+it** — no decision is pending; the work is to read the 18 exposed tools
+against the redaction choke point and the camera gate, with particular
+attention to the four that act (`approve_proposal`, `set_autonomy_level`,
+`ha_call_service`, `run_scanner`) and to whether the MCP trust-boundary
+rulings (scrub deterministically before the model; pin local) hold on every
+response path; (3) the final review, which does not exist.
+
+One more thing the memory note surfaced that this file should carry: **the
+app-ui-access branch was merged and pushed by my broken chain (§5), which
+skipped the plan's "superpowers:finishing-a-development-branch → founder merge
+decision" step.** The merge itself is sound and the suite was green minus the
+documented baseline; the *decision* was never taken.
 
 ---
 
