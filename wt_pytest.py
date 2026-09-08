@@ -50,4 +50,86 @@ if not real.startswith(expected):
 
 import pytest  # noqa: E402
 
-raise SystemExit(pytest.main(sys.argv[1:]))
+# 5. Enforce the suite's asyncio contract at the wrapper, not the invoking
+#    shell. The contract lives in halbert_core/pyproject.toml
+#    ([tool.pytest.ini_options] asyncio_mode = "auto"): fourteen suites
+#    (voice, TTS, terminal-stream, compute, ...) write bare ``async def
+#    test_`` with no marker and rely on auto-conversion. That ini applies
+#    only when the run's inifile/rootdir resolution actually picks it up;
+#    a run that loses it — a stray pytest.ini between cwd and the package
+#    dir, or an ``asyncio_mode`` override riding in via PYTEST_ADDOPTS —
+#    silently falls back to pytest-asyncio's built-in strict default and
+#    fails ~200 async tests with "async def functions are not natively
+#    supported", a signature that reads as a code regression but is pure
+#    invocation environment (seen 2026-09-07 as a 205-failed/17-error full
+#    gate; the committed tree itself is green under the gate invocation).
+#
+#    Two overrides cannot simply be out-ranked, so they are refused loudly:
+#    ``-o asyncio_mode=...``/``--override-ini asyncio_mode=...`` beats both
+#    the ini and the ``--asyncio-mode`` CLI flag inside pytest's option
+#    resolution, and ``-p no:asyncio`` unloads the plugin outright. Anything
+#    else (a missing ini, a stale one) is neutralized by appending
+#    ``--asyncio-mode=auto``, which outranks every inifile. A caller who
+#    truly wants strict mode bypasses the wrapper and calls pytest directly.
+import shlex  # noqa: E402
+
+try:
+    _addopts = shlex.split(os.environ.get("PYTEST_ADDOPTS", ""))
+except ValueError as _e:  # malformed quoting in the caller's env
+    sys.stderr.write(f"REFUSING TO RUN: PYTEST_ADDOPTS does not shlex-split ({_e}).\n")
+    raise SystemExit(2) from None
+
+_tokens = sys.argv[1:] + _addopts
+
+
+def _asyncio_override_values(tokens):
+    """Every value the invocation explicitly assigns to asyncio mode."""
+    values = []
+    skip_next = False
+    for i, tok in enumerate(tokens):
+        if skip_next:
+            skip_next = False
+            continue
+        if tok in ("-o", "--override-ini"):
+            nxt = tokens[i + 1] if i + 1 < len(tokens) else ""
+            if nxt.split("=", 1)[0].strip() == "asyncio_mode":
+                values.append(nxt.split("=", 1)[1] if "=" in nxt else "")
+                skip_next = True
+            continue
+        if tok.startswith("--asyncio-mode="):
+            values.append(tok.split("=", 1)[1])
+            continue
+        if tok == "--asyncio-mode":
+            values.append(tokens[i + 1] if i + 1 < len(tokens) else "")
+            skip_next = True
+            continue
+        if tok.startswith("-o") and "asyncio_mode" in tok:
+            values.append(tok.split("=", 1)[1] if "=" in tok else "")
+            continue
+        if tok == "-p" and i + 1 < len(tokens) and tokens[i + 1] == "no:asyncio":
+            values.append("no:asyncio")
+            skip_next = True
+            continue
+        if tok.startswith("-p") and "no:asyncio" in tok:
+            values.append("no:asyncio")
+    return values
+
+
+_overrides = _asyncio_override_values(_tokens)
+_bad = [v for v in _overrides if v not in ("auto", "")]
+if _bad:
+    sys.stderr.write(
+        f"REFUSING TO RUN: this run sets asyncio mode {_bad!r} (argv or "
+        "PYTEST_ADDOPTS). The suite's contract is asyncio_mode=auto — "
+        "fourteen suites rely on it and any other mode fails ~200 async "
+        "tests with 'async def functions are not natively supported'. "
+        "Drop the override, or bypass wt_pytest.py to run strict "
+        "deliberately.\n"
+    )
+    raise SystemExit(2)
+
+_argv = sys.argv[1:]
+if not _overrides:
+    _argv.append("--asyncio-mode=auto")
+
+raise SystemExit(pytest.main(_argv))
