@@ -484,7 +484,9 @@ class TestConcurrency:
     @pytest.mark.parametrize(
         "store_method, call",
         [
-            ("create_thread", lambda tm, tid: tm.new_thread("Scanner share", "x", from_thread_id=tid)),
+            # P3c: `_open_new_thread` opens the successor through the atomic
+            # get-or-open, so that is the store call the lock must cover.
+            ("get_or_open_thread", lambda tm, tid: tm.new_thread("Scanner share", "x", from_thread_id=tid)),
             ("get_thread", lambda tm, tid: tm.retract_recall(tid, "gone")),
         ],
         # `tick` moves threads too, but takes the lock once per close rather
@@ -606,20 +608,21 @@ class TestConcurrency:
     def test_new_thread_cannot_race_a_turn_into_a_second_open_row(self, tm, monkeypatch):
         t1 = _turn(tm, "add a samba share for the media folder")
         entered, released = threading.Event(), threading.Event()
-        real = tm.store.create_thread
+        real = tm.store.get_or_open_thread
 
         def synced(*args, **kwargs):
-            # new_thread pauses the old row *before* it creates the successor.
-            # Unlocked, a begin_turn arriving in this window found no open
-            # thread at all and opened its own, leaving two rows at
-            # status='open' — the loser never selected again, never paused, and
-            # out of reach of tick(), which sweeps only 'paused'. Behind the
-            # manager's lock the turn cannot get in here, so it waits.
+            # new_thread pauses the old row *before* it opens the successor
+            # (through the P3c get-or-open). Unlocked, a begin_turn arriving
+            # in this window found no open thread at all and opened its own,
+            # leaving two rows at status='open' — the loser never selected
+            # again, never paused, and out of reach of tick(), which sweeps
+            # only 'paused'. Behind the manager's lock the turn cannot get
+            # in here, so it waits.
             entered.set()
             released.wait(timeout=0.5)
             return real(*args, **kwargs)
 
-        monkeypatch.setattr(tm.store, "create_thread", synced)
+        monkeypatch.setattr(tm.store, "get_or_open_thread", synced)
         failures = []
 
         def switch():

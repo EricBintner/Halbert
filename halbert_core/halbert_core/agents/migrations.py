@@ -63,7 +63,6 @@ from typing import Any, Dict, List, Optional, Sequence
 
 from ..intake.signals import analyze_message, canonical_entities
 from .blocks import content_to_anthropic, content_to_text
-from .conversation import Conversation
 from .conversation_sqlite import SqliteConversationStore
 from .receipt import build_receipt, provisional_title
 from .threads import MAX_THREAD_ENTITIES
@@ -532,17 +531,20 @@ def _build_thread(
     tid = rec["thread_id"]
     title = rec["title"]
 
-    store.save(Conversation(
-        conversation_id=tid,
-        user_id=rec["user_id"],
-        title=title,
-        created_at=rec["created_at"],
-        updated_at=rec["updated_at"],
+    # The row is born CLOSED, not via the legacy ``save()`` (which writes
+    # the column default 'open'): the migration runs on every boot against
+    # the live store, where the one-leaf index (D-5) makes a second open
+    # row a constraint violation -- a transiently-open import would fail
+    # against the live conversation's open leaf every boot. ``create_thread``
+    # takes no user_id, so it rides the update below.
+    if not store.create_thread(
+        tid, title, status="closed", created_at=rec["created_at"],
         metadata={_SOURCE_META_KEY: source_path},
-    ))
-    if store.get_thread(tid) is None:
+    ):
         logger.warning(f"migration: thread row for {tid} was not created")
         return False
+    if rec["user_id"]:
+        store.update_thread(tid, user_id=rec["user_id"], updated_at=rec["updated_at"])
 
     rows: List[Dict[str, Any]] = []
     turn_id: Optional[str] = None

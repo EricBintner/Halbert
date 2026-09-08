@@ -33,7 +33,11 @@ logger = logging.getLogger("halbert.agents.conversation_sqlite")
 _DEFAULT_DB = str(Path.home() / ".halbert" / "conversations.db")
 
 #: Bump when a migration step below must run on existing databases.
-SCHEMA_VERSION = 4
+#: v5: the one-leaf heal -- duplicate-open rows beyond the single
+#: ``current_open_thread()`` winner are demoted to ``paused`` on open, then
+#: the partial unique index ``idx_one_open_leaf`` makes two opens
+#: structurally impossible (P3c first, then the index: founder ruling D-5).
+SCHEMA_VERSION = 5
 
 # Columns added to the legacy tables. ``_ensure_schema`` applies each one
 # with ``ALTER TABLE ... ADD COLUMN`` when ``PRAGMA table_info`` lacks it.
@@ -670,6 +674,47 @@ class SqliteConversationStore:
                 except sqlite3.OperationalError as e:
                     logger.warning(f"FTS5 unavailable, falling back to LIKE: {e}")
                     fts_ready = False
+                # v5 (D-5 ruling: "P3c first, then the index"): the one-leaf
+                # heal, BEFORE the partial unique index below is created --
+                # on an A6b-era store with duplicate opens the CREATE UNIQUE
+                # INDEX would fail and abort the whole open, bricking the
+                # store. P3c's get_or_open_thread guarantees single-open at
+                # the writer, so this heal runs once, on the way past v4.
+                if version < 5:
+                    row = cur.execute(
+                        "SELECT id FROM conversations WHERE status = 'open' "
+                        "ORDER BY updated_at DESC LIMIT 1"
+                    ).fetchone()
+                    # The winner is exactly the row current_open_thread()
+                    # answers with (same predicate, same order); every other
+                    # open row is demoted to paused -- a lifecycle stamp
+                    # (status, paused_at, updated_at), never a content one:
+                    # messages, receipt, title, entities and metadata are
+                    # preserved as they stand, and tick()'s paused sweep can
+                    # now reach the rows (the A6b orphan could never be
+                    # reaped because no sweep looks at 'open').
+                    if row is not None:
+                        demoted = cur.execute(
+                            "UPDATE conversations SET status = 'paused', "
+                            "paused_at = ?, updated_at = ? "
+                            "WHERE status = 'open' AND id != ?",
+                            (time.time(), time.time(), row[0]),
+                        ).rowcount
+                        if demoted:
+                            logger.warning(
+                                "one-leaf heal (v5): demoted %d duplicate open "
+                                "thread(s) to paused; %r stays open",
+                                demoted, row[0],
+                            )
+                # The one-leaf partial unique index (design §1.2, landed per
+                # the D-5 ruling): two open threads stops being a logic bug
+                # and becomes a constraint violation at the exact commit that
+                # caused it. Ungated like every other index (IF NOT EXISTS on
+                # each open), but it must come after the heal above.
+                cur.execute(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS idx_one_open_leaf "
+                    "ON conversations(status) WHERE status = 'open'"
+                )
                 if version < SCHEMA_VERSION:
                     cur.execute("DELETE FROM schema_version")
                     cur.execute(
@@ -1589,6 +1634,90 @@ class SqliteConversationStore:
             logger.warning(f"create_thread failed: {e}")
             return False
 
+    def get_or_open_thread(
+        self,
+        thread_id: str,
+        title: str,
+        *,
+        title_source: str = "provisional",
+        created_at: Optional[float] = None,
+        parent_thread_id: Optional[str] = None,
+        metadata: Optional[dict] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """The atomic get-or-open (P3c, founder ruling D-5): find the open
+        thread; if none exists, create ``thread_id``; if a concurrent body
+        created one inside the same transaction window, return THAT one.
+
+        One ``BEGIN IMMEDIATE`` transaction, so the check (find the open
+        row) and the create are a single atomic step across every caller of
+        one database file -- two bodies (or two direct store instances on
+        the same file) that both see "no open thread" serialize here: the
+        first creates, the second gets the first's row back. No lost rows,
+        and exactly one open thread results. ``BEGIN IMMEDIATE`` (not the
+        deferred transaction ``create_thread`` rides) claims the write lock
+        *before* the read, the same discipline ``_ensure_schema`` uses: a
+        deferred read-then-write can return SQLITE_BUSY on the upgrade
+        under WAL instead of waiting out ``busy_timeout``.
+
+        Returns the thread dict (``current_open_thread``'s shape) with one
+        added key, ``created``: ``True`` when this call inserted the row,
+        ``False`` when an existing open thread was returned instead -- in
+        which case nothing was written: the returned thread keeps its own
+        title/metadata, and the proposed ``thread_id``/``metadata`` are
+        never stamped onto another body's thread. ``None`` on failure
+        (``create_thread``'s ``False`` in caller terms: the caller keeps
+        the proposed id, which ``ThreadManager`` already treats as the
+        documented store-outage path).
+
+        Scope: the open-row lookup is today's global one
+        (``current_open_thread``'s ``status='open' ORDER BY updated_at
+        DESC``) -- the ``persona`` column stays reserved for the D-1 Q3/T4
+        scope decision, and the founder's D-5 ruling lands the leaf index
+        unscoped.
+        """
+        if self._conn is None or not thread_id:
+            return None
+        ts = float(created_at) if created_at is not None else time.time()
+        try:
+            with self._lock:
+                self._conn.execute("BEGIN IMMEDIATE")
+                try:
+                    row = self._conn.execute(
+                        _THREAD_SELECT
+                        + " WHERE c.status = 'open' ORDER BY c.updated_at DESC LIMIT 1"
+                    ).fetchone()
+                    if row is None:
+                        self._conn.execute(
+                            """INSERT INTO conversations
+                               (id, user_id, title, created_at, updated_at, metadata,
+                                status, title_source, parent_thread_id)
+                               VALUES (?, NULL, ?, ?, ?, ?, 'open', ?, ?)""",
+                            (thread_id, title, ts, ts, json.dumps(metadata or {}),
+                             title_source, parent_thread_id),
+                        )
+                        row = self._conn.execute(
+                            _THREAD_SELECT + " WHERE c.id = ?", (thread_id,)
+                        ).fetchone()
+                        created = True
+                    else:
+                        created = False
+                    self._conn.commit()
+                except Exception:
+                    self._conn.rollback()
+                    raise
+            thread = self._row_to_thread(row)
+            thread["created"] = created
+            return thread
+        except sqlite3.IntegrityError as e:
+            # ``create_thread`` parity: a colliding id is a warning, not a
+            # raise (with the write lock held, the only way in is an id that
+            # already exists as a non-open row).
+            logger.warning(f"get_or_open_thread: thread {thread_id} already exists: {e}")
+            return None
+        except Exception as e:
+            logger.warning(f"get_or_open_thread failed: {e}")
+            return None
+
     def update_thread(self, thread_id: str, **fields: Any) -> bool:
         """Update thread columns. Lists/dicts are JSON-encoded; flags coerced to 0/1.
 
@@ -1766,11 +1895,10 @@ class SqliteConversationStore:
         T2 rewires topic switching, auto-reopen, explicit ``new_thread`` and
         ``resume_thread`` onto it, and T2 also adds the branch-summary
         minting (design §2.3) inside this same transaction. Until then the
-        leaf invariant stays the writer-discipline one (``_pause_thread`` /
-        ``_reopen_thread`` in threads.py); the design's partial unique index
-        that would make it structural is held for the founder's §7 Q3
-        answer (see the T1 report: it conflicts with the P3d shared-store
-        race and legacy duplicate-open rows as speced).
+        leaf invariant rests on P3c's ``get_or_open_thread`` at the writer
+        plus the one-leaf partial unique index that v5 landed (founder
+        ruling D-5: "P3c first, then the index") -- two open threads is now
+        a constraint violation, not just a logic bug.
 
         Rules, from the design's own text:
 

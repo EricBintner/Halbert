@@ -216,17 +216,19 @@ class TestInvoke:
         app, store = app_with_store
         client = TestClient(app)
 
+        # One open leaf (D-5): the filter's multiple rows come from paused
+        # threads, the shape a real store holds.
         for i in range(3):
             client.post("/api/conversations/invoke", json={
                 "method": "create_thread",
                 "args": [f"t{i}", f"Thread {i}"],
-                "kwargs": {},
+                "kwargs": {"status": "paused"},
             })
 
         resp = client.post("/api/conversations/invoke", json={
             "method": "list_threads",
             "args": [],
-            "kwargs": {"status": "open", "limit": 100},
+            "kwargs": {"status": "paused", "limit": 100},
         })
         assert resp.status_code == 200
         threads = resp.json()["value"]

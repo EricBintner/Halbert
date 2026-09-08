@@ -316,7 +316,10 @@ class TestUpdateMessage:
         assert store._conn.execute("SELECT rowid FROM messages_fts WHERE messages_fts MATCH '\"old\"'").fetchone() is None
 
     def test_update_thread_id_moves_row(self, store):
-        store.create("t1"); store.create("t2")
+        store.create("t1")
+        # Second thread is created non-open (D-5 one-leaf: only one open
+        # row exists per store).
+        store.create_thread("t2", "T2", status="closed")
         mid = store.append_message("t1", "user", "moving")
         assert store.update_message(mid, thread_id="t2") is True
         assert store._conn.execute("SELECT conversation_id FROM messages WHERE id = ?", (mid,)).fetchone()[0] == "t2"
@@ -353,7 +356,7 @@ class TestUpdateMessage:
         ).fetchone()[0] == "t1"  # FTS entry not moved either
         assert store.search("nowhere") == ["t1"]
         # the store is still usable afterwards for a real move
-        store.create("t2")
+        store.create_thread("t2", "T2", status="closed")
         assert store.update_message(mid, thread_id="t2") is True
 
 
@@ -588,8 +591,12 @@ class TestThreadReaders:
         assert store.get_thread("nope") is None
 
     def test_list_threads_and_current_open(self, store):
-        for tid in ("a", "b", "c"):
-            store.create_thread(tid, tid.upper())
+        # One open leaf (D-5): "a" and "b" are created in their resting
+        # statuses; "c" is the open one. The update_thread calls below still
+        # exercise the same setters as before.
+        store.create_thread("a", "A", status="closed")
+        store.create_thread("b", "B", status="paused")
+        store.create_thread("c", "C")
         store.update_thread("a", status="closed", last_active=100.0)
         store.update_thread("b", status="paused", last_active=200.0)
         store.update_thread("c", status="open", last_active=300.0)
@@ -703,7 +710,7 @@ class TestThreadReaders:
         future "scope the timeline to a thread" refactor silently breaking
         the one-conversation model with an otherwise-green suite."""
         store.create_thread("t1", "T1")
-        store.create_thread("t2", "T2")
+        store.create_thread("t2", "T2", status="closed")
         store.append_message("t1", "user", "hello from t1", turn_id="x1", timestamp=1.0)
         store.append_message("t1", "assistant", "reply1", origin="assistant", turn_id="x1", timestamp=2.0)
         store.append_message("t2", "user", "hello from t2", turn_id="x2", timestamp=3.0)
@@ -980,7 +987,7 @@ class TestReceiptsReviewFixes:
     def test_search_receipts_ranks_by_score_then_recency_beyond_limit(self, store):
         for i in range(8):
             tid = f"t{i}"
-            store.create_thread(tid, f"Thread {i}")
+            store.create_thread(tid, f"Thread {i}", status="closed")
             store.update_thread(tid, last_active=float(i))
             extra = " gadget" if i % 2 == 0 else ""
             store.upsert_receipt(tid, f"Thread {i}", f"Entities: widget{extra}")
@@ -1015,7 +1022,7 @@ class TestReceiptsRound2Findings:
         of the per-row loop."""
         for i in range(6):
             tid = f"t{i}"
-            store.create_thread(tid, f"Thread {i}")
+            store.create_thread(tid, f"Thread {i}", status="closed")
             store.upsert_receipt(tid, f"Thread {i}", "Entities: widget")
         calls = []
         original = store._fts_term_hits_map
@@ -1080,7 +1087,7 @@ class TestMergeThread:
         the open loops, terminal blocks and compaction boundaries the merged
         turns produced stop being reachable from the thread that owns them,
         and are never returned again by any query."""
-        store.create_thread("prev", "Samba share")
+        store.create_thread("prev", "Samba share", status="paused")
         store.create_thread("new", "Scanner share")
         store.append_message("new", "user", "now the scanner share", turn_id="t2")
 
@@ -1194,7 +1201,7 @@ class TestPendingNotes:
 
     def test_notes_do_not_leak_between_threads(self, store):
         store.create_thread("t1", "T")
-        store.create_thread("t2", "U")
+        store.create_thread("t2", "U", status="closed")
         store.append_message("t1", "system", "mine", origin="system", visible_in_timeline=False)
         store.append_message("t2", "system", "theirs", origin="system", visible_in_timeline=False)
         assert store.pending_notes("t1") == ["mine"] and store.pending_notes("t2") == ["theirs"]
@@ -1231,7 +1238,7 @@ class TestLastTurnId:
 
     def test_turn_ids_do_not_leak_between_threads(self, store):
         store.create_thread("t1", "T")
-        store.create_thread("t2", "U")
+        store.create_thread("t2", "U", status="closed")
         store.append_message("t1", "user", "mine", origin="human", turn_id="u-mine")
         store.append_message("t2", "user", "theirs", origin="human", turn_id="u-theirs")
         assert store.last_turn_id("t1") == "u-mine"
@@ -1245,3 +1252,114 @@ class TestLastTurnId:
         store.append_message("t1", "system", "n", origin="system",
                              turn_id="u2", visible_in_timeline=False)
         assert store.last_turn_id("t1") == "u2"
+
+
+# ---------------------------------------------------------------------------
+# get_or_open_thread (P3c, founder ruling D-5): the atomic get-or-open the
+# concurrent begin_turn race needed. One BEGIN IMMEDIATE transaction: find
+# the open thread; none -> create; a concurrent body created one inside the
+# transaction window -> return that one. No lost rows, exactly one open.
+# ---------------------------------------------------------------------------
+
+class TestGetOrOpenThread:
+    def test_creates_when_no_thread_is_open(self, store):
+        t = store.get_or_open_thread(
+            "n1", "Samba share", created_at=10.0,
+            metadata={"reason": "auto", "previous_thread_id": None},
+        )
+        assert t is not None and t["created"] is True
+        assert t["thread_id"] == "n1"
+        assert (t["title"], t["status"], t["title_source"]) == (
+            "Samba share", "open", "provisional")
+        assert t["metadata"] == {"reason": "auto", "previous_thread_id": None}
+        assert store.get_thread("n1")["id"] == "n1"
+
+    def test_joins_the_open_thread_and_writes_nothing(self, store):
+        first = store.get_or_open_thread("n1", "First subject", created_at=10.0)
+        assert first["created"] is True
+        second = store.get_or_open_thread(
+            "n2", "Second subject", created_at=20.0,
+            title_source="model", metadata={"reason": "auto"},
+        )
+        assert second["created"] is False
+        # The caller was handed the existing open thread, unchanged: its own
+        # title, its own metadata, and the proposed id never became a row.
+        assert second["thread_id"] == "n1"
+        assert second["title"] == "First subject"
+        assert second["metadata"] == {}
+        assert store.get_thread("n2") is None
+        assert [t["thread_id"] for t in store.list_threads()] == ["n1"]
+
+    def test_joins_after_a_pause_so_topic_switches_still_switch(self, store):
+        # _open_new_thread pauses the predecessor first -- that ordering is
+        # what keeps "open a NEW thread" meaning what it says.
+        store.get_or_open_thread("n1", "First subject", created_at=10.0)
+        store.update_thread("n1", status="paused", paused_at=15.0)
+        t = store.get_or_open_thread("n2", "Second subject", created_at=20.0,
+                                     metadata={"previous_thread_id": "n1"})
+        assert t["created"] is True and t["thread_id"] == "n2"
+        assert store.current_open_thread()["thread_id"] == "n2"
+
+    def test_concurrent_callers_get_one_thread_not_two(self, tmp_path):
+        """The race P3d sanctioned and P3c closes: many threads, one store,
+        all get-or-open at once -- one row created, every caller handed the
+        same thread, exactly one open thread."""
+        db = str(tmp_path / "race.db")
+        store = SqliteConversationStore(db)
+        callers, rounds = 8, 6
+        results = []
+        barrier = threading.Barrier(callers)
+        errors = []
+
+        def call(n):
+            try:
+                barrier.wait()
+                for i in range(rounds):
+                    t = store.get_or_open_thread(f"prop-{n}-{i}", f"T{n}{i}")
+                    if t is None:
+                        errors.append((n, i, "None"))
+                    else:
+                        results.append((t["thread_id"], t["created"]))
+            except Exception as e:  # noqa: BLE001 — recorded, asserted below
+                errors.append((n, repr(e)))
+
+        threads = [threading.Thread(target=call, args=(n,)) for n in range(callers)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=30)
+        assert not any(t.is_alive() for t in threads)
+        assert errors == []
+        # Every caller was told the same thread, and only one insert ever
+        # happened (exactly one created=True across the whole storm).
+        assert {tid for tid, _ in results} == {store.current_open_thread()["thread_id"]}
+        assert sum(1 for _, created in results if created) == 1
+        assert len(store.list_threads(status="open", limit=10)) == 1
+        store.close()
+
+    def test_two_store_instances_on_one_file_agree_on_one_thread(self, tmp_path):
+        """The two-connection shape (two processes on one file): both
+        instances get-or-open; the BEGIN IMMEDIATE serializes them, one row
+        is created, the other instance is handed it."""
+        db = str(tmp_path / "two.db")
+        a = SqliteConversationStore(db)
+        b = SqliteConversationStore(db)
+        ta = a.get_or_open_thread("from-a", "A's subject")
+        tb = b.get_or_open_thread("from-b", "B's subject")
+        assert ta is not None and tb is not None
+        assert ta["thread_id"] == tb["thread_id"]
+        assert sorted((ta["created"], tb["created"])) == [False, True]
+        assert len(a.list_threads(status="open", limit=10)) == 1
+        a.close()
+        b.close()
+
+    def test_bad_inputs_and_outage_parity(self, store):
+        assert store.get_or_open_thread("", "no id") is None
+        # A colliding id on an existing non-open row is create_thread's
+        # IntegrityError, absorbed to the same None the caller degrades on.
+        store.get_or_open_thread("n1", "T", created_at=10.0)
+        store.update_thread("n1", status="closed")
+        assert store.get_or_open_thread("n1", "again") is None
+        dead = SqliteConversationStore.__new__(SqliteConversationStore)
+        dead._conn = None
+        assert dead.get_or_open_thread("x", "T") is None

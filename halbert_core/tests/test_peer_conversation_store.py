@@ -143,6 +143,20 @@ class TestRoundTrips:
         listed = store.list_threads(status="open")
         assert [t["thread_id"] for t in listed] == ["t1"]
 
+    def test_get_or_open_thread_over_the_wire(self, wired):
+        """P3c's primitive is ONE wire call by design — the cold-start race
+        collapses only if the server's get-or-open transaction is reached
+        as a single invoke, not as current_open_thread + create_thread."""
+        server, store = wired
+        first = store.get_or_open_thread("n1", "First subject", created_at=10.0)
+        assert first is not None and first["created"] is True
+        assert first["thread_id"] == "n1"
+        joined = store.get_or_open_thread("n2", "Second subject")
+        assert joined is not None and joined["created"] is False
+        assert joined["thread_id"] == "n1"
+        assert server.store.get_thread("n2") is None
+        assert server.store.current_open_thread()["thread_id"] == "n1"
+
     def test_messages(self, wired):
         server, store = wired
         store.create_thread("t1", "First thread")
@@ -192,7 +206,9 @@ class TestRoundTrips:
     def test_redact_and_merge(self, wired):
         server, store = wired
         store.create_thread("t1", "Secrets")
-        store.create_thread("t2", "Other")
+        # The merge-back shape (D-5 one-leaf): source open, destination
+        # paused; merge_thread reopens the destination.
+        store.create_thread("t2", "Other", status="paused")
         mid = store.append_message("t1", "user", "/srv/clients/acmecorp-payroll.kdbx")
         assert store.redact_message(mid) == "t1"
         assert store.list_messages("t1")[0]["content"] == store.REDACTED

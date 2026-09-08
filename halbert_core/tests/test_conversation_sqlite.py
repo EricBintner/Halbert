@@ -15,6 +15,16 @@ def store():
     s.close()
 
 
+def _create_closed(store, cid, user_id=None):
+    """Legacy ``create()`` opens its row (the column default), and one open
+    leaf per store (D-5) means a second create would violate
+    ``idx_one_open_leaf``. The list/search surfaces below are status-blind,
+    so seeds close as they land -- the pre-index tests were documenting the
+    permissive multi-open surface the founder has now ruled away."""
+    store.create(cid, user_id)
+    assert store.update_thread(cid, status="closed") is True
+
+
 # ---------------------------------------------------------------------------
 # CRUD
 # ---------------------------------------------------------------------------
@@ -74,7 +84,7 @@ class TestCRUD:
 class TestList:
     def test_list_returns_summaries(self, store):
         for i in range(3):
-            store.create(f"c{i}", user_id="u1")
+            _create_closed(store, f"c{i}", user_id="u1")
             store.append_message(f"c{i}", "user", f"msg {i}")
         listed = store.list_conversations(user_id="u1")
         assert len(listed) == 3
@@ -82,14 +92,14 @@ class TestList:
         assert listed[0]["message_count"] == 1
 
     def test_list_filters_by_user(self, store):
-        store.create("a", "u1")
-        store.create("b", "u2")
+        _create_closed(store, "a", "u1")
+        _create_closed(store, "b", "u2")
         assert len(store.list_conversations(user_id="u1")) == 1
         assert len(store.list_conversations(user_id="u2")) == 1
 
     def test_list_pagination(self, store):
         for i in range(5):
-            store.create(f"p{i}", "u")
+            _create_closed(store, f"p{i}", "u")
         assert len(store.list_conversations(limit=2)) == 2
         assert len(store.list_conversations(limit=2, offset=4)) == 1
 
@@ -122,8 +132,8 @@ class TestSearch:
         assert store.search("") == []
 
     def test_search_multiple_matches_distinct(self, store):
-        store.create("m1"); store.append_message("m1", "user", "fix the network")
-        store.create("m2"); store.append_message("m2", "user", "network is down")
+        _create_closed(store, "m1"); store.append_message("m1", "user", "fix the network")
+        _create_closed(store, "m2"); store.append_message("m2", "user", "network is down")
         results = store.search("network")
         assert set(results) >= {"m1", "m2"}
 
