@@ -15,11 +15,12 @@ Gating is layered, OFF by default at every layer:
    Checked at registration and again inside the handler.
 2. Capability — ``CAP_APPLESCRIPT`` from capabilities.py (a preset /
    being.yml decision, no probe). Checked at registration.
-3. Config — ~/.config/halbert/applescript_config.yml ``enabled:`` is
-   re-read on EVERY tool call (never cached), so flipping the file takes
-   effect immediately; a registered tool refuses to execute while the
-   switch is off (a stale registration is never a leak — only a stale
-   schema offered to the model).
+3. Config — the applescript config file
+   (``get_config_dir()/applescript_config.yml``) ``enabled:`` is re-read
+   on EVERY tool call (never cached), so flipping the file takes effect
+   immediately; a registered tool refuses to execute while the switch is
+   off (a stale registration is never a leak — only a stale schema
+   offered to the model).
 
 RoleGate (guest persona) integration lands in A2; nothing here executes
 while the config is off regardless.
@@ -34,11 +35,23 @@ from __future__ import annotations
 import asyncio
 import logging
 import platform
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from ..config import applescript_config
 
 logger = logging.getLogger("halbert.tools.applescript")
+
+#: Per-stream output cap (stdout and stderr each). osascript output is
+#: read into memory, so an uncapped stream (a huge ``ls``, a log dump)
+#: would buffer without bound. At the cap the process is stopped and a
+#: truncation notice is returned — the model sees partial output plus
+#: why it is partial.
+MAX_OUTPUT_BYTES = 1024 * 1024
+
+_READ_CHUNK = 64 * 1024
+
+#: Grace period for reaping a child after its pipes closed or we killed it.
+_EXIT_GRACE_SECONDS = 5.0
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -46,7 +59,7 @@ logger = logging.getLogger("halbert.tools.applescript")
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _result(success: bool, output: str = "", error: str = "",
-            exit_code: Optional[int] = 0) -> Dict[str, Any]:
+            exit_code: Optional[int] = None) -> Dict[str, Any]:
     """The structured result shape every handler path returns."""
     return {
         "success": success,
@@ -56,14 +69,86 @@ def _result(success: bool, output: str = "", error: str = "",
     }
 
 
+def _kill(proc) -> None:
+    """Kill the child, tolerating one that already exited.
+
+    Timeout-path kill race: a grandchild holding the pipes can keep the
+    reads blocked past the timeout while the child itself is gone —
+    ``kill()`` then raises ``ProcessLookupError``, which must not escape
+    the structured-result contract.
+    """
+    try:
+        proc.kill()
+    except ProcessLookupError:
+        pass
+
+
+async def _reap(proc) -> None:
+    """Wait briefly for the child to exit; fall back to a guarded kill."""
+    try:
+        await asyncio.wait_for(proc.wait(), timeout=_EXIT_GRACE_SECONDS)
+    except asyncio.TimeoutError:
+        _kill(proc)
+
+
+async def _read_capped(stream, limit: int) -> Tuple[bytes, bool]:
+    """Read one pipe to EOF or the byte cap. Returns (bytes, truncated)."""
+    chunks = []
+    total = 0
+    while True:
+        chunk = await stream.read(_READ_CHUNK)
+        if not chunk:
+            return b"".join(chunks), False
+        if total + len(chunk) > limit:
+            chunks.append(chunk[: limit - total])
+            return b"".join(chunks), True
+        chunks.append(chunk)
+        total += len(chunk)
+
+
+async def _collect_output(proc, limit: int) -> Tuple[bytes, bytes, bool, bool]:
+    """Read both pipes concurrently (a sequential read can deadlock when
+    one pipe fills while we block on the other). The first stream to hit
+    the cap ends collection and the sibling read is cancelled — the
+    caller then stops the process, since a writer with no reader would
+    block forever. Returns (stdout, stderr, stdout_truncated,
+    stderr_truncated).
+    """
+    out_task = asyncio.create_task(_read_capped(proc.stdout, limit))
+    err_task = asyncio.create_task(_read_capped(proc.stderr, limit))
+    out = err = b""
+    out_trunc = err_trunc = False
+    pending = {out_task, err_task}
+    try:
+        while pending:
+            done, pending = await asyncio.wait(
+                pending, return_when=asyncio.FIRST_COMPLETED)
+            truncated_now = False
+            for task in done:
+                data, was_truncated = task.result()
+                if task is out_task:
+                    out, out_trunc = data, was_truncated
+                else:
+                    err, err_trunc = data, was_truncated
+                truncated_now = truncated_now or was_truncated
+            if truncated_now:
+                break
+    finally:
+        for task in (out_task, err_task):
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(out_task, err_task, return_exceptions=True)
+    return out, err, out_trunc, err_trunc
+
+
 async def _execute(argv: List[str]) -> Dict[str, Any]:
     """Run osascript (argv list, no shell) and capture stdout/stderr/exit code.
 
     The timeout comes from applescript_config.yml (re-read here, per call)
-    and is enforced with asyncio.wait_for: on expiry the process is killed
-    and a structured timeout error is returned — never a hang, never a
-    raise. SEC-2 lesson (tools/system_info.py): the script travels as one
-    ``-e`` argv element, so there is no shell to escape.
+    and is enforced with asyncio.wait_for: on expiry the process is
+    killed and a structured timeout error is returned — never a hang,
+    never a raise. SEC-2 lesson (tools/system_info.py): the script
+    travels as one ``-e`` argv element, so there is no shell to escape.
     """
     cfg = applescript_config.load_config()
     timeout = max(1, int(cfg.timeout_seconds))
@@ -76,30 +161,50 @@ async def _execute(argv: List[str]) -> Dict[str, Any]:
         )
     except Exception as e:
         logger.warning(f"osascript launch failed: {e}")
-        return _result(False, error=f"Failed to launch osascript: {e}",
-                       exit_code=None)
+        return _result(False, error=f"Failed to launch osascript: {e}")
 
     try:
-        out, err = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        out, err, out_trunc, err_trunc = await asyncio.wait_for(
+            _collect_output(proc, MAX_OUTPUT_BYTES), timeout=timeout)
     except asyncio.TimeoutError:
-        proc.kill()
-        await proc.wait()
+        _kill(proc)
+        await _reap(proc)
         logger.warning(f"osascript timed out after {timeout}s and was killed")
         return _result(
             False,
             error=f"Script timed out after {timeout}s and was killed "
                   f"(timeout_seconds in applescript_config.yml).",
-            exit_code=None,
         )
     except Exception as e:
+        _kill(proc)
+        await _reap(proc)
         logger.warning(f"osascript communication failed: {e}")
-        return _result(False, error=f"osascript communication failed: {e}",
-                       exit_code=None)
+        return _result(False, error=f"osascript communication failed: {e}")
 
-    output = out.decode(errors="replace")
-    error = err.decode(errors="replace")
+    truncated = out_trunc or err_trunc
+    if truncated:
+        # The cap cut a stream short: stop the process (it may still be
+        # writing into a pipe nobody reads) and report the partial output
+        # with a notice, so the model knows the result is partial.
+        _kill(proc)
+        await _reap(proc)
+        stream = "stdout" if out_trunc else "stderr"
+        logger.warning(f"osascript output exceeded {MAX_OUTPUT_BYTES} bytes; process stopped")
+        err_text = err.decode(errors="replace")
+        notice = (f"Output exceeded the {MAX_OUTPUT_BYTES} byte cap "
+                  f"({stream} truncated); the process was stopped.")
+        return _result(
+            False,
+            output=out.decode(errors="replace"),
+            error=(f"{err_text}\n{notice}" if err_text else notice),
+            exit_code=proc.returncode,
+        )
+
+    # Both pipes hit EOF — the child is done (or closed its output early).
+    await _reap(proc)
     exit_code = proc.returncode if proc.returncode is not None else -1
-    return _result(exit_code == 0, output=output, error=error, exit_code=exit_code)
+    return _result(exit_code == 0, output=out.decode(errors="replace"),
+                   error=err.decode(errors="replace"), exit_code=exit_code)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -115,28 +220,33 @@ def _gate_check() -> Optional[Dict[str, Any]]:
     off. The switch is re-read on every call (see applescript_config).
     """
     if not applescript_config.is_applescript_enabled():
+        try:
+            where = str(applescript_config._config_path())
+        except Exception:
+            where = "applescript_config.yml"
         return _result(
             False,
-            error="AppleScript execution is disabled "
-                  "(applescript_config.yml: enabled: false). "
+            error=f"AppleScript execution is disabled ({where}: enabled: false). "
                   "Enable it to allow script execution.",
-            exit_code=None,
         )
     if platform.system() != "Darwin":
         return _result(
             False,
             error="AppleScript tools require macOS (osascript).",
-            exit_code=None,
         )
     return None
 
 
-def _script_from_args(args: Dict) -> Optional[str]:
-    """Extract the script string, refusing empty input."""
-    script = (args.get("script") or "").strip()
-    if not script:
-        return None
-    return script
+def _script_from_args(args: Dict) -> Tuple[Optional[str], Optional[str]]:
+    """Extract the script string. Returns (script, error); error is set
+    for missing/empty and non-string input (a list arg must not reach
+    ``str.strip`` and crash the handler)."""
+    script = args.get("script")
+    if script is None or (isinstance(script, str) and not script.strip()):
+        return None, "No script provided (empty 'script' argument)."
+    if not isinstance(script, str):
+        return None, f"'script' must be a string, got {type(script).__name__}."
+    return script.strip(), None
 
 
 async def _run_applescript_handler(args: Dict) -> Dict[str, Any]:
@@ -144,10 +254,9 @@ async def _run_applescript_handler(args: Dict) -> Dict[str, Any]:
     refusal = _gate_check()
     if refusal is not None:
         return refusal
-    script = _script_from_args(args)
-    if script is None:
-        return _result(False, error="No script provided (empty 'script' argument).",
-                       exit_code=None)
+    script, error = _script_from_args(args)
+    if error is not None:
+        return _result(False, error=error)
     return await _execute(["osascript", "-e", script])
 
 
@@ -156,10 +265,9 @@ async def _run_jxa_handler(args: Dict) -> Dict[str, Any]:
     refusal = _gate_check()
     if refusal is not None:
         return refusal
-    script = _script_from_args(args)
-    if script is None:
-        return _result(False, error="No script provided (empty 'script' argument).",
-                       exit_code=None)
+    script, error = _script_from_args(args)
+    if error is not None:
+        return _result(False, error=error)
     return await _execute(["osascript", "-l", "JavaScript", "-e", script])
 
 
@@ -173,9 +281,9 @@ APPLESCRIPT_TOOL_SCHEMAS = {
         "name": "run_applescript",
         "description": (
             "Execute an AppleScript string via osascript and capture stdout, "
-            "stderr, and exit code. Use for macOS app control (Finder, Music, "
-            "System Events, ...). A script that exceeds the configured timeout "
-            "is killed. Syntax errors return stderr verbatim so you can "
+            "stderr, and exit code. Use for querying and controlling macOS "
+            "applications. A script that exceeds the configured timeout is "
+            "killed. Syntax errors return stderr verbatim so you can "
             "self-correct."
         ),
         "parameters": {
@@ -219,26 +327,25 @@ APPLESCRIPT_TOOL_HANDLERS = {
 }
 
 
-def register_applescript_tools(tool_executor) -> bool:
+def register_applescript_tools(tool_executor) -> None:
     """Register AppleScript/JXA tools with a ToolExecutor instance.
 
-    macOS only (osascript) and gated on the CAP_APPLESCRIPT capability;
-    returns True when tools were registered. The per-call applescript
-    config switch still gates every execution after registration, so the
-    caller does not need to check it here.
+    macOS only (osascript) and gated on the CAP_APPLESCRIPT capability.
+    The per-call applescript config switch still gates every execution
+    after registration, so the caller does not need to check it here.
     """
     if platform.system() != "Darwin":
         logger.info("AppleScript tools not registered: requires macOS")
-        return False
+        return
 
     try:
         from ..capabilities import CAP_APPLESCRIPT, has_capability
         if not has_capability(CAP_APPLESCRIPT):
             logger.info("AppleScript tools not registered: capability is off")
-            return False
+            return
     except Exception as e:
         logger.debug("CAP_APPLESCRIPT lookup failed, applescript stays off: %s", e)
-        return False
+        return
 
     for name, schema in APPLESCRIPT_TOOL_SCHEMAS.items():
         handler = APPLESCRIPT_TOOL_HANDLERS.get(name)
@@ -247,4 +354,3 @@ def register_applescript_tools(tool_executor) -> bool:
         else:
             logger.warning(f"AppleScript tool '{name}' has schema but no handler — skipped")
     logger.info("Registered AppleScript tools (run_applescript, run_jxa)")
-    return True

@@ -18,6 +18,7 @@ from halbert_core.tools import applescript_tools
 from halbert_core.tools.applescript_tools import (
     APPLESCRIPT_TOOL_HANDLERS,
     APPLESCRIPT_TOOL_SCHEMAS,
+    MAX_OUTPUT_BYTES,
     register_applescript_tools,
 )
 
@@ -36,30 +37,49 @@ class FakeExecutor:
         self.registered[name] = (handler, schema)
 
 
+class FakeStream:
+    """Stand-in for the StreamReader on a subprocess pipe: hands out the
+    canned bytes in chunks; a nonzero delay makes reads block (past any
+    test timeout), simulating a process whose pipes never close."""
+
+    def __init__(self, data=b"", chunk_size=64 * 1024, delay=0.0):
+        self._data = data
+        self._chunk_size = chunk_size
+        self._delay = delay
+
+    async def read(self, n):
+        if self._delay:
+            await asyncio.sleep(self._delay)
+        if not self._data:
+            return b""
+        chunk = self._data[: min(n, self._chunk_size)]
+        self._data = self._data[len(chunk):]
+        return chunk
+
+
 class FakeProc:
-    """Stand-in for asyncio.subprocess.Process with canned results."""
+    """Stand-in for asyncio.subprocess.Process: canned streams, a kill()
+    that records (or raises, for the already-exited kill race) and a
+    wait() returning the canned exit code."""
 
-    def __init__(self, returncode=0, stdout=b"", stderr=b"", communicate_delay=0.0):
+    def __init__(self, returncode=0, stdout=b"", stderr=b"",
+                 stream_delay=0.0, kill_error=None):
         self.returncode = returncode
-        self._stdout = stdout
-        self._stderr = stderr
-        self._communicate_delay = communicate_delay
+        self.stdout = FakeStream(stdout, delay=stream_delay)
+        self.stderr = FakeStream(stderr, delay=stream_delay)
         self.killed = False
-
-    async def communicate(self):
-        if self._communicate_delay:
-            await asyncio.sleep(self._communicate_delay)
-        return (self._stdout, self._stderr)
+        self._kill_error = kill_error
 
     def kill(self):
+        if self._kill_error is not None:
+            raise self._kill_error
         self.killed = True
 
     async def wait(self):
         return self.returncode
 
 
-def _write_config(tmp_path, enabled, timeout_seconds=10):
-    path = tmp_path / "applescript_config.yml"
+def _write_config(path, enabled, timeout_seconds=10):
     path.write_text(f"enabled: {str(enabled).lower()}\ntimeout_seconds: {timeout_seconds}\n")
     return path
 
@@ -105,6 +125,11 @@ class TestAppleScriptConfig:
         assert cfg.enabled is True
         assert cfg.timeout_seconds == 25
 
+    def test_quoted_false_string_reads_as_disabled(self, isolated_config):
+        """enabled: "false" (a YAML string) must NOT count as enabled."""
+        isolated_config.write_text('enabled: "false"\n')
+        assert applescript_config.load_config().enabled is False
+
     def test_corrupt_file_falls_back_to_disabled(self, isolated_config):
         isolated_config.write_text("enabled: [not:: a:: valid:: yaml: dict\n")
         cfg = applescript_config.load_config()
@@ -123,7 +148,7 @@ class TestRegistration:
         monkeypatch.setattr(caps, "has_capability", lambda cap: True)
 
         executor = FakeExecutor()
-        assert register_applescript_tools(executor) is True
+        register_applescript_tools(executor)
         assert set(executor.registered) == {"run_applescript", "run_jxa"}
 
     def test_not_registered_on_linux(self, monkeypatch):
@@ -132,7 +157,7 @@ class TestRegistration:
         monkeypatch.setattr(caps, "has_capability", lambda cap: True)
 
         executor = FakeExecutor()
-        assert register_applescript_tools(executor) is False
+        register_applescript_tools(executor)
         assert executor.registered == {}
 
     def test_not_registered_when_capability_off(self, monkeypatch):
@@ -141,7 +166,7 @@ class TestRegistration:
         monkeypatch.setattr(caps, "has_capability", lambda cap: False)
 
         executor = FakeExecutor()
-        assert register_applescript_tools(executor) is False
+        register_applescript_tools(executor)
         assert executor.registered == {}
 
     def test_every_schema_has_a_handler_and_matching_name(self):
@@ -170,7 +195,7 @@ class TestRegistration:
 
 class TestHandlers:
     def test_run_applescript_success(self, isolated_config, monkeypatch):
-        _write_config(isolated_config.parent, enabled=True)
+        _write_config(isolated_config, enabled=True)
         calls = _mock_spawn(monkeypatch, [
             FakeProc(returncode=0, stdout=b"Halbert\n"),
         ])
@@ -185,7 +210,7 @@ class TestHandlers:
                           'tell application "Finder" to name of home']]
 
     def test_run_jxa_uses_javascript_language_flag(self, isolated_config, monkeypatch):
-        _write_config(isolated_config.parent, enabled=True)
+        _write_config(isolated_config, enabled=True)
         calls = _mock_spawn(monkeypatch, [
             FakeProc(returncode=0, stdout=b'"home"\n'),
         ])
@@ -198,7 +223,7 @@ class TestHandlers:
                           "app = Application('Finder'); app.home().name()"]]
 
     def test_invalid_script_returns_structured_error(self, isolated_config, monkeypatch):
-        _write_config(isolated_config.parent, enabled=True)
+        _write_config(isolated_config, enabled=True)
         _mock_spawn(monkeypatch, [
             FakeProc(returncode=1, stderr=b"exec error: Expected end of line but found \n"),
         ])
@@ -213,7 +238,7 @@ class TestHandlers:
         assert result["output"] == ""
 
     def test_missing_script_arg_is_a_structured_error(self, isolated_config, monkeypatch):
-        _write_config(isolated_config.parent, enabled=True)
+        _write_config(isolated_config, enabled=True)
         calls = _mock_spawn(monkeypatch, [FakeProc()])
 
         result = asyncio.run(APPLESCRIPT_TOOL_HANDLERS["run_applescript"]({}))
@@ -221,8 +246,20 @@ class TestHandlers:
         assert result["success"] is False
         assert calls == []  # nothing was executed
 
+    def test_non_string_script_is_rejected_not_crashed(self, isolated_config, monkeypatch):
+        """A list arg must not reach str.strip and raise AttributeError."""
+        _write_config(isolated_config, enabled=True)
+        calls = _mock_spawn(monkeypatch, [FakeProc()])
+
+        result = asyncio.run(APPLESCRIPT_TOOL_HANDLERS["run_applescript"](
+            {"script": ["tell application \"Finder\""]}))
+
+        assert result["success"] is False
+        assert "must be a string" in result["error"]
+        assert calls == []
+
     def test_spawn_failure_is_structured_not_a_crash(self, isolated_config, monkeypatch):
-        _write_config(isolated_config.parent, enabled=True)
+        _write_config(isolated_config, enabled=True)
 
         def fake_create_subprocess_exec(*argv, **kwargs):
             raise FileNotFoundError(2, "No such file or directory", "osascript")
@@ -248,6 +285,8 @@ class TestConfigGate:
         assert result["success"] is False
         assert result["exit_code"] is None
         assert "disabled" in result["error"].lower()
+        # the refusal names the resolved config file so the user can act on it
+        assert "applescript_config.yml" in result["error"]
         assert calls == []
 
     def test_config_is_reread_per_call(self, isolated_config, monkeypatch):
@@ -267,12 +306,27 @@ class TestConfigGate:
         assert second["output"] == "ok\n"
         assert len(calls) == 1  # spawned exactly once — on the enabled call
 
+    def test_platform_gate_refuses_even_when_config_on(self, isolated_config, monkeypatch):
+        """Config ON but not macOS: the in-handler platform gate refuses
+        without spawning (defense in depth against a stale registration)."""
+        _write_config(isolated_config, enabled=True)
+        monkeypatch.setattr(platform, "system", lambda: "Linux")
+        calls = _mock_spawn(monkeypatch, [FakeProc()])
+
+        result = asyncio.run(APPLESCRIPT_TOOL_HANDLERS["run_applescript"](
+            {"script": "return 1"}))
+
+        assert result["success"] is False
+        assert result["exit_code"] is None
+        assert "macos" in result["error"].lower()
+        assert calls == []
+
 
 class TestTimeout:
     def test_runaway_script_is_killed_at_configured_timeout(
             self, isolated_config, monkeypatch):
-        _write_config(isolated_config.parent, enabled=True, timeout_seconds=1)
-        proc = FakeProc(communicate_delay=30.0)  # a "delay 30" script
+        _write_config(isolated_config, enabled=True, timeout_seconds=1)
+        proc = FakeProc(stream_delay=30.0)  # a "delay 30" script
         _mock_spawn(monkeypatch, [proc])
 
         result = asyncio.run(APPLESCRIPT_TOOL_HANDLERS["run_applescript"](
@@ -284,11 +338,82 @@ class TestTimeout:
         assert proc.killed is True
 
     def test_timeout_config_is_reread_per_call(self, isolated_config, monkeypatch):
-        _write_config(isolated_config.parent, enabled=True, timeout_seconds=1)
-        proc = FakeProc(communicate_delay=30.0)
+        """A timeout change in the file takes effect on the very next call:
+        the same script that was killed at 1s completes under the raised
+        limit (no caching)."""
+        _write_config(isolated_config, enabled=True, timeout_seconds=1)
+        slow = FakeProc(stream_delay=2.0, returncode=0, stdout=b"done\n")
+        fast = FakeProc(stream_delay=2.0, returncode=0, stdout=b"done\n")
+        _mock_spawn(monkeypatch, [slow, fast])
+        handler = APPLESCRIPT_TOOL_HANDLERS["run_applescript"]
+
+        killed = asyncio.run(handler({"script": "delay 30"}))
+        assert "timed out" in killed["error"].lower()
+        assert slow.killed is True
+
+        isolated_config.write_text("enabled: true\ntimeout_seconds: 30\n")
+        finished = asyncio.run(handler({"script": "delay 30"}))
+        assert finished["success"] is True
+        assert finished["output"] == "done\n"
+        assert fast.killed is False
+
+    def test_timeout_kill_race_when_child_already_exited(
+            self, isolated_config, monkeypatch):
+        """A grandchild holding the pipes keeps the reads blocked past the
+        timeout while the child itself is gone: kill() raises
+        ProcessLookupError, which must not escape the structured contract."""
+        _write_config(isolated_config, enabled=True, timeout_seconds=1)
+        proc = FakeProc(stream_delay=30.0, kill_error=ProcessLookupError())
         _mock_spawn(monkeypatch, [proc])
 
         result = asyncio.run(APPLESCRIPT_TOOL_HANDLERS["run_applescript"](
             {"script": "delay 30"}))
 
+        assert result["success"] is False
+        assert result["exit_code"] is None
         assert "timed out" in result["error"].lower()
+
+
+class TestOutputCap:
+    def test_stdout_beyond_cap_is_truncated_and_process_stopped(
+            self, isolated_config, monkeypatch):
+        _write_config(isolated_config, enabled=True)
+        proc = FakeProc(stdout=b"x" * (MAX_OUTPUT_BYTES + 1000))
+        _mock_spawn(monkeypatch, [proc])
+
+        result = asyncio.run(APPLESCRIPT_TOOL_HANDLERS["run_applescript"](
+            {"script": "cat a huge file"}))
+
+        assert len(result["output"]) == MAX_OUTPUT_BYTES
+        assert result["success"] is False
+        assert "truncat" in result["error"].lower()
+        assert "stdout" in result["error"]
+        assert proc.killed is True
+
+    def test_stderr_beyond_cap_is_truncated(self, isolated_config, monkeypatch):
+        _write_config(isolated_config, enabled=True)
+        proc = FakeProc(returncode=1,
+                        stderr=b"e" * (MAX_OUTPUT_BYTES + 1000))
+        _mock_spawn(monkeypatch, [proc])
+
+        result = asyncio.run(APPLESCRIPT_TOOL_HANDLERS["run_applescript"](
+            {"script": "fail loudly"}))
+
+        assert result["success"] is False
+        assert "truncat" in result["error"].lower()
+        assert "stderr" in result["error"]
+        # the notice was appended after the capped stderr text
+        assert result["error"].endswith("the process was stopped.")
+
+    def test_output_under_cap_is_untouched(self, isolated_config, monkeypatch):
+        _write_config(isolated_config, enabled=True)
+        proc = FakeProc(returncode=0, stdout=b"small\n")
+        _mock_spawn(monkeypatch, [proc])
+
+        result = asyncio.run(APPLESCRIPT_TOOL_HANDLERS["run_applescript"](
+            {"script": "echo small"}))
+
+        assert result["success"] is True
+        assert result["output"] == "small\n"
+        assert result["error"] == ""
+        assert proc.killed is False
