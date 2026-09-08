@@ -953,11 +953,24 @@ class ToolExecutor:
         """Read file contents."""
         path = args["path"]
         encoding = args.get("encoding", "utf-8")
-        
+
         # Security: expand and normalize path
         path = os.path.expanduser(path)
         path = os.path.abspath(path)
-        
+
+        # SK-2 seam 1 (design §6): resolve the path against the registry's
+        # known skill paths before dispatch. A hit is a catalog
+        # consultation — every Track-B consultation passes through this one
+        # choke point, whatever surface asked — and appends a `read`
+        # receipt to the skill_events table. Reportability, never a gate:
+        # a receipt that cannot be written costs a log line, not the read.
+        try:
+            from ..skills.telemetry import record_skill_read
+            record_skill_read(path)
+        except Exception:
+            logger.debug("skill read telemetry failed; continuing",
+                         exc_info=True)
+
         if not os.path.exists(path):
             raise FileNotFoundError(f"File not found: {path}")
         

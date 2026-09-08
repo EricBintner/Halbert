@@ -747,6 +747,12 @@ class AgentStateMachine:
             async for event in self._begin_turn():
                 yield event
 
+            # SK-2 seam 2: the turn's skill activations, promoted from a
+            # debug log line to the durable skill_events table. After
+            # _begin_turn so the turn scope is entered and the row carries
+            # the same run_id the read receipts will.
+            self._record_skill_activation()
+
             try:
                 # A queued caller was told "waiting" before it blocked, and
                 # nothing else on the normal turn path clears that badge —
@@ -2142,6 +2148,47 @@ class AgentStateMachine:
             safety.set_skill_safety(None)
         except Exception:
             logger.warning("clearing skill safety failed", exc_info=True)
+
+    def _record_skill_activation(self) -> None:
+        """Promote the turn's skill activations to skill_events (SK-2 §6).
+
+        Seam 2: matcher and explicit activations were invisible durable-wise
+        (a debug log line); now each one is a row keyed by the skill's
+        stable id — `explicit` for a `/name` invocation, `matched` for a
+        trigger match — with the turn's ids so a run's rows join (the read
+        receipts the executor writes carry the same run_id). Runs inside
+        the turn lock, after `_begin_turn` entered the turn scope. A skill
+        that never got an id writes nothing: the row keys on identity,
+        never name. Never raises — telemetry is reportability, not a gate.
+        """
+        try:
+            intake = getattr(self.ctx, "intake", None)
+            matches = getattr(intake, "active_skills", None) if intake else None
+            if not matches:
+                return
+            from ..continuity.provenance import current_turn
+            from ..skills.telemetry import record_skill_event
+
+            run_id = current_turn.get()
+            session_id = getattr(self.ctx, "session_id", None)
+            for match in matches:
+                skill = getattr(match, "skill", None)
+                skill_id = getattr(skill, "id", None)
+                if not skill_id:
+                    continue
+                record_skill_event(
+                    skill_id,
+                    "explicit" if getattr(match, "explicit", False) else "matched",
+                    session_id=session_id,
+                    run_id=run_id,
+                    detail={
+                        "name": getattr(skill, "name", ""),
+                        "score": getattr(match, "score", 0),
+                    },
+                )
+        except Exception:
+            logger.warning("recording skill activations failed; continuing",
+                           exc_info=True)
 
     #: How many ledger rows the Eyes block carries, and how far back it looks.
     #: An idle day is thousands of rows, so this is a cap, not a window: the

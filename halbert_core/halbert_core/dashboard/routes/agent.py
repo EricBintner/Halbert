@@ -278,6 +278,14 @@ def get_agent():
 
                 registry = SkillRegistry.from_disk(dirs=daemon_skill_dirs())
                 skill_matcher = SkillMatcher(registry)
+                # SK-2: the same registry the matcher runs over is the one
+                # the catalog renders from and the read seam resolves
+                # against — hold it where the executor's read_file can find
+                # it, so every catalog consultation becomes a telemetry
+                # receipt without threading the registry through the tool
+                # registry.
+                from ...skills.telemetry import set_active_registry
+                set_active_registry(registry)
                 logger.info(
                     "Skill matcher wired: %d skill(s) from %s",
                     len(registry.all()),
