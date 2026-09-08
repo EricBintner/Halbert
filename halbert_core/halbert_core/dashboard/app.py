@@ -1420,11 +1420,22 @@ def create_app(enable_cors: bool = True) -> FastAPI:
                     # The transcript reaches the browser as a plain line — no
                     # wrapper phrase (a wrapper reads as a meta-instruction);
                     # the browser echoes it back to the user verbatim and
-                    # submits it as the turn text, carrying the speaker
-                    # claim below into the typed ingress.
+                    # submits it as the turn text. C2 (voice honesty): the
+                    # relay records this observation under a server-minted
+                    # single-use receipt token BEFORE broadcasting, and the
+                    # token rides with the transcript — the browser redeems
+                    # it with the turn, and the talk door stamps the turn's
+                    # claim from what the pipeline actually observed, never
+                    # from the wire's word (dashboard/voice_relay.py). The
+                    # transcript IS the command text
+                    # (transcribe_before_command): the receipt is bound to
+                    # these exact words, so a redeemed token cannot carry
+                    # the observed speaker's identity onto others.
                     text = getattr(observation, "text", "") or ""
                     if not text.strip():
                         return
+                    from .voice_relay import get_voice_relay_receipts
+                    relay_token = get_voice_relay_receipts().record(observation)
                     ingress = _coordinator.get_ingress("dashboard")
                     if ingress is None or not hasattr(ingress, "broadcast"):
                         return
@@ -1434,6 +1445,7 @@ def create_app(enable_cors: bool = True) -> FastAPI:
                         "speaker_name": getattr(observation, "speaker_name", ""),
                         "speaker_role": getattr(observation, "speaker_role", "unknown"),
                         "area_id": getattr(observation, "area_id", ""),
+                        "relay_token": relay_token,
                     })
 
                 _coordinator.on_voice_turn = _relay_voice_turn

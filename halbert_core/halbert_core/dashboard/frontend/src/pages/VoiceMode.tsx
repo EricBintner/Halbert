@@ -293,19 +293,15 @@ export function VoiceMode({ onExitToCanvas }: VoiceModeProps) {
       // because submitTurn is defined below this callback and must not be
       // a dependency of it — rebuilding the uplink on every render would
       // churn the microphone.
-      onTranscript: ({ text, speakerName, speakerRole }) =>
+      onTranscript: ({ text, relayToken }) =>
         submitTurnRef.current?.(text, {
-          speakerName,
-          speakerRole,
-          // Claim source, derived once here: a role the pipeline matched is
-          // a biometric verification claim; a name without a matched role
-          // is free text; nothing identified means unverified (absent).
-          claimSource:
-            speakerRole && speakerRole !== 'unknown'
-              ? 'voice_speaker_verification'
-              : speakerName
-                ? 'free_text_name'
-                : undefined,
+          // C2 (voice honesty): the speaker claim is the SERVER's to
+          // stamp — the relay recorded its observation and minted this
+          // receipt token with the transcript, and only the token
+          // redeems the observed speaker's claim. The browser used to
+          // derive claim_source/speaker fields itself; the server now
+          // ignores those entirely, so only the token is sent.
+          relayToken,
         }),
     })
     uplinkRef.current = uplink

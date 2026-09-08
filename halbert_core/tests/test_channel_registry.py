@@ -357,14 +357,25 @@ class TestTheRouteStampsTheClaim:
     def test_honest_voice_relay_turn_arrives_unchanged(self, client, fake_agent):
         """The honest relay's turn — modality, identified speaker, role
         from the speaker profile, speaker-verification claim — threads
-        exactly as before (zero behavior change for honest clients; the
-        claim-strength cap at the RoleGate is D-6's, untouched here)."""
+        exactly as before for a client that redeems the relay's receipt
+        (zero behavior change for honest clients; the claim-strength cap
+        at the RoleGate is D-6's, untouched here). C2 moved the facts to
+        the receipt: the turn carries what the OBSERVATION recorded, and
+        the wire's fields are ignored — pinned in
+        test_voice_relay_honest.py."""
+        from types import SimpleNamespace
+        from halbert_core.dashboard.voice_relay import get_voice_relay_receipts
+        store = get_voice_relay_receipts()
+        store.reset()
+        token = store.record(SimpleNamespace(
+            text="what's running on the scanner", speaker_id="spk-eric",
+            speaker_name="Eric", speaker_role="member",
+            speaker_confidence=0.91, area_id="",
+        ))
         resp = client.post("/api/agent/message", json={
             "message": "what's running on the scanner",
             "modality": "voice",
-            "speaker_name": "Eric",
-            "speaker_role": "member",
-            "claim_source": "voice_speaker_verification",
+            "relay_token": token,
         })
         assert resp.status_code == 200
         kwargs = fake_agent.calls[0]
@@ -386,8 +397,13 @@ class TestTheRouteStampsTheClaim:
         assert kwargs["claim_source"] is None
 
     def test_raised_device_cert_clamps_on_the_route(self, client, fake_agent):
-        """A client-declared VERIFIED source clamps to the channel's
-        actual source before it ever reaches the ladder."""
+        """A client-declared VERIFIED source never reaches the ladder.
+        C2 tightened this further than the clamp: on the voice channel
+        the wire's source is ignored entirely in favor of the relay
+        receipt's stamp, so a raised ``device_cert`` with no redeemable
+        receipt stamps NOTHING (the turn is unidentified) — and with a
+        receipt the stamp is the observation's own
+        speaker-verification, never the VERIFIED the wire declared."""
         resp = client.post("/api/agent/message", json={
             "message": "unlock the deadbolt",
             "modality": "voice",
@@ -395,7 +411,7 @@ class TestTheRouteStampsTheClaim:
             "claim_source": "device_cert",
         })
         assert resp.status_code == 200
-        assert fake_agent.calls[0]["claim_source"] == "voice_speaker_verification"
+        assert fake_agent.calls[0]["claim_source"] is None
 
     def test_unknown_modality_is_refused_fail_closed(self, client, fake_agent):
         """A modality that resolves to no registered channel is refused

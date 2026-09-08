@@ -232,6 +232,12 @@ export interface VoiceTranscript {
   speakerName?: string
   speakerRole?: string
   areaId?: string
+  /** The server-minted relay receipt token (C2): the server recorded the
+   * observation behind this transcript before broadcasting it, and this
+   * token is the only thing that redeems the observation's speaker claim
+   * when the turn is submitted. Without it the turn is unidentified —
+   * the wire's own claim fields no longer count for anything. */
+  relayToken?: string
 }
 
 export type PcmUplinkStatus = 'idle' | 'starting' | 'running' | 'stopped'
@@ -388,6 +394,7 @@ export class PcmUplink {
       speakerName: typeof msg.speaker_name === 'string' ? msg.speaker_name : undefined,
       speakerRole: typeof msg.speaker_role === 'string' ? msg.speaker_role : undefined,
       areaId: typeof msg.area_id === 'string' ? msg.area_id : undefined,
+      relayToken: typeof msg.relay_token === 'string' ? msg.relay_token : undefined,
     })
   }
 

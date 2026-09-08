@@ -217,22 +217,23 @@ export interface ModelSelection {
  * Packet 04 A1: what a spoken turn carries into the typed ingress.
  *
  * A voice turn reaches the same /api/agent/message door as a typed one
- * (browser-relayed STT), so without these fields the backend cannot tell
- * the two apart — and defaulted every spoken command to the owner's role.
+ * (browser-relayed STT). C2 (voice honesty): the speaker claim is the
+ * SERVER's to stamp — the relay recorded its observation of the utterance
+ * and minted a receipt token, and only that token redeems the observed
+ * speaker's claim. The browser no longer sends the claim fields it used
+ * to derive (they are ignored server-side), only the token; a turn with
+ * no token is an unidentified voice turn (unknown role, never admin).
  * The fields are omitted entirely on typed turns, so a typed request is
  * byte-identical to before.
  */
 export interface VoiceTurnOrigin {
-  /** Speaker name from the STT relay (CAM++ match, empty when unmatched). */
-  speakerName?: string;
-  /** Identified role ('admin' | 'member' | 'guest' | 'restricted' | 'unknown'). */
-  speakerRole?: string;
   /**
-   * Where the claim came from: a role the audio pipeline matched is
-   * 'voice_speaker_verification'; a name with no matched role is
-   * 'free_text_name'; absent means unverified.
+   * The relay receipt token the server minted with this transcript
+   * (C2). The server stamps the turn's speaker claim from the
+   * observation this token redeems — never from anything this client
+   * says about itself.
    */
-  claimSource?: string;
+  relayToken?: string;
 }
 
 export interface UseAgentStreamOptions {
@@ -1084,12 +1085,14 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
           ? { tier: selection.tier }
           : {}),
         ...(selection?.endpointId ? { endpoint_id: selection.endpointId } : {}),
-        // Packet 04 A1: a spoken turn carries its modality and speaker
-        // claim; omitted entirely on typed turns (byte-identical body).
+        // Packet 04 A1: a spoken turn carries its modality. C2: the claim
+        // is the server's to stamp from the relay receipt — the browser
+        // sends only the token the relay minted with the transcript (its
+        // former claim_source/speaker fields are ignored server-side, so
+        // they are not sent). Omitted entirely on typed turns
+        // (byte-identical body).
         ...(voice ? { modality: 'voice' } : {}),
-        ...(voice?.speakerName ? { speaker_name: voice.speakerName } : {}),
-        ...(voice?.speakerRole ? { speaker_role: voice.speakerRole } : {}),
-        ...(voice?.claimSource ? { claim_source: voice.claimSource } : {}),
+        ...(voice?.relayToken ? { relay_token: voice.relayToken } : {}),
       }),
       signal: controller.signal
     }).then(async (response) => {

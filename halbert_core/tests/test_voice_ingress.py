@@ -91,6 +91,15 @@ def client(monkeypatch, fake_agent):
 class TestRouteThreadsVoiceFields:
 
     def test_voice_turn_carries_modality_and_speaker(self, client, fake_agent):
+        """C2 updated this pin: the wire's speaker fields are no longer
+        threaded on a voice turn — they are ignored in favour of the
+        relay receipt's stamp (see test_voice_relay_honest.py for the
+        full C2 pins). What still threads is the modality itself: the
+        turn IS a voice turn, and process() applies the channel's own
+        "unknown" default role to it — never the admin a typed turn
+        carries. The honest relay's end-to-end shape (receipt recorded,
+        token redeemed) is covered at the C2 seam; this test keeps the
+        A1 floor: a voice turn never silently becomes dashboard chat."""
         resp = client.post("/api/agent/message", json={
             "message": "what's running on the scanner",
             "modality": "voice",
@@ -102,9 +111,9 @@ class TestRouteThreadsVoiceFields:
         assert len(fake_agent.calls) == 1
         kwargs = fake_agent.calls[0]
         assert kwargs["modality"] == "voice"
-        assert kwargs["speaker_name"] == "Eric"
-        assert kwargs["speaker_role"] == "member"
-        assert kwargs["claim_source"] == "voice_speaker_verification"
+        assert kwargs["speaker_name"] is None
+        assert kwargs["speaker_role"] is None
+        assert kwargs["claim_source"] is None
 
     def test_text_turn_sends_no_voice_defaults(self, client, fake_agent):
         """A request without the new fields is byte-identical to today.
@@ -121,6 +130,11 @@ class TestRouteThreadsVoiceFields:
         assert kwargs["claim_source"] is None
 
     def test_unknown_speaker_role_is_threaded_not_rewritten(self, client, fake_agent):
+        """C2: a voice turn's wire-declared role is ignored entirely
+        (there is no receipt here, so the turn is unidentified); what
+        reaches process() is None and the channel's own "unknown"
+        default applies inside process(). The pin the test keeps: the
+        turn never carries the "admin" a typed turn defaults to."""
         resp = client.post("/api/agent/message", json={
             "message": "delete everything",
             "modality": "voice",
@@ -128,7 +142,7 @@ class TestRouteThreadsVoiceFields:
         })
         assert resp.status_code == 200
         kwargs = fake_agent.calls[0]
-        assert kwargs["speaker_role"] == "unknown"
+        assert kwargs["speaker_role"] is None
 
 
 # -----------------------------------------------------------------------------
@@ -371,8 +385,9 @@ class TestRelayRegressionPin:
 
     def test_relay_broadcast_shape_is_the_frontend_contract(self):
         """The browser consumes {type, text, speaker_name, speaker_role,
-        area_id}; the shape must not drift (and the claim fields already
-        ride it — that is what A1 threads through)."""
+        area_id, relay_token}; the shape must not drift. The relay_token
+        (C2) is what the browser redeems with the turn so the server can
+        stamp the claim from its own observation of the utterance."""
         src = APP_PY.read_text()
         m = re.search(
             r"async def _relay_voice_turn.*?await ingress\.broadcast\(\{(.*?)\}\)",
@@ -380,4 +395,7 @@ class TestRelayRegressionPin:
         )
         assert m, "_relay_voice_turn broadcast not found in app.py"
         keys = re.findall(r'"(\w+)":', m.group(1))
-        assert keys == ["type", "text", "speaker_name", "speaker_role", "area_id"]
+        assert keys == [
+            "type", "text", "speaker_name", "speaker_role",
+            "area_id", "relay_token",
+        ]
