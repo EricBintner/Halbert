@@ -46,13 +46,17 @@ failure mode — server down, tool error (``isError``), timeout,
 disconnect, protocol garbage — is a clean result message, never a
 crash and never a hang (every client operation is timeout-bounded).
 
-Registration timing is restart-based: tools are discovered at agent
-init, so a server added to (or removed from) ``mcp_config.yml`` shows
-up after the next agent start. Re-running the bridge on a live executor
-(a future B4 health refresh) is also supported: it first drops every
-stale ``mcp__`` registration, so a removed server's tools do not
-linger. The client's per-call config reload stays B1's connection
-behavior.
+Registration timing is refresh-based since B4: tools are discovered at
+agent init, and the health monitor (mcp/health.py) re-runs this bridge
+from CURRENT config whenever ``mcp_config.yml``'s file identity changes
+(plus after a server recovers), so a server added to (or removed from)
+the config shows up within one health tick, no restart. Re-running the
+bridge on a live executor is safe and diff-based: tools of servers the
+current config does not name are dropped (their classifier would
+fail-closed block them anyway), while a server that is configured but
+DOWN at refresh time KEEPS its previous registrations — a failed
+connect must not zero the working set (the B2 residual, fixed here).
+The client's per-call config reload stays B1's connection behavior.
 
 Context bloat: a server exposing a huge tool list bloats every agent
 turn's tool schema block. Above :data:`MANY_TOOLS_WARNING` the bridge
@@ -86,7 +90,12 @@ import logging
 from typing import Any, Dict, List, Optional, Set
 
 from .client import join_text_content
-from .registry import MCPToolRegistry
+from .registry import (
+    MCP_TOOL_PREFIX,
+    MCPToolRegistry,
+    parse_qualified_tool_name,
+    sanitize_component,
+)
 
 logger = logging.getLogger("halbert.mcp.bridge")
 
@@ -312,23 +321,79 @@ def _register_server_tools(
     return len(qualified_names)
 
 
-def _unregister_stale_mcp_tools(tool_executor) -> None:
-    """Drop every previously bridged tool before a fresh discovery, so a
-    server that vanished from the config does not leave its tools behind
-    (the executor has no unregister of its own). The ``mcp__`` prefix is
-    exclusively the bridge's — no native tool carries it.
+def _drop_tools_for_server(tool_executor, server_name: str) -> int:
+    """Drop every executor registration belonging to one server (its
+    sanitized component in the qualified names; *server_name* is the raw
+    config name the client connected, so it is sanitized before the
+    comparison). Returns how many landed. The registry's per-server
+    ``register`` replaces its OWN entries, but the executor's older keys
+    would linger when a server's tool list SHRANK between discoveries —
+    this is the executor-side half of the replace."""
+    component = sanitize_component(server_name).lower()
+    dropped = 0
+    for name in list(tool_executor.tools):
+        if not name.startswith(MCP_TOOL_PREFIX):
+            continue
+        parsed = parse_qualified_tool_name(name)
+        if parsed is None:
+            continue
+        if parsed[0].lower() == component:
+            tool_executor.tools.pop(name, None)
+            tool_executor.schemas.pop(name, None)
+            dropped += 1
+    return dropped
 
-    The drop runs BEFORE connect(), so a re-registration whose connect
-    fails totally yields ZERO MCP tools rather than keeping the previous
-    (still working) set. B4's health refresh must move this drop after a
-    successful connect, or diff old-vs-new registration sets.
+
+def _drop_unconfigured_server_tools(
+    tool_executor, configured_names: List[str],
+) -> List[str]:
+    """B4's DIFF drop — the stale-drop ordering fix the bridge docstring
+    used to defer. Only the tools of servers the CURRENT config does not
+    name are dropped, BEFORE anything is registered; the rest of the old
+    set survives until its own server is (re-)registered.
+
+    Three cases fall out of one rule (a registered tool exists only if
+    its server was configured at registration time):
+
+      * server REMOVED/RENAMED/DROPPED-BY-VALIDATION since → its tools
+        are dropped outright (B3's classifier would fail-closed block
+        them anyway; keeping them would only list dead names);
+      * server still configured but DOWN at this refresh (its connect
+        failed) → its tools are KEPT — the B2 residual this fixes: the
+        old drop ran before ``connect()``, so a re-registration whose
+        connect failed totally yielded ZERO MCP tools instead of keeping
+        the previous, still-working set. The client relaunches a down
+        server on the next call, and the monitor keeps retrying;
+      * server connected now → its executor entries are replaced just
+        before its fresh registration (``_drop_tools_for_server``), so a
+        SHRUNK tool list leaves no stale names behind.
+
+    Returns the raw names of the servers whose tools were dropped (for
+    the log). A blind spot, stated honestly: a kept (down) server's
+    tools may still classify under a surviving colliding config entry —
+    the collider-displacement closure is complete once the server
+    connects again and the refresh re-registers its tools.
     """
-    stale = [name for name in tool_executor.tools if name.startswith("mcp__")]
-    for name in stale:
-        tool_executor.tools.pop(name, None)
-        tool_executor.schemas.pop(name, None)
-    if stale:
-        logger.debug("Dropped %d stale MCP tool registration(s)", len(stale))
+    configured_sanitized = {
+        sanitize_component(name).lower() for name in configured_names}
+    dropped_servers: List[str] = []
+    for name in list(tool_executor.tools):
+        if not name.startswith(MCP_TOOL_PREFIX):
+            continue
+        parsed = parse_qualified_tool_name(name)
+        if parsed is None:
+            continue
+        if parsed[0].lower() not in configured_sanitized:
+            tool_executor.tools.pop(name, None)
+            tool_executor.schemas.pop(name, None)
+            server = parsed[0]
+            if server not in dropped_servers:
+                dropped_servers.append(server)
+    if dropped_servers:
+        logger.debug(
+            "Dropped stale MCP tool registration(s) for server(s): %s",
+            ", ".join(dropped_servers))
+    return dropped_servers
 
 
 async def discover_and_register(tool_executor, mcp_client) -> int:
@@ -359,17 +424,25 @@ async def discover_and_register(tool_executor, mcp_client) -> int:
 
 
 async def _discover_and_register(tool_executor, mcp_client) -> int:
-    """The discovery body, run under discover_and_register's net."""
-    _unregister_stale_mcp_tools(tool_executor)
+    """The discovery body, run under discover_and_register's net.
 
+    B4 ordering: the stale drop no longer runs before ``connect()``.
+    The diff runs AFTER it (see ``_drop_unconfigured_server_tools``), so
+    a refresh whose connects all fail keeps the previous registrations
+    instead of zeroing the MCP tool set, while a server the current
+    config no longer names still loses its tools.
+    """
     try:
         # Connect every configured server. The client logs each failure
         # and collects it — a server that is down is simply absent from
         # connected_servers() below.
         await mcp_client.connect()
     except Exception as e:
-        logger.warning(
-            "MCP discovery: connect failed, no tools registered: %s", e)
+        # The real client's connect() never raises MCPClientError (it
+        # logs and collects per-server failures); this catches the
+        # unexpected. B4: total failure KEEPS the prior registrations —
+        # dropping them here would be the pre-B4 zeroing bug again.
+        logger.warning("MCP discovery: connect failed: %s", e)
         return 0
 
     try:
@@ -378,11 +451,30 @@ async def _discover_and_register(tool_executor, mcp_client) -> int:
         logger.warning("MCP discovery: could not list connected servers: %s", e)
         return 0
 
+    # The configured names, for the diff. A config the bridge cannot
+    # read leaves the diff blind — drop NOTHING (the classifier's
+    # absent-server fail-closed path gates whatever is stale; a
+    # mis-timed drop must not amplify a read failure into a tool loss).
+    try:
+        from .config import load_config
+        configured_names = [s.name for s in load_config().servers]
+    except Exception as e:
+        logger.warning(
+            "MCP discovery: config unreadable (%s); keeping every "
+            "existing MCP registration", e)
+        configured_names = None
+    if configured_names is not None:
+        _drop_unconfigured_server_tools(tool_executor, configured_names)
+
     registry = MCPToolRegistry()
     registered = 0
     for server_name in servers:
         try:
+            # Collect FIRST: a server whose tools/list fails KEEPS its
+            # previous registrations (same rule as a failed connect —
+            # B4's ordering), instead of having been dropped up front.
             tool_schemas = await _collect_server_tools(mcp_client, server_name)
+            _drop_tools_for_server(tool_executor, server_name)
             # Registration is inside the same try: a conversion or
             # registry failure costs THIS server's tools, not the rest
             # of the loop.

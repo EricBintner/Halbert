@@ -43,10 +43,13 @@ first match here is deterministic regardless of config order — but
 that check is a determinism win, NOT a closure: a colliding entry
 inserted BEFORE a fenced server displaces the fence at load, and tools
 registered from the displaced server classify under the surviving
-entry, not fail closed. B4's health-refresh re-registration (dropping
-stale ``mcp__`` registrations and re-bridging from current config) is
-what closes that displacement; the load-time check cannot. One honest
-limit: a collision-suffixed tool (``..._2``) rides its server's
+entry, not fail closed. That displacement is closed by the health
+monitor's refresh (B4, mcp/health.py): it re-runs discovery from
+CURRENT config whenever mcp_config.yml changes, dropping every stale
+``mcp__`` registration whose server the refreshed config does not
+carry — so a tool registered from the displaced server does not
+survive the edit. One honest limit: a collision-suffixed tool
+(``..._2``) rides its server's
 override or the default — it cannot be individually classified (see
 ``registry.parse_qualified_tool_name``).
 

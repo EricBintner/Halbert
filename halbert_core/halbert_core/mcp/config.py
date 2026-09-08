@@ -8,10 +8,22 @@ on Linux). The shipped default is EMPTY — no servers, capability inert.
 There are no curated defaults and no discovery suggestions; servers are
 configured one at a time by the host (founder ruling, 2026-09-08).
 
-The config is read on EVERY call (not cached), so changes take effect
-immediately without a restart — the same pattern as vision/config.py and
-applescript_config.py. A user who removes a server must not have the
-client still talking to it from a stale cache.
+The config is read on every call, MEMOIZED BY FILE IDENTITY (B4): the
+stat identity — ``(st_mtime_ns, st_size, st_ino)`` — of
+``mcp_config.yml`` is checked first, and an unchanged file serves the
+already-parsed :class:`MCPClientConfig` instead of re-parsing. This
+collapses the two YAML parses per MCP execute that the per-call readers
+(classification + the client's ``_ensure``) used to pay, and collapses
+the per-call repeat of every load-time warning (a skipped server or a
+collision used to emit its warning twice per call, forever). Freshness
+is preserved: any write that changes the file changes its identity, and
+the next call reads from disk (verified by tests: flip → seen, pin the
+mtime → cached, corrupt → fixed cycle re-reads). Consumers must treat
+the returned :class:`MCPClientConfig` as READ-ONLY — it is shared
+between every reader until the file changes. The identity (not just
+mtime) is what makes this safe to key on: size and inode catch a
+rewrite the filesystem timestamps too coarsely to notice, and a path
+switch (``HALBERT_CONFIG_DIR``) keys a separate slot per path.
 
 Security: ``auth.token_env`` names an environment variable; the token
 value lives in the environment, never in the config. A literal ``token``
@@ -79,9 +91,11 @@ Honest consequence, for whoever builds on this: that check is a
 determinism win, NOT a closure — a colliding entry inserted BEFORE a
 fenced server displaces the fence at load, and tools registered from
 the displaced server classify under the surviving entry, not fail
-closed. B4's health-refresh re-registration (dropping stale ``mcp__``
-registrations and re-bridging from current config) is what closes the
-displacement; this load-time check cannot.
+closed. The closure lives in the health monitor's refresh
+(mcp/health.py): it re-runs discovery/registration from CURRENT config
+whenever this file's identity changes, dropping every ``mcp__``
+registration whose server the refreshed config does not carry — so the
+displaced server's tools do not survive the edit.
 
 Entries that fail validation are skipped with a warning, never raise —
 a corrupt config means "no servers", not a dead agent.
@@ -450,15 +464,57 @@ def _parse_server(entry: Any, index: int, default_timeout: float) -> Optional[MC
     )
 
 
-def load_config() -> MCPClientConfig:
-    """Load the MCP client config from disk.
+def _config_identity(path: Path) -> tuple:
+    """The file identity a memo slot is keyed against: mtime nanoseconds,
+    size, and inode. ``None`` members mean "no file" — a MISSING file is
+    memoizable too (its result is cheap, but memoizing it collapses the
+    per-call stat+read for a deployment with no config at all)."""
+    try:
+        stat = path.stat()
+        return (stat.st_mtime_ns, stat.st_size, stat.st_ino)
+    except OSError:
+        return (None, None, None)
 
-    Re-read on every call. Missing file, unparseable YAML, or a
-    non-mapping document all mean the SAME thing: zero servers, the
-    capability inert, no crash (founder ruling: absent/corrupt config
-    degrades to "no servers").
+
+#: The per-path memo slot: ``path`` -> (identity, parsed config). One
+#: slot per distinct config path (multi-instance processes each point
+#: ``HALBERT_CONFIG_DIR`` at their own directory, so in practice one);
+#: a file change replaces its slot in place, so memory never grows with
+#: the number of EDITS. Consumers of any returned MCPClientConfig must
+#: treat it as READ-ONLY — it is shared between every reader until the
+#: file's identity changes.
+_CONFIG_MEMO: Dict[str, tuple] = {}
+
+
+def load_config() -> MCPClientConfig:
+    """Load the MCP client config from disk, memoized by file identity.
+
+    Every call stats the file first; an unchanged identity serves the
+    cached :class:`MCPClientConfig` (see the module docstring), a changed
+    (or first-seen) one re-reads and re-parses. Missing file, unparseable
+    YAML, or a non-mapping document all mean the SAME thing: zero
+    servers, the capability inert, no crash (founder ruling:
+    absent/corrupt config degrades to "no servers").
     """
     path = config_path()
+    identity = _config_identity(path)
+    slot = _CONFIG_MEMO.get(str(path))
+    if slot is not None and slot[0] == identity:
+        return slot[1]
+    config = _read_config(path)
+    _CONFIG_MEMO[str(path)] = (identity, config)
+    return config
+
+
+def reset_config_memo() -> None:
+    """Drop every memo slot (test isolation; a restart clears it the
+    same way by being a new process)."""
+    _CONFIG_MEMO.clear()
+
+
+def _read_config(path: Path) -> MCPClientConfig:
+    """The disk read behind :func:`load_config` — the original
+    (uncached) loader body."""
     if not path.exists():
         return MCPClientConfig(load_error="config file missing")
     try:
@@ -525,7 +581,8 @@ def load_config() -> MCPClientConfig:
             # matching config entry would win. Keep the first, name both.
             # NOTE: this is a determinism win, not a closure — a
             # colliding entry inserted BEFORE a fenced server displaces
-            # the fence; B4's re-registration closes that.
+            # the fence; the health monitor's refresh (B4, mcp/health.py)
+            # closes that by re-bridging from current config.
             logger.warning(
                 "MCP config: server '%s' sanitizes to the same name as "
                 "server '%s'; keeping the first, skipping '%s' — "

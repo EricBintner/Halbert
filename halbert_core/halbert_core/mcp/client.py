@@ -52,11 +52,13 @@ Security model:
     produces a clean ``MCPClientError``, never a hang.
 
 Lifecycle: ``MCPClient`` manages connections to multiple servers. The
-config is re-read on EVERY call; a live connection whose config
-signature changed is disconnected and rebuilt, so config edits (and
-deletions) take effect without a restart. A crashed stdio server is
-detected on the next call and relaunched — basic reconnection only;
-background health monitoring and backoff are B4. Connection setup per
+config is re-read on EVERY call (memoized by file identity — config.py);
+a live connection whose config signature changed is disconnected and
+rebuilt, so config edits (and deletions) take effect without a restart.
+A crashed stdio server is detected on the next call and relaunched —
+and B4's health monitor (mcp/health.py) now makes that proactive:
+periodic ``ping`` probes plus backoff-capped reconnection between
+calls. Connection setup per
 server is serialized by an asyncio lock, so concurrent first calls
 launch exactly one subprocess.
 """
@@ -876,7 +878,8 @@ class MCPClient:
       * signature changed → disconnect, rebuild (config edits apply
         without a restart)
       * connection dead (crashed subprocess) → disconnect, relaunch
-        (basic reconnection; monitoring/backoff is B4)
+        (basic reconnection; the health monitor — mcp/health.py —
+        drives the same machinery proactively, with backoff)
 
     Connection setup is serialized PER SERVER by an asyncio lock: two
     concurrent first calls launch exactly one subprocess, not one each
@@ -929,7 +932,22 @@ class MCPClient:
                 await connection.close()
                 del self._connections[server_name]
             transport = build_transport(server_config)
-            await transport.connect()
+            try:
+                await transport.connect()
+            except MCPClientError as e:
+                # B4: a rebuild that cannot be established is the exact
+                # "not connected" state an agent call should be told
+                # about — the acceptance phrase, with the transport's own
+                # (already redacted) detail preserved inside it. The
+                # wrapped type stays in the MCPConnectionError family
+                # (MCPDisconnectedError IS one), so ``raises(MCPConnectionError)``
+                # callers keep passing. A build_transport failure
+                # (unsupported transport — config-validated away in
+                # production) is NOT wrapped: that is misconfiguration,
+                # not a connection state.
+                raise MCPDisconnectedError(
+                    f"MCP server '{server_name}' is not connected ({e})"
+                ) from None
             connection = _Connection(signature, transport)
             self._connections[server_name] = connection
             return connection
@@ -984,6 +1002,34 @@ class MCPClient:
     def connected_servers(self) -> List[str]:
         return sorted(
             name for name, conn in self._connections.items() if conn.alive)
+
+    async def ping(self, server_name: str) -> None:
+        """MCP ``ping`` — the spec's own liveness request (B4's probe).
+
+        An ANSWER of any kind proves the transport is responsive: an
+        empty ``result`` from a server that implements ping, or even a
+        JSON-RPC method-not-found error from a server that predates it —
+        both come back over a live transport, so both are health. What
+        this RAISES is what is not healthy:
+
+          * :class:`MCPDisconnectedError` — the connection is gone
+            (crashed subprocess, closed stream), or could not be
+            re-established (``_ensure`` relaunches a dead connection as
+            a side effect, so probing doubles as the reconnection
+            attempt);
+          * :class:`MCPTimeoutError` — the server is alive but answered
+            nothing in time (the unresponsive case a transport ``alive``
+            flag cannot see);
+          * any other :class:`MCPClientError` — relaunch failed,
+            configuration gone, protocol garbage.
+
+        Note the HTTP constraint (B1): timing out the wait here does not
+        cancel the in-flight POST worker thread — the ``requests``
+        timeout still bounds it. The monitor treats the timeout as the
+        answer it needs (unresponsive) without assuming the thread died.
+        """
+        connection = await self._ensure(server_name)
+        await connection.transport.request("ping")
 
     # -- protocol surface ----------------------------------------------------
 

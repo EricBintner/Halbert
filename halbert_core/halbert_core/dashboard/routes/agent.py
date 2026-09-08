@@ -340,12 +340,21 @@ def get_agent():
         # bridge discovers tools from the configured servers, so a
         # server that is down simply contributes no tools (graceful
         # absence) and config edits apply on the next agent start.
+        # B4: the same init starts the health monitor for that client
+        # (periodic ping sweeps, backoff-capped reconnection, and the
+        # config-refresh re-registration that keeps the bridged tool
+        # set honest mid-process). The monitor supersedes any previous
+        # one (a re-init must not leak the old tick) and is stopped in
+        # the dashboard's shutdown event.
         try:
             from ...capabilities import CAP_MCP_CLIENT, has_capability
             if has_capability(CAP_MCP_CLIENT):
                 from ...mcp.bridge import register_mcp_tools
                 from ...mcp.client import MCPClient
-                register_mcp_tools(tool_executor, MCPClient())
+                from ...mcp.health import start_mcp_health_monitor
+                client = MCPClient()
+                register_mcp_tools(tool_executor, client)
+                start_mcp_health_monitor(client, tool_executor=tool_executor)
         except Exception as e:
             logger.warning(f"Could not register MCP tools (non-fatal): {e}")
         _agent_instance = AgentStateMachine(
