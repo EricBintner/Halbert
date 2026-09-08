@@ -580,6 +580,25 @@ class ToolExecutor:
                 error=f"Operation blocked for safety: {safety_result.reason}",
                 risk_level=safety_result.risk_level
             )
+
+        # A role block is a BLOCK, not a confirmation (A2 review). RoleGate
+        # marks speaker-role refusals allowed=False on a sub-CRITICAL risk —
+        # its design comment says blocking, not confirmation — and no
+        # confirmed=True path may override the gate. Before this check the
+        # executor read only risk_level, so a guest/restricted-role block
+        # degraded into an ordinary confirmable HIGH and confirmation
+        # executed it.
+        if not safety_result.allowed:
+            logger.warning(f"BLOCKED by role gate: {tool_name} {args}")
+            self._audit(
+                tool_name, args, session_id,
+                success=False, error="Blocked: role gate"
+            )
+            return ExecutionResult(
+                success=False,
+                error=f"Operation blocked for safety: {safety_result.reason}",
+                risk_level=safety_result.risk_level
+            )
         
         # Require confirmation for HIGH risk
         if safety_result.risk_level == RiskLevel.HIGH and not confirmed:

@@ -198,10 +198,15 @@ _DO_SHELL = re.compile(r"\bdo\s+shell\s+script\b", re.I)
 
 #: ``do shell script`` payload tokens that mean disk destruction,
 #: recursive deletion, or privilege escalation. CRITICAL — never runs.
+#: Conservative by design: these only ever apply INSIDE a `do shell
+#: script` payload, so their words can never flip a SAFE read to
+#: CRITICAL; plain `find`/`curl`/`wget` stay HIGH (only the destructive
+#: combination escalates — see the tests).
 _CRITICAL_SHELL_TOKENS = tuple(
     re.compile(p, re.I)
     for p in (
         r"\brm\b",
+        r"\bsrm\b",
         r"\bsudo\b",
         r"\bdd\b",
         r"\bmkfs(?:\.\w+)?\b",
@@ -212,6 +217,11 @@ _CRITICAL_SHELL_TOKENS = tuple(
         r"\bhalt\b",
         r"\bpoweroff\b",
         r">\s*/dev/",
+        # find + -delete: as destructive as rm, and never legitimate in
+        # an agent-generated payload; plain `find` is NOT in this list.
+        r"\bfind\b[^\n]*\s-delete\b",
+        # pipe-to-shell remote-code execution
+        r"\b(?:curl|wget)\b[^\n]*\|\s*(?:ba|z|da|k)?sh\b",
     )
 )
 
