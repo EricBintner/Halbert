@@ -583,6 +583,31 @@ class TestOverrideKeyMatching:
             "matches no advertised tool" in r.message
             for r in caplog.records)
 
+    async def test_hyphenated_key_matches_across_sanitization(
+            self, config_dir, caplog):
+        """The bridge's warning check passes RAW names on both sides
+        (advertised tool name vs config key) — the matcher must sanitize
+        both, or the bridge warns "matches no advertised tool" about
+        ``delete-file`` while classification APPLIES it to the
+        registered ``delete_file`` as CRITICAL: warning/classification
+        drift, the exact thing the shared matcher exists to prevent."""
+        write_config(config_dir, [stdio_server(
+            "fs", tool_risk={"delete-file": "critical"})])
+        tool_executor = ToolExecutor(web_search=False)
+        with caplog.at_level(
+                logging.WARNING, logger="halbert.mcp.bridge"):
+            await discover_and_register(tool_executor, RecordingClient())
+        assert not any(
+            "matches no advertised tool" in r.message
+            for r in caplog.records)
+
+        # And the override the bridge accepted is the one classification
+        # applies: the registered delete_file is fenced, end to end.
+        result = await tool_executor.execute(
+            "mcp__fs__delete_file", {"path": "/tmp/x"})
+        assert not result.success
+        assert result.risk_level == RiskLevel.CRITICAL
+
 
 # ---------------------------------------------------------------------------
 # Sanitized server-name collisions (spec review, Issue 3)
@@ -641,6 +666,39 @@ class TestSanitizedServerCollision:
         for _ in range(3):
             result = safety.classify("mcp__my_fs__delete_file", {})
             assert result.risk_level == RiskLevel.CRITICAL  # my_fs wins
+
+    def test_collision_detected_in_the_unsanitized_direction(
+            self, config_dir, caplog):
+        """The load-side collision check passes TWO RAW config names
+        (neither is a pre-sanitized registered component), so the
+        matcher must sanitize both sides: ``[my_fs, "my fs"(critical)]``
+        must collide exactly like the other direction — a missed
+        collision here silently keeps the fenced server AND leaves no
+        skipped/absent signal for B4 to act on."""
+        write_config(config_dir, [
+            stdio_server("my_fs"),
+            stdio_server("my fs", risk_override="critical"),
+        ])
+        with caplog.at_level(logging.WARNING, logger="halbert.mcp.config"):
+            cfg = load_config()
+        assert [s.name for s in cfg.servers] == ["my_fs"]
+        assert cfg.skipped_servers == ["my fs"]
+        assert any(
+            "my_fs" in r.message and "my fs" in r.message
+            for r in caplog.records)
+
+    def test_raw_duplicate_drop_is_recorded(self, config_dir):
+        """The one skipped_servers drop kind with no test: the classic
+        duplicate-name rule's drop must be recorded too, so an
+        absent-server refusal can name it rather than guess."""
+        write_config(config_dir, [
+            stdio_server("fs", risk_override="high"),
+            stdio_server("fs", risk_override="low"),
+        ])
+        cfg = load_config()
+        assert [s.name for s in cfg.servers] == ["fs"]
+        assert cfg.server("fs").risk_override == RiskLevel.HIGH  # first wins
+        assert cfg.skipped_servers == ["fs"]
 
 
 # ---------------------------------------------------------------------------

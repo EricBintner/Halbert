@@ -85,7 +85,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Optional, Tuple
 
-from ..mcp.config import _redact, load_config
+from ..mcp.config import load_config, redact
 from ..mcp.registry import components_match, parse_qualified_tool_name
 from .safety import RiskLevel, SafetyCheckResult
 
@@ -132,7 +132,7 @@ def _absent_reason(server_component: str, config) -> str:
     the current config does not carry — naming what the config read saw,
     so the block is diagnosable, not a mystery. Dropped server names are
     config-written text interpolated into a user-facing message, so each
-    passes the config module's redactor (``_redact``, the same scrub
+    passes the config module's redactor (``redact``, the same scrub
     ``load_error`` gets) before it lands anywhere."""
     details = []
     if config.load_error:
@@ -140,7 +140,7 @@ def _absent_reason(server_component: str, config) -> str:
     if config.skipped_servers:
         details.append(
             "dropped by validation: "
-            + ", ".join(_redact(name) for name in config.skipped_servers))
+            + ", ".join(redact(name) for name in config.skipped_servers))
     state = "; ".join(details) if details else (
         "removed or renamed since registration")
     return (

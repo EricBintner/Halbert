@@ -137,6 +137,15 @@ def redact_url(url: str) -> str:
     return _redact(str(url))
 
 
+def redact(text: str) -> str:
+    """Public alias of the module's redactor, for sibling modules that
+    interpolate config-written text into messages or logs
+    (tools/mcp_safety.py does, for dropped server names in fail-closed
+    refusal reasons) — the same scrub ``load_error`` gets, without
+    reaching into a module-private name."""
+    return _redact(str(text))
+
+
 #: Variable names already warned about as unset (see
 #: MCPAuthConfig.resolve_token). One warning per misconfigured name,
 #: ever — resolve_token runs on every HTTP request and a repeat warning

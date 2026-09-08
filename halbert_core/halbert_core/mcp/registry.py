@@ -61,9 +61,9 @@ def _sanitize_component(raw: Any) -> str:
 sanitize_component = _sanitize_component
 
 
-def components_match(config_written: Any, registered: str) -> bool:
-    """Does a config-written name (server or tool) refer to the
-    registered component of a qualified tool name?
+def components_match(config_written: Any, registered: Any) -> bool:
+    """Do two names (config-written and/or registered) refer to the
+    same component of a qualified tool name?
 
     THE one matcher for every override decision: B3's classifier
     (tools/mcp_safety.py), the registration-time unmatched-key warning
@@ -72,14 +72,25 @@ def components_match(config_written: Any, registered: str) -> bool:
     classification will apply" is enforced by code, not convention —
     if this gains a rule, every consumer gains it together.
 
-    Sanitized on both sides (the registry collapsed ``my-fs`` →
-    ``my_fs``), and CASE-INSENSITIVELY: ``sanitize_component`` preserves
-    case, so a fence written ``Delete_File`` must still match a
-    registered ``delete_file`` rather than silently missing it and
-    auto-executing. Registered names keep their case — only the
-    comparison lowers it.
+    SYMMETRIC: BOTH sides are sanitized before comparison, because not
+    every caller has a pre-sanitized name — the loader's collision
+    check passes two raw config names, and the bridge's warning check
+    passes a raw advertised tool name against a raw config key. (The
+    classifier's registered side arrives already sanitized from a
+    qualified name; sanitizing again is idempotent, so it is
+    unchanged.) A one-sided matcher was exactly the drift the
+    consolidation was meant to remove: with raw names on the
+    unsanitized side, ``"my fs"`` missed colliding with ``my_fs`` at
+    load, and the bridge warned about ``delete-file`` while
+    classification applied it.
+
+    CASE-INSENSITIVELY: ``sanitize_component`` preserves case, so a
+    fence written ``Delete_File`` must still match a registered
+    ``delete_file`` rather than silently missing it and auto-executing.
+    Registered names keep their case — only the comparison lowers it.
     """
-    return sanitize_component(config_written).lower() == str(registered).lower()
+    return (sanitize_component(config_written).lower()
+            == sanitize_component(registered).lower())
 
 
 def qualify_tool_name(server_name: str, tool_name: str) -> str:
