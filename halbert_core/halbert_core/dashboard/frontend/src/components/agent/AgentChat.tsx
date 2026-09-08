@@ -9,7 +9,7 @@
  * Phase 59: Enhanced with Chat feature parity:
  * - @mention autocomplete
  * - Vision/image support (drag/drop/paste)
- * - Message queue (type while busy)
+ * - Mid-turn arrivals: text typed while busy goes to the server immediately (C3)
  * - Code block rendering with run buttons
  * - Model loading status
  */
@@ -315,9 +315,6 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
   const [attachedImages, setAttachedImages] = useState<AttachedImage[]>([]);
   const [isDraggingImage, setIsDraggingImage] = useState(false);
 
-  // Phase 59: Message queue (type while busy)
-  const [messageQueue, setMessageQueue] = useState<string[]>([]);
-
   // Phase 8 / T8a.3: modules expanded from provenance WhyChip clicks
   const [expandedProvenanceModules, setExpandedProvenanceModules] = useState<ExpandedProvenanceModule[]>([]);
 
@@ -330,6 +327,14 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
     moduleInvocations,
     turnModel,
     sendMessage,
+    // C3 (busy-mode unification): the backend owns busy semantics — text
+    // typed while a turn runs is sent to the server immediately as a
+    // mid-turn arrival, and the server's own verdicts are rendered below
+    // (the old client-side queue was a polite fiction that delayed a
+    // steer_accepted the server would have given right away).
+    sendMidturn,
+    midturnVerdicts,
+    dismissMidturnVerdict,
     confirmAction,
     applyDiff,
     rejectDiff,
@@ -387,11 +392,8 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
     if (agentError) return;
     if (session?.pendingConfirmation || session?.state === 'awaiting_confirmation') return;
     if (session?.diffProposals.some((diff) => diff.status === 'pending')) return;
-    // A queued question is about to be sent; it says so next, and two
-    // sentences in one breath would eat each other.
-    if (messageQueue.length > 0) return;
     announce('Reply finished');
-  }, [isStreaming, agentError, session, messageQueue.length]);
+  }, [isStreaming, agentError, session]);
 
   // Load mentionables on mount
   useEffect(() => {
@@ -560,49 +562,16 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [tailTurnId, anchored, isAtBottom, liveUser, response, session?.toolExecutions]);
 
-  // Process queued messages when streaming completes.
-  //
-  // "Not streaming" is not the same as "finished": a turn that stopped on
-  // tool_confirmation_required, or one holding a diff nobody has answered,
-  // is parked and still owns the screen. Draining into it folded the live
-  // turn away and started a new one, so the ConfirmationDialog vanished and
-  // the approval was silently dropped (R11-02). Same three conditions the
-  // fold effect above uses, for the same reason; `session` is in the deps so
-  // the queue drains as soon as the user answers.
-  useEffect(() => {
-    if (session?.pendingConfirmation || session?.state === 'awaiting_confirmation') return;
-    if (session?.diffProposals.some((diff) => diff.status === 'pending')) return;
-    if (!isStreaming && messageQueue.length > 0) {
-      const nextMessage = messageQueue[0];
-      setMessageQueue(prev => prev.slice(1));
-      setInput(nextMessage);
-      // Auto-send after a brief delay
-      setTimeout(() => {
-        // `/model` typed while the agent was streaming is still a command,
-        // not a question. handleSend guards it; this path did not, so the
-        // command reached the backend as ordinary text — harmless while a
-        // session was thrown away each turn, but every turn is persisted
-        // now, so it would be written into the transcript and read back in
-        // the thread receipt. Guarded first: nothing else has happened yet,
-        // so there is nothing to unwind.
-        if (handleModelCommand(nextMessage)) return;
-        const userMsg: UserMessage = {
-          id: 'user-' + Date.now(),
-          content: nextMessage,
-          timestamp: Date.now(),
-        };
-        // Same as handleSend: whatever is still on screen goes into the
-        // transcript before this turn takes its place.
-        foldLiveTurn();
-        cancelledRef.current = false;
-        setLiveUser(userMsg);
-        // Same as handleSend: re-pin to the bottom for the new turn.
-        setIsAtBottom(true);
-        sendMessage(nextMessage, undefined, picker.selection);
-        setInput('');
-      }, 100);
-    }
-  }, [isStreaming, messageQueue, session]);
+  // C3 (busy-mode unification) removed the client-side message queue and
+  // its drain effect: a message typed while the agent is streaming goes to
+  // the server immediately as a mid-turn arrival, and the server's verdict
+  // (`steer_accepted` / `stop_declined` / the stop outcome) is rendered as
+  // a chip above the composer. The old queue was a polite fiction — it
+  // delayed a steer the server would have accepted immediately, and a
+  // "queued" message that arrived after the turn ended was never steering
+  // anything. (The R11-02 parked-turn guarantee comes free now: an
+  // arrival never starts a turn of its own, so it cannot fold a turn
+  // parked on a confirmation or an undecided diff away.)
 
   // Filter mentionables based on input
   const filteredMentionables = mentionables.filter(m =>
@@ -909,16 +878,25 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
   };
 
   const handleSend = async () => {
-    if (!isStreaming && handleModelCommand(input)) return;
+    // A slash command is a command, busy or not: the composer's commands
+    // are parsed client-side and never reach the server as text (the old
+    // queue deferred them to the drain, which re-parsed them there).
+    if (handleModelCommand(input)) return;
 
-    // Queue messages if streaming
-    if (isStreaming && input.trim()) {
-      setMessageQueue(prev => [...prev, input.trim()]);
+    // C3 (busy-mode unification): text typed while a turn runs is sent to
+    // the server IMMEDIATELY as a mid-turn arrival — the backend decides
+    // what it is (plain text steers into the running turn, "/stop" claims
+    // the generation) and the verdict renders as a chip below. The old
+    // client-side queue was a fiction the server never knew about. Image
+    // attachments keep the whole-turn path below: there is no mid-turn
+    // seam for images (the server queues the turn on its lock and says so
+    // with `turn_queued`).
+    if (isStreaming && input.trim() && attachedImages.length === 0) {
+      sendMidturn(input.trim());
       setInput('');
-      // The composer swallowed the sentence; the queue chip is the only
-      // other trace of it, and a feed is not a live region. Without this,
-      // Enter while the agent is busy appears to do nothing at all.
-      announce('Message queued');
+      // The composer swallowed the sentence; until the server's verdict
+      // lands, this is its only trace, and a feed is not a live region.
+      announce('Sent to the running turn');
       return;
     }
 
@@ -1389,22 +1367,52 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
           </div>
         )}
 
-        {/* Message Queue */}
-        {messageQueue.length > 0 && (
+        {/* Mid-turn verdicts (C3): the server's own answer for text typed
+            while a turn ran — rendered where the old "Queued:" chips
+            pretended to hold a queue the server never knew about. */}
+        {midturnVerdicts.length > 0 && (
           <div className="mb-2 space-y-1">
-            {messageQueue.map((msg, idx) => (
-              <div key={idx} className="flex items-center justify-between gap-2 px-2 py-1 bg-warning/10 border border-warning/20 rounded text-xs">
-                <span className="text-muted-foreground truncate">Queued: {msg}</span>
+            {midturnVerdicts.map((verdict) => (
+              <div
+                key={verdict.id}
+                className="flex items-center justify-between gap-2 px-2 py-1 bg-info/10 border border-info/20 rounded text-xs"
+              >
+                <span className="text-muted-foreground truncate">
+                  {verdict.kind === 'steer_accepted' && (
+                    <>
+                      {verdict.demoted ? 'Steered (was a stop, a tool was mid-flight): ' : 'Steered the running turn: '}
+                      {verdict.text}
+                      {verdict.replaced ? ' (replaced an earlier steer)' : ''}
+                    </>
+                  )}
+                  {verdict.kind === 'stop_declined' && (
+                    <>Stop declined — {verdict.reason ?? 'the turn had finished'}: </>
+                  )}
+                  {verdict.kind === 'stopped' && <>Stopped the running turn: {verdict.text}</>}
+                  {verdict.kind === 'sent_as_turn' && (
+                    <>Sent as its own turn — {verdict.reason ?? 'the running turn had finished'}: {verdict.text}</>
+                  )}
+                </span>
                 <button
                   type="button"
-                  aria-label={`Remove queued message: ${msg}`}
-                  onClick={() => setMessageQueue(prev => prev.filter((_, i) => i !== idx))}
+                  aria-label={`Dismiss verdict: ${verdict.text}`}
+                  onClick={() => dismissMidturnVerdict(verdict.id)}
                   className="text-muted-foreground hover:text-foreground shrink-0"
                 >
                   <XIcon className="h-3 w-3" aria-hidden="true" />
                 </button>
               </div>
             ))}
+          </div>
+        )}
+
+        {/* turn_queued (C3): the server's honest "this whole turn is
+            queued behind the running one" — image arrivals' declared
+            queue mode, an observable state now instead of a bare
+            "waiting" badge. */}
+        {session?.turnQueued && (
+          <div className="mb-2 px-2 py-1 bg-warning/10 border border-warning/20 rounded text-xs">
+            <span className="text-muted-foreground">Queued behind the running turn — it starts when this one finishes.</span>
           </div>
         )}
 
@@ -1434,7 +1442,7 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
               }}
               onKeyDown={handleKeyDown}
               onPaste={handlePaste}
-              placeholder={isStreaming ? "Type to queue next message..." : "Ask Halbert... (@ to mention, paste/drop images)"}
+              placeholder={isStreaming ? "Type to steer the running turn..." : "Ask Halbert... (@ to mention, paste/drop images)"}
               className="w-full bg-muted border border-border rounded-lg px-4 py-2 pr-10 text-sm text-foreground placeholder-zinc-500 focus:outline-none focus:border-info resize-none overflow-hidden min-h-[40px]"
               rows={1}
               style={{ maxHeight: '150px' }}
@@ -1485,7 +1493,7 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
             On a home variant there is no pill to sit here at all
             — see peerGovernedVariant above. */}
         <div className="mt-2 flex items-center justify-between gap-2 text-xs text-muted-foreground">
-          <span>{isStreaming ? 'Agent working... type to queue' : 'Press Enter to send'}</span>
+          <span>{isStreaming ? 'Agent working... type to steer' : 'Press Enter to send'}</span>
           {peerGovernedVariant ? null : (
             <ChatModelPill
               picker={picker}

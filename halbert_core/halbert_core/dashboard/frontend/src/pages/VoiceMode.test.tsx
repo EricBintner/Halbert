@@ -47,7 +47,7 @@ const h = vi.hoisted(() => {
     uplinks: [] as Array<{ start: ReturnType<typeof vi.fn>; stop: ReturnType<typeof vi.fn>; state: string; getAnalyserTap: () => unknown }>,
     uplinkOptions: [] as Array<{
       onError?: (message: string) => void
-      onTranscript?: (t: { text: string; speakerName?: string; speakerRole?: string }) => void
+      onTranscript?: (t: { text: string; speakerName?: string; speakerRole?: string; relayToken?: string }) => void
     }>,
     /** When true, the next PcmUplink.start() stays 'starting' until the
      * test resolves it (a pending getUserMedia). */
@@ -129,7 +129,7 @@ vi.mock('@/lib/pcmCapture', () => ({
       h.uplinkOptions.push(
         opts as {
           onError?: (message: string) => void
-          onTranscript?: (t: { text: string; speakerName?: string; speakerRole?: string }) => void
+          onTranscript?: (t: { text: string; speakerName?: string; speakerRole?: string; relayToken?: string }) => void
         },
       )
     }
@@ -390,17 +390,18 @@ describe('mark tap handling', () => {
     expect(onTranscript).toBeTypeOf('function')
     act(() => { onTranscript!({ text: 'what is my disk usage' }) })
 
-    // Packet 04 A1: the spoken turn is typed as voice. No speaker was
-    // identified in this transcript, so the claim fields are absent —
-    // the backend then defaults the role to "unknown", never admin.
+    // Packet 04 A1: the spoken turn is typed as voice. No receipt token
+    // came with this transcript, so none is sent — the server stamps no
+    // claim and defaults the role to "unknown", never admin (C2: the
+    // browser no longer derives or sends claim fields at all).
     expect(h.agent!.sendMessage).toHaveBeenCalledWith(
       'what is my disk usage', expect.any(String),
       undefined, undefined,
-      expect.objectContaining({ speakerName: undefined, speakerRole: undefined }),
+      expect.objectContaining({ relayToken: undefined }),
     )
   })
 
-  it('listening: an identified transcript carries the speaker claim into the turn', async () => {
+  it('listening: a transcript carries its relay receipt, not a client-derived claim', async () => {
     setMachine('listening', 'listening')
     mount()
     await waitFor(() => expect(h.uplinkOptions.length).toBeGreaterThan(0))
@@ -411,17 +412,18 @@ describe('mark tap handling', () => {
         text: 'restart the scanner service',
         speakerName: 'Eric',
         speakerRole: 'member',
+        relayToken: 'receipt-1',
       } as Parameters<NonNullable<typeof onTranscript>>[0])
     })
 
+    // C2 (voice honesty): the ONLY thing the browser contributes is the
+    // server-minted receipt token — the server stamps the speaker claim
+    // from its own recorded observation, and the speaker fields the
+    // transcript carried are not sent (they are ignored server-side).
     expect(h.agent!.sendMessage).toHaveBeenCalledWith(
       'restart the scanner service', expect.any(String),
       undefined, undefined,
-      {
-        speakerName: 'Eric',
-        speakerRole: 'member',
-        claimSource: 'voice_speaker_verification',
-      },
+      { relayToken: 'receipt-1' },
     )
   })
 

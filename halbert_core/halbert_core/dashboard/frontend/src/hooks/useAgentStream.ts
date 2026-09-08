@@ -181,6 +181,34 @@ export interface AgentSession {
   modality?: ModalityInfo | null;
   /** Phase 2: speech segments emitted for voice delivery this turn. */
   speechSegments?: SpeechSegmentEvent[];
+  /**
+   * C3 (busy-mode unification): true once the server says this whole
+   * turn is queued behind the running one (`turn_queued` — the honest
+   * event for the lock wait, image arrivals' declared queue mode), false
+   * again once the turn actually starts.
+   */
+  turnQueued?: boolean;
+}
+
+/**
+ * C3 (busy-mode unification): the server's own verdict for a mid-turn
+ * arrival — what the backend DID with text typed while a turn ran. The
+ * backend owns semantics; the client renders its verdict (the old local
+ * message queue was a polite fiction that delayed a `steer_accepted`
+ * the server would have given immediately).
+ */
+export interface MidturnVerdict {
+  id: string;
+  kind: 'steer_accepted' | 'stop_declined' | 'stopped' | 'sent_as_turn';
+  /** What was sent (steer chips show it; stop chips show the command). */
+  text: string;
+  /** The server's own reason string, when it sent one. */
+  reason?: string;
+  /** A steer that replaced an earlier pending steer (07-B flags). */
+  replaced?: boolean;
+  /** A steer that was demoted from a stop (tool batch in flight). */
+  demoted?: boolean;
+  at: number;
 }
 
 export interface StreamEvent {
@@ -217,22 +245,23 @@ export interface ModelSelection {
  * Packet 04 A1: what a spoken turn carries into the typed ingress.
  *
  * A voice turn reaches the same /api/agent/message door as a typed one
- * (browser-relayed STT), so without these fields the backend cannot tell
- * the two apart — and defaulted every spoken command to the owner's role.
+ * (browser-relayed STT). C2 (voice honesty): the speaker claim is the
+ * SERVER's to stamp — the relay recorded its observation of the utterance
+ * and minted a receipt token, and only that token redeems the observed
+ * speaker's claim. The browser no longer sends the claim fields it used
+ * to derive (they are ignored server-side), only the token; a turn with
+ * no token is an unidentified voice turn (unknown role, never admin).
  * The fields are omitted entirely on typed turns, so a typed request is
  * byte-identical to before.
  */
 export interface VoiceTurnOrigin {
-  /** Speaker name from the STT relay (CAM++ match, empty when unmatched). */
-  speakerName?: string;
-  /** Identified role ('admin' | 'member' | 'guest' | 'restricted' | 'unknown'). */
-  speakerRole?: string;
   /**
-   * Where the claim came from: a role the audio pipeline matched is
-   * 'voice_speaker_verification'; a name with no matched role is
-   * 'free_text_name'; absent means unverified.
+   * The relay receipt token the server minted with this transcript
+   * (C2). The server stamps the turn's speaker claim from the
+   * observation this token redeems — never from anything this client
+   * says about itself.
    */
-  claimSource?: string;
+  relayToken?: string;
 }
 
 export interface UseAgentStreamOptions {
@@ -283,6 +312,17 @@ export interface UseAgentStreamReturn {
     images?: string[],
     voice?: VoiceTurnOrigin,
   ) => void;
+  /**
+   * C3: send text while a turn runs as a MID-TURN ARRIVAL — it goes to
+   * the server immediately (no client-side queue) and this surfaces the
+   * server's own verdict (`steer_accepted` / `stop_declined` / the stop
+   * outcome) in `midturnVerdicts`. Never resets the running turn's
+   * display: an arrival is not a new turn.
+   */
+  sendMidturn: (message: string) => void;
+  /** The server's verdicts for this session's mid-turn arrivals, newest last. */
+  midturnVerdicts: MidturnVerdict[];
+  dismissMidturnVerdict: (id: string) => void;
   confirmAction: (actionId: string, confirmed: boolean) => void;
   applyDiff: (diffId: string) => void;
   rejectDiff: (diffId: string) => void;
@@ -429,6 +469,9 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
   const [provenance, setProvenance] = useState<ProvenanceRef[]>([]);
   const [moduleInvocations, setModuleInvocations] = useState<ModuleInvocation[]>([]);
   const [turnModel, setTurnModel] = useState<TurnModelInfo | null>(null);
+  // C3: the server's own verdicts for mid-turn arrivals (rendered, never
+  // queued client-side — the backend owns busy semantics).
+  const [midturnVerdicts, setMidturnVerdicts] = useState<MidturnVerdict[]>([]);
 
   const eventSourceRef = useRef<EventSource | null>(null);
   const sessionIdRef = useRef<string | null>(null);
@@ -783,7 +826,20 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
 
         // A2c: user-facing conversation status (in_progress/blocked/waiting/...)
         case 'conversation_status':
-          return { ...prev, conversationStatus: (event.status as string) ?? null };
+          return {
+            ...prev,
+            conversationStatus: (event.status as string) ?? null,
+            // C3: any non-waiting status means the queued turn is now
+            // running (process() flips it to in_progress right after
+            // acquiring the lock).
+            turnQueued: (event.status as string) === 'waiting' ? prev.turnQueued : false,
+          };
+
+        // C3 (busy-mode unification): the honest queued-turn event — this
+        // whole turn waits on the machine's turn lock behind the running
+        // one (the image-arrival queue mode the dashboard declares).
+        case 'turn_queued':
+          return { ...prev, turnQueued: true };
 
         // C1d: somatic block phase/status change
         case 'somatic_block':
@@ -1084,12 +1140,14 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
           ? { tier: selection.tier }
           : {}),
         ...(selection?.endpointId ? { endpoint_id: selection.endpointId } : {}),
-        // Packet 04 A1: a spoken turn carries its modality and speaker
-        // claim; omitted entirely on typed turns (byte-identical body).
+        // Packet 04 A1: a spoken turn carries its modality. C2: the claim
+        // is the server's to stamp from the relay receipt — the browser
+        // sends only the token the relay minted with the transcript (its
+        // former claim_source/speaker fields are ignored server-side, so
+        // they are not sent). Omitted entirely on typed turns
+        // (byte-identical body).
         ...(voice ? { modality: 'voice' } : {}),
-        ...(voice?.speakerName ? { speaker_name: voice.speakerName } : {}),
-        ...(voice?.speakerRole ? { speaker_role: voice.speakerRole } : {}),
-        ...(voice?.claimSource ? { claim_source: voice.claimSource } : {}),
+        ...(voice?.relayToken ? { relay_token: voice.relayToken } : {}),
       }),
       signal: controller.signal
     }).then(async (response) => {
@@ -1149,6 +1207,118 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
     // Store abort controller for cancel functionality
     eventSourceRef.current = { close: () => { stopTimeoutCheck(); controller.abort(); } } as EventSource;
   }, [initSession, handleEvent, flushNow]);
+
+  // C3 (busy-mode unification): text typed while a turn runs goes to the
+  // server IMMEDIATELY as a mid-turn arrival — the backend owns the
+  // semantics (steer into the running turn, /stop claims the generation)
+  // and this renders its verdict. Deliberately NOT sendMessage: an
+  // arrival is not a new turn, so nothing about the running turn's
+  // display is reset — no clearResponse, no initSession, no isStreaming
+  // flip. The arrival's own SSE stream is short (the verdict events) and
+  // is consumed here; the running turn's stream keeps driving the screen.
+  const sendMidturn = useCallback((message: string) => {
+    const trimmed = message.trim();
+    if (!trimmed) return;
+    const controller = new AbortController();
+    let becameFullTurn = false;
+    fetch(apiUrl('/api/agent/message'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        message: trimmed,
+        // A session id names one turn; the arrival mints its own.
+        session_id: crypto.randomUUID(),
+        max_tokens: 8192,
+        temperature: 0.7,
+      }),
+      signal: controller.signal,
+    }).then(async (response) => {
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+      const reader = response.body?.getReader();
+      if (!reader) throw new Error('No response body');
+      const decoder = new TextDecoder();
+      let buffer = '';
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          try {
+            const event = JSON.parse(line.slice(6)) as StreamEvent;
+            // The race: the running turn finished between the composer's
+            // send and the server's look, so this arrival became an
+            // ordinary turn after all. Pipe it through the normal event
+            // path — exactly what would have happened had it been sent a
+            // moment later — and say so instead of pretending to steer.
+            if (event.type === 'session_started') {
+              becameFullTurn = true;
+              setIsStreaming(true);
+              setMidturnVerdicts(prev => [...prev.slice(-4), {
+                id: crypto.randomUUID(),
+                kind: 'sent_as_turn',
+                text: trimmed,
+                reason: 'the running turn had finished',
+                at: Date.now(),
+              }]);
+            }
+            if (becameFullTurn) {
+              handleEvent(event);
+              continue;
+            }
+            if (event.type === 'steer_accepted') {
+              setMidturnVerdicts(prev => [...prev.slice(-4), {
+                id: crypto.randomUUID(),
+                kind: 'steer_accepted',
+                text: trimmed,
+                reason: (event.reason as string | undefined) ?? undefined,
+                replaced: !!(event.replaced),
+                demoted: !!(event.demoted),
+                at: Date.now(),
+              }]);
+            } else if (event.type === 'stop_declined') {
+              setMidturnVerdicts(prev => [...prev.slice(-4), {
+                id: crypto.randomUUID(),
+                kind: 'stop_declined',
+                text: trimmed,
+                reason: (event.reason as string | undefined) ?? undefined,
+                at: Date.now(),
+              }]);
+            } else if (event.type === 'cancelled') {
+              // The arrival's stop claimed the running turn: its own
+              // stream is the one that ends with `cancelled`, so the
+              // verdict chip says the stop landed; the running turn's
+              // stream drives the rest of the screen.
+              setMidturnVerdicts(prev => [...prev.slice(-4), {
+                id: crypto.randomUUID(),
+                kind: 'stopped',
+                text: trimmed,
+                at: Date.now(),
+              }]);
+            }
+          } catch {
+            // Ignore parse errors for partial data
+          }
+        }
+      }
+      if (becameFullTurn) {
+        flushNow();
+        setIsStreaming(false);
+      }
+    }).catch((err) => {
+      if (err.name === 'AbortError') return;
+      console.error('Mid-turn arrival error:', err);
+      optionsRef.current.onError?.(err.message || 'Mid-turn arrival failed');
+    });
+  }, [handleEvent, flushNow]);
+
+  const dismissMidturnVerdict = useCallback((id: string) => {
+    setMidturnVerdicts(prev => prev.filter(v => v.id !== id));
+  }, []);
 
   const confirmAction = useCallback((actionId: string, confirmed: boolean) => {
     if (!sessionIdRef.current) return;
@@ -1303,6 +1473,9 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
     moduleInvocations,
     turnModel,
     sendMessage,
+    sendMidturn,
+    midturnVerdicts,
+    dismissMidturnVerdict,
     confirmAction,
     applyDiff,
     rejectDiff,

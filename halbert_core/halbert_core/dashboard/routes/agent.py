@@ -91,6 +91,13 @@ class SendMessageRequest(BaseModel):
     speaker_name: Optional[str] = Field(None, description="Speaker identified by the audio pipeline (CAM++ match name) for a voice turn. Display label only")
     speaker_role: Optional[str] = Field(None, description="Identified speaker role for a voice turn (admin/member/guest/restricted/unknown). Never inferred, never authoritative: honored on voice turns as the stated label the claim-strength cap applies to, ignored on the dashboard channel")
     claim_source: Optional[str] = Field(None, description="Where the speaker claim came from ('voice_speaker_verification' | 'free_text_name'). A hint only: the server stamps the claim from the resolved channel, clamped to its ceiling")
+    # C2 (voice honesty): the receipt the SERVER minted when the relay
+    # handed the browser this utterance's transcript. On a voice turn it
+    # is the only thing that can stamp a speaker claim -- the wire's
+    # claim/speaker fields are ignored entirely in favor of what the
+    # observation recorded (see send_message). Absent or unredeemed means
+    # the turn is unidentified: no claim, unknown role, never admin.
+    relay_token: Optional[str] = Field(None, description="The server-minted relay receipt token that came with this utterance's transcript (voice relay, C2). A voice turn's claim is stamped from the recorded observation this token redeems -- never from this request's own fields")
 
 
 class ConfirmActionRequest(BaseModel):
@@ -1616,9 +1623,15 @@ if FASTAPI_AVAILABLE:
         # nothing is silently dropped. Arrivals carrying images keep the
         # queue-a-turn path below: images ride the per-turn context, and no
         # mid-turn seam for them exists yet.
+        #
+        # C3 (busy-mode unification): the arrival's resolved channel rides
+        # the call — the verbs this arrival may use are the channel's own
+        # busy_verbs, so a spoken or terminal "/stop" degrades to a steer
+        # (neither channel declares stop) while the dashboard's "/stop"
+        # still claims the generation.
         if not request.images:
             _decision, arrival_events = agent.handle_midturn_arrival(
-                session_id, request.message
+                session_id, request.message, channel=channel
             )
             if arrival_events is not None:
                 async def arrival_stream():
@@ -1683,26 +1696,50 @@ if FASTAPI_AVAILABLE:
         #   channel's own admin default applies -- the dashboard session
         #   is authenticated, so the wire naming a different role was
         #   never a security boundary, and the design §5 table makes the
-        #   role a property of the channel). Over the voice channel the
-        #   identified speaker's stated role still threads -- as the
-        #   label D-6's claim-strength cap applies to, never as
-        #   self-granted authority. The terminal channel ignores it for
-        #   the dashboard door's reason exactly (C5: its credential is
-        #   the same dashboard token), and its claim likewise carries
+        #   role a property of the channel). The terminal channel ignores
+        #   it for the dashboard door's reason exactly (C5: its credential
+        #   is the same dashboard token), and its claim likewise carries
         #   that token whether the wire declared a source or none --
         #   the channel's identity is not absent-able, it is what the
         #   server validated on the request; there is no pre-C5
         #   terminal turn whose bytes need preserving.
-        # - speaker_name rides as a display label only; it never feeds
-        #   authorization (the ladder hashes it into the claim's value,
-        #   and a typed turn records no claim at all).
+        # - speaker_name rides as a display label only over the
+        #   dashboard door; it never feeds authorization (the ladder
+        #   hashes it into the claim's value, and a typed turn records no
+        #   claim at all).
+        #
+        # C2 (voice honesty) closes the forged-voice surface C1's own
+        # report flagged: over the voice channel a declared
+        # "voice_speaker_verification" sits exactly AT the ceiling, so
+        # the clamp alone could not tell the honest browser relay from a
+        # raw POST saying the same words. The voice turn's claim, name
+        # and role are now stamped from the SERVER's relay-side
+        # knowledge -- the observation the relay recorded when it handed
+        # the browser the transcript, redeemed by the single-use receipt
+        # token (dashboard/voice_relay.py). The wire's claim_source /
+        # speaker_name / speaker_role are ignored entirely on voice
+        # turns; a turn with no redeemable receipt (absent, spent,
+        # expired, or bound to different words) is an unidentified voice
+        # turn: no claim, no name, and the channel's own "unknown" role
+        # applies -- never a silent admin. The C1 clamp survives as the
+        # last line of defence: the receipt-derived claim still passes
+        # through stamped_claim_source, so nothing raises above the
+        # ceiling on any channel.
         #
         # A typed request with none of the voice fields arrives at
         # process() with every field None -- byte-identical to before C1
         # (the 04-A1 pin).
+        stamped_speaker_name = request.speaker_name
+        stamped_claim_hint = request.claim_source
         if channel.id == "voice":
             stamped_modality = "voice"
-            stamped_speaker_role = request.speaker_role
+            from ..voice_relay import (
+                get_voice_relay_receipts, stamped_voice_fields,
+            )
+            receipt = get_voice_relay_receipts().consume(request.relay_token)
+            (
+                stamped_claim_hint, stamped_speaker_name, stamped_speaker_role,
+            ) = stamped_voice_fields(receipt, request.message)
         elif channel.id == "terminal":
             # C5: the turn arrives at process() as "terminal" so the
             # state machine resolves the same channel for provenance
@@ -1714,7 +1751,11 @@ if FASTAPI_AVAILABLE:
             stamped_modality = None
             stamped_speaker_role = None
         from ...agents.channels import CHANNEL_CLAIM_STAMP, stamped_claim_source
-        stamped_claim = stamped_claim_source(channel, request.claim_source)
+        # C1's clamp, kept as the last line of defence (C2): the hint is
+        # the wire's word on the dashboard/terminal doors and the
+        # receipt-derived stamp on the voice door, and the ceiling clamp
+        # applies to both -- nothing raises above the channel's ceiling.
+        stamped_claim = stamped_claim_source(channel, stamped_claim_hint)
         if channel.id == "terminal" and not stamped_claim:
             # The founder ruling made the terminal's claim the dashboard
             # token unconditionally (ASSERTED via the existing token --
@@ -1748,7 +1789,7 @@ if FASTAPI_AVAILABLE:
                     history_budget=history_budget,
                     retrieval_scope=request.scope,
                     modality=stamped_modality,
-                    speaker_name=request.speaker_name,
+                    speaker_name=stamped_speaker_name,
                     speaker_role=stamped_speaker_role,
                     claim_source=stamped_claim,
                 )) as stream:

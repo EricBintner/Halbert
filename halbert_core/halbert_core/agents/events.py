@@ -445,6 +445,27 @@ class StreamEvent:
         )
 
     @classmethod
+    def turn_queued(
+        cls,
+        session_id: str,
+        waiting_for: Optional[str] = None,
+    ) -> 'StreamEvent':
+        """Emit the honest queued-turn event (channel layer C3).
+
+        A whole-turn arrival that waits for the running turn (image
+        arrivals over the dashboard door, a terminal client's first-class
+        queue) tells the client so with a dedicated event: "this turn is
+        queued behind the running one" is an observable state, not just a
+        generic waiting badge. Rides alongside (never replaces) the
+        ``conversation_status`` waiting event existing consumers read.
+        """
+        return cls(
+            type="turn_queued",
+            session_id=session_id,
+            data={"waiting_for": waiting_for},
+        )
+
+    @classmethod
     def conversation_status(
         cls,
         session_id: str,

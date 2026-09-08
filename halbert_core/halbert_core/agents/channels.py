@@ -214,12 +214,13 @@ def stamped_claim_source(
       (C5): its identity IS the dashboard token, so a declared source
       over it can only ever clamp to that stamp.
     - The voice channel passes a declared source at or below its ceiling
-      through unchanged — an honest relay's claim survives, an unknown
-      source keeps the ladder's own fail-closed reading — and a declared
-      source ABOVE the ceiling clamps down to the channel's stamp: the
-      wire can raise nothing. (Making this stamp fully server-side —
-      the relay's own observation instead of the browser's word — is
-      C2's honesty pass; the ceiling clamp holds until then.)
+      through unchanged and a declared source ABOVE the ceiling clamps
+      down to the channel's stamp: the wire can raise nothing. Since C2
+      (voice honesty) the hint the voice door hands this function is not
+      the wire's word at all — it is the relay receipt's stamp
+      (``dashboard/voice_relay.py``), so this clamp is the voice
+      channel's LAST line of defence, not its first; the wire's fields
+      are ignored upstream of it.
     """
     if not declared:
         return None

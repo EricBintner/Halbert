@@ -1000,9 +1000,39 @@ def create_app(enable_cors: bool = True) -> FastAPI:
     
     # WebSocket connection manager
     manager = ConnectionManager()
-    
+
     # Store in app state
     app.state.ws_manager = manager
+
+    # C4 (turn-event tee) — the first consumer's bridge. The state
+    # machine publishes a REDUCED turn-event set (state transitions,
+    # statuses, tool/block markers, the busy-mode verdicts) to the
+    # process-wide tee; this bridge re-broadcasts each payload on the
+    # dashboard's authenticated /ws fan-out as {'type': 'turn_event'},
+    # so the voice HUD (and any second screen in the room) can reflect a
+    # turn it did not post — observe-only: the tee carries no verb, and
+    # the /ws socket was already receive-only. The tee scrubs payload
+    # strings through the echo-guard seam before this bridge ever sees
+    # them. The bridge schedules its own broadcast task (tee callbacks
+    # are sync by contract; the turn must never await a slow subscriber).
+    try:
+        from ..agents.turn_event_tee import get_turn_event_tee
+
+        def _bridge_turn_event(payload) -> None:
+            try:
+                loop = asyncio.get_event_loop()
+                loop.create_task(manager.broadcast(
+                    {"type": "turn_event", "data": payload}
+                ))
+            except RuntimeError:
+                # No running loop (startup edge): the event is dropped —
+                # the tee is observation, never delivery.
+                pass
+
+        get_turn_event_tee().subscribe(_bridge_turn_event)
+        logger.info("Turn-event tee bridged to the /ws fan-out")
+    except Exception as e:
+        logger.warning(f"Turn-event tee bridge not wired (non-fatal): {e}")
     
     # SEC-1 — one door.
     #
@@ -1420,11 +1450,22 @@ def create_app(enable_cors: bool = True) -> FastAPI:
                     # The transcript reaches the browser as a plain line — no
                     # wrapper phrase (a wrapper reads as a meta-instruction);
                     # the browser echoes it back to the user verbatim and
-                    # submits it as the turn text, carrying the speaker
-                    # claim below into the typed ingress.
+                    # submits it as the turn text. C2 (voice honesty): the
+                    # relay records this observation under a server-minted
+                    # single-use receipt token BEFORE broadcasting, and the
+                    # token rides with the transcript — the browser redeems
+                    # it with the turn, and the talk door stamps the turn's
+                    # claim from what the pipeline actually observed, never
+                    # from the wire's word (dashboard/voice_relay.py). The
+                    # transcript IS the command text
+                    # (transcribe_before_command): the receipt is bound to
+                    # these exact words, so a redeemed token cannot carry
+                    # the observed speaker's identity onto others.
                     text = getattr(observation, "text", "") or ""
                     if not text.strip():
                         return
+                    from .voice_relay import get_voice_relay_receipts
+                    relay_token = get_voice_relay_receipts().record(observation)
                     ingress = _coordinator.get_ingress("dashboard")
                     if ingress is None or not hasattr(ingress, "broadcast"):
                         return
@@ -1434,6 +1475,7 @@ def create_app(enable_cors: bool = True) -> FastAPI:
                         "speaker_name": getattr(observation, "speaker_name", ""),
                         "speaker_role": getattr(observation, "speaker_role", "unknown"),
                         "area_id": getattr(observation, "area_id", ""),
+                        "relay_token": relay_token,
                     })
 
                 _coordinator.on_voice_turn = _relay_voice_turn

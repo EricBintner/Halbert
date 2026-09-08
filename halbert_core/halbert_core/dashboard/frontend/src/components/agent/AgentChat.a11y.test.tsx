@@ -138,8 +138,20 @@ describe('AgentChat speaks the streaming lifecycle', () => {
     expect(listener.said.filter((s) => s === 'Reply finished')).toHaveLength(1)
   })
 
-  it('says a message is queued while the agent is busy, not sent', async () => {
-    routeFetch(() => heldBody(chunkLine('working…')))
+  it('says a mid-turn send while the agent is busy, and renders the server’s verdict', async () => {
+    // C3 (busy-mode unification): text typed while the agent is busy is
+    // sent to the server immediately as a mid-turn arrival — there is no
+    // client-side queue anymore — and the server's own verdict renders as
+    // a chip. The first fetch stream is held open (the agent stays busy);
+    // the arrival's stream answers with steer_accepted.
+    let firstStream = true
+    routeFetch(() => {
+      if (firstStream) {
+        firstStream = false
+        return heldBody(chunkLine('working…'))
+      }
+      return sseBody([ev('steer_accepted', { reason: 'steer', replaced: false, demoted: false })])
+    })
     render(<AgentChat />)
     const composer = await screen.findByPlaceholderText(/^Ask Halbert/)
 
@@ -149,10 +161,11 @@ describe('AgentChat speaks the streaming lifecycle', () => {
 
     await userEvent.type(composer, 'and while you are at it{Enter}')
 
-    // The first question was sent; the second was queued, not sent again.
+    // The first question was sent as a turn; the second went to the
+    // running turn immediately, and the server's verdict rendered.
     expect(listener.said.filter((s) => s === 'Message sent')).toHaveLength(1)
-    expect(listener.said.filter((s) => s === 'Message queued')).toHaveLength(1)
-    expect(await screen.findByText(/Queued: and while you are at it/)).toBeInTheDocument()
+    expect(listener.said.filter((s) => s === 'Sent to the running turn')).toHaveLength(1)
+    expect(await screen.findByText(/Steered the running turn: and while you are at it/)).toBeInTheDocument()
   })
 
   it('says Stopped when the turn is cancelled, and nothing after it', async () => {
