@@ -273,12 +273,16 @@ class MCPHealthMonitor:
             # exits at its next loop-top flag check); cancellation only
             # interrupts an in-flight sweep faster. Neither is awaited
             # unboundedly — a stop must never hang the shutdown.
-            pending = await asyncio.wait(
-                {task}, timeout=self._probe_timeout + 5.0)
+            bound = self._probe_timeout + 5.0
+            pending = await asyncio.wait({task}, timeout=bound)
             if task in pending:
+                # The bound is not sweep-aware: an in-flight multi-server
+                # discovery sweep can outlive it. stop() still returns —
+                # the task exits at its next loop-top flag check (residual
+                # task lifetime, not a hang).
                 logger.warning(
                     "MCP health monitor did not stop within %ss; leaving "
-                    "it to its loop", self.interval)
+                    "it to its loop", bound)
         reconnects = list(self._reconnect_tasks.values())
         self._reconnect_tasks.clear()
         for task in reconnects:

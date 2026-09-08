@@ -56,7 +56,12 @@ current config does not name are dropped (their classifier would
 fail-closed block them anyway), while a server that is configured but
 DOWN at refresh time KEEPS its previous registrations — a failed
 connect must not zero the working set (the B2 residual, fixed here).
-The client's per-call config reload stays B1's connection behavior.
+One blind case, deliberate: a config that EXISTS but cannot be READ
+(``load_error`` other than "config file missing") leaves the diff
+blind — nothing is dropped (a mis-timed drop must not amplify a read
+failure into a tool loss); a MISSING file is a legitimate removal and
+the diff proceeds with the empty server list. The client's per-call
+config reload stays B1's connection behavior.
 
 Context bloat: a server exposing a huge tool list bloats every agent
 turn's tool schema block. Above :data:`MANY_TOOLS_WARNING` the bridge
@@ -430,7 +435,10 @@ async def _discover_and_register(tool_executor, mcp_client) -> int:
     The diff runs AFTER it (see ``_drop_unconfigured_server_tools``), so
     a refresh whose connects all fail keeps the previous registrations
     instead of zeroing the MCP tool set, while a server the current
-    config no longer names still loses its tools.
+    config no longer names still loses its tools. The diff is also
+    load_error-aware: a MISSING config is a legitimate removal (drop);
+    a config that exists but cannot be read leaves the diff blind (keep
+    everything).
     """
     try:
         # Connect every configured server. The client logs each failure
@@ -451,14 +459,30 @@ async def _discover_and_register(tool_executor, mcp_client) -> int:
         logger.warning("MCP discovery: could not list connected servers: %s", e)
         return 0
 
-    # The configured names, for the diff. A config the bridge cannot
-    # read leaves the diff blind — drop NOTHING (the classifier's
-    # absent-server fail-closed path gates whatever is stale; a
-    # mis-timed drop must not amplify a read failure into a tool loss).
+    # The configured names, for the diff. load_config never raises — it
+    # degrades to a load_error — so the blind-config guard must read the
+    # error SHAPES, not an exception:
+    #   * "config file missing" is a legitimate removal (every server is
+    #     gone): proceed with the empty list and let the diff drop;
+    #   * every other load_error ("unparseable: …", "file is not a
+    #     mapping", "'servers' is not a list") means the file EXISTS but
+    #     could not be read — the diff is BLIND: drop NOTHING (the
+    #     classifier's absent-server fail-closed path gates whatever is
+    #     stale; a mis-timed drop must not amplify a read failure into a
+    #     tool loss).
+    configured_names: Optional[List[str]]
     try:
-        from .config import load_config
-        configured_names = [s.name for s in load_config().servers]
+        from .config import MISSING_CONFIG_LOAD_ERROR, load_config
+        config = load_config()
+        if config.load_error and config.load_error != MISSING_CONFIG_LOAD_ERROR:
+            logger.warning(
+                "MCP discovery: config unreadable (%s); keeping every "
+                "existing MCP registration", config.load_error)
+            configured_names = None
+        else:
+            configured_names = [s.name for s in config.servers]
     except Exception as e:
+        # Defensive only — load_config never raises by design.
         logger.warning(
             "MCP discovery: config unreadable (%s); keeping every "
             "existing MCP registration", e)

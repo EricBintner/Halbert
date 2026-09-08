@@ -877,6 +877,57 @@ class TestStaleDropOrdering:
         assert _mcp_tools(executor) == [
             "mcp__fs__delete_file", "mcp__fs__read_file"]
 
+    @pytest.mark.parametrize("raw", [
+        "servers: [oops-not-yaml",      # unparseable YAML
+        "just_a_string",                # not a mapping
+        "servers: 42",                  # 'servers' is not a list
+    ])
+    async def test_a_real_corrupt_config_keeps_everything(
+            self, tmp_path, raw):
+        """The NON-RAISING corrupt shapes — what load_config actually
+        returns for a file that exists but cannot be read (it degrades to
+        a load_error, never raises). Every such shape leaves the diff
+        blind: the tools are KEPT, not dropped."""
+        from halbert_core.mcp import config as config_mod
+
+        write_config(tmp_path, ["fs"])
+        executor = ToolExecutor(web_search=False)
+        await discover_and_register(
+            executor, FakeClient(tools={"fs": FS_TOOLS}))
+        assert _mcp_tools(executor) == [
+            "mcp__fs__delete_file", "mcp__fs__read_file"]
+
+        (tmp_path / "mcp_config.yml").write_text(raw)
+        config_mod.reset_config_memo()
+        assert load_config().load_error  # genuinely unreadable
+
+        # The refresh runs (the file identity changed) — and drops nothing.
+        await discover_and_register(
+            executor, FakeClient(tools={"fs": FS_TOOLS}))
+        assert _mcp_tools(executor) == [
+            "mcp__fs__delete_file", "mcp__fs__read_file"]
+
+    async def test_a_missing_config_drops_everything(self, tmp_path):
+        """The OPPOSITE shape: a MISSING file is a legitimate removal —
+        every server is gone, so the diff proceeds with the empty list
+        and the tools are dropped (the opposite side of "unparseable")."""
+        write_config(tmp_path, ["fs"])
+        executor = ToolExecutor(web_search=False)
+        await discover_and_register(
+            executor, FakeClient(tools={"fs": FS_TOOLS}))
+        assert _mcp_tools(executor) == [
+            "mcp__fs__delete_file", "mcp__fs__read_file"]
+
+        (tmp_path / "mcp_config.yml").unlink()
+        # A real client tears down the removed server at its next call
+        # (_ensure: "not configured") and connects nothing — the fake
+        # mirrors that by having nothing connected.
+        # (tools is empty too: the real client connects only what the
+        # config names, and the config now names nothing.)
+        down_client = FakeClient(tools={}, connected=set())
+        await discover_and_register(executor, down_client)
+        assert _mcp_tools(executor) == []
+
     async def test_a_total_connect_failure_keeps_everything(self, tmp_path):
         write_config(tmp_path, ["fs"])
         executor = ToolExecutor(web_search=False)

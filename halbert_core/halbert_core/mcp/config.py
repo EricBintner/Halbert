@@ -506,6 +506,16 @@ def load_config() -> MCPClientConfig:
     return config
 
 
+#: The load_error string for a MISSING file — the one unreadable-config
+#: state a consumer may ACT on: a missing file is a legitimate removal
+#: (every server is gone), unlike every other load_error ("unparseable:
+#: …", "file is not a mapping", "'servers' is not a list"), which means
+#: the file EXISTS but could not be read — there the consumer is blind
+#: and must keep prior state rather than acting on an empty server list
+#: (mcp/bridge.py's diff is the consumer).
+MISSING_CONFIG_LOAD_ERROR = "config file missing"
+
+
 def reset_config_memo() -> None:
     """Drop every memo slot (test isolation; a restart clears it the
     same way by being a new process)."""
@@ -516,7 +526,8 @@ def _read_config(path: Path) -> MCPClientConfig:
     """The disk read behind :func:`load_config` — the original
     (uncached) loader body."""
     if not path.exists():
-        return MCPClientConfig(load_error="config file missing")
+        return MCPClientConfig(
+            load_error=MISSING_CONFIG_LOAD_ERROR)
     try:
         with open(path) as f:
             data = yaml.safe_load(f)
