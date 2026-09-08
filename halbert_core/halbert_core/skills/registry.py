@@ -102,13 +102,19 @@ def resolve_extends(skill: Skill, by_name: Dict[str, Skill],
         scope=pick("scope"),
         knowledge_scope=pick("knowledge_scope"),
         trace_expand=pick("trace_expand"),
-        model=pick("model"),
+        tier=pick("tier"),
         priority=pick("priority"),
         budget_multiplier=pick("budget_multiplier"),
         allowed_tools=pick("allowed_tools"),
         subagent=pick("subagent"),
         max_turns=pick("max_turns"),
         kind=pick("kind"),
+        requires=pick("requires"),
+        # Identity and lifecycle are never inherited: an id is identity, not
+        # a capability (design §5.4 — a rename or a move must not smuggle or
+        # forfeit provenance), and lifecycle is per-skill (§5.5).
+        id=skill.id,
+        state=skill.state,
         prompt=prompt,
         extends=None,
     )

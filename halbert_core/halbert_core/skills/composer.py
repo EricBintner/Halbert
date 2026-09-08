@@ -14,7 +14,7 @@ alike:
     prompts   concatenate      — expertise adds up
     safety    most restrictive — a constraint one skill declares binds all
     scope     highest priority — retrieval takes a single scope (v1)
-    model     highest priority — one turn, one tier
+    tier      highest priority — one turn, one tier
     budget    max appetite     — averaging would dilute a deep specialist
     tools     intersection     — a restriction one skill declares binds all
 """
@@ -60,7 +60,7 @@ class ComposedSkills:
     scope: Optional[str] = None
     knowledge_scope: Optional[str] = None
     trace_expand: bool = True
-    model: Optional[str] = None
+    tier: Optional[str] = None
     safety: SkillSafety = field(default_factory=SkillSafety)
     allowed_tools: Optional[Tuple[str, ...]] = None
     budget_appetite: Dict[str, float] = field(default_factory=dict)
@@ -189,15 +189,18 @@ def merge_allowed_tools(skills: Sequence[Skill]) -> Optional[Tuple[str, ...]]:
     return tuple(sorted(allowed))
 
 
-def merge_model(skills: Sequence[Skill]) -> Optional[str]:
+def merge_tier(skills: Sequence[Skill]) -> Optional[str]:
     """The most authoritative skill's tier, ties broken to the more capable."""
     if not skills:
         return None
     top = max(s.priority_rank for s in skills)
     contenders = [s for s in skills if s.priority_rank == top]
     return max(
-        contenders, key=lambda s: _TIER_RANK.get(s.model, 3)  # explicit ids win
-    ).model
+        # _TIER_RANK.get rather than []: compose() accepts any Skill-shaped
+        # object, and an unknown tier degrades to the chat rank rather than
+        # raising — the parser already refused everything else at parse.
+        contenders, key=lambda s: _TIER_RANK.get(s.tier, 1)
+    ).tier
 
 
 def merge_budget_appetite(skills: Sequence[Skill]) -> Dict[str, float]:
@@ -243,7 +246,7 @@ def compose(skills: Sequence[Skill]) -> ComposedSkills:
         scope=scope,
         knowledge_scope=knowledge_scope,
         trace_expand=any(s.trace_expand for s in ordered),
-        model=merge_model(ordered),
+        tier=merge_tier(ordered),
         safety=merge_safety(ordered),
         allowed_tools=merge_allowed_tools(ordered),
         budget_appetite=merge_budget_appetite(ordered),

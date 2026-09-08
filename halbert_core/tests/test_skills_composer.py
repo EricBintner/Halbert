@@ -48,10 +48,10 @@ def test_a_prompt_less_skill_contributes_no_header():
 
 def test_composing_nothing_is_empty_not_an_error():
     c = compose([])
-    assert c.is_empty and c.prompt == "" and c.model is None
+    assert c.is_empty and c.prompt == "" and c.tier is None
 
 
-# ── Ordering, scope, model ────────────────────────────────────────────
+# ── Ordering, scope, tier ────────────────────────────────────────────
 
 def test_priority_decides_the_lead_skill():
     low = _skill("a-normal", priority="normal", scope="host", model="chat")
@@ -60,7 +60,7 @@ def test_priority_decides_the_lead_skill():
     c = compose([low, high])
     assert c.names[0] == "z-critical"
     assert c.scope == "host_security"
-    assert c.model == "specialist"
+    assert c.tier == "specialist"
 
 
 def test_scope_falls_to_the_lead_because_retrieval_takes_only_one():
@@ -83,7 +83,7 @@ def test_equal_priority_breaks_to_the_more_capable_tier():
         _skill("a", priority="high", model="chat"),
         _skill("b", priority="high", model="specialist"),
     ])
-    assert c.model == "specialist"
+    assert c.tier == "specialist"
 
 
 # ── Safety ────────────────────────────────────────────────────────────

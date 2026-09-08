@@ -34,20 +34,21 @@ def _skill_model_tier(active_skills: Sequence[Any]) -> Optional[str]:
     """The model tier the active skills ask for, if any.
 
     Skill frontmatter names the models.yml slots (chat / specialist / vision),
-    not the legacy orchestrator triple. An explicit "provider:model" string is
-    not a tier and is left for the model layer to resolve.
+    not models — the "provider:model" passthrough is retired (skills SK-1,
+    the Determination rule), so a composed tier is always a slot name or
+    nothing.
     """
     if not active_skills:
         return None
     try:
         from ..skills.composer import compose_matches
 
-        model = compose_matches(active_skills).model
+        tier = compose_matches(active_skills).tier
     except Exception:  # pragma: no cover - never block model selection
         logger.debug("skill tier resolution failed", exc_info=True)
         return None
-    if model in ("chat", "specialist", "vision"):
-        return model
+    if tier in ("chat", "specialist", "vision"):
+        return tier
     return None
 
 

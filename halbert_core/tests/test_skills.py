@@ -9,6 +9,7 @@ the shipped `*_admin` scopes are indexed and unreachable.
 
 from __future__ import annotations
 
+import logging
 import textwrap
 
 import pytest
@@ -60,7 +61,7 @@ def test_parses_frontmatter_and_body():
     s = parse_skill(_skill_md())
     assert s.name == "storage-ops"
     assert s.role == "storage-ops"
-    assert s.model == "specialist"
+    assert s.tier == "specialist"
     assert s.priority == "high"
     assert s.triggers.domains == ("storage",)
     assert s.triggers.keywords == ("zfs", "smart")
@@ -72,7 +73,7 @@ def test_a_file_with_no_frontmatter_is_all_prompt():
     s = parse_skill("Just some expertise.", name="freeform")
     assert s.name == "freeform"
     assert s.prompt == "Just some expertise."
-    assert s.model == "chat"
+    assert s.tier == "chat"
 
 
 def test_legacy_orchestrator_tier_is_rejected():
@@ -81,9 +82,16 @@ def test_legacy_orchestrator_tier_is_rejected():
         parse_skill(_skill_md(model="orchestrator"))
 
 
-def test_explicit_provider_model_passes_through():
-    s = parse_skill(_skill_md(model="ollama:qwen3-coder"))
-    assert s.model == "ollama:qwen3-coder"
+def test_a_legacy_provider_model_id_is_downgraded_not_honored(caplog):
+    # SK-1 (the Determination rule): the "provider:model" passthrough is
+    # retired — a skill may route to a slot, never name a model. The compat
+    # reader downgrades the legacy value to chat with a warning rather than
+    # honoring it.
+    with caplog.at_level(logging.WARNING, logger="halbert_core.skills.parser"):
+        s = parse_skill(_skill_md(model="ollama:qwen3-coder"))
+    assert s.tier == "chat"
+    assert any("downgrad" in r.message or "retired" in r.message
+               for r in caplog.records)
 
 
 def test_unclosed_frontmatter_is_an_error():
@@ -195,7 +203,7 @@ def test_extends_unions_lists_and_child_wins_on_scalars():
     assert zfs.triggers.domains == ("storage",)      # inherited
     assert zfs.triggers.keywords == ("zpool",)       # own
     assert zfs.priority == "critical"                # child wins
-    assert zfs.model == "specialist"                 # inherited
+    assert zfs.tier == "specialist"                 # inherited
     assert zfs.safety.protected_paths == ("/boot",)  # inherited
     assert zfs.safety.blocked_commands == ("zpool destroy",)
     # A parent's approval requirement cannot be dropped by a child.
