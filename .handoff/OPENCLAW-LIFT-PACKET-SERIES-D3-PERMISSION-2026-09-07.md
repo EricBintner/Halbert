@@ -175,7 +175,7 @@ The design doc names homes that do not exist (`capabilities/ceiling.py`, `afford
 ## Executor gotchas (verified house traps)
 
 - Run pytest as `arch -arm64 /Volumes/4TB-BAD/Halbert/.venv/bin/python ./wt_pytest.py <paths>` from the worktree root — plain `.venv/bin/pytest` starts the universal2 binary as x86_64 AND its editable install pins `halbert_core` to the MAIN tree, silently testing the wrong code.
-- Single-prefix imports in tests: `from halbert_core.halbert_core.persona.permission import …` exactly — pytest-from-root resolves `halbert_core` as an outer namespace package; package-level relative imports fail in tests.
+- Imports in tests: `from halbert_core.persona.permission import …` — one `halbert_core.` prefix, exactly as the merged `test_policy_lattice.py` does. (Packet-02's gotcha section says `halbert_core.halbert_core.…`; that form fails collection in the merged tree with `ModuleNotFoundError: No module named 'halbert_core.halbert_core'` — the wt_pytest wrapper puts the inner package on the path directly. Verified 2026-09-07.)
 - Commit with pathspecs (`git add <files>`), never `git add -A` — concurrent sessions sweep the index.
 - No Co-Authored-By trailers, no generation attribution (project rule).
 - The design doc's `capabilities/` package home is a collision with the `capabilities.py` module — build under `persona/permission/`. Do not rename either.
