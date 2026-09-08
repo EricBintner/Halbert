@@ -909,23 +909,23 @@ class TestConfig:
 
     def test_missing_file_means_no_servers(self, config_dir, tmp_path):
         assert not (tmp_path / "mcp_config.yml").exists()
-        assert load_config().servers == []
+        assert load_config().servers == ()
 
     def test_empty_file_means_no_servers(self, config_dir):
         config_dir()
-        assert load_config().servers == []
+        assert load_config().servers == ()
 
     def test_null_servers_means_no_servers(self, config_dir):
         path = config_path()
         path.write_text("servers:\n")
-        assert load_config().servers == []
+        assert load_config().servers == ()
 
     def test_corrupt_yaml_means_no_servers(self, config_dir, caplog):
         path = config_path()
         path.write_text("servers: [unclosed\n  - {bad yaml")
         with caplog.at_level(logging.WARNING, logger="halbert.mcp.config"):
             config = load_config()
-        assert config.servers == []
+        assert config.servers == ()
         assert "failed to load" in caplog.text
 
     def test_full_entries_parse(self, config_dir):
@@ -944,8 +944,9 @@ class TestConfig:
         fs = config.server("filesystem")
         assert fs.transport == "stdio"
         assert fs.command == "npx"
-        assert fs.args == ["-y", "@modelcontextprotocol/server-filesystem", "/u"]
-        assert fs.env == {"NODE_ENV": "production"}
+        # B4: config collection fields are read-only tuples now.
+        assert fs.args == ("-y", "@modelcontextprotocol/server-filesystem", "/u")
+        assert dict(fs.env) == {"NODE_ENV": "production"}
         assert fs.timeout_seconds == 12.0
         linear = config.server("linear")
         assert linear.transport == "http"
@@ -975,7 +976,7 @@ class TestConfig:
 
     def test_servers_not_a_list_means_no_servers(self, config_dir):
         config_dir(servers={"name": "oops"})
-        assert load_config().servers == []
+        assert load_config().servers == ()
 
     def test_literal_token_never_reaches_config_warnings(
             self, config_dir, caplog):

@@ -361,7 +361,8 @@ class TestFailTightValidation:
         assert [s.name for s in cfg.servers] == ["good"]
         assert any("fs" in r.message and "risk" in r.message
                    for r in caplog.records)
-        assert cfg.skipped_servers == ["fs"]
+        # B4: skipped_servers is a read-only tuple now.
+        assert cfg.skipped_servers == ("fs",)
 
     def test_invalid_tool_risk_value_skips_the_server(
             self, config_dir, caplog):
@@ -370,7 +371,7 @@ class TestFailTightValidation:
         ])
         with caplog.at_level(logging.WARNING, logger="halbert.mcp.config"):
             cfg = load_config()
-        assert cfg.servers == []
+        assert cfg.servers == ()
         assert any("fs" in r.message for r in caplog.records)
 
     def test_tool_risk_non_mapping_skips_the_server(self, config_dir):
@@ -378,7 +379,7 @@ class TestFailTightValidation:
             stdio_server("fs", tool_risk=["delete_file"]),
         ])
         cfg = load_config()
-        assert cfg.servers == []
+        assert cfg.servers == ()
 
     def test_parsed_config_carries_the_overrides(self, config_dir):
         write_config(config_dir, [stdio_server(
@@ -632,7 +633,8 @@ class TestSanitizedServerCollision:
             for r in caplog.records)
         # The displaced entry is recorded, so a fail-closed refusal (or
         # B5) can say WHAT was dropped instead of guessing.
-        assert cfg.skipped_servers == ["my_fs"]
+        # B4: skipped_servers is a tuple (frozen config).
+        assert cfg.skipped_servers == ("my_fs",)
 
     def test_case_only_collision_is_rejected_too(self, config_dir):
         """Matching is case-insensitive, so FS/fs would collide at
@@ -644,7 +646,7 @@ class TestSanitizedServerCollision:
         ])
         cfg = load_config()
         assert [s.name for s in cfg.servers] == ["FS"]
-        assert cfg.skipped_servers == ["fs"]
+        assert cfg.skipped_servers == ("fs",)
 
     async def test_classification_deterministic_regardless_of_order(
             self, config_dir):
@@ -682,7 +684,8 @@ class TestSanitizedServerCollision:
         with caplog.at_level(logging.WARNING, logger="halbert.mcp.config"):
             cfg = load_config()
         assert [s.name for s in cfg.servers] == ["my_fs"]
-        assert cfg.skipped_servers == ["my fs"]
+        # B4: skipped_servers is a read-only tuple now.
+        assert cfg.skipped_servers == ("my fs",)
         assert any(
             "my_fs" in r.message and "my fs" in r.message
             for r in caplog.records)
@@ -698,7 +701,7 @@ class TestSanitizedServerCollision:
         cfg = load_config()
         assert [s.name for s in cfg.servers] == ["fs"]
         assert cfg.server("fs").risk_override == RiskLevel.HIGH  # first wins
-        assert cfg.skipped_servers == ["fs"]
+        assert cfg.skipped_servers == ("fs",)
 
 
 # ---------------------------------------------------------------------------

@@ -98,6 +98,7 @@ from .client import join_text_content
 from .registry import (
     MCP_TOOL_PREFIX,
     MCPToolRegistry,
+    iter_server_tool_names,
     parse_qualified_tool_name,
     sanitize_component,
 )
@@ -333,20 +334,14 @@ def _drop_tools_for_server(tool_executor, server_name: str) -> int:
     comparison). Returns how many landed. The registry's per-server
     ``register`` replaces its OWN entries, but the executor's older keys
     would linger when a server's tool list SHRANK between discoveries —
-    this is the executor-side half of the replace."""
-    component = sanitize_component(server_name).lower()
-    dropped = 0
-    for name in list(tool_executor.tools):
-        if not name.startswith(MCP_TOOL_PREFIX):
-            continue
-        parsed = parse_qualified_tool_name(name)
-        if parsed is None:
-            continue
-        if parsed[0].lower() == component:
-            tool_executor.tools.pop(name, None)
-            tool_executor.schemas.pop(name, None)
-            dropped += 1
-    return dropped
+    this is the executor-side half of the replace. The name walk is the
+    registry's shared one (B4 quality review: the naming rule lives in
+    one place)."""
+    stale = list(iter_server_tool_names(tool_executor, server_name))
+    for name in stale:
+        tool_executor.tools.pop(name, None)
+        tool_executor.schemas.pop(name, None)
+    return len(stale)
 
 
 def _drop_unconfigured_server_tools(

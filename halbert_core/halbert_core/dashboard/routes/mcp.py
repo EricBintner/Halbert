@@ -14,7 +14,8 @@ an honest empty state (the same shape the frontend renders as "MCP is
 off"), not an error. The mcp package is imported only inside the
 capability check — the subtractive contract (a capability-off body
 never pays for it) — and every mcp-written string in the payload was
-redacted where it was produced (config.redact / the client's scrubbing).
+redacted where it was produced (config.redact / the client's scrubbing),
+and the route's own fallback message is redacted at serve time.
 """
 from __future__ import annotations
 
@@ -61,12 +62,15 @@ async def mcp_status() -> Dict[str, Any]:
         return mcp_status_snapshot()
     except Exception as e:
         # The status page must not become the thing that breaks: a
-        # broken snapshot is an honest "unknown" payload, not a 500.
+        # broken snapshot is an honest "unknown" payload, not a 500. The
+        # detail is redacted WHERE SERVED (an exception message can carry
+        # paths or credential-bearing URLs) and kept in the log.
+        from ...mcp.config import redact
         logger.warning("MCP status snapshot failed: %s", e)
         return {
             "enabled": True,
             "monitor_running": False,
             "servers": [],
             "skipped_servers": [],
-            "load_error": f"status snapshot failed: {e}",
+            "load_error": f"status snapshot failed: {redact(str(e))}",
         }

@@ -106,6 +106,7 @@ import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, Dict, List, Optional, Tuple
 
 import yaml
@@ -167,7 +168,7 @@ def redact(text: str) -> str:
 _WARNED_MISSING_TOKEN_ENVS: set = set()
 
 
-@dataclass
+@dataclass(frozen=True)
 class MCPAuthConfig:
     """How to authenticate to a remote (HTTP) server.
 
@@ -207,10 +208,14 @@ class MCPAuthConfig:
         return None
 
 
-@dataclass
+@dataclass(frozen=True)
 class MCPServerConfig:
     """One configured MCP server.
 
+    B4: instances are FROZEN with read-only collection fields — the
+    memo (load_config) hands the same object to every reader, so a
+    mutation anywhere would silently corrupt classification
+    process-wide; a config change is expressed by writing the file.
     B3 risk fields: ``risk_override`` is the per-server classification
     (None = no override, the classifier's MEDIUM default applies);
     ``tool_risk`` maps server-advertised tool names to levels, each
@@ -224,13 +229,28 @@ class MCPServerConfig:
     name: str
     transport: str = "stdio"      # stdio | http
     command: str = ""             # stdio: executable to launch
-    args: List[str] = field(default_factory=list)
-    env: Dict[str, str] = field(default_factory=dict)
+    args: Tuple[str, ...] = field(default_factory=tuple)
+    env: Dict[str, str] = field(default_factory=lambda: MappingProxyType({}))
     url: str = ""                 # http: server endpoint
     auth: Optional[MCPAuthConfig] = None
     timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS
     risk_override: Optional[RiskLevel] = None       # B3: per-server level
-    tool_risk: Dict[str, RiskLevel] = field(default_factory=dict)  # B3: per-tool
+    tool_risk: Dict[str, RiskLevel] = field(
+        default_factory=lambda: MappingProxyType({}))  # B3: per-tool
+
+    def __post_init__(self) -> None:
+        """Normalize the collection fields into read-only shapes. The
+        memo hands the SAME config object to every reader (classifier,
+        client, monitor, status route) until the file changes — so the
+        collections are frozen into tuples / mapping proxies at
+        construction: one future mutation site would otherwise silently
+        corrupt classification process-wide with no local breakage."""
+        object.__setattr__(self, "args", tuple(self.args))
+        if not isinstance(self.env, MappingProxyType):
+            object.__setattr__(self, "env", MappingProxyType(dict(self.env)))
+        if not isinstance(self.tool_risk, MappingProxyType):
+            object.__setattr__(self, "tool_risk",
+                               MappingProxyType(dict(self.tool_risk)))
 
     def signature(self) -> Tuple:
         """Identity of the CONNECTION this config produces. The client
@@ -266,9 +286,14 @@ class MCPServerConfig:
         return _redact(text)
 
 
-@dataclass
+@dataclass(frozen=True)
 class MCPClientConfig:
     """The whole mcp_config.yml, re-read on every use.
+
+    B4: FROZEN with read-only collection fields (see MCPServerConfig) —
+    the memo hands this same object to classification, the client's
+    hot-reload check, the monitor and the status route until the file
+    changes.
 
     B3 diagnostics, so a fail-closed classification can say WHY a
     registered tool's server is absent (see tools/mcp_safety.py):
@@ -281,9 +306,14 @@ class MCPClientConfig:
     problems are different states, and the refusal reason should not
     claim a problem that is not there.
     """
-    servers: List[MCPServerConfig] = field(default_factory=list)
-    skipped_servers: List[str] = field(default_factory=list)
+    servers: Tuple[MCPServerConfig, ...] = field(default_factory=tuple)
+    skipped_servers: Tuple[str, ...] = field(default_factory=tuple)
     load_error: str = ""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "servers", tuple(self.servers))
+        object.__setattr__(self, "skipped_servers",
+                           tuple(self.skipped_servers))
 
     def server(self, name: str) -> Optional[MCPServerConfig]:
         for s in self.servers:
@@ -454,8 +484,8 @@ def _parse_server(entry: Any, index: int, default_timeout: float) -> Optional[MC
         name=name,
         transport=transport,
         command=command,
-        args=args,
-        env=env,
+        args=tuple(args),
+        env=MappingProxyType(env),
         url=url,
         auth=auth,
         timeout_seconds=timeout,
@@ -605,4 +635,4 @@ def _read_config(path: Path) -> MCPClientConfig:
         seen_sanitized[sanitize_component(parsed.name).lower()] = parsed.name
         servers.append(parsed)
     return MCPClientConfig(
-        servers=servers, skipped_servers=skipped)
+        servers=tuple(servers), skipped_servers=tuple(skipped))

@@ -214,14 +214,9 @@ class MCPHealthMonitor:
         started for status-only)."""
         if self._tool_executor is None:
             return None
-        from .registry import parse_qualified_tool_name, sanitize_component
-        component = sanitize_component(server_name).lower()
-        count = 0
-        for name in self._tool_executor.tools:
-            parsed = parse_qualified_tool_name(name)
-            if parsed is not None and parsed[0].lower() == component:
-                count += 1
-        return count
+        from .registry import iter_server_tool_names
+        return sum(1 for _ in iter_server_tool_names(self._tool_executor,
+                                                     server_name))
 
     @property
     def running(self) -> bool:
@@ -274,7 +269,7 @@ class MCPHealthMonitor:
             # interrupts an in-flight sweep faster. Neither is awaited
             # unboundedly — a stop must never hang the shutdown.
             bound = self._probe_timeout + 5.0
-            pending = await asyncio.wait({task}, timeout=bound)
+            _, pending = await asyncio.wait({task}, timeout=bound)
             if task in pending:
                 # The bound is not sweep-aware: an in-flight multi-server
                 # discovery sweep can outlive it. stop() still returns —
@@ -448,6 +443,14 @@ class MCPHealthMonitor:
         """One reconnect per server at a time — a second tick that finds
         the first attempt still running waits for its backoff instead of
         piling a second subprocess launch onto the same server."""
+        if self._stopping:
+            # The orphan window: on 3.10 a cancel landing exactly as the
+            # probe's wait_for completes is swallowed, so THIS sweep can
+            # still reach a down server after stop() cleared
+            # _reconnect_tasks and disconnected the client — scheduling a
+            # rebuild here would launch a stdio subprocess during
+            # shutdown. The flag check is the hard gate.
+            return
         if name in self._reconnect_tasks:
             return
         try:
@@ -465,6 +468,8 @@ class MCPHealthMonitor:
         outcome, so a tick that finds the task done just reads the
         record. Never raises past the nets below."""
         logger.info("MCP server '%s': attempting reconnect", name)
+        if self._stopping:
+            return
         try:
             await self._client.reconnect(name)
         except asyncio.CancelledError:

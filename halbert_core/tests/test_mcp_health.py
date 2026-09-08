@@ -1002,6 +1002,70 @@ class TestLifecycle:
         await stop_mcp_health_monitor()
         assert second.running is False
 
+    async def test_stop_warns_when_the_task_outlives_the_bound(
+            self, tmp_path, caplog, monkeypatch):
+        """The did-not-stop warning actually fires: `asyncio.wait` binds
+        a (done, pending) TUPLE, and a sweep task that outlives the bound
+        must be seen in the pending set — logged, and stop still
+        disconnects the client (the B4 quality-review binding bug)."""
+        import logging as _logging
+        from halbert_core.mcp import health as health_mod
+        from halbert_core.mcp.health import start_mcp_health_monitor
+
+        client = FakeClient(tools={"fs": FS_TOOLS})
+        monitor = start_mcp_health_monitor(client)
+        assert monitor.running is True
+
+        real_wait = asyncio.wait
+
+        async def fake_wait(fs, timeout=None):
+            # Simulate the sweep task outliving the bound: nothing done.
+            return (set(), set(fs))
+
+        monkeypatch.setattr(health_mod.asyncio, "wait", fake_wait)
+
+        try:
+            with caplog.at_level(_logging.WARNING,
+                                 logger="halbert.mcp.health"):
+                await monitor.stop()
+            assert "did not stop within" in caplog.text
+            # The rest of stop() still ran: the client was disconnected.
+            assert client.disconnect_calls == [None]
+            # (restore the real wait for the disconnect path below)
+        finally:
+            monkeypatch.setattr(health_mod.asyncio, "wait", real_wait)
+            client.disconnect_calls.clear()
+            await monitor.stop()
+        assert client.disconnect_calls == [None]
+
+    async def test_no_reconnect_is_scheduled_after_stop(
+            self, tmp_path):
+        """The orphan window, closed: after stop(), a sweep that still
+        reaches a down server (the 3.10 swallowed-cancel iteration) must
+        not schedule a reconnect — no task, no launch, no subprocess."""
+        write_config(tmp_path, ["fs"])
+        client = FakeClient(tools={"fs": FS_TOOLS},
+                            fail_connect={"fs"}, fail_reconnect={"fs"})
+        from halbert_core.mcp import health as health_mod
+        from halbert_core.mcp.health import start_mcp_health_monitor
+
+        monitor = start_mcp_health_monitor(client)
+        await monitor.stop()
+        assert monitor._stopping is True
+
+        # The internal path a swallowed-cancel sweep would take: a down
+        # server reaches _schedule_reconnect AFTER stop() cleared the
+        # bookkeeping — the guard must refuse.
+        record = monitor._record("fs")
+        monitor._schedule_reconnect("fs", record)
+        assert monitor._reconnect_tasks == {}
+        assert client.reconnect_calls == []  # no subprocess launch
+
+        # And end-to-end: a post-stop sweep schedules nothing either.
+        await monitor.check_once()
+        assert monitor._reconnect_tasks == {}
+        assert client.reconnect_calls == []
+
     async def test_stop_mcp_health_monitor_stops_the_active_one(self):
         from halbert_core.mcp import health as health_mod
         from halbert_core.mcp.health import (

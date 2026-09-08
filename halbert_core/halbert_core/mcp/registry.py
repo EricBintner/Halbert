@@ -98,6 +98,19 @@ def qualify_tool_name(server_name: str, tool_name: str) -> str:
     return f"{MCP_TOOL_PREFIX}{_sanitize_component(server_name)}__{_sanitize_component(tool_name)}"  # noqa: E501
 
 
+def iter_server_tool_names(tool_executor, server_name: str):
+    """Yield *tool_executor*'s bridged ``mcp__`` names that belong to one
+    server — its sanitized component, matched case-insensitively against
+    the qualified name's server part. The one walk shared by the bridge's
+    per-server drop and the monitor's tool counts, so the naming rule
+    cannot drift between them."""
+    component = sanitize_component(server_name).lower()
+    for name in tool_executor.tools:
+        parsed = parse_qualified_tool_name(name)
+        if parsed is not None and parsed[0].lower() == component:
+            yield name
+
+
 def parse_qualified_tool_name(qualified_name: str) -> Optional[tuple]:
     """The inverse of :func:`qualify_tool_name`: split a qualified tool
     name back into its ``(server_component, tool_component)`` pair, both
