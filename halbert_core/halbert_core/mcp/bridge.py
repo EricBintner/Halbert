@@ -11,8 +11,7 @@ handler is an ordinary async ``handler(args) -> result`` like every
 other registered tool.
 
 Shape of the flow (all of it inside :func:`discover_and_register`, the
-single funnel every MCP tool flows through — the seam B3's per-server
-risk classification wraps):
+single funnel every MCP tool flows through):
 
   ``connect()`` every configured server (failures logged by the client,
   never raised — a server that is down contributes NO tools, which is
@@ -64,8 +63,15 @@ cap ever needs tuning — deliberately not built until asked).
 Guests: MCP tool names are dynamic (they come from remote servers), so
 they cannot be enumerated on ``persona/guest_tools.py``'s allowlist —
 which is exactly why they are structurally denied: the allowlist IS the
-rule, and no ``mcp__`` name is on it. Per-server risk classification
-(B3) will decide what the OWNER's turns may do with these tools.
+rule, and no ``mcp__`` name is on it. What the OWNER's turns may do
+with these tools is decided by B3's risk classification — which lives in
+the PER-CALL path (``tools/mcp_safety.py``, routed from
+``ToolSafetyFramework._classify_builtin``), NOT in this bridge: tool
+registration happens once at agent init, but classification must be
+re-evaluated against the current ``mcp_config.yml`` on every call, so a
+``risk_override`` flip gates the next tool call with no restart. Nothing
+below intercepts or gates; the executor's existing chain (CRITICAL
+block, HIGH confirmation, RoleGate) enforces.
 """
 from __future__ import annotations
 
@@ -173,8 +179,10 @@ def make_tool_handler(mcp_client, server_name: str, tool_name: str):
     typed errors carry clean redacted messages, and the executor's
     existing catch-all converts any exception into a failed
     :class:`~halbert_core.tools.executor.ExecutionResult` — the same
-    path every native tool's exceptions take. B3 will intercept the
-    result/error on its way to the model.
+    path every native tool's exceptions take. Nothing intercepts the
+    result here: B3's risk classification runs in the executor's
+    per-call classify step (tools/mcp_safety.py) BEFORE this handler is
+    reached, and the executor enforces it.
     """
 
     async def handler(args: Dict[str, Any]) -> Any:
@@ -193,9 +201,14 @@ async def _collect_server_tools(
 ) -> List[Dict[str, Any]]:
     """One server's ``tools/list`` answer, all pages, as a list of dicts.
 
-    THE B3 SEAM: every MCP tool schema flows through this one function
-    before registration, so per-server risk classification (B3) can wrap
-    or filter it without touching the rest of the bridge.
+    Once "THE B3 SEAM": every MCP tool schema flows through this one
+    function before registration. B3 chose NOT to wrap it — registration
+    is a bad moment to classify, because it happens once at agent init
+    and a classification captured here would be a snapshot a config flip
+    cannot reach (the freshness requirement is per call). Risk
+    classification lives in tools/mcp_safety.py, in the per-call
+    executor path; the seam remains a plain fetch, kept as its own
+    function because pagination (when it lands) still belongs here.
     """
     schemas = await mcp_client.list_tools(server_name)
     if not isinstance(schemas, list):

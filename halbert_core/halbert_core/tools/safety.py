@@ -537,6 +537,19 @@ class ToolSafetyFramework:
             # (see tools/applescript_safety.py).
             from .applescript_safety import classify_applescript_tool
             return classify_applescript_tool(tool_name, args)
+        elif tool_name.startswith("mcp__"):
+            # B3: MCP tools are remote — there is no local text to
+            # pattern-match (the shell-command rules above read command
+            # text; a `tools/call` payload says nothing about what the
+            # server does with it). Classification comes from config
+            # overrides (per-tool `tool_risk` > per-server
+            # `risk_override`, mcp_config.yml), re-read on EVERY call so
+            # a config flip gates the next call, with an explicit MEDIUM
+            # default (execute with warning). Lazy import for the same
+            # cycle-shape reason as the applescript branch above
+            # (mcp.config imports this module for RiskLevel).
+            from .mcp_safety import classify_mcp_tool
+            return classify_mcp_tool(tool_name, args)
         else:
             # Unknown tools get MEDIUM by default
             return SafetyCheckResult(
@@ -767,6 +780,22 @@ class ToolSafetyFramework:
             return (
                 f"**Run {label}:**\n"
                 f"```\n{preview}\n```\n{omitted}\n\n"
+                f"**Risk Level:** {result.risk_level.value.upper()}\n"
+                f"**Reason:** {result.reason}"
+            )
+        elif tool_name.startswith("mcp__"):
+            # B3: the analog of the applescript branch showing the
+            # script — show what the call actually is: the SERVER, the
+            # TOOL, and a capped preview of the ARGS (the args are what
+            # the remote server receives, and they can be arbitrarily
+            # large; the confirmation surface must not flood). Non-dict
+            # args tolerated, mirroring the applescript branch's guard.
+            from .mcp_safety import describe_mcp_tool, mcp_args_preview
+            server, tool = describe_mcp_tool(tool_name)
+            return (
+                f"**MCP tool:** `{server}` → `{tool}`\n\n"
+                f"**Args preview:**\n"
+                f"```\n{mcp_args_preview(args)}\n```\n\n"
                 f"**Risk Level:** {result.risk_level.value.upper()}\n"
                 f"**Reason:** {result.reason}"
             )

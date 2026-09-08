@@ -28,6 +28,10 @@ Config shape (see .handoff workstream B plan):
         command: npx
         args: ["-y", "@modelcontextprotocol/server-filesystem", "/Users/eric"]
         env: {KEY: value}            # extra subprocess env (merged over os.environ)
+        risk_override: high           # B3: every tool from this server classifies HIGH
+        tool_risk:                   # B3: per-tool levels, each beats the server override
+          delete_file: critical
+          read_file: safe
       - name: linear
         transport: http
         url: https://mcp.linear.app/mcp
@@ -35,6 +39,34 @@ Config shape (see .handoff workstream B plan):
           type: bearer
           token_env: LINEAR_MCP_TOKEN
         timeout_seconds: 30
+
+Risk classification (B3), honestly: MCP tools are remote. The safety
+framework's pattern-matching classifier reads shell commands and script
+text — it cannot read what a server on the other end of a transport will
+do with a ``tools/call``. Config overrides are therefore the PRIMARY
+mechanism and the burden is on the operator to classify servers
+correctly. Absent any override a tool classifies MEDIUM (executes, with
+the framework's warning semantics — see tools/safety.py). Levels are the
+framework's own: safe, low, medium, high, critical (case-insensitive).
+Precedence per call: per-tool ``tool_risk`` > server ``risk_override`` >
+MEDIUM default.
+
+Overrides are parsed HERE (validated once per config read, into
+``tools.safety.RiskLevel`` values) but consumed per call by
+``tools/mcp_safety.py`` against this freshly re-read config — a risk flip
+gates the NEXT tool call with no restart, exactly like every other key
+in this file. ``tool_risk`` keys are tool names as the SERVER advertises
+them (the unsanitized form you would see in tools/list); matching
+against a registered ``mcp__{server}__{tool}`` name goes through the
+registry's sanitization.
+
+Fail TIGHT, not loose: an invalid level name (``risk_override: extreme``,
+``tool_risk: {x: banana}``) or a non-mapping ``tool_risk`` skips the
+whole server entry with a warning. The loader's rule for every other
+validation failure (unknown transport, missing command) is "the server
+contributes nothing"; a typo'd risk level must not silently downgrade a
+server the operator meant to fence — and in production a skipped server
+connects to nothing, so its tools are absent entirely, never MEDIUM.
 
 Entries that fail validation are skipped with a warning, never raise —
 a corrupt config means "no servers", not a dead agent.
@@ -48,6 +80,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import yaml
+
+from ..tools.safety import RiskLevel
 
 logger = logging.getLogger("halbert.mcp.config")
 
@@ -136,7 +170,18 @@ class MCPAuthConfig:
 
 @dataclass
 class MCPServerConfig:
-    """One configured MCP server."""
+    """One configured MCP server.
+
+    B3 risk fields: ``risk_override`` is the per-server classification
+    (None = no override, the classifier's MEDIUM default applies);
+    ``tool_risk`` maps server-advertised tool names to levels, each
+    beating the server override for that tool. Both are None/empty when
+    the config does not set them, and both are DELIBERATELY excluded
+    from :meth:`signature` — a risk flip is a classification change, not
+    a connection change, and classification re-reads this config on
+    every call anyway (forcing a reconnect would gate nothing that the
+    per-call read does not already gate).
+    """
     name: str
     transport: str = "stdio"      # stdio | http
     command: str = ""             # stdio: executable to launch
@@ -145,6 +190,8 @@ class MCPServerConfig:
     url: str = ""                 # http: server endpoint
     auth: Optional[MCPAuthConfig] = None
     timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS
+    risk_override: Optional[RiskLevel] = None       # B3: per-server level
+    tool_risk: Dict[str, RiskLevel] = field(default_factory=dict)  # B3: per-tool
 
     def signature(self) -> Tuple:
         """Identity of the CONNECTION this config produces. The client
@@ -232,6 +279,55 @@ def _parse_auth(entry: Dict[str, Any]) -> Optional[MCPAuthConfig]:
     )
 
 
+#: Valid risk level names, for the invalid-override warning message.
+_RISK_LEVEL_NAMES = tuple(level.value for level in RiskLevel)
+
+
+def _parse_risk_level(value: Any) -> RiskLevel:
+    """A config-written risk level name → RiskLevel. Case-insensitive.
+
+    Raises ValueError for anything that is not a valid level name —
+    never a silent fallback. The caller (``_parse_server``) skips the
+    whole server on a bad level: classification fails TIGHT, not loose
+    (see the module docstring).
+    """
+    if not isinstance(value, str):
+        raise ValueError(
+            f"risk level must be one of {', '.join(_RISK_LEVEL_NAMES)}, "
+            f"got {type(value).__name__}")
+    name = value.strip().lower()
+    try:
+        return RiskLevel(name)
+    except ValueError:
+        raise ValueError(
+            f"unknown risk level '{value}' "
+            f"(valid: {', '.join(_RISK_LEVEL_NAMES)})") from None
+
+
+def _parse_risk_overrides(entry: Dict[str, Any]) -> "tuple":
+    """The B3 override keys of one servers[] entry:
+    (risk_override, tool_risk). Raises ValueError on an invalid level —
+    a ValueError here means the whole server entry is skipped (fail
+    tight), matching how every other validation failure is handled."""
+    risk_override = entry.get("risk_override")
+    if risk_override is not None:
+        risk_override = _parse_risk_level(risk_override)
+
+    tool_risk: Dict[str, RiskLevel] = {}
+    raw_tool_risk = entry.get("tool_risk")
+    if raw_tool_risk is not None:
+        if not isinstance(raw_tool_risk, dict):
+            raise ValueError("tool_risk must be a mapping of tool name to risk level")
+        for tool_name, level in raw_tool_risk.items():
+            if level is None:
+                raise ValueError(
+                    f"tool_risk['{tool_name}'] has no risk level "
+                    f"(valid: {', '.join(_RISK_LEVEL_NAMES)})")
+            tool_risk[str(tool_name)] = _parse_risk_level(level)
+
+    return risk_override, tool_risk
+
+
 def _parse_server(entry: Any, index: int, default_timeout: float) -> Optional[MCPServerConfig]:
     """Validate one `servers:` entry. Returns None (with a warning) for
     anything unusable — never raises."""
@@ -288,6 +384,19 @@ def _parse_server(entry: Any, index: int, default_timeout: float) -> Optional[MC
             "MCP config: server '%s' timeout_seconds must be positive, using default", name)
         timeout = default_timeout
 
+    # B3 risk overrides. A ValueError skips the WHOLE server (fail
+    # tight): an invalid level name must never silently fall back to
+    # MEDIUM for a server the operator meant to fence, and a skipped
+    # server connects to nothing in production — its tools are absent,
+    # not medium.
+    try:
+        risk_override, tool_risk = _parse_risk_overrides(entry)
+    except ValueError as e:
+        logger.warning(
+            "MCP config: server '%s' risk classification invalid (%s), "
+            "skipping the server — overrides fail tight, not loose", name, e)
+        return None
+
     return MCPServerConfig(
         name=name,
         transport=transport,
@@ -297,6 +406,8 @@ def _parse_server(entry: Any, index: int, default_timeout: float) -> Optional[MC
         url=url,
         auth=auth,
         timeout_seconds=timeout,
+        risk_override=risk_override,
+        tool_risk=tool_risk,
     )
 
 

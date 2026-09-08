@@ -42,14 +42,53 @@ logger = logging.getLogger("halbert.mcp.registry")
 _NON_ALNUM = re.compile(r"[^A-Za-z0-9]+")
 
 
+#: The prefix every bridged MCP tool name carries. Exclusively the
+#: bridge's — no native tool starts with it, which is what lets the
+#: safety classifier (tools/mcp_safety.py) route on the prefix and what
+#: lets _unregister_stale_mcp_tools drop exactly the bridged set.
+MCP_TOOL_PREFIX = "mcp__"
+
+
 def _sanitize_component(raw: Any) -> str:
     part = _NON_ALNUM.sub("_", str(raw)).strip("_")
     return part or "unnamed"
 
 
+#: Public alias: B3's classifier and B5's display both need to reduce a
+#: config-written name (server or tool) to the sanitized form the
+#: qualified name carries, so an override written against ``my-fs`` /
+#: ``delete-file`` still matches the registered ``mcp__my_fs__delete_file``.
+sanitize_component = _sanitize_component
+
+
 def qualify_tool_name(server_name: str, tool_name: str) -> str:
     """The namespaced tool key: ``mcp__{server}__{tool}``."""
-    return f"mcp__{_sanitize_component(server_name)}__{_sanitize_component(tool_name)}"  # noqa: E501
+    return f"{MCP_TOOL_PREFIX}{_sanitize_component(server_name)}__{_sanitize_component(tool_name)}"  # noqa: E501
+
+
+def parse_qualified_tool_name(qualified_name: str) -> Optional[tuple]:
+    """The inverse of :func:`qualify_tool_name`: split a qualified tool
+    name back into its ``(server_component, tool_component)`` pair, both
+    in sanitized form.
+
+    Returns None for anything that is not a well-formed qualified name —
+    no ``mcp__`` prefix, wrong component count, or an empty component.
+    Sanitization guarantees a component can never contain the ``__``
+    delimiter (so the split is unambiguous), with one honest limit: a
+    deterministic collision suffix (``mcp__fs__tool_2``) is part of the
+    tool component and is NOT stripped — a tool that only exists under a
+    suffixed name cannot be individually classified per-tool and rides
+    its server's override or the MEDIUM default.
+    """
+    if not isinstance(qualified_name, str):
+        return None
+    if not qualified_name.startswith(MCP_TOOL_PREFIX):
+        return None
+    rest = qualified_name[len(MCP_TOOL_PREFIX):]
+    parts = rest.split("__")
+    if len(parts) != 2 or not parts[0] or not parts[1]:
+        return None
+    return parts[0], parts[1]
 
 
 @dataclass(frozen=True)
