@@ -36,9 +36,16 @@ qualified key (``my-fs``/``delete-file`` → ``mcp__my_fs__delete_file``),
 so override lookups compare the sanitized form of both sides — and
 CASE-INSENSITIVELY, because ``sanitize_component`` preserves case: a
 fence written ``Delete_File`` must match the registered
-``delete_file``, not silently miss it and auto-execute. The loader
-rejects sanitized-name collisions outright (config.py), so the first
-match here is deterministic regardless of config order. One honest
+``delete_file``, not silently miss it and auto-execute. The one
+matcher every consumer shares is ``registry.components_match``. The
+loader rejects sanitized-name collisions outright (config.py), so the
+first match here is deterministic regardless of config order — but
+that check is a determinism win, NOT a closure: a colliding entry
+inserted BEFORE a fenced server displaces the fence at load, and tools
+registered from the displaced server classify under the surviving
+entry, not fail closed. B4's health-refresh re-registration (dropping
+stale ``mcp__`` registrations and re-bridging from current config) is
+what closes that displacement; the load-time check cannot. One honest
 limit: a collision-suffixed tool (``..._2``) rides its server's
 override or the default — it cannot be individually classified (see
 ``registry.parse_qualified_tool_name``).
@@ -78,8 +85,8 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Optional, Tuple
 
-from ..mcp.config import load_config
-from ..mcp.registry import parse_qualified_tool_name, sanitize_component
+from ..mcp.config import _redact, load_config
+from ..mcp.registry import components_match, parse_qualified_tool_name
 from .safety import RiskLevel, SafetyCheckResult
 
 logger = logging.getLogger("halbert.tools.mcp_safety")
@@ -120,28 +127,20 @@ def _current_config():
         return None
 
 
-def _match_component(config_written: str, registered_component: str) -> bool:
-    """Does a config-written name (server or tool) refer to the
-    registered component of a qualified name? Sanitized on both sides
-    (the registry collapsed ``my-fs`` → ``my_fs``), and
-    CASE-INSENSITIVELY: ``sanitize_component`` preserves case, so a
-    fence written ``Delete_File`` must still match a registered
-    ``delete_file`` rather than silently missing it and auto-executing.
-    Registered names keep their case — only the comparison lowers it.
-    """
-    return sanitize_component(config_written).lower() == registered_component.lower()
-
-
 def _absent_reason(server_component: str, config) -> str:
     """The fail-closed refusal reason for a registered tool whose server
     the current config does not carry — naming what the config read saw,
-    so the block is diagnosable, not a mystery."""
+    so the block is diagnosable, not a mystery. Dropped server names are
+    config-written text interpolated into a user-facing message, so each
+    passes the config module's redactor (``_redact``, the same scrub
+    ``load_error`` gets) before it lands anywhere."""
     details = []
     if config.load_error:
         details.append(f"config unreadable ({config.load_error})")
     if config.skipped_servers:
         details.append(
-            "dropped by validation: " + ", ".join(config.skipped_servers))
+            "dropped by validation: "
+            + ", ".join(_redact(name) for name in config.skipped_servers))
     state = "; ".join(details) if details else (
         "removed or renamed since registration")
     return (
@@ -184,20 +183,20 @@ def classify_mcp_tool(tool_name: str, args: Any) -> SafetyCheckResult:
     if config is None:
         # Defensive: load_config never raises by design, but an
         # unexpected failure must not read as "no overrides, MEDIUM".
-        return _result(
-            RiskLevel.CRITICAL,
+        reason = (
             f"Server '{server_component}': mcp_config.yml could not be "
             f"read; classification fails closed rather than downgrading "
-            f"a live tool to the MEDIUM default",
-            "mcp.server_absent_fail_closed",
-        )
+            f"a live tool to the MEDIUM default")
+        logger.warning("MCP fail-closed: %s", reason)
+        return _result(
+            RiskLevel.CRITICAL, reason, "mcp.config_unreadable_fail_closed")
 
     for server in config.servers:
-        if not _match_component(server.name, server_component):
+        if not components_match(server.name, server_component):
             continue
         # Per-tool first: the most specific statement wins.
         for tool_key, level in server.tool_risk.items():
-            if _match_component(tool_key, tool_component):
+            if components_match(tool_key, tool_component):
                 return _result(
                     level,
                     f"Per-tool override: mcp_config.yml server "
@@ -223,11 +222,14 @@ def classify_mcp_tool(tool_name: str, args: Any) -> SafetyCheckResult:
     # Registered tool, absent server: removed, renamed, or dropped by
     # validation since registration. Fail closed — the exact scenario
     # per-call freshness exists for must not become a silent downgrade.
+    # Logged here because nothing downstream says it: the executor's
+    # audit line records only "Blocked: critical risk", and a removed
+    # or renamed server must be nameable in the logs, not just in the
+    # refusal the model sees.
+    reason = _absent_reason(server_component, config)
+    logger.warning("MCP fail-closed: %s", reason)
     return _result(
-        RiskLevel.CRITICAL,
-        _absent_reason(server_component, config),
-        "mcp.server_absent_fail_closed",
-    )
+        RiskLevel.CRITICAL, reason, "mcp.server_absent_fail_closed")
 
 
 def mcp_risk_summary() -> Dict[str, Any]:

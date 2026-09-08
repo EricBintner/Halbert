@@ -75,6 +75,13 @@ registered namespace (``my-fs`` and ``my_fs``; also a case-only
 difference, since override matching is case-insensitive) would make
 classification depend on config order, so the loader keeps the FIRST and
 skips the later colliding entry with a warning naming both raw names.
+Honest consequence, for whoever builds on this: that check is a
+determinism win, NOT a closure — a colliding entry inserted BEFORE a
+fenced server displaces the fence at load, and tools registered from
+the displaced server classify under the surviving entry, not fail
+closed. B4's health-refresh re-registration (dropping stale ``mcp__``
+registrations and re-bridging from current config) is what closes the
+displacement; this load-time check cannot.
 
 Entries that fail validation are skipped with a warning, never raise —
 a corrupt config means "no servers", not a dead agent.
@@ -90,7 +97,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import yaml
 
 from ..tools.safety import RiskLevel
-from .registry import sanitize_component
+from .registry import components_match, sanitize_component
 
 logger = logging.getLogger("halbert.mcp.config")
 
@@ -242,12 +249,14 @@ class MCPClientConfig:
 
     B3 diagnostics, so a fail-closed classification can say WHY a
     registered tool's server is absent (see tools/mcp_safety.py):
-    ``skipped_servers`` names the entries dropped by validation (only
-    entries that had a name at all); ``load_error`` says why nothing
-    could be read — missing file, unparseable YAML, wrong shape —
-    redacted, never raw file content. Both are empty when the config is
-    merely empty: no servers and no problems are different states, and
-    the refusal reason should not claim a problem that is not there.
+    ``skipped_servers`` names the entries dropped at load — by
+    validation, by the duplicate-name rule, or by the sanitized-name
+    collision rule (only entries that had a name at all);
+    ``load_error`` says why nothing could be read — missing file,
+    unparseable YAML, wrong shape — redacted, never raw file content.
+    Both are empty when the config is merely empty: no servers and no
+    problems are different states, and the refusal reason should not
+    claim a problem that is not there.
     """
     servers: List[MCPServerConfig] = field(default_factory=list)
     skipped_servers: List[str] = field(default_factory=list)
@@ -492,23 +501,31 @@ def load_config() -> MCPClientConfig:
             logger.warning(
                 "MCP config: duplicate server name '%s', keeping the first",
                 parsed.name)
+            skipped.append(parsed.name)
             continue
-        sanitized_key = sanitize_component(parsed.name).lower()
-        if sanitized_key in seen_sanitized:
+        # The shared matcher (registry.components_match) decides what
+        # collides — the same rule classification and the bridge's
+        # unmatched-key warning use, so the three cannot drift.
+        colliding_with = next(
+            (raw for raw in seen_sanitized.values()
+             if components_match(raw, parsed.name)), None)
+        if colliding_with is not None:
             # B3: ``my-fs`` and ``my_fs`` (and a case-only difference)
             # sanitize to the SAME registered namespace, so keeping both
             # would make classification order-dependent — the first
             # matching config entry would win. Keep the first, name both.
+            # NOTE: this is a determinism win, not a closure — a
+            # colliding entry inserted BEFORE a fenced server displaces
+            # the fence; B4's re-registration closes that.
             logger.warning(
                 "MCP config: server '%s' sanitizes to the same name as "
-                "server '%s' (both become tools named 'mcp__%s__…'); "
-                "keeping the first, skipping '%s' — otherwise "
-                "classification would depend on config order",
-                parsed.name, seen_sanitized[sanitized_key], sanitized_key,
-                parsed.name)
+                "server '%s'; keeping the first, skipping '%s' — "
+                "otherwise classification would depend on config order",
+                parsed.name, colliding_with, parsed.name)
+            skipped.append(parsed.name)
             continue
         seen.add(parsed.name)
-        seen_sanitized[sanitized_key] = parsed.name
+        seen_sanitized[sanitize_component(parsed.name).lower()] = parsed.name
         servers.append(parsed)
     return MCPClientConfig(
         servers=servers, skipped_servers=skipped)

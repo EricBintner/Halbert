@@ -71,7 +71,12 @@ registration happens once at agent init, but classification must be
 re-evaluated against the current ``mcp_config.yml`` on every call, so a
 ``risk_override`` flip gates the next tool call with no restart. Nothing
 below intercepts or gates; the executor's existing chain (CRITICAL
-block, HIGH confirmation, RoleGate) enforces.
+block, HIGH confirmation, RoleGate) enforces. One pre-existing route
+reaches past this bridge's guarantees: an UNREGISTERED ``mcp__`` name
+can be peer-proxied (the executor's ``peer_tool_proxy``) before
+classification ever runs locally — there, the PEER's own safety chain
+governs execution; locally, without a peer, such a name is simply an
+unknown tool.
 """
 from __future__ import annotations
 
@@ -236,25 +241,27 @@ def _warn_unmatched_tool_risk_keys(
     """
     try:
         from .config import load_config
-        from .registry import sanitize_component
+        from .registry import components_match
 
         server = load_config().server(server_name)
         if server is None or not server.tool_risk:
             return
-        advertised = {
-            sanitize_component(s.get("name")).lower()
-            for s in tool_schemas
+        advertised = [
+            s.get("name") for s in tool_schemas
             if isinstance(s, dict) and s.get("name")
-        }
+        ]
         for key in server.tool_risk:
-            if sanitize_component(key).lower() not in advertised:
+            # The shared matcher (registry.components_match) — the same
+            # rule classification uses — so a key this warning accepts
+            # is a key classification will apply. Never a drifted copy.
+            if not any(components_match(name, key) for name in advertised):
                 logger.warning(
                     "MCP config: server '%s' tool_risk key '%s' matches "
                     "no advertised tool (advertised: %s) — the override "
                     "applies to nothing; if this is a typo, the tool "
                     "classifies on its per-server or default path",
                     server_name, key,
-                    ", ".join(sorted(advertised)) or "(none)")
+                    ", ".join(sorted(str(n) for n in advertised)) or "(none)")
     except Exception as e:
         logger.debug(
             "MCP tool_risk unmatched-key check skipped for server '%s': %s",

@@ -355,12 +355,13 @@ class TestFailTightValidation:
         write_config(config_dir, [
             stdio_server("fs", risk_override="extreme"),
             stdio_server("good"),
-        ], )
+        ])
         with caplog.at_level(logging.WARNING, logger="halbert.mcp.config"):
             cfg = load_config()
         assert [s.name for s in cfg.servers] == ["good"]
         assert any("fs" in r.message and "risk" in r.message
                    for r in caplog.records)
+        assert cfg.skipped_servers == ["fs"]
 
     def test_invalid_tool_risk_value_skips_the_server(
             self, config_dir, caplog):
@@ -452,13 +453,19 @@ class TestAbsentServerFailsClosed:
         assert result.success is False  # still blocked under the old config
 
         write_config(config_dir, [stdio_server("fs", risk_override="critcal")])
-        result = await executor.execute(
-            "mcp__fs__read_file", {"path": "/tmp/x"}, confirmed=True)
+        with caplog.at_level(logging.WARNING, logger="halbert.tools.mcp_safety"):
+            result = await executor.execute(
+                "mcp__fs__read_file", {"path": "/tmp/x"}, confirmed=True)
         assert not result.success
         assert result.risk_level == RiskLevel.CRITICAL
         assert "fs" in (result.error or "")
         assert "validation" in (result.error or "")
         assert client.calls == []
+        # The cause must reach the LOGS, not only the refusal the model
+        # sees — the executor's audit line says only "critical risk".
+        assert any(
+            "fail-closed" in r.message and "fs" in r.message
+            for r in caplog.records)
 
     async def test_deleted_config_file_blocks(self, config_dir):
         executor, client = await self._registered_under_critical(config_dir)
@@ -598,6 +605,9 @@ class TestSanitizedServerCollision:
         assert any(
             "my-fs" in r.message and "my_fs" in r.message
             for r in caplog.records)
+        # The displaced entry is recorded, so a fail-closed refusal (or
+        # B5) can say WHAT was dropped instead of guessing.
+        assert cfg.skipped_servers == ["my_fs"]
 
     def test_case_only_collision_is_rejected_too(self, config_dir):
         """Matching is case-insensitive, so FS/fs would collide at
@@ -609,6 +619,7 @@ class TestSanitizedServerCollision:
         ])
         cfg = load_config()
         assert [s.name for s in cfg.servers] == ["FS"]
+        assert cfg.skipped_servers == ["fs"]
 
     async def test_classification_deterministic_regardless_of_order(
             self, config_dir):

@@ -61,6 +61,27 @@ def _sanitize_component(raw: Any) -> str:
 sanitize_component = _sanitize_component
 
 
+def components_match(config_written: Any, registered: str) -> bool:
+    """Does a config-written name (server or tool) refer to the
+    registered component of a qualified tool name?
+
+    THE one matcher for every override decision: B3's classifier
+    (tools/mcp_safety.py), the registration-time unmatched-key warning
+    (mcp/bridge.py) and the loader's collision rejection (mcp/config.py)
+    all import this, so "a key the registration warning accepts is a key
+    classification will apply" is enforced by code, not convention —
+    if this gains a rule, every consumer gains it together.
+
+    Sanitized on both sides (the registry collapsed ``my-fs`` →
+    ``my_fs``), and CASE-INSENSITIVELY: ``sanitize_component`` preserves
+    case, so a fence written ``Delete_File`` must still match a
+    registered ``delete_file`` rather than silently missing it and
+    auto-executing. Registered names keep their case — only the
+    comparison lowers it.
+    """
+    return sanitize_component(config_written).lower() == str(registered).lower()
+
+
 def qualify_tool_name(server_name: str, tool_name: str) -> str:
     """The namespaced tool key: ``mcp__{server}__{tool}``."""
     return f"{MCP_TOOL_PREFIX}{_sanitize_component(server_name)}__{_sanitize_component(tool_name)}"  # noqa: E501
