@@ -77,10 +77,20 @@ class SendMessageRequest(BaseModel):
     # identified speaker defaults to speaker_role="unknown" inside
     # process(), never "admin": RoleGate must not hear the owner's voice
     # in an unidentified speaker's.
-    modality: Optional[str] = Field(None, description="'voice' when this turn arrived spoken; absent means typed")
-    speaker_name: Optional[str] = Field(None, description="Speaker identified by the audio pipeline (CAM++ match name) for a voice turn")
-    speaker_role: Optional[str] = Field(None, description="Identified speaker role for a voice turn (admin/member/guest/restricted/unknown). Never inferred; absent + voice modality defaults to 'unknown'")
-    claim_source: Optional[str] = Field(None, description="Where the speaker claim came from ('voice_speaker_verification' | 'free_text_name')")
+    #
+    # C1 (channel layer): these four fields are client *hints*, not
+    # authority. The server resolves the channel from the modality and
+    # stamps what the turn actually carries (see send_message): the claim
+    # source is derived from the resolved channel and clamped to its
+    # ceiling, the speaker role is ignored over the dashboard door, and
+    # only the speaker name survives purely as a display label. A field
+    # the wire sets can therefore never raise the claim strength the
+    # ladder sees. The frontend contract is unchanged — an honest relay
+    # turn threads exactly as before.
+    modality: Optional[str] = Field(None, description="'voice' when this turn arrived spoken; absent (or 'text') means typed. Resolves the ingress channel; an unregistered value is refused")
+    speaker_name: Optional[str] = Field(None, description="Speaker identified by the audio pipeline (CAM++ match name) for a voice turn. Display label only")
+    speaker_role: Optional[str] = Field(None, description="Identified speaker role for a voice turn (admin/member/guest/restricted/unknown). Never inferred, never authoritative: honored on voice turns as the stated label the claim-strength cap applies to, ignored on the dashboard channel")
+    claim_source: Optional[str] = Field(None, description="Where the speaker claim came from ('voice_speaker_verification' | 'free_text_name'). A hint only: the server stamps the claim from the resolved channel, clamped to its ceiling")
 
 
 class ConfirmActionRequest(BaseModel):
@@ -1577,6 +1587,25 @@ if FASTAPI_AVAILABLE:
         # client could correlate.
         session_id = request.session_id or str(uuid.uuid4())
 
+        # C1 (channel layer, D-4 design §1): resolve the ingress channel
+        # before anything else touches the turn. The server is the claim
+        # authority: the modality resolves WHICH channel this turn arrived
+        # on, and the claim/role fields the request carries are then
+        # stamped against that channel below -- the wire can no longer
+        # self-declare a claim strength or name its own RoleGate role. A
+        # modality that resolves to no registered channel is refused in
+        # the admission module's shape (fail closed, never silently
+        # treated as typed).
+        from ...agents.channels import ChannelRefused, resolve_channel
+        try:
+            channel = resolve_channel(request.modality)
+        except ChannelRefused as refusal:
+            logger.info(
+                "channel ingress refused: modality=%r (%s)",
+                request.modality, refusal.reason_code,
+            )
+            raise HTTPException(status_code=400, detail=refusal.payload())
+
         # Packet 07 B1/B2: the interrupt algebra. An arrival that reaches the
         # machine while a turn is in flight no longer queues as a whole
         # second turn: "/stop" claims the running turn's activity generation
@@ -1634,6 +1663,44 @@ if FASTAPI_AVAILABLE:
         # the manager. None means "no store": the turn still runs.
         thread_manager = _thread_manager()
 
+        # C1: the server-stamped claim fields. What the wire declared is
+        # not what the turn carries:
+        #
+        # - modality is the channel's own value (the resolver already
+        #   refused anything it does not name), so a dashboard turn
+        #   arrives at process() exactly as a typed turn always has;
+        # - claim_source is stamped from the resolved channel
+        #   (stamped_claim_source): over the dashboard door every
+        #   declared claim clamps to the channel's own token, over the
+        #   voice channel a declared source above the ceiling clamps
+        #   down to speaker verification. A forged
+        #   "voice_speaker_verification" on a typed request can no longer
+        #   mint an ASSERTED speaker claim, and a declared "device_cert"
+        #   can no longer record VERIFIED on either channel.
+        # - speaker_role is ignored over the dashboard door (the
+        #   channel's own admin default applies -- the dashboard session
+        #   is authenticated, so the wire naming a different role was
+        #   never a security boundary, and the design §5 table makes the
+        #   role a property of the channel). Over the voice channel the
+        #   identified speaker's stated role still threads -- as the
+        #   label D-6's claim-strength cap applies to, never as
+        #   self-granted authority.
+        # - speaker_name rides as a display label only; it never feeds
+        #   authorization (the ladder hashes it into the claim's value,
+        #   and a typed turn records no claim at all).
+        #
+        # A typed request with none of the voice fields arrives at
+        # process() with every field None -- byte-identical to before C1
+        # (the 04-A1 pin).
+        if channel.id == "voice":
+            stamped_modality = "voice"
+            stamped_speaker_role = request.speaker_role
+        else:
+            stamped_modality = None
+            stamped_speaker_role = None
+        from ...agents.channels import stamped_claim_source
+        stamped_claim = stamped_claim_source(channel, request.claim_source)
+
         async def event_stream():
             """Generate SSE events from agent processing."""
             from ...agents.events import StreamEvent
@@ -1656,10 +1723,10 @@ if FASTAPI_AVAILABLE:
                     temperature=request.temperature,
                     history_budget=history_budget,
                     retrieval_scope=request.scope,
-                    modality=request.modality,
+                    modality=stamped_modality,
                     speaker_name=request.speaker_name,
-                    speaker_role=request.speaker_role,
-                    claim_source=request.claim_source,
+                    speaker_role=stamped_speaker_role,
+                    claim_source=stamped_claim,
                 )) as stream:
                     async for event in stream:
                         yield event.to_sse()

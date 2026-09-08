@@ -390,9 +390,24 @@ class ThreadManager:
             hint = ""
 
         turn_id = uuid.uuid4().hex
+        # C1 (channel layer, D-4 design §1): provenance — "how did this
+        # turn arrive". process() binds the turn's resolved channel on
+        # current_turn_channel (the same copy-down-the-task pattern as
+        # the turn digest); read here, recorded in the row's metadata and
+        # never used to gate anything. Direct begin_turn callers (no
+        # turn running) bind nothing and keep today's row exactly.
+        channel_metadata = None
+        try:
+            from .channels import current_turn_channel
+            channel = current_turn_channel.get()
+            if channel is not None:
+                channel_metadata = {"channel": channel.id}
+        except Exception:
+            channel_metadata = None
         user_message_id = self.store.append_message(
             thread_id, "user", query, origin="human", turn_id=turn_id,
             session_id=session_id, status="in_progress", timestamp=now,
+            metadata=channel_metadata,
         )
         return TurnContext(
             thread_id=thread_id,

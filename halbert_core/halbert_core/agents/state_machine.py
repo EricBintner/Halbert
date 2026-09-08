@@ -522,6 +522,25 @@ class AgentStateMachine:
         else:
             turn_speaker_role = "unknown"
 
+        # C1 (channel layer, D-4 design §1): the turn's resolved channel,
+        # derived from the same normalized modality through the one
+        # registry, bound here for provenance — the ThreadManager reads
+        # it when it writes the user row (metadata.channel), recording
+        # how the turn arrived, never gating anything on it. Same
+        # copy-down-the-task pattern as the turn digest below; reset in
+        # the finally so no channel bleeds into a later turn. The route
+        # already refused an unresolvable modality, and the two values
+        # here always resolve, so a failure is non-fatal by the same rule
+        # as the digest.
+        channel_token = None
+        try:
+            from .channels import current_turn_channel, resolve_channel
+            channel_token = current_turn_channel.set(
+                resolve_channel(turn_modality)
+            )
+        except Exception as e:
+            logger.debug(f"turn channel not bound (non-fatal): {e}")
+
         # Packet 04 A2: claim strength at the voice gate — recorded, not
         # enforced (RoleGate never reads this; enforcement is the D-6
         # permission-system pass). A voice turn's claim_source maps
@@ -707,6 +726,15 @@ class AgentStateMachine:
                     current_turn_digest.reset(digest_token)
                 except Exception as e:
                     logger.debug(f"turn digest unbind failed (non-fatal): {e}")
+            # C1: the channel binding dies with the turn, the same rule —
+            # a channel read after this point belongs to no turn and must
+            # not label the next one's rows.
+            if channel_token is not None:
+                try:
+                    from .channels import current_turn_channel
+                    current_turn_channel.reset(channel_token)
+                except Exception as e:
+                    logger.debug(f"turn channel unbind failed (non-fatal): {e}")
             self.turn_lock.release()
 
     def _supersede_paused_turn(self, session_id: str) -> None:
