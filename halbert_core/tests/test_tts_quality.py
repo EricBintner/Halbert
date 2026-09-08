@@ -10,8 +10,9 @@ identifiers synthesized as noise. The rule lifted from OpenClaw:
   * otherwise strip fences/inline code/markdown noise from the SPOKEN
     copy only — the on-screen text is untouched.
 
-``summarizer`` is a recorded hook for C2 (spoken summarization of long
-replies), deferred until a utility-model slot exists.
+``summarizer`` is the C2 hook (spoken summarization of long replies),
+wired to the utility-model seam in packet 04 C2 — see
+test_speech_summarizer.py for the seam's own contract.
 """
 from __future__ import annotations
 
@@ -105,11 +106,11 @@ class TestAdaptForSpeech:
         assert "`" not in spoken and "**" not in spoken and "#" not in spoken
         assert "systemctl restart" in spoken and "care" in spoken
 
-    def test_summarizer_hook_is_accepted_and_unused(self):
-        """C2 (deferred): the parameter exists so the utility-slot
-        integration has a place to land; today it changes nothing."""
+    def test_summarizer_hook_composes_for_long_text_only(self):
+        """C2: the hook is live. A summarizer that does not fire for
+        short text (the seam's own gate) changes nothing."""
         reply = "All quiet on the scanner."
-        assert adapt_for_speech(reply, summarizer=lambda t: "SUMMARY") == reply
+        assert adapt_for_speech(reply, summarizer=lambda t: t) == reply
 
 
 class TestCodeFenceRatio:

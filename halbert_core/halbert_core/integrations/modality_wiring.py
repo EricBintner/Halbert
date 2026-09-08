@@ -447,7 +447,7 @@ def should_speak(ctx: Any) -> bool:
         return False
 
 
-def spoken_segment_lines(response: str, payload: Any) -> list:
+def spoken_segment_lines(response: str, payload: Any, summarizer: Any = None) -> list:
     """Select the lines a voice turn will actually speak (packet 04 C1).
 
     The spoken copy is adapted before synthesis — a code-heavy reply
@@ -457,11 +457,26 @@ def spoken_segment_lines(response: str, payload: Any) -> list:
     on-screen text is untouched: this reads the payload the demuxer
     already assembled and never writes back to it.
 
+    Packet 04 C2: ``summarizer`` (from
+    ``.speech_summarizer.make_speech_summarizer``) summarizes the
+    whole spoken copy of a long prose reply to one or two sentences.
+    The gate is the whole reply, not one segment — a threshold gate
+    applied per segment would miss a long reply split into short
+    ones — so the stripped lines are joined, offered to the
+    summarizer once, and only a strictly-shorter summary replaces
+    them (as a single persona line carrying the first line's
+    prosody). A code-heavy reply is never summarized: the fallback
+    branch runs before any summarizer use. The summarizer is
+    fail-soft by contract and returns its input whenever it does not
+    fire, so the spoken path degrades to the C1 behavior.
+
     Args:
         response: The full reply text (the code-heaviness decision is
             made on the whole reply, not per segment).
         payload: The MultiStreamPayload from ``demux_response`` (its
             ``segments`` carry the per-segment prosody/role).
+        summarizer: Optional C2 seam callable (see above). The
+            display copy is never passed to it — only the spoken copy.
 
     Returns:
         A list of dicts ``{text, role, rate, volume, whisper}`` — the
@@ -471,7 +486,8 @@ def spoken_segment_lines(response: str, payload: Any) -> list:
 
     if is_code_heavy(response):
         # The whole reply is code: one fallback line, spoken the same
-        # way every time. The detail is on screen.
+        # way every time. The detail is on screen. Never summarized —
+        # the fallback decision precedes summarization (C2).
         return [{
             "text": adapt_for_speech(response),
             "role": "persona",
@@ -498,6 +514,27 @@ def spoken_segment_lines(response: str, payload: Any) -> list:
             "volume": float(getattr(prosody, "volume", 1.0) or 1.0),
             "whisper": bool(getattr(prosody, "whisper", False)),
         })
+
+    # C2: one summary for the whole spoken copy. The summarizer owns
+    # the deterministic length gate; a no-op (short text, no model,
+    # failed request, summary not strictly shorter) returns the join
+    # unchanged and the segment set stays as C1 produced it.
+    if summarizer is not None and lines:
+        joined = "\n\n".join(line["text"] for line in lines)
+        try:
+            summary = summarizer(joined)
+        except Exception as e:
+            logger.debug(f"Speech summarization skipped (non-fatal): {e}")
+            summary = joined
+        if summary and summary != joined and len(summary) < len(joined):
+            first = lines[0]
+            lines = [{
+                "text": summary,
+                "role": first["role"],
+                "rate": first["rate"],
+                "volume": first["volume"],
+                "whisper": first["whisper"],
+            }]
     return lines
 
 
