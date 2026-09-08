@@ -29,6 +29,40 @@ _WEB_SEARCH_RE = re.compile(
     re.IGNORECASE,
 )
 
+# The slash channel (skills SK-2, design §2.4): a `/<name>` token at the
+# head of a message addresses a skill. One segment, the skill-name
+# charset, and nothing path-shaped — `/etc/hosts` is a path, not a skill.
+_SLASH_TOKEN_RE = re.compile(r"^/([a-z0-9][a-z0-9-]{0,63})$")
+
+
+def parse_slash_skills(message: str) -> List[str]:
+    """The skills a message's leading `/<name>` tokens address.
+
+    Only a leading run counts: once a token is not a skill-shaped slash
+    token the run is over, so "check /etc/hosts" and "look at /storage-ops"
+    address nothing. Reserved names — the client-side slash commands SK-1
+    encoded, and the tool names — end the run without routing: a user
+    typing `/model` means the command, and the loader already refused any
+    skill that tried to claim that name. An unknown name still parses:
+    resolution (and the warning for a name no skill answers to) is the
+    matcher's job, and the turn proceeds either way.
+    """
+    out: List[str] = []
+    for token in (message or "").split():
+        match = _SLASH_TOKEN_RE.match(token)
+        if not match:
+            break
+        name = match.group(1)
+        try:
+            from ..skills.reserved import is_reserved_skill_name
+
+            if is_reserved_skill_name(name):
+                break
+        except Exception:  # pragma: no cover - the refusal must not load skills
+            pass
+        out.append(name)
+    return out
+
 
 def _skill_model_tier(active_skills: Sequence[Any]) -> Optional[str]:
     """The model tier the active skills ask for, if any.
@@ -161,13 +195,17 @@ class IntakePipeline:
         # Matched before model selection so an active skill's tier can be
         # honoured. Matching never fails a turn: a broken skill file or
         # matcher costs the turn its role scope and expertise prompt, not
-        # its answer.
+        # its answer. Leading `/<name>` tokens join the caller's explicit
+        # list (design §2.4): a slash invocation overrides trigger
+        # matching entirely.
+        explicit = list(explicit_skills or ())
+        explicit += parse_slash_skills(message)
         active_skills: List[Any] = []
         if self._skill_matcher is not None:
             try:
                 active_skills = list(
                     self._skill_matcher.match(
-                        message, signals, explicit=explicit_skills
+                        message, signals, explicit=explicit or None
                     )
                 )
             except Exception:  # pragma: no cover - defensive
