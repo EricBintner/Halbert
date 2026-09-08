@@ -104,10 +104,11 @@ from __future__ import annotations
 
 import logging
 import os
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 import yaml
 
@@ -230,12 +231,12 @@ class MCPServerConfig:
     transport: str = "stdio"      # stdio | http
     command: str = ""             # stdio: executable to launch
     args: Tuple[str, ...] = field(default_factory=tuple)
-    env: Dict[str, str] = field(default_factory=lambda: MappingProxyType({}))
+    env: Mapping[str, str] = field(default_factory=lambda: MappingProxyType({}))
     url: str = ""                 # http: server endpoint
     auth: Optional[MCPAuthConfig] = None
     timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS
     risk_override: Optional[RiskLevel] = None       # B3: per-server level
-    tool_risk: Dict[str, RiskLevel] = field(
+    tool_risk: Mapping[str, RiskLevel] = field(
         default_factory=lambda: MappingProxyType({}))  # B3: per-tool
 
     def __post_init__(self) -> None:
@@ -636,3 +637,320 @@ def _read_config(path: Path) -> MCPClientConfig:
         servers.append(parsed)
     return MCPClientConfig(
         servers=tuple(servers), skipped_servers=tuple(skipped))
+
+
+# ---------------------------------------------------------------------------
+# Dashboard write path (B5): the UI's edits to mcp_config.yml land here.
+#
+# The loader above is the truth about what a config MEANS; the write path
+# reuses it rather than keeping a second, looser validator — every entry
+# the dashboard writes is parsed with the SAME ``_parse_server`` before a
+# byte is replaced, and the serialized file is parsed back and compared
+# against that parse BEFORE the rename. What the UI writes therefore
+# loads back exactly, or the write never happens.
+#
+# Atomicity: temp file in the config's own directory, ``os.replace`` —
+# a crash mid-write leaves the previous file intact and never a partial
+# one (the same guarantee the memo's identity keying presumes).
+#
+# Secrets: the dashboard API carries an env var NAME (``token_env``),
+# never a token value. A literal ``token`` the user hand-wrote into an
+# existing entry is PRESERVED on an unrelated edit (it stays in the file
+# it was already in; it never crosses the API and is never echoed back),
+# but a write that would INTRODUCE a literal token is refused — the
+# token_env flow exists so a secret typed into a web form is not persisted
+# to disk in the first place. Every error message this section raises
+# passes through ``redact`` before it reaches a response or a log.
+# ---------------------------------------------------------------------------
+
+class ConfigWriteError(Exception):
+    """A config edit the write path refused (message is safe to serve —
+    it is redacted at raise sites that interpolate user input)."""
+
+
+def _captured_parse_server(
+    entry: Any, index: int, default_timeout: float,
+) -> MCPServerConfig:
+    """``_parse_server`` with its skip-warning captured as the error
+    detail. The loader's validation lives in one place (no drift): the
+    write path just reads the same warning the loader would log. The
+    message is already token-scrubbed (``_scrub`` runs at the warning
+    sites for shapes that carry raw config text) and is redacted again
+    by the caller before it is served."""
+    captured: List[logging.LogRecord] = []
+
+    class _Capture(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            captured.append(record)
+
+    handler = _Capture(level=logging.WARNING)
+    logger.addHandler(handler)
+    try:
+        parsed = _parse_server(entry, index, default_timeout)
+    finally:
+        logger.removeHandler(handler)
+    if parsed is None:
+        detail = captured[0].getMessage() if captured else (
+            "entry is not a valid MCP server configuration")
+        raise ValueError(redact(detail))
+    return parsed
+
+
+def serialize_server_entry(config: MCPServerConfig) -> Dict[str, Any]:
+    """A parsed server config → the canonical ``servers:`` entry the
+    file stores. The dashboard writes THIS (derived from the validated
+    parse, not from the request body), so "what was written" and "what
+    loads back" are the same object by construction."""
+    entry: Dict[str, Any] = {"name": config.name}
+    entry["transport"] = config.transport
+    if config.transport == "stdio":
+        entry["command"] = config.command
+        if config.args:
+            entry["args"] = list(config.args)
+    else:
+        entry["url"] = config.url
+    if config.env:
+        entry["env"] = dict(config.env)
+    if config.auth is not None and (config.auth.token_env or config.auth.token):
+        auth: Dict[str, Any] = {"type": config.auth.type}
+        if config.auth.token_env:
+            auth["token_env"] = config.auth.token_env
+        if config.auth.token:
+            # Only ever reached for a token read back out of the same
+            # file (preservation on an unrelated edit) — the dashboard
+            # API has no field that could introduce one.
+            auth["token"] = config.auth.token
+        entry["auth"] = auth
+    if config.timeout_seconds != DEFAULT_TIMEOUT_SECONDS:
+        entry["timeout_seconds"] = config.timeout_seconds
+    if config.risk_override is not None:
+        entry["risk_override"] = config.risk_override.value
+    if config.tool_risk:
+        entry["tool_risk"] = {
+            tool: level.value for tool, level in config.tool_risk.items()}
+    return entry
+
+
+def _round_trip_equal(
+    first: MCPServerConfig, second: MCPServerConfig,
+) -> bool:
+    """Did the serialize → file → parse cycle preserve the server?
+    Connection identity via ``signature`` (name/transport/command/args/
+    env/url/auth incl. a preserved literal token/timeout) plus the B3
+    risk fields (excluded from the signature on purpose, so compared
+    here explicitly)."""
+    return (
+        first.signature() == second.signature()
+        and first.risk_override == second.risk_override
+        and dict(first.tool_risk) == dict(second.tool_risk)
+    )
+
+
+def _read_raw_document(path: Path) -> Optional[Dict[str, Any]]:
+    """The fresh (unmemoized) raw document, or ``None`` for a MISSING
+    file. A file that exists but cannot be read raises
+    :class:`ConfigWriteError` — the dashboard refuses to overwrite a
+    config it cannot parse (an unreadable file may hold hand-written
+    servers; replacing it with an empty document would silently delete
+    them)."""
+    if not path.exists():
+        return None
+    try:
+        with open(path) as f:
+            data = yaml.safe_load(f)
+    except Exception as e:
+        raise ConfigWriteError(
+            "mcp_config.yml is unreadable (%s) — refusing to overwrite "
+            "it from the dashboard; edit the file by hand"
+            % redact(str(e))) from None
+    if data is None:
+        return {}
+    if not isinstance(data, dict):
+        raise ConfigWriteError(
+            "mcp_config.yml is not a mapping — refusing to overwrite it "
+            "from the dashboard; edit the file by hand")
+    raw_servers = data.get("servers")
+    if raw_servers is not None and not isinstance(raw_servers, list):
+        raise ConfigWriteError(
+            "'servers' in mcp_config.yml is not a list — refusing to "
+            "overwrite it from the dashboard; edit the file by hand")
+    return data
+
+
+def _atomic_write_yaml(path: Path, document: Dict[str, Any]) -> None:
+    """Serialize, then replace atomically (temp file in the same
+    directory + ``os.replace``): a crash mid-write leaves the previous
+    file intact, never a truncated one. Note the file is rewritten in
+    canonical YAML form — hand-written comments are not preserved (the
+    established pattern, tools/write_config.py's _apply_yaml)."""
+    text = yaml.safe_dump(document, sort_keys=False, allow_unicode=True)
+    directory = path.parent
+    directory.mkdir(parents=True, exist_ok=True)
+    fd, temp_name = tempfile.mkstemp(
+        prefix=path.name + ".", suffix=".tmp", dir=str(directory))
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temp_name, path)
+    except Exception:
+        try:
+            os.unlink(temp_name)
+        except OSError:
+            pass
+        raise
+
+
+def edit_servers(
+    mutator, default_timeout: float = DEFAULT_TIMEOUT_SECONDS,
+) -> MCPClientConfig:
+    """Apply *mutator* to the raw ``servers:`` list and atomically
+    replace the file.
+
+    The mutator receives the raw entries (list of dicts / raw shapes as
+    written) and returns ``(new_entries, touched)`` — the new list, plus
+    the indexes it changed, so ONLY what the edit wrote is held to the
+    validated round-trip (a hand-broken entry elsewhere in the file is
+    the operator's own state; the dashboard neither fixes nor clobbers
+    it, and the loader keeps skipping it exactly as before).
+
+    Returns the freshly re-read :class:`MCPClientConfig` (the write
+    changed the file identity, so ``load_config`` re-parses; nothing
+    else is needed to make the next reader see the edit).
+
+    Raises :class:`ConfigWriteError` (or ValueError from the mutator) —
+    both mean "nothing was written".
+    """
+    path = config_path()
+    document = _read_raw_document(path) or {}
+    raw_servers = document.get("servers")
+    entries: List[Any] = list(raw_servers) if isinstance(raw_servers, list) else []
+    new_entries, touched = mutator(list(entries))
+
+    new_document = dict(document)
+    new_document["servers"] = new_entries
+
+    # Round-trip gate, touched entries only: serialize the whole new
+    # document, parse THAT back, and require every touched entry to load
+    # back to the same server the pre-write validation produced. A
+    # mismatch (a YAML shape that eats a field, a type the dumper
+    # mutates) aborts the write before the replace.
+    for index in touched:
+        raw_entry = new_entries[index]
+        expected = _captured_parse_server(raw_entry, index, default_timeout)
+        text = yaml.safe_dump(new_document, sort_keys=False,
+                              allow_unicode=True)
+        try:
+            reloaded = yaml.safe_load(text)
+        except Exception as e:  # pragma: no cover - safe_dump of parsed data
+            raise ConfigWriteError(
+                f"serialized config failed to re-parse ({redact(str(e))})")
+        round_entries = (reloaded or {}).get("servers") or []
+        if index >= len(round_entries):
+            raise ConfigWriteError(
+                f"server '{expected_name(expected)}' did "
+                f"not survive serialization")
+        reparsed = _captured_parse_server(
+            round_entries[index], index, default_timeout)
+        if not _round_trip_equal(expected, reparsed):
+            raise ConfigWriteError(
+                f"server '{expected.name}' did not round-trip through "
+                f"serialization — refusing to write it")
+
+    _atomic_write_yaml(path, new_document)
+    return load_config()
+
+
+def expected_name(expected: Any = None, **_: Any) -> str:
+    """The server name a failed round-trip was for (a formatting helper
+    kept tiny so the error paths above stay one-line)."""
+    try:
+        return getattr(expected, "name", "?")
+    except Exception:  # pragma: no cover - defensive only
+        return "?"
+
+
+def add_server_entry(entry: Dict[str, Any]) -> MCPClientConfig:
+    """Validate *entry* as a whole new server and append it. A name that
+    duplicates an existing one (exactly or after sanitization — the same
+    rule the loader's collision check applies) is refused here so the
+    dashboard answers 400 instead of writing an entry the loader would
+    skip."""
+    parsed = _captured_parse_server(entry, 0, DEFAULT_TIMEOUT_SECONDS)
+
+    def _mutate(entries: List[Any]) -> "tuple":
+        existing_raw = [
+            (i, e) for i, e in enumerate(entries) if isinstance(e, dict)]
+        for index, existing in existing_raw:
+            name = str(existing.get("name", "") or "").strip()
+            if not name:
+                continue
+            if name == parsed.name or components_match(name, parsed.name):
+                raise ValueError(
+                    f"a server named '{name}' is already configured")
+        canonical = serialize_server_entry(parsed)
+        entries.append(canonical)
+        return entries, [len(entries) - 1]
+
+    return edit_servers(_mutate)
+
+
+def remove_server_entry(name: str) -> MCPClientConfig:
+    """Remove every entry written as *name* (the loader keeps the first
+    of a duplicate pair, so removing by exact raw name is the operator's
+    own intent). Raises ValueError when the name is not configured —
+    never a silent no-op."""
+
+    def _mutate(entries: List[Any]) -> "tuple":
+        keep: List[Any] = []
+        removed = 0
+        for entry in entries:
+            if (isinstance(entry, dict)
+                    and str(entry.get("name", "") or "").strip() == name):
+                removed += 1
+                continue
+            keep.append(entry)
+        if not removed:
+            raise ValueError(f"no server named '{name}' is configured")
+        return keep, []
+
+    return edit_servers(_mutate)
+
+
+def set_risk_overrides(
+    name: str,
+    risk_override: Optional[str],
+    tool_risk: Optional[Dict[str, str]],
+) -> MCPClientConfig:
+    """Set (or clear, with None) one server's B3 override keys. Every
+    other key of the entry — including a literal ``auth.token`` the user
+    hand-wrote — is preserved untouched. Raises ValueError when the
+    server is not configured or the level names are invalid."""
+
+    def _mutate(entries: List[Any]) -> "tuple":
+        for index, entry in enumerate(entries):
+            if not (isinstance(entry, dict)
+                    and str(entry.get("name", "") or "").strip() == name):
+                continue
+            modified = dict(entry)
+            if risk_override is None:
+                modified.pop("risk_override", None)
+            else:
+                modified["risk_override"] = str(risk_override)
+            if tool_risk is None:
+                modified.pop("tool_risk", None)
+            else:
+                modified["tool_risk"] = {
+                    str(tool): str(level)
+                    for tool, level in tool_risk.items()}
+            # Validate the MODIFIED entry before anything is written —
+            # an invalid level is a 400, never a silently skipped server.
+            parsed = _captured_parse_server(
+                modified, index, DEFAULT_TIMEOUT_SECONDS)
+            canonical = serialize_server_entry(parsed)
+            entries[index] = canonical
+            return entries, [index]
+        raise ValueError(f"no server named '{name}' is configured")
+
+    return edit_servers(_mutate)

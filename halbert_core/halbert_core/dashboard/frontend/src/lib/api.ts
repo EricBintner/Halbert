@@ -91,6 +91,30 @@ export const api = {
   },
 
   // -----------------------------------------------------------------
+  // MCP (B4 status, B5 config-edit endpoints)
+  // -----------------------------------------------------------------
+  getMcpStatus() {
+    return request('/api/mcp/status')
+  },
+  addMcpServer(entry: Record<string, unknown>) {
+    return request('/api/mcp/servers', {
+      method: 'POST',
+      body: JSON.stringify(entry),
+    })
+  },
+  removeMcpServer(name: string) {
+    return request(`/api/mcp/servers/${encodeURIComponent(name)}`, {
+      method: 'DELETE',
+    })
+  },
+  setMcpRisk(name: string, body: { risk_override: string | null; tool_risk: Record<string, string> | null }) {
+    return request(`/api/mcp/servers/${encodeURIComponent(name)}/risk`, {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    })
+  },
+
+  // -----------------------------------------------------------------
   // Agent chat (legacy /api/chat/* retired — T4b.1)
   //
   // Conversation traffic goes through the agent state machine at

@@ -14,6 +14,7 @@ import { Development } from './pages/Development'
 import { Network } from './pages/Network'
 import { Sharing } from './pages/Sharing'
 import { Findings } from './pages/Findings'
+import { MCP } from './pages/MCP'
 import { Backups } from './pages/Backups'
 import { Apps } from './pages/Apps'
 import { Approvals } from './pages/Approvals'
@@ -128,6 +129,7 @@ function App() {
                     <Route path="/network" element={<Network />} />
                     <Route path="/sharing" element={<Sharing />} />
                     <Route path="/findings" element={<Findings />} />
+                    <Route path="/mcp" element={<MCP />} />
                     {/* Legacy path: the page was renamed from Security to Findings
                      * to resolve the name overlap with Settings > Security. */}
                     <Route path="/security" element={<Navigate to="/findings" replace />} />
