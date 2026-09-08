@@ -747,6 +747,12 @@ class AgentStateMachine:
             async for event in self._begin_turn():
                 yield event
 
+            # SK-2 seam 2: the turn's skill activations, promoted from a
+            # debug log line to the durable skill_events table. After
+            # _begin_turn so the turn scope is entered and the row carries
+            # the same run_id the read receipts will.
+            self._record_skill_activation()
+
             try:
                 # A queued caller was told "waiting" before it blocked, and
                 # nothing else on the normal turn path clears that badge —
@@ -2143,6 +2149,47 @@ class AgentStateMachine:
         except Exception:
             logger.warning("clearing skill safety failed", exc_info=True)
 
+    def _record_skill_activation(self) -> None:
+        """Promote the turn's skill activations to skill_events (SK-2 §6).
+
+        Seam 2: matcher and explicit activations were invisible durable-wise
+        (a debug log line); now each one is a row keyed by the skill's
+        stable id — `explicit` for a `/name` invocation, `matched` for a
+        trigger match — with the turn's ids so a run's rows join (the read
+        receipts the executor writes carry the same run_id). Runs inside
+        the turn lock, after `_begin_turn` entered the turn scope. A skill
+        that never got an id writes nothing: the row keys on identity,
+        never name. Never raises — telemetry is reportability, not a gate.
+        """
+        try:
+            intake = getattr(self.ctx, "intake", None)
+            matches = getattr(intake, "active_skills", None) if intake else None
+            if not matches:
+                return
+            from ..continuity.provenance import current_turn
+            from ..skills.telemetry import record_skill_event
+
+            run_id = current_turn.get()
+            session_id = getattr(self.ctx, "session_id", None)
+            for match in matches:
+                skill = getattr(match, "skill", None)
+                skill_id = getattr(skill, "id", None)
+                if not skill_id:
+                    continue
+                record_skill_event(
+                    skill_id,
+                    "explicit" if getattr(match, "explicit", False) else "matched",
+                    session_id=session_id,
+                    run_id=run_id,
+                    detail={
+                        "name": getattr(skill, "name", ""),
+                        "score": getattr(match, "score", 0),
+                    },
+                )
+        except Exception:
+            logger.warning("recording skill activations failed; continuing",
+                           exc_info=True)
+
     #: How many ledger rows the Eyes block carries, and how far back it looks.
     #: An idle day is thousands of rows, so this is a cap, not a window: the
     #: block is grounding -- what has just happened around this machine -- not
@@ -2235,6 +2282,59 @@ class AgentStateMachine:
                            exc_info=True)
             return ""
 
+    def _catalog_block(self) -> str:
+        """The ``<available_skills>`` catalog, or "" without a registry.
+
+        Track B disclosure (skills SK-2, design §2.1): every consultable
+        skill is listed by name, description and location so the model can
+        read one on demand. Rendered from the registry's structured
+        snapshot -- keyed to its snapshot_version, never re-parsed from
+        this prompt -- and the skills matched this turn are passed as
+        protected, so the truncation ladder cuts them last. Never raises:
+        a catalog that cannot render costs the turn its disclosure, not
+        its answer.
+        """
+        try:
+            pipeline = getattr(self, "intake", None)
+            registry = getattr(pipeline, "skill_registry", None) if pipeline else None
+            if registry is None:
+                return ""
+            turn = getattr(self.ctx, "intake", None)
+            protected = getattr(turn, "active_skill_names", None) or ()
+            from ..skills.catalog import render_available_skills
+
+            return render_available_skills(registry, protected=protected)
+        except Exception:
+            logger.warning("rendering the skills catalog failed; continuing",
+                           exc_info=True)
+            return ""
+
+    def _stable_head(self, identity: str, catalog: str,
+                     skills_block: str) -> str:
+        """The cache-stable head of messages[0], closed by the boundary.
+
+        §2.2: identity, catalog and bound bodies are a pure function of
+        versioned inputs, assembled through `build_stable_prefix` and
+        followed by the literal CACHE_BOUNDARY marker; everything volatile
+        -- receipt block, folded history rows, the turn prompt -- is
+        appended below it by `_build_messages`. The join is sha-keyed and
+        memoized; a failure here falls back to the plain join rather than
+        costing the turn the head at all.
+        """
+        try:
+            from ..prompts.agent_prompts import (
+                CACHE_BOUNDARY_MARKER,
+                build_stable_prefix,
+            )
+            stable = build_stable_prefix(identity, catalog, skills_block)
+        except Exception:
+            logger.warning("stable-prefix assembly failed; joining plainly",
+                           exc_info=True)
+            stable = "\n\n".join(p for p in (identity, catalog, skills_block) if p)
+        if not stable:
+            return ""
+        return f"{stable}\n\n{CACHE_BOUNDARY_MARKER}"
+
     def _build_messages(
         self, prompt: str, tail: str = "", response_modality: str = "text",
     ) -> List[Dict[str, Any]]:
@@ -2287,7 +2387,12 @@ class AgentStateMachine:
         # sent on both LLM calls of a turn, so it is paid for twice; it is
         # capped in the composer for that reason.
         skills_block = self._composed_prompt_block()
-        head = "\n\n".join(p for p in (identity, skills_block) if p)
+        # SK-2: the <available_skills> catalog rides between identity and
+        # the bound bodies, and the whole head is closed by the literal
+        # CACHE_BOUNDARY marker (§2.2) -- everything above it versioned,
+        # everything below it volatile.
+        catalog = self._catalog_block()
+        head = self._stable_head(identity, catalog, skills_block)
         content = f"{head}\n\n{prompt}" if head else prompt
         messages: List[Dict[str, Any]] = [{"role": "system", "content": content}]
         if self.ctx.thread_receipt_block:

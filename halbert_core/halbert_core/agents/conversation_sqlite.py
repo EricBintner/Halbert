@@ -204,6 +204,25 @@ _REFERENCE_SCHEMA: Dict[str, str] = {
                         closed_at   REAL,
                         source      TEXT
                     )""",
+    # Skills usage telemetry (design DESIGN-SKILLS-SYSTEM-2026-09-07 §6):
+    # one row per activation, explicit invocation or catalog consultation
+    # read. Keyed by the stable skill id, never the name — the same
+    # identity discipline as provenance. The event enum is deliberately
+    # NOT a CHECK constraint: rows are written only through
+    # skills/telemetry.py, and a DDL-pinned enum in a table created with
+    # IF NOT EXISTS would silently diverge between old and new databases
+    # the moment a later packet (SK-6, SK-7) adds an event — the enum
+    # lives in one place, the module.
+    "skill_events": """CREATE TABLE IF NOT EXISTS skill_events (
+                        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                        ts          REAL NOT NULL,
+                        run_id      TEXT,
+                        session_id  TEXT,
+                        skill_id    TEXT NOT NULL,
+                        persona     TEXT,
+                        event       TEXT NOT NULL,
+                        detail_json TEXT NOT NULL DEFAULT '{}'
+                    )""",
 }
 
 
@@ -3038,6 +3057,85 @@ class SqliteConversationStore:
         except Exception as e:
             logger.warning(f"close_open_loop failed: {e}")
             return False
+
+    # ------------------------------------------------------------------
+    # skill_events (skills telemetry, SK-2 — design §6)
+    # ------------------------------------------------------------------
+
+    def append_skill_event(
+        self,
+        *,
+        skill_id: str,
+        event: str,
+        ts: Optional[float] = None,
+        run_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        persona: Optional[str] = None,
+        detail: Optional[dict] = None,
+    ) -> Optional[int]:
+        """Append one usage-telemetry row. Returns the row id, or None.
+
+        Telemetry never fails a turn or a tool: a write that cannot happen
+        logs and returns None, the same posture as append_message. Rows
+        are keyed by the stable skill id (never the name); the enum and
+        the writers live in skills/telemetry.py, which is the only module
+        that calls this.
+        """
+        if self._conn is None:
+            return None
+        import time as _time
+        try:
+            with self._lock, self._conn:
+                cur = self._conn.execute(
+                    "INSERT INTO skill_events "
+                    "(ts, run_id, session_id, skill_id, persona, event, detail_json) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        float(ts) if ts is not None else _time.time(),
+                        run_id, session_id, skill_id, persona, event,
+                        json.dumps(detail or {}),
+                    ),
+                )
+                return int(cur.lastrowid)
+        except Exception as e:
+            logger.warning(f"append_skill_event failed: {e}")
+            return None
+
+    def list_skill_events(
+        self,
+        *,
+        skill_id: Optional[str] = None,
+        since: Optional[float] = None,
+        limit: int = 500,
+    ) -> List[Dict[str, Any]]:
+        """Read telemetry rows back, newest first.
+
+        The named consumers (design §6) — the curator's stale→archive
+        transitions and draft expiry, the learning loop's counter reset,
+        the dashboard's counts — are later packets; this reader ships with
+        the table so the rows it writes are verifiable from day one.
+        """
+        if self._conn is None:
+            return []
+        clauses, params = [], []
+        if skill_id is not None:
+            clauses.append("skill_id = ?")
+            params.append(skill_id)
+        if since is not None:
+            clauses.append("ts >= ?")
+            params.append(float(since))
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        try:
+            with self._lock:
+                rows = self._conn.execute(
+                    f"SELECT * FROM skill_events {where} "
+                    "ORDER BY id DESC LIMIT ?",
+                    (*params, int(limit)),
+                ).fetchall()
+            return [dict(r) for r in rows]
+        except Exception as e:
+            logger.warning(f"list_skill_events failed: {e}")
+            return []
 
     # ------------------------------------------------------------------
     # Migration (Plan B: B21)

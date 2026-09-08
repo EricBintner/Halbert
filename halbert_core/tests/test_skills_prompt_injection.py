@@ -83,7 +83,14 @@ class TestTheBlockReachesMessagesZero:
         m = self._machine("")
         head = m._build_messages("What time is it?")[0]["content"]
         assert "[Active Skill:" not in head
-        assert head == "I am this machine.\n\nWhat time is it?"
+        # SK-2 closed the head with the literal cache boundary (§2.2): the
+        # identity is the stable prefix, the marker ends it, the question
+        # is volatile below. With no catalog and no skill block this is
+        # the whole byte shape.
+        from halbert_core.prompts.agent_prompts import CACHE_BOUNDARY_MARKER
+        assert head == (
+            f"I am this machine.\n\n{CACHE_BOUNDARY_MARKER}\n\nWhat time is it?"
+        )
 
 
 class TestEndToEndThroughRealComposition:
