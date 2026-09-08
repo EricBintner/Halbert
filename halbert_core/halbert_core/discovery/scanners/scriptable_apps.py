@@ -34,6 +34,12 @@ Documented decisions:
 - Depth-1 globs only: apps nested in subfolders (e.g.
   "/Applications/Adobe Creative Cloud/Adobe Photoshop.app") are a known
   blind spot — accepted scope, revisit alongside A4 if the gap matters.
+- SANITIZE UNTRUSTED NAMES (A4 review): bundle display names
+  (``CFBundleName``) and .sdef command names come from app bundles anyone
+  with filesystem access can plant, and they reach LLM prompt surfaces
+  (``chat_context``, the A4 prompt injector). Names are normalized with
+  ``sanitize_discovery_text`` before they are stored — control characters
+  and angle brackets stripped, whitespace collapsed, length capped.
 """
 
 from __future__ import annotations
@@ -44,6 +50,7 @@ import platform
 import re
 import shlex
 import xml.etree.ElementTree as ET
+from xml.parsers.expat import ExpatError
 from pathlib import Path
 from plistlib import load as _plist_load
 from typing import List, Optional
@@ -55,6 +62,7 @@ from ..schema import (
     DiscoverySeverity,
     DiscoveryAction,
     make_discovery_id,
+    sanitize_discovery_text,
 )
 
 logger = logging.getLogger("halbert.scanner.scriptable_apps")
@@ -211,7 +219,10 @@ class ScriptableAppsScanner(BaseScanner):
                 if isinstance(value, str) and value:
                     name = value
                     break
-        except (OSError, ValueError, AttributeError) as e:
+        except (OSError, ValueError, AttributeError, ExpatError) as e:
+            # ExpatError: a planted/malformed Info.plist is unparseable XML
+            # (found via the A4 hostile-name fixture) — skip the bundle
+            # rather than crash the whole scan.
             self.logger.debug(f"No readable Info.plist for {app_path}: {e}")
             bundle_id, name = None, None
         return bundle_id, name or app_path.stem
@@ -224,8 +235,17 @@ class ScriptableAppsScanner(BaseScanner):
         bundle_id: Optional[str],
     ) -> Optional[Discovery]:
         """Aggregate the bundle's dictionaries into one Discovery."""
+        # Bundle display names are attacker-writable filesystem metadata
+        # and reach prompt surfaces downstream — sanitize before storing
+        # (fall back to the folder stem, itself sanitized).
+        name = sanitize_discovery_text(name) or sanitize_discovery_text(app_path.stem)
+        if not name:
+            return None
+
         # Merge all .sdef files of the bundle (some apps ship more than
-        # one); document order preserved, duplicates dropped.
+        # one); document order preserved, duplicates dropped. Command
+        # names are sanitized with the display name — they feed the same
+        # prompt surfaces (description, chat_context, data["commands"]).
         commands: List[str] = []
         seen_commands: set[str] = set()
         class_count = 0
@@ -235,7 +255,8 @@ class ScriptableAppsScanner(BaseScanner):
             if parsed is None:
                 continue  # corrupt/non-XML dictionary — skip it
             for cmd in parsed["commands"]:
-                if cmd not in seen_commands:
+                cmd = sanitize_discovery_text(cmd)
+                if cmd and cmd not in seen_commands:
                     seen_commands.add(cmd)
                     commands.append(cmd)
             class_count += len(parsed["classes"])

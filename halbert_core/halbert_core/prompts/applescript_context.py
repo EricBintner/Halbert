@@ -13,14 +13,25 @@ Where the data comes from
 -------------------------
 The stored discovery results only. ``DiscoveryEngine`` keeps discoveries in
 memory (populated by scan runs, surfaced through ``get_by_type``); this
-injector reads them via the ``get_engine()`` singleton — the same
-lazy-singleton pattern ``context/extra_adapters.py`` uses — and NEVER
-triggers a scan. The A3 scanner runs in ~0.1s but it is a filesystem walk
-over /Applications; putting it on the per-turn prompt path would change the
-cost calculus, so A4's decision is: read-only, no scan, no caching layer on
-top (the engine's in-memory store already serves repeated reads). When no
-scan has run yet there is nothing to inject and the block is empty — that is
-the correct answer, not an error.
+injector peeks at the engine singleton if one already exists and NEVER
+triggers a scan or constructs one — building the global (ChromaDB-backed
+by default) engine on the prompt path would be a heavyweight side effect
+and would pin the singleton's storage mode before anyone chooses it. No
+engine instance yet means no scan has run yet, so the block is empty —
+the same "empty block is the correct answer" philosophy as an empty store.
+
+Sanitization
+------------
+Discovery data is untrusted: an attacker who can plant a .app bundle in
+~/Applications controls its ``CFBundleName`` and .sdef command names, and
+a review repro showed a planted name containing
+``"\n</applescript_context>\n"`` would escape the block and author
+operator-trust text that persists every turn until re-scan. The A3 scanner
+now sanitizes at the source (``sanitize_discovery_text`` in
+discovery/schema.py); this injector applies the same normalization as
+defense-in-depth, because pre-existing stored discoveries may predate the
+scanner-side fix. Malformed ``data`` shapes (missing dict, non-list
+``commands``, missing name) skip the app entirely.
 
 Bounded strategy (the plan's prompt-bloat risk)
 -----------------------------------------------
@@ -149,11 +160,16 @@ class AppleScriptContextInjector:
     def _engine(self) -> Optional[Any]:
         if self.discovery_engine is not None:
             return self.discovery_engine
+        # Peek, never construct: no engine instance yet means no scan has
+        # run yet, so there is nothing to inject. Building the global
+        # engine here would initialize its (ChromaDB-backed by default)
+        # storage on the prompt path — a heavyweight side effect and a pin
+        # on the singleton's storage mode.
         try:
-            from ..discovery.engine import get_engine
-            return get_engine()
+            from ..discovery import engine as engine_module
+            return getattr(engine_module, "_engine", None)
         except Exception as e:
-            logger.debug("Discovery engine unavailable: %s", e)
+            logger.debug("Discovery engine module unavailable: %s", e)
             return None
 
     def _scriptable_apps(self) -> List[Dict[str, Any]]:
@@ -162,13 +178,16 @@ class AppleScriptContextInjector:
 
         Built from each Discovery's ``data`` (the scanner's full, capped
         command list plus the true ``command_count``), never from
-        ``chat_context`` which samples only 5 commands by design.
+        ``chat_context`` which samples only 5 commands by design. All text
+        is sanitized here (defense-in-depth — the A3 scanner already
+        sanitizes at the source, but stored discoveries may predate that
+        fix), and malformed ``data`` shapes skip the app.
         """
         engine = self._engine()
         if engine is None:
             return []
         try:
-            from ..discovery.schema import DiscoveryType
+            from ..discovery.schema import DiscoveryType, sanitize_discovery_text
             discoveries = engine.get_by_type(DiscoveryType.APP)
         except Exception as e:
             logger.debug("Failed to read scriptable-app discoveries: %s", e)
@@ -177,12 +196,27 @@ class AppleScriptContextInjector:
         apps: List[Dict[str, Any]] = []
         seen_names: set = set()
         for d in discoveries:
-            data = getattr(d, "data", None) or {}
-            name = data.get("app_name") or getattr(d, "name", None)
-            if not name or name in seen_names:
+            data = getattr(d, "data", None)
+            if not isinstance(data, dict):
+                continue  # malformed discovery — nothing to summarize
+            raw_name = data.get("app_name") or getattr(d, "name", None)
+            name = sanitize_discovery_text(raw_name)
+            if not name:
+                continue
+            # Same-named apps collapse to the first occurrence — the store
+            # is id-keyed, so duplicates only arise from colliding display
+            # names across scan roots, and one bullet per name is enough.
+            if name in seen_names:
                 continue
             seen_names.add(name)
-            commands = list(data.get("commands") or [])
+            raw_commands = data.get("commands")
+            if not isinstance(raw_commands, list):
+                continue  # malformed shape (e.g. a bare string) — skip app
+            commands = [
+                cleaned
+                for cleaned in (sanitize_discovery_text(c) for c in raw_commands)
+                if cleaned
+            ]
             command_count = data.get("command_count")
             if not isinstance(command_count, int) or command_count < 0:
                 command_count = len(commands)
@@ -243,7 +277,17 @@ class AppleScriptContextInjector:
 
     @staticmethod
     def _enforce_cap(block: str) -> str:
-        """Last-resort bound: drop whole lines until the block fits."""
+        """
+        Last-resort bound: drop whole lines until the block fits.
+
+        Note: when the cap bites, the closing ``</applescript_context>``
+        tag line is dropped like any other line, so the truncated block
+        ends with an UNCLOSED opening tag plus a truncation marker. That
+        should never happen given the MAX_APPS / MAX_COMMANDS_SHOWN bounds
+        ahead of it (and per-item sanitization caps), which is why it is
+        only a last resort — but a downstream consumer must not parse the
+        truncated block as well-formed XML.
+        """
         if len(block) <= MAX_BLOCK_CHARS:
             return block
 
@@ -255,12 +299,10 @@ class AppleScriptContextInjector:
                 break
             out.append(line)
             size += len(line) + 1
-        # The closing tag is the first casualty of a cap this deep — drop
-        # it rather than emit a lie about completeness.
-        if out and out[-1] == "</applescript_context>":
-            out.pop()
         out.append(note)
-        logger.warning(
+        # Fires per turn when it fires at all, and the state it reports is
+        # self-healing on the next scan — debug, not warning noise.
+        logger.debug(
             "Scriptable-apps context exceeded %d chars (%d); truncated",
             MAX_BLOCK_CHARS, len(block),
         )
