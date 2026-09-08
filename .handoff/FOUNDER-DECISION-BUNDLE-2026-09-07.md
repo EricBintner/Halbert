@@ -53,3 +53,13 @@ Nothing is blocked, but for the record: the program's commits ride whichever ses
 ---
 
 **What does NOT need a ruling** (recorded, proceeding on program rules): D3-P2..P6 follow their packet series with P5/P6 review-gated; channel C2–C4 are buildable now per the design; the D-2 skills packets (SK-1..7) await dispatch as their own wave; engine candidates (IngressDecision lift, eval-protocol lift, scheduler status split) hold at their two-instance lift conditions; the ecosystem residues are Halley/BM/DebateHaus's own cleanups.
+---
+
+## RESOLVED (founder rulings, 2026-09-07)
+
+- **D-1 (F-2): APPROVED — dispatch EN-2** on the replies as they stand; EN-3/EN-4 follow EN-2; EN-5 follows those.
+- **D-3 (F-4): Option A — no prompted heartbeat.** The monitor-hash extension follow-up is recorded (needs check-on-X job candidates); Option C stays pre-approved behind its evidence standard.
+- **D-4: YES — the terminal becomes a third talk channel, ASSERTED via dashboard token.** FOUNDER CAUTION, binding on the C5 executor: **two terminals are installed in the app — verify-first which is the correct one before wiring anything.**
+- **D-5: P3c first, then the index.** Land the atomic get-or-open + a v5 heal for legacy duplicate rows, then the one-leaf partial unique index lands as one statement. No lost rows, no bricked stores.
+- **D-2 (F-3): still open** — the joint curated-core session remains unscheduled; 01-B and EN-6 stay gated until it rules.
+- **D-6: standing as written** — push after each merge pass (observed practice), sec-branch merge-or-close at the founder's convenience.
