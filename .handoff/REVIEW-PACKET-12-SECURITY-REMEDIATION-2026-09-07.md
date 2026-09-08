@@ -70,7 +70,7 @@ Fails CI when a route appears without an auth dependency. **It also asserts its 
 
 Both SEC-9 criticals were **dead code**, not misconfiguration. Levels 2 and 3 keyed on `garage_door` and `water_valve` — neither is a Home Assistant domain (HA uses `cover` and `valve`) — so the confirm and forbid tiers matched nothing, ever, while `cover` sat in Level 1 and opened the garage with no confirmation. Unknown domains returned "act, log only", which is how `shell_command`, `python_script`, `hassio` and `homeassistant` auto-executed.
 
-`evaluate_call()` now judges the union of `entity_id`, `data.entity_id` and `data.target.entity_id`, most-restrictive-wins, at all three call sites. Before it, `entity_id="switch.lamp", data={"entity_id": "switch.life_support"}` was judged as the lamp.
+`evaluate_call()` now judges the union of `entity_id`, `data.entity_id` and `data.target.entity_id`, most-restrictive-wins, at all four call sites — including `home/cognitive_loop.py:194`, the one that runs unattended, which `fcb381d3` converted from `evaluate()`. Before it, `entity_id="switch.lamp", data={"entity_id": "switch.life_support"}` was judged as the lamp.
 
 ### 4.4 Two findings the 186-finding audit missed
 
@@ -103,14 +103,21 @@ A research pass built the full replacement and measured it. The numbers are real
 
 | corpus | today | plan's "unknown → HIGH" | proposed allowlist | after one maintenance pass |
 |---|---|---|---|---|
-| Halbert's own argv (262) | 3.1% prompt | **82.8%** | 23.7% | **11.1%** |
-| RAG shell corpus (11,133) | 13.6% | 83.9% | 83.3% | 78.6% |
+| Halbert's own argv (262) | 3.1% prompt | **82.8%** | **23.7%** |
+| RAG shell corpus (11,133) | 14.0% | 84.0% | 83.3% |
+
+Every figure above reproduces from `.handoff/research/sec-2-3/measurement/converge.py`. An
+earlier draft of this packet carried a fourth column — 11.1% argv and 78.6% docs "after one
+maintenance pass" — and **those two numbers do not reproduce from the committed script**, which
+emits no second-pass figure at all. They are withdrawn. The convergence argument is therefore
+unproven: 23.7% is what the allowlist measurably achieves, and whether maintenance halves it
+again is a claim someone must re-measure before relying on it.
 
 The implementation plan's stated direction — `unknown → HIGH` — takes the prompt rate on Halbert's own observation repertoire from 3.1% to **82.8%**. That is not a gate an owner keeps. The proposed allowlist (exact `(basename, first-arg)` lookup) converges instead.
 
 **Two couplings the plan did not account for:**
 
-1. The prefix bug and the default are **entangled**. 27 of 38 currently-SAFE argv commands (`lspci`, `lsmod`, `lsusb`, `lsblk`, `findmnt`, `lsof`) are SAFE *only because* `^(ls|find|…)` is a bare prefix match. Adding a word boundary without first replacing what the regex was doing pushes all of them into the default branch.
+1. The prefix bug and the default are **entangled**. 15 of 38 currently-SAFE argv commands (`lspci`, `lsmod`, `lscpu`, `lsusb`, `lsblk`, `findmnt`, `iptables -L`) are SAFE *only because* the alternation is a bare prefix match. Adding a word boundary without first replacing what the regex was doing pushes those into the default branch. (An earlier draft said 27; that was the row count of the three unanchored rules, not the number that stops matching under `\b`. `lsof` does not appear in the corpus at all.)
 2. `RoleGate` caps `guest` at medium and `restricted` at low and **blocks** above the cap. Under `unknown → HIGH`, those speakers are not prompted — they are refused outright. Dashboard chat is unaffected (`speaker_role` defaults to `admin`); the voice path is not.
 
 **Five live defects the critics found in the proposed patch** — this is why it is not landed:
@@ -125,7 +132,11 @@ The implementation plan's stated direction — `unknown → HIGH` — takes the 
 
 Also: `user_overrides` is typed `Dict[str, RiskLevel]` and consumed as the read-only table's value type, which raises `TypeError` out of `classify()` — called unguarded from `executor.py`.
 
-**Measured cost of landing it:** exactly **2 test failures** across the full suite, both in `test_terminal_stream_bridge.py` (they execute `sleep 5`; the fix is `confirmed=True` — those tests are about timeouts, not classification). And **two tests go vacuous**: `test_agent_pool_cwd_injection.py` keeps passing while its name, docstring and rationale become false.
+**Measured cost of landing it — and read the baseline.** Against `75e3f47c` the patch cost exactly **2 test failures**, both in `test_terminal_stream_bridge.py` (they execute `sleep 5`; the fix is `confirmed=True` — those tests are about timeouts, not classification).
+
+Re-measured against `fcb381d3` it costs **24**. Twenty-two are in `test_secret_reads.py`: the patched module was cut before `79dca611` and so *reverts the credential-read gate*. Three of those are `TestDoesNotOverCorrect` cases — `cat /etc/ssh/sshd_config`, `ls ~/.ssh`, `grep Port /etc/ssh/sshd_config` — which is precisely the over-correction §6 asks you to watch for. **Landing this means merging the patch onto the credential tier, not replacing `safety.py` wholesale.**
+
+And **two tests go vacuous**: `test_agent_pool_cwd_injection.py` keeps passing while its name, docstring and rationale become false.
 
 **My recommendation:** land it, after fixing defects 1–5, keyed on `(head, argv[1])` rather than basename, with `user_overrides` wired to an "always allow this exact invocation" affordance so the residual is a finite queue the owner drains rather than a permanent tax. **But the shape is a product decision about how often Halbert is allowed to interrupt, and it should be yours.**
 
@@ -164,7 +175,7 @@ Platform facts verified on this machine: `O_TMPFILE`, `os.linkat` and `os.openat
 After landing SEC-1, SEC-9 and the SEC-2/3 front half, a 24-agent adversarial pass was run against
 those commits: did they close what they claim, can the new controls be bypassed, what did they break,
 and **are the commit messages true**. It raised 81 issues; 17 were serious and put to independent
-verifiers. **Zero were refuted.** Ten are fixed in `fcb381d3`; the rest are below.
+verifiers. **Zero were refuted.** The tables below account for 12 of the 17 — eight fixed, four still open. The remaining five were folded into the fixes rather than tracked separately (`scene` to Level 2, the fourth `evaluate_call` site, `simulate_command`'s shell, the deploy-unit comments, and the `guard_bind` claim); each is named in `fcb381d3`'s message. An earlier draft said "ten are fixed; the rest are below", which did not add up.
 
 That pass is the most useful thing in this packet, because four of the seventeen were in code that had
 already been reviewed, tested, committed and described as done.
@@ -189,7 +200,7 @@ loopback origin?* — and it is a design decision, not an oversight:
 |---|---|---|
 | medium | The CORS allowlist still grants `localhost:3000` and `:5173` full credentialed access. With a session cookie in a browser, that is the one browser-reachable way around the new door. | `app.py:568` |
 | medium | `origin_allowed` accepts **every** loopback origin, so a page on any other localhost port can open the PTY bridge and the live microphone stream using the owner's cookie. | `auth.py:286` |
-| medium | `POST /auth/logout` is unauthenticated and revokes *all* sessions — a cross-origin denial of service. | `auth.py:486` |
+| medium | `POST /auth/logout` is unauthenticated and revokes *all* sessions — a cross-origin denial of service. | `auth.py:525` |
 | medium | `conversation` is Level 2, so at `orchestrate` the `conversation.process` laundering path still auto-executes. | `ha_governance.py` |
 
 64 further issues were raised below the serious bar and not adversarially checked: 18 more overclaims,
@@ -207,7 +218,9 @@ passes for the wrong reason is how the persona regression shipped.
 
 ## 6. Review Directives for Fable
 
-- **Rule on the classifier shape (§5.1).** This is the decision that matters most and it is a product judgement, not a security one: how often may Halbert interrupt its owner? Check the measured numbers against your own reading of the corpus method (`scratchpad/mine.py`, `proto.py`, `converge.py`), and rule on `(head, argv[1])` keying, the `user_overrides` affordance, and whether `RoleGate` refusing `restricted` speakers outright is acceptable.
+- **Rule on the classifier shape (§5.1).** This is the decision that matters most and it is a product judgement, not a security one: how often may Halbert interrupt its owner? Check the measured numbers against your own reading of the corpus method — the scripts, the corpus and the full per-command report are committed at `.handoff/research/sec-2-3/measurement/` (`mine.py` builds the corpus, `proto.py` is the prototype classifier, `converge.py` prints the table above, `verify.py` is its 47 assertions). **They carry hard-coded absolute paths to the tmp directory they were written in; repoint those at `measurement/` before running.** An earlier draft cited them at a `scratchpad/` path that existed on no machine but the author's.
+
+  Then rule on: `(head, argv[1])` keying, the `user_overrides` affordance, and whether `RoleGate` refusing `restricted` speakers outright rather than prompting them is acceptable.
 - **Rule on the sandbox (§5.2).** Given `diskutil list` returns rc=0 with no output under the proposal, and given the current profile already blocks all network silently — is the right answer a better profile, no sandbox with the classifier carrying the weight, or a sandbox that refuses to start rather than degrading? State the fail direction you want.
 - **Adversarial pass on `dashboard/auth.py`.** Specifically: `_hostname_of` port and IPv6 handling; `origin_allowed` returning `True` on an absent Origin; whether the `?token=` WebSocket query parameter lands anywhere it should not; whether the ticket HMAC is over enough; and whether the ticket seen-set grows without bound.
 - **Check the credential tier for over-correction (§4.4b).** The half of `test_secret_reads.py` that matters is `TestDoesNotOverCorrect`. If any case there starts prompting, the tier has been drawn as a directory rule again and needs narrowing, not widening.

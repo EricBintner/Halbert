@@ -1,5 +1,16 @@
 # Halbert — Security Implementation Plan
 
+
+> **Read this first — the tree has moved.**
+> This document describes Halbert **as it was at commit `7719fff1` on 2026-09-06**. It is
+> written in the present tense and several of its statements are no longer true: five commits
+> of remediation have landed since (`152f10c5`, `3cd680db`, `75e3f47c`, `79dca611`,
+> `fcb381d3`), closing or partly closing a number of the defects described below.
+>
+> For current state read `.handoff/SECURITY-REMEDIATION-PROGRESS-2026-09-07.md`; for what is
+> open read `.handoff/SECURITY-TODO.md`. Treat every present-tense claim here as "was true on
+> 2026-09-06" and verify before acting on it.
+
 **Date:** 2026-09-06 · **Branch:** `feat/attunement-halbert` · **Status:** DRAFT, awaiting founder ratification
 
 Triage of the 186 confirmed findings in `.handoff/SECURITY-AUDIT-FINDINGS-2026-09-06.md` into

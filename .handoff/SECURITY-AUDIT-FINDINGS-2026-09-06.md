@@ -1,6 +1,17 @@
 # Halbert — Security Audit Findings
 
-**Date:** 2026-09-06 · **Branch:** `feat/attunement-halbert` · **Method:** three adversarial passes, 205 agents
+
+> **Read this first — the tree has moved.**
+> This document describes Halbert **as it was at commit `7719fff1` on 2026-09-06**. It is
+> written in the present tense and several of its statements are no longer true: five commits
+> of remediation have landed since (`152f10c5`, `3cd680db`, `75e3f47c`, `79dca611`,
+> `fcb381d3`), closing or partly closing a number of the defects described below.
+>
+> For current state read `.handoff/SECURITY-REMEDIATION-PROGRESS-2026-09-07.md`; for what is
+> open read `.handoff/SECURITY-TODO.md`. Treat every present-tense claim here as "was true on
+> 2026-09-06" and verify before acting on it.
+
+**Date:** 2026-09-06 · **Tree audited:** commit `7719fff1` · **Method:** three adversarial passes, 205 agents
 
 **Scope:** `halbert_core/`, `custom_components/`, `packaging/`, `deploy/`, `config/`, `scripts/`, `packages/`, and the Tauri shell.
 Excluded: `.claude/worktrees/`, `node_modules/`, `build/`, `dist/`, `__pycache__/`, `marketing/`.
@@ -22,6 +33,11 @@ reachable by someone who is not the owner.
 | T2-network | **T2 · Network adjacent** — a LAN attacker, or a web page in the owner's browser via CORS, DNS rebinding or WebSocket | 41 |
 | T3-injection | **T3 · Indirect prompt injection** — attacker text reaching the model through web results, RAG, screen OCR, filenames, logs, HA entity names or MCP output, then driving a privileged tool call | 35 |
 | T4-agent-overstep | **T4 · Agent overstep** — autonomous or approved-once action exceeding what the owner intended | 42 |
+
+**These are 186 write-ups covering roughly 172 distinct defects** — fourteen file:line anchors
+carry more than one write-up, because independent finder dimensions reached the same code by
+different routes and the dedupe was deliberately conservative. Counting them as 186 separate
+defects overstates the total by about 8%.
 
 **Totals:** 186 confirmed — 12 critical, 50 high, 95 medium, 29 low. 
 By lens: 123 code security, 63 UI and control security.

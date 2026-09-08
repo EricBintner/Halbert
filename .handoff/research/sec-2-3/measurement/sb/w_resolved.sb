@@ -1,0 +1,8 @@
+(version 1)
+(deny default)
+(allow process-exec)
+(allow process-fork)
+(allow file-read-metadata)
+(allow file-read-data (literal "/"))
+(allow file-read* (subpath "/usr") (subpath "/bin") (subpath "/sbin") (subpath "/System") (subpath "/private/etc"))
+(allow file-write* (subpath "/private/tmp/sbxw"))
