@@ -34,6 +34,7 @@ from halbert_core.mcp.client import (
     MCPConnectionError,
     MCPDisconnectedError,
     MCPProtocolError,
+    MCPToolError,
     StdioTransport,
     _parse_sse,
 )
@@ -81,23 +82,47 @@ def tools_list():
     return tools
 
 initialized = False
+saw_rejection = False
 
 def not_initialized(req):
     send({"jsonrpc": "2.0", "id": req.get("id"),
           "error": {"code": -32000, "message": "not initialized"}})
+
+def send_tools(req, tools, next_cursor=None):
+    result = {"tools": [{"name": t} for t in tools]}
+    if next_cursor:
+        result["nextCursor"] = next_cursor
+    send({"jsonrpc": "2.0", "id": req.get("id"), "result": result})
 
 def handle(req):
     global initialized
     method = req.get("method", "")
     if method == "initialize":
         initialized = True
-        send({"jsonrpc": "2.0", "id": req.get("id"), "result": {
-            "protocolVersion": "2024-11-05",
-            "capabilities": {"tools": {"listChanged": False}},
-            "serverInfo": {"name": "fake", "version": "0.1.0"}}})
+        if MODE == "bad_init":
+            send({"jsonrpc": "2.0", "id": req.get("id"), "result": {}})
+        elif MODE == "old_version":
+            send({"jsonrpc": "2.0", "id": req.get("id"), "result": {
+                "protocolVersion": "1998-01-01"}})
+        else:
+            send({"jsonrpc": "2.0", "id": req.get("id"), "result": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {"tools": {"listChanged": False}},
+                "serverInfo": {"name": "fake", "version": "0.1.0"}}})
     elif method == "tools/list":
         if not initialized:
             not_initialized(req)
+        elif MODE == "paginated":
+            cursor = (req.get("params") or {}).get("cursor")
+            pages = {"p2": (["tool_b"], "p3"), "p3": (["tool_c"], None)}
+            if cursor is None:
+                send_tools(req, ["tool_a"], "p2")
+            else:
+                tools, nxt = pages.get(cursor, ([], None))
+                send_tools(req, tools, nxt)
+        elif MODE == "hostile":
+            # Always echoes a cursor: pagination must hit its cap.
+            send_tools(req, ["tool_x"], req.get("params", {}).get("cursor") or "more")
         else:
             send({"jsonrpc": "2.0", "id": req.get("id"),
                   "result": {"tools": tools_list()}})
@@ -107,12 +132,17 @@ def handle(req):
             return
         params = req.get("params") or {}
         args = params.get("arguments") or {}
-        if params.get("name") == "add":
+        if params.get("name") == "boom":
+            send({"jsonrpc": "2.0", "id": req.get("id"), "result": {
+                "content": [{"type": "text", "text": "something exploded"}],
+                "isError": True}})
+        elif params.get("name") == "add":
             text = str(int(args.get("a", 0)) + int(args.get("b", 0)))
         else:
             text = json.dumps(args)
-        send({"jsonrpc": "2.0", "id": req.get("id"), "result": {
-            "content": [{"type": "text", "text": text}]}})
+        if params.get("name") != "boom":
+            send({"jsonrpc": "2.0", "id": req.get("id"), "result": {
+                "content": [{"type": "text", "text": text}]}})
     elif method == "resources/list":
         send({"jsonrpc": "2.0", "id": req.get("id"), "result": {"resources": [
             {"uri": "fake://greeting", "name": "greeting",
@@ -150,6 +180,34 @@ while True:
     if MODE == "refuse":
         send({"jsonrpc": "2.0", "id": req.get("id"),
               "error": {"code": -32603, "message": "handshake refused"}})
+        continue
+    if MODE in ("sneaky", "sneaky_noanswer"):
+        # Adversarial server-initiated traffic. A server REQUEST with an
+        # id colliding with the client's pending request, plus an
+        # adversarial notification carrying both a method and an id —
+        # neither may resolve the pending future.
+        if "method" in req:
+            if req.get("method") == "initialize":
+                initialized = True
+                send({"jsonrpc": "2.0", "id": req.get("id"), "result": {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {}, "serverInfo": {"name": "fake"}}})
+            elif req.get("method") == "tools/list":
+                send({"jsonrpc": "2.0", "id": req.get("id"),
+                      "method": "sampling/createMessage",
+                      "params": {"text": "gotcha"}})
+                send({"jsonrpc": "2.0", "method": "notifications/message",
+                      "id": req.get("id"),
+                      "params": {"result": "fake"}})
+                if MODE == "sneaky":
+                    send({"jsonrpc": "2.0", "id": req.get("id"),
+                          "result": {"tools": [{"name": "sneaky_tool"}]}})
+            elif req.get("method") == "resources/list":
+                send({"jsonrpc": "2.0", "id": req.get("id"),
+                      "result": {"saw_rejection": saw_rejection}})
+        elif "error" in req:
+            # The client's -32601 rejection of our server request.
+            saw_rejection = True
         continue
     if MODE == "die_after" and initialized:
         sys.exit(0)
@@ -225,9 +283,11 @@ def stdio_server_entry(script, name="fake", mode="normal", timeout=2.0, **extra)
 
 class FakeHTTPResponse:
     def __init__(self, status_code=200, content_type="application/json",
-                 body=None, json_body=None):
+                 body=None, json_body=None, extra_headers=None):
         self.status_code = status_code
         self.headers = {"Content-Type": content_type}
+        if extra_headers:
+            self.headers.update(extra_headers)
         self.text = body if body is not None else json.dumps(json_body or {})
         self._json = json_body
 
@@ -420,6 +480,72 @@ class TestStdioTransport:
         with pytest.raises(MCPConnectionError, match="broken"):
             await transport.connect()
 
+    # -- B1 review: server-initiated traffic must not steal a future ------
+
+    async def test_server_request_with_colliding_id_never_resolves_pending(
+            self, stdio_transports):
+        """A server-initiated REQUEST whose id collides with our pending
+        request, plus an adversarial notification carrying the same id,
+        must both be ignored — only the true response resolves the
+        future. (Before the fix, the colliding request resolved the
+        future and the true response was dropped as unknown.)"""
+        transport = stdio_transports(mode="sneaky")
+        await transport.connect()
+        result = await transport.request("tools/list")
+        assert [t["name"] for t in result["tools"]] == ["sneaky_tool"]
+
+    async def test_server_requests_are_rejected_not_ignored(
+            self, stdio_transports):
+        """A server-initiated request gets a JSON-RPC -32601 back, so the
+        server is not left hanging on a reply we will never send."""
+        transport = stdio_transports(mode="sneaky")
+        await transport.connect()
+        await transport.request("tools/list")  # triggers the server request
+        result = await transport.request("resources/list")
+        assert result["saw_rejection"] is True
+
+    async def test_colliding_request_without_true_answer_times_out(
+            self, stdio_transports):
+        """When the server request is the ONLY thing that comes back, the
+        pending request must fail via its timeout — not silently
+            "succeed" with the request's payload."""
+        transport = stdio_transports(mode="sneaky_noanswer", timeout=0.5)
+        await transport.connect()
+        with pytest.raises(MCPClientError, match="no response"):
+            await transport.request("tools/list")
+
+    # -- B1 review: initialize validation -----------------------------------
+
+    async def test_initialize_result_without_version_fails_handshake(
+            self, stdio_transports):
+        transport = stdio_transports(mode="bad_init")
+        with pytest.raises(MCPConnectionError, match="protocolVersion"):
+            await transport.connect()
+
+    async def test_unsupported_server_version_fails_handshake(
+            self, stdio_transports):
+        transport = stdio_transports(mode="old_version")
+        with pytest.raises(MCPConnectionError, match="1998-01-01"):
+            await transport.connect()
+
+    async def test_negotiated_version_is_recorded(self, stdio_transports):
+        transport = stdio_transports()
+        await transport.connect()
+        assert transport.negotiated_protocol_version == "2024-11-05"
+
+    # -- B1 review: isError stays raw at the transport level -----------------
+
+    async def test_iserror_result_is_raw_at_transport_level(
+            self, stdio_transports):
+        """The transport returns the raw result; the isError → typed
+        error surface lives on MCPClient.call_tool."""
+        transport = stdio_transports()
+        await transport.connect()
+        result = await transport.request("tools/call", {
+            "name": "boom", "arguments": {}})
+        assert result["isError"] is True
+        assert result["content"][0]["text"] == "something exploded"
+
 
 # ===========================================================================
 # HTTP transport (Streamable HTTP, mocked — no network)
@@ -481,7 +607,8 @@ class TestHTTPTransport:
             self, http_transport_factory, monkeypatch):
         monkeypatch.setenv("FAKE_MCP_TOKEN", "env-token-value-12345")
         fake = FakePost([
-            FakeHTTPResponse(json_body=rpc_result(1, {})),
+            FakeHTTPResponse(json_body=rpc_result(
+                1, {"protocolVersion": "2024-11-05"})),
             FakeHTTPResponse(status_code=202),
         ])
         from halbert_core.mcp.config import MCPAuthConfig
@@ -524,7 +651,8 @@ class TestHTTPTransport:
     async def test_jsonrpc_error_becomes_protocol_error(
             self, http_transport_factory):
         fake = FakePost([
-            FakeHTTPResponse(json_body=rpc_result(1, {})),
+            FakeHTTPResponse(json_body=rpc_result(
+                1, {"protocolVersion": "2024-11-05"})),
             FakeHTTPResponse(status_code=202),
             FakeHTTPResponse(json_body={
                 "jsonrpc": "2.0", "id": 2,
@@ -540,6 +668,103 @@ class TestHTTPTransport:
         transport = http_transport_factory(FakePost([]))
         with pytest.raises(MCPDisconnectedError):
             await transport.request("tools/list")
+
+    # -- B1 review: Mcp-Session-Id -------------------------------------------
+
+    async def test_session_id_is_captured_and_echoed(
+            self, http_transport_factory):
+        fake = FakePost([
+            FakeHTTPResponse(
+                json_body=rpc_result(1, {"protocolVersion": "2024-11-05"}),
+                extra_headers={"Mcp-Session-Id": "sess-abc"}),
+            FakeHTTPResponse(status_code=202),
+            FakeHTTPResponse(json_body=rpc_result(
+                2, {"tools": [{"name": "echo"}]})),
+        ])
+        transport = http_transport_factory(fake)
+        await transport.connect()
+        tools = await transport.request("tools/list")
+        assert tools["tools"][0]["name"] == "echo"
+        # The initialize POST itself carries no session id (none is held
+        # yet); every subsequent request must echo it.
+        assert "Mcp-Session-Id" not in fake.calls[0]["headers"]
+        assert fake.calls[1]["headers"]["Mcp-Session-Id"] == "sess-abc"
+        assert fake.calls[2]["headers"]["Mcp-Session-Id"] == "sess-abc"
+
+    async def test_expired_session_rehandshakes_once_and_retries(
+            self, http_transport_factory):
+        """A 404 while a session id is held means the session expired:
+        one transparent re-handshake, then the original request is
+        retried — not a misdiagnosed legacy-transport error."""
+        fake = FakePost([
+            # first session
+            FakeHTTPResponse(
+                json_body=rpc_result(1, {"protocolVersion": "2024-11-05"}),
+                extra_headers={"Mcp-Session-Id": "sess-old"}),
+            FakeHTTPResponse(status_code=202),
+            # session expired
+            FakeHTTPResponse(status_code=404),
+            # re-handshake: NEW initialize (id 3) and a new session id
+            FakeHTTPResponse(
+                json_body=rpc_result(3, {"protocolVersion": "2024-11-05"}),
+                extra_headers={"Mcp-Session-Id": "sess-new"}),
+            FakeHTTPResponse(status_code=202),
+            # the retried original request (still id 2)
+            FakeHTTPResponse(json_body=rpc_result(
+                2, {"tools": [{"name": "after_reconnect"}]})),
+        ])
+        transport = http_transport_factory(fake)
+        await transport.connect()
+        tools = await transport.request("tools/list")
+        assert tools["tools"][0]["name"] == "after_reconnect"
+        # The retried POST carries the NEW session id.
+        assert fake.calls[5]["headers"]["Mcp-Session-Id"] == "sess-new"
+
+    # -- B1 review: JSON responses must answer the request --------------------
+
+    async def test_json_response_with_wrong_id_is_rejected(
+            self, http_transport_factory):
+        fake = FakePost([
+            FakeHTTPResponse(
+                json_body=rpc_result(1, {"protocolVersion": "2024-11-05"})),
+            FakeHTTPResponse(status_code=202),
+            # answers id 999, not our tools/list (id 2)
+            FakeHTTPResponse(json_body=rpc_result(
+                999, {"tools": [{"name": "wrong-request"}]})),
+        ])
+        transport = http_transport_factory(fake)
+        await transport.connect()
+        with pytest.raises(MCPProtocolError, match="does not answer"):
+            await transport.request("tools/list")
+
+    # -- B1 review: URLs are user input ---------------------------------------
+
+    async def test_url_with_embedded_key_is_redacted_from_errors(
+            self, http_transport_factory, caplog):
+        """The configured URL is user input: a ?key= credential in it
+        must not survive into the raised error or the log record."""
+        secret = "sk-live-url-secret-991"
+        fake = FakePost([
+            FakeHTTPResponse(status_code=404),
+            FakeHTTPResponse(status_code=404),
+        ])
+        transport = http_transport_factory(
+            fake, url=f"https://mcp.example.com/mcp?key={secret}")
+        with caplog.at_level(logging.WARNING, logger="halbert.mcp.client"):
+            with pytest.raises(MCPConnectionError,
+                               match="legacy HTTP\\+SSE") as excinfo:
+                await transport.connect()
+        assert secret not in str(excinfo.value)
+        assert secret not in caplog.text
+
+    async def test_bad_initialize_result_fails_handshake(
+            self, http_transport_factory):
+        fake = FakePost([
+            FakeHTTPResponse(json_body=rpc_result(1, {})),
+        ])
+        transport = http_transport_factory(fake)
+        with pytest.raises(MCPProtocolError, match="protocolVersion"):
+            await transport.connect()
 
 
 # ===========================================================================
@@ -816,6 +1041,92 @@ class TestMCPClient:
         with pytest.raises(MCPClientError):
             await client.list_tools("fake")
         assert time.monotonic() - start < 10.0
+        await client.disconnect()
+
+    # -- B1 review: isError, pagination, concurrency, URL redaction ----------
+
+    async def test_call_tool_iserror_raises_typed_error(
+            self, fake_server_script, config_dir):
+        """A tool result with isError: true is the tool FAILING —
+        call_tool must raise, carrying the content and raw result, never
+        return it as a normal result."""
+        config_dir([stdio_server_entry(fake_server_script)])
+        client = MCPClient()
+        with pytest.raises(MCPToolError) as excinfo:
+            await client.call_tool("fake", "boom", {})
+        assert excinfo.value.text == "something exploded"
+        assert excinfo.value.result["isError"] is True
+        assert "reported an error" in str(excinfo.value)
+        # A normal tool still returns its raw result.
+        result = await client.call_tool("fake", "add", {"a": 1, "b": 1})
+        assert result["content"][0]["text"] == "2"
+        await client.disconnect()
+
+    async def test_list_tools_follows_pagination_cursor(
+            self, fake_server_script, config_dir):
+        """A server that splits tools/list into pages must not lose
+        every page after the first."""
+        config_dir([stdio_server_entry(fake_server_script, mode="paginated")])
+        client = MCPClient()
+        tools = await client.list_tools("fake")
+        assert [t["name"] for t in tools] == ["tool_a", "tool_b", "tool_c"]
+        await client.disconnect()
+
+    async def test_hostile_infinite_cursor_hits_the_cap(
+            self, fake_server_script, config_dir):
+        """A server that echoes a cursor forever gets a clear pagination
+        error, not an infinite loop."""
+        config_dir([stdio_server_entry(fake_server_script, mode="hostile",
+                                       timeout=5.0)])
+        client = MCPClient()
+        with pytest.raises(MCPProtocolError, match="pagination"):
+            await client.list_tools("fake")
+        await client.disconnect()
+
+    async def test_concurrent_first_touch_launches_one_subprocess(
+            self, fake_server_script, config_dir, monkeypatch):
+        """Two concurrent first calls must launch exactly one subprocess
+        (the per-server lock); without it the loser's transport is
+        overwritten and its subprocess orphaned."""
+        config_dir([stdio_server_entry(fake_server_script)])
+        built = []
+        real_build = mcp_client_module.build_transport
+
+        def counting_build(server_config):
+            built.append(server_config.name)
+            return real_build(server_config)
+
+        monkeypatch.setattr(mcp_client_module, "build_transport",
+                            counting_build)
+        client = MCPClient()
+        results = await asyncio.gather(
+            client.list_tools("fake"),
+            client.list_tools("fake"),
+        )
+        assert built == ["fake"]
+        assert all([t["name"] for t in tools] == ["echo", "add"]
+                   for tools in results)
+        await client.disconnect()
+
+    async def test_url_secret_not_logged_by_connect_failure(
+            self, config_dir, monkeypatch, caplog):
+        """The client-level connect() failure log interpolates the
+        server's error message — an embedded URL credential must not
+        reach the log record."""
+        secret = "sk-live-url-secret-777"
+        config_dir([{
+            "name": "remote", "transport": "http",
+            "url": f"https://mcp.example.com/mcp?key={secret}",
+            "timeout_seconds": 2.0,
+        }])
+        fake = FakePost([FakeHTTPResponse(status_code=404)])
+        monkeypatch.setattr(mcp_client_module.requests, "post", fake)
+        client = MCPClient()
+        with caplog.at_level(logging.WARNING, logger="halbert.mcp.client"):
+            await client.connect()  # must not raise
+        assert "remote" in caplog.text
+        assert "failed to connect" in caplog.text
+        assert secret not in caplog.text
         await client.disconnect()
 
 

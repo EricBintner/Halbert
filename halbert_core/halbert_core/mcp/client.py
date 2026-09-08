@@ -21,18 +21,31 @@ Transports:
 
 Protocol: ``initialize`` → ``notifications/initialized`` handshake, then
 ``tools/list``, ``tools/call``, ``resources/list``, ``resources/read`` —
-the same wire shapes ``mcp/server.py`` speaks on the other side.
+the same wire shapes ``mcp/server.py`` speaks on the other side. The
+initialize result is VALIDATED: a server that omits or misstates its
+``protocolVersion`` fails the handshake instead of being silently
+accepted, and a version the client does not support is a clear error.
+``tools/list`` and ``resources/list`` follow ``nextCursor`` pagination
+with a page cap. A Streamable HTTP server's ``Mcp-Session-Id`` response
+header is captured and echoed on every request; a 404 while holding a
+session id means the session expired and triggers ONE transparent
+re-handshake + retry (a 404 with no session id held is the
+legacy-transport error).
 
 Security model:
   * Tokens never logged. Config carries env var NAMES (``token_env``);
     a resolved token is used in the Authorization header and nothing
     else. Every error message that could carry a requests exception (and
     therefore a URL or anything the peer echoes back) is scrubbed of the
-    token value and run through ``redact_text``.
+    token value and run through ``redact_text``; every message that
+    interpolates a configured URL goes through ``redact_url`` — a URL is
+    user input and can embed ``?key=`` or ``user:pass@`` credentials.
   * Results from MCP tools flow into the agent's own context — that is
     the agent's trusted internal path, exactly like the server's internal
     reads. The egress boundary lives in server.py's response choke point;
-    the client does not duplicate it.
+    the client does not duplicate it. A tool result with ``isError``
+    raises :class:`MCPToolError` — a failed call never surfaces as a
+    normal result (what happens to the content after that is B3).
   * Every operation is timeout-bounded (default 30s, per-server
     ``timeout_seconds``). A hung, crashed, or garbage-spewing server
     produces a clean ``MCPClientError``, never a hang.
@@ -42,7 +55,9 @@ config is re-read on EVERY call; a live connection whose config
 signature changed is disconnected and rebuilt, so config edits (and
 deletions) take effect without a restart. A crashed stdio server is
 detected on the next call and relaunched — basic reconnection only;
-background health monitoring and backoff are B4.
+background health monitoring and backoff are B4. Connection setup per
+server is serialized by an asyncio lock, so concurrent first calls
+launch exactly one subprocess.
 """
 from __future__ import annotations
 
@@ -58,13 +73,19 @@ from .config import (
     DEFAULT_TIMEOUT_SECONDS,
     MCPServerConfig,
     load_config,
+    redact_url,
 )
 
 logger = logging.getLogger("halbert.mcp.client")
 
-#: The protocol revision this client speaks — the same one
-#: mcp/server.py answers with.
-PROTOCOL_VERSION = "2024-11-05"
+#: Protocol revisions this client can speak, newest first — the one it
+#: SENDS in initialize, and the set it will accept back. The server's
+#: answer wins if it is in this set (negotiation); anything else fails
+#: the handshake. ``mcp/server.py`` answers ``2024-11-05``.
+SUPPORTED_PROTOCOL_VERSIONS = ("2025-03-26", "2024-11-05")
+
+#: The revision this client proposes in ``initialize``.
+PROTOCOL_VERSION = SUPPORTED_PROTOCOL_VERSIONS[0]
 
 _CLIENT_INFO = {"name": "halbert-mcp-client", "version": "0.1.0"}
 
@@ -95,6 +116,59 @@ class MCPProtocolError(MCPClientError):
 
 class MCPDisconnectedError(MCPClientError):
     """The server connection is gone (process exited / stream closed)."""
+
+
+class MCPToolError(MCPClientError):
+    """The server executed the tool and the tool itself failed — the
+    result carried ``isError: true``. Carries ``.result`` (the raw MCP
+    result) and ``.text`` (the joined text content), so the caller can
+    show what went wrong. A failed call never surfaces as a normal
+    result; what happens to the content after this is B3."""
+
+    def __init__(self, message: str, result: Any = None, text: str = "") -> None:
+        super().__init__(message)
+        self.result = result
+        self.text = text
+
+
+class _SessionExpired(MCPConnectionError):
+    """Internal: HTTP 404 while a session id was held — the server
+    expired the session. Not part of the public error surface; the
+    HTTP transport re-handshakes and retries once before anything
+    escapes."""
+
+
+def _validate_initialize_result(result: Any, server_name: str) -> str:
+    """Require a well-formed initialize result and return the negotiated
+    protocol version. Silent acceptance of a missing/mismatched version
+    is the fail-unsafe path: everything downstream would be speaking
+    protocol shapes neither side agreed on."""
+    if not isinstance(result, dict):
+        raise MCPProtocolError(
+            f"MCP server '{server_name}': initialize result is not an object")
+    version = result.get("protocolVersion")
+    if not isinstance(version, str) or not version:
+        raise MCPProtocolError(
+            f"MCP server '{server_name}': initialize result has no "
+            f"protocolVersion")
+    if version not in SUPPORTED_PROTOCOL_VERSIONS:
+        raise MCPProtocolError(
+            f"MCP server '{server_name}': server speaks protocol version "
+            f"'{version}', which this client does not support "
+            f"(supported: {', '.join(SUPPORTED_PROTOCOL_VERSIONS)})")
+    return version
+
+
+def _join_text_content(content: Any) -> str:
+    """Join a result's text content items into one string."""
+    parts: List[str] = []
+    if isinstance(content, list):
+        for item in content:
+            if (isinstance(item, dict)
+                    and item.get("type") == "text"
+                    and isinstance(item.get("text"), str)):
+                parts.append(item["text"])
+    return "\n".join(parts)
 
 
 def _redact(text: str) -> str:
@@ -159,6 +233,9 @@ class StdioTransport:
         self._reader: Optional[asyncio.Task] = None
         self._pending: Dict[Any, "asyncio.Future"] = {}
         self._next_id = 0
+        #: The protocol version the SERVER answered initialize with (only
+        #: set after a validated handshake).
+        self.negotiated_protocol_version: Optional[str] = None
 
     # -- lifecycle ---------------------------------------------------------
 
@@ -200,7 +277,9 @@ class StdioTransport:
         self._pending = {}
         self._reader = asyncio.get_running_loop().create_task(self._read_loop())
         try:
-            await self.request("initialize", _initialize_params())
+            result = await self.request("initialize", _initialize_params())
+            self.negotiated_protocol_version = _validate_initialize_result(
+                result, self.name)
         except MCPClientError as e:
             await self.close()
             raise MCPConnectionError(
@@ -241,7 +320,18 @@ class StdioTransport:
     # -- protocol ----------------------------------------------------------
 
     async def _read_loop(self) -> None:
-        """Drain stdout, resolving pending futures by response id."""
+        """Drain stdout, resolving pending futures by response id.
+
+        Only a RESPONSE — no ``method``, and a ``result`` or ``error``
+        member — may resolve a pending future. A server-initiated message
+        carrying a ``method`` is never the answer to our request, even
+        when its id collides with one of ours: resolving on id alone let
+        a colliding server request steal a pending future and silently
+        misattribute it (the true response was then dropped as an
+        unknown id). Server requests get a JSON-RPC error back (this
+        client implements no server-facing handlers, and a server left
+        waiting on a reply would hang); server notifications are dropped.
+        """
         assert self._proc is not None and self._proc.stdout is not None
         try:
             while True:
@@ -257,6 +347,14 @@ class StdioTransport:
                     continue
                 if not isinstance(message, dict):
                     continue
+                if message.get("method") is not None:
+                    # Server-initiated request (method + id) or
+                    # notification (method, no id). NEVER a response.
+                    if "id" in message:
+                        await self._reject_server_request(message["id"])
+                    continue
+                if "result" not in message and "error" not in message:
+                    continue  # neither request nor response: drop
                 future = self._pending.pop(message.get("id"), None)
                 if future is not None and not future.done():
                     future.set_result(message)
@@ -264,6 +362,24 @@ class StdioTransport:
         finally:
             self._fail_pending(MCPDisconnectedError(
                 f"MCP server '{self.name}': stream closed"))
+
+    async def _reject_server_request(self, req_id: Any) -> None:
+        """Answer a server-initiated request with method-not-found, so
+        the server is not left hanging on a reply we will never send."""
+        try:
+            await self._write({
+                "jsonrpc": "2.0", "id": req_id,
+                "error": {
+                    "code": -32601,
+                    "message": (
+                        "Halbert MCP client does not accept "
+                        "server-initiated requests"),
+                },
+            })
+        except MCPClientError as e:
+            logger.debug(
+                "MCP server '%s': could not reject server request: %s",
+                self.name, e)
 
     def _fail_pending(self, exc: MCPClientError) -> None:
         pending = list(self._pending.values())
@@ -397,6 +513,14 @@ class HTTPTransport:
         self.timeout = float(timeout)
         self._connected = False
         self._next_id = 0
+        #: The Mcp-Session-Id the server assigned at initialize (if any),
+        #: echoed on every subsequent request. Without it, a spec-
+        #: compliant Streamable HTTP server that assigns session ids 404s
+        #: every request after the first.
+        self._session_id: Optional[str] = None
+        #: The protocol version the SERVER answered initialize with (only
+        #: set after a validated handshake).
+        self.negotiated_protocol_version: Optional[str] = None
 
     @property
     def alive(self) -> bool:
@@ -409,15 +533,19 @@ class HTTPTransport:
         }
         if token:
             headers["Authorization"] = f"Bearer {token}"
+        if self._session_id:
+            headers["Mcp-Session-Id"] = self._session_id
         return headers
 
     def _post_sync(self, message: Dict[str, Any], timeout: float) -> Dict[str, Any]:
         """The synchronous core, run in a worker thread."""
         token = self.token_provider() if self.token_provider else None
+        headers = self._headers(token)
+        session_sent = "Mcp-Session-Id" in headers
         try:
             response = requests.post(
                 self.url, json=message,
-                headers=self._headers(token), timeout=timeout)
+                headers=headers, timeout=timeout)
         except requests.RequestException as e:
             # The exception (and the URL inside it) can carry credentials
             # — a user:pass@ URL, or anything a proxy echoes back. Scrub
@@ -426,23 +554,38 @@ class HTTPTransport:
                 f"MCP server '{self.name}': request failed: "
                 f"{_scrub(str(e), [token or ''])}") from None
 
+        # Capture (or update) the session id whenever the server sends
+        # one — assigning it at initialize and rotating it later are both
+        # legal.
+        session_id = response.headers.get("Mcp-Session-Id")
+        if session_id:
+            self._session_id = session_id
+
         # A notification (no id) is ACKed by 200/202 with no body — that
         # is the Streamable HTTP spec's success path for notifications,
         # not an error.
         if "id" not in message and response.status_code in (200, 202):
             return {}
 
+        if response.status_code == 404 and session_sent:
+            # The endpoint exists (initialize worked) and we hold a
+            # session id — the server expired the session. The transport
+            # re-handshakes and retries once; this never escapes.
+            raise _SessionExpired(
+                f"MCP server '{self.name}': HTTP 404 with a session id "
+                f"held — session expired")
         if response.status_code in (404, 405):
             # Streamable HTTP POSTs to the message endpoint; a server
             # answering 404/405 to the POST is either the wrong URL or a
             # server speaking only the LEGACY HTTP+SSE transport (GET a
             # stream, POST elsewhere). We do not support the legacy
-            # transport — say so, clearly, once.
+            # transport — say so, clearly, once. The URL is redacted: it
+            # is user input and can embed ?key= or user:pass@ secrets.
             raise MCPConnectionError(
                 f"MCP server '{self.name}': HTTP {response.status_code} at "
-                f"{self.url} — the endpoint does not accept Streamable HTTP "
-                f"POSTs. If this server speaks only the legacy HTTP+SSE "
-                f"transport, it is not supported.")
+                f"{redact_url(self.url)} — the endpoint does not accept "
+                f"Streamable HTTP POSTs. If this server speaks only the "
+                f"legacy HTTP+SSE transport, it is not supported.")
         if response.status_code in (401, 403):
             raise MCPConnectionError(
                 f"MCP server '{self.name}': HTTP {response.status_code} "
@@ -469,6 +612,15 @@ class HTTPTransport:
         if not isinstance(parsed, dict):
             raise MCPProtocolError(
                 f"MCP server '{self.name}': response is not a JSON-RPC object")
+        if (parsed.get("id") != message.get("id")
+                or ("result" not in parsed and "error" not in parsed)):
+            # Same guard the SSE path has always had: a JSON body that is
+            # not the ANSWER to this request (wrong id, or neither result
+            # nor error) must not be mistaken for one.
+            raise MCPProtocolError(
+                f"MCP server '{self.name}': response does not answer this "
+                f"request (id {message.get('id')!r} expected, got "
+                f"{parsed.get('id')!r})")
         return parsed
 
     async def _exchange(
@@ -488,16 +640,31 @@ class HTTPTransport:
     async def connect(self) -> None:
         if self._connected:
             return
-        await self.request("initialize", _initialize_params())
+        await self._handshake()
+
+    async def _handshake(self) -> None:
+        """initialize + initialized notification. Also the re-entry point
+        after a session expiry: the old session id is dropped first."""
+        self._session_id = None
+        result = await self.request("initialize", _initialize_params())
+        self.negotiated_protocol_version = _validate_initialize_result(
+            result, self.name)
         # The initialized notification: a Streamable HTTP server answers a
-        # notification with 202/200 and no body. Fire it, ignore failures
-        # — a server that rejects notifications but serves requests is
-        # still usable (and the next request will surface real problems).
+        # notification with 202/200 and no body. Fire it (timeout-bounded
+        # like every other POST), ignore failures — a server that rejects
+        # notifications but serves requests is still usable (and the next
+        # request will surface real problems).
         try:
-            await asyncio.to_thread(
-                self._post_sync,
-                {"jsonrpc": "2.0", "method": "notifications/initialized"},
-                self.timeout)
+            await asyncio.wait_for(
+                asyncio.to_thread(
+                    self._post_sync,
+                    {"jsonrpc": "2.0", "method": "notifications/initialized"},
+                    self.timeout),
+                timeout=self.timeout + 5.0)
+        except asyncio.TimeoutError:
+            logger.debug(
+                "MCP server '%s': initialized notification timed out",
+                self.name)
         except MCPClientError as e:
             logger.debug(
                 "MCP server '%s': initialized notification rejected: %s",
@@ -520,6 +687,15 @@ class HTTPTransport:
             message["params"] = params
         try:
             response = await self._exchange(message)
+        except _SessionExpired:
+            # The server expired our session (404 with a session id
+            # held). Re-handshake ONCE and retry — transparently; a
+            # second expiry propagates as the connection error it is.
+            logger.info(
+                "MCP server '%s': session expired, re-handshaking", self.name)
+            self._connected = False
+            await self._handshake()
+            response = await self._exchange(message)
         except asyncio.TimeoutError:
             raise MCPTimeoutError(
                 f"MCP server '{self.name}': no response to '{method}' "
@@ -533,10 +709,15 @@ class HTTPTransport:
 
     async def notify(self, method: str) -> None:
         try:
-            await asyncio.to_thread(
-                self._post_sync,
-                {"jsonrpc": "2.0", "method": method},
-                self.timeout)
+            await asyncio.wait_for(
+                asyncio.to_thread(
+                    self._post_sync,
+                    {"jsonrpc": "2.0", "method": method},
+                    self.timeout),
+                timeout=self.timeout + 5.0)
+        except asyncio.TimeoutError:
+            logger.debug("MCP server '%s': %s notification timed out",
+                         self.name, method)
         except MCPClientError as e:
             logger.debug("MCP server '%s': %s notification failed: %s",
                          self.name, method, e)
@@ -604,38 +785,53 @@ class MCPClient:
         without a restart)
       * connection dead (crashed subprocess) → disconnect, relaunch
         (basic reconnection; monitoring/backoff is B4)
+
+    Connection setup is serialized PER SERVER by an asyncio lock: two
+    concurrent first calls launch exactly one subprocess, not one each
+    with the loser's transport orphaned.
     """
+
+    #: Safety cap on tools/list and resources/list pagination. A hostile
+    #: server that echoes a cursor forever must produce a clear error,
+    #: not an infinite loop.
+    MAX_LIST_PAGES = 100
 
     def __init__(self, config_loader=load_config) -> None:
         self._load = config_loader
         self._connections: Dict[str, _Connection] = {}
+        self._locks: Dict[str, asyncio.Lock] = {}
 
     # -- lifecycle ---------------------------------------------------------
 
     async def _ensure(self, server_name: str) -> _Connection:
-        config = self._load()
-        server_config = config.server(server_name)
-        if server_config is None:
-            raise MCPClientError(
-                f"MCP server '{server_name}' is not configured "
-                f"(see {__name__}.config.config_path())")
-        signature = server_config.signature()
-        connection = self._connections.get(server_name)
-        if connection is not None:
-            if connection.signature == signature and connection.alive:
-                return connection
-            reason = ("configuration changed" if connection.signature != signature
-                      else "connection lost")
-            logger.info(
-                "MCP server '%s': %s, reconnecting",
-                server_name, reason)
-            await connection.close()
-            del self._connections[server_name]
-        transport = build_transport(server_config)
-        await transport.connect()
-        connection = _Connection(signature, transport)
-        self._connections[server_name] = connection
-        return connection
+        lock = self._locks.setdefault(server_name, asyncio.Lock())
+        async with lock:
+            # Config is re-read INSIDE the lock too: a coroutine that
+            # waited may find the config changed while it queued.
+            config = self._load()
+            server_config = config.server(server_name)
+            if server_config is None:
+                raise MCPClientError(
+                    f"MCP server '{server_name}' is not configured "
+                    f"(see {__name__}.config.config_path())")
+            signature = server_config.signature()
+            connection = self._connections.get(server_name)
+            if connection is not None:
+                if connection.signature == signature and connection.alive:
+                    return connection
+                reason = ("configuration changed"
+                          if connection.signature != signature
+                          else "connection lost")
+                logger.info(
+                    "MCP server '%s': %s, reconnecting",
+                    server_name, reason)
+                await connection.close()
+                del self._connections[server_name]
+            transport = build_transport(server_config)
+            await transport.connect()
+            connection = _Connection(signature, transport)
+            self._connections[server_name] = connection
+            return connection
 
     async def connect(self, server_name: Optional[str] = None) -> None:
         """Connect one server by name, or every configured server
@@ -680,12 +876,41 @@ class MCPClient:
 
     # -- protocol surface ----------------------------------------------------
 
-    async def list_tools(self, server_name: str) -> List[Dict[str, Any]]:
-        """``tools/list`` → the server's tool schemas."""
+    async def _list_paginated(
+        self,
+        server_name: str,
+        method: str,
+        key: str,
+    ) -> List[Dict[str, Any]]:
+        """``tools/list`` / ``resources/list`` with cursor pagination.
+
+        A server may split its answer into pages (``nextCursor``);
+        stopping after the first page silently drops every later page.
+        Follow the cursor until the server stops sending one, with a
+        page cap so a hostile cursor echo fails with a clear error
+        instead of looping forever.
+        """
         connection = await self._ensure(server_name)
-        result = await connection.transport.request("tools/list")
-        tools = (result or {}).get("tools", [])
-        return tools if isinstance(tools, list) else []
+        items: List[Dict[str, Any]] = []
+        cursor: Optional[str] = None
+        for _page in range(self.MAX_LIST_PAGES):
+            params = {"cursor": cursor} if cursor else None
+            result = await connection.transport.request(method, params)
+            result = result if isinstance(result, dict) else {}
+            batch = result.get(key)
+            if isinstance(batch, list):
+                items.extend(batch)
+            cursor = result.get("nextCursor")
+            if not cursor:
+                return items
+        raise MCPProtocolError(
+            f"MCP server '{server_name}': {method} pagination exceeded "
+            f"{self.MAX_LIST_PAGES} pages — the server keeps returning a "
+            f"nextCursor (hostile or broken cursor echo)")
+
+    async def list_tools(self, server_name: str) -> List[Dict[str, Any]]:
+        """``tools/list`` → the server's tool schemas, all pages."""
+        return await self._list_paginated(server_name, "tools/list", "tools")
 
     async def call_tool(
         self,
@@ -698,20 +923,27 @@ class MCPClient:
         The result is the agent's trusted internal input (server-side
         redaction does not apply here — that boundary is ours to enforce
         when WE serve, not when we call out); B3 owns what happens to it
-        next.
+        next. A result carrying ``isError: true`` is the tool FAILING —
+        it raises :class:`MCPToolError` (carrying the content and the
+        raw result) instead of surfacing as a normal result.
         """
         connection = await self._ensure(server_name)
-        return await connection.transport.request("tools/call", {
+        result = await connection.transport.request("tools/call", {
             "name": tool_name,
             "arguments": arguments or {},
         })
+        if isinstance(result, dict) and result.get("isError"):
+            text = _join_text_content(result.get("content"))
+            raise MCPToolError(
+                f"MCP server '{server_name}' tool '{tool_name}' reported "
+                f"an error: {text or '(no detail)'}",
+                result=result, text=text)
+        return result
 
     async def list_resources(self, server_name: str) -> List[Dict[str, Any]]:
-        """``resources/list`` → the server's resources."""
-        connection = await self._ensure(server_name)
-        result = await connection.transport.request("resources/list")
-        resources = (result or {}).get("resources", [])
-        return resources if isinstance(resources, list) else []
+        """``resources/list`` → the server's resources, all pages."""
+        return await self._list_paginated(
+            server_name, "resources/list", "resources")
 
     async def read_resource(
         self, server_name: str, uri: str

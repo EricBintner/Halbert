@@ -30,7 +30,7 @@ Config shape (see .handoff workstream B plan):
         env: {KEY: value}            # extra subprocess env (merged over os.environ)
       - name: linear
         transport: http
-        url: https://mcp.linear.app/sse
+        url: https://mcp.linear.app/mcp
         auth:
           type: bearer
           token_env: LINEAR_MCP_TOKEN
@@ -76,6 +76,15 @@ def _redact(text: str) -> str:
         return redact_text(text, prose=True)
     except Exception:
         return text
+
+
+def redact_url(url: str) -> str:
+    """A URL safe to put in a log or error message: stripped of embedded
+    credentials (``user:pass@``) and query-string secrets (``?key=...``,
+    ``?token=...``). Every message that interpolates a configured server
+    URL goes through here — a URL is config/user input, and the
+    tokens-never-logged rule applies to it too."""
+    return _redact(str(url))
 
 
 @dataclass
