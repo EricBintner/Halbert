@@ -27,6 +27,7 @@ import pytest
 
 from halbert_core.consent.copy import (
     CURRENT_VERSION,
+    PROFILE_REVIEW_KEYS,
     available_versions,
     copy_for,
     copy_manifest_path,
@@ -53,7 +54,10 @@ def test_every_consenting_capability_has_copy():
         cap for cap in VOCABULARY if takes_consent_records(cap)
     }
 
-    assert consenting == set(_manifest().keys())
+    # D3-P4: the manifest also carries the three profile review-screen
+    # keys (§3.2 Screen 5) — the digest a profile acceptance batch
+    # stamps on every record it writes.
+    assert consenting | set(PROFILE_REVIEW_KEYS) == set(_manifest().keys())
 
 
 def test_the_copy_module_covers_the_consenting_set_too():

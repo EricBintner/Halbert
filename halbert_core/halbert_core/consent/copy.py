@@ -25,6 +25,11 @@ Rules this module is built under:
   ``text_shown_sha256`` must still resolve to the words the owner saw.
   ``sensor.screen`` carries a superseded ``v0`` so that round trip is
   exercised by the shipped data itself.
+- **Profile review screens ride the same module and manifest** (D3-P4,
+  §3.2 Screen 5/6): a profile acceptance batch carries one digest on
+  every record it writes — the review-screen wording — under the
+  ``profile:<name>.review`` keys, so a ``via: "profile:attentive"``
+  grant resolves to the exact screen the owner accepted.
 - The manifest is regenerated from this module
   (``python -c "from halbert_core.consent.copy import write_manifest;
   write_manifest()"``) — the module is the source of truth, the
@@ -281,6 +286,80 @@ COPY: Dict[str, Dict[str, str]] = {
             "rule, not an oversight."
         ),
     },
+    # -- profile review screens (D3-P4) ------------------------------
+    # Not capabilities: these are the §3.2 Screen-5 review texts, the
+    # words an owner reads before accepting a profile. A profile's
+    # acceptance batch carries ONE digest — this text's — on every
+    # record it writes ("each with text_shown_sha256 of the Screen-5
+    # wording", §3.2 Screen 6), which is why they live in the one copy
+    # module and ride the same manifest: a "profile:attentive" grant
+    # resolves to the exact review screen the owner accepted.
+    "profile:reserved.review": {
+        "v1": (
+            "Here is everything you're about to allow. I answer your "
+            "questions, read this machine's own vitals, and read my own "
+            "settings and history. I watch nothing, I listen to nothing, "
+            "and nothing on this machine changes because of me: I never "
+            "run commands, never read system configuration, and nothing I "
+            "do leaves this machine. Silent capture is off and stays off. "
+            "What you allow here is written to a record you can read and "
+            "I cannot edit, with the date, the surface you granted it "
+            "from, and a fingerprint of these exact words — and every "
+            "part of it is revocable afterwards on one page."
+        ),
+    },
+    "profile:attentive.review": {
+        "v1": (
+            "Here is everything you're about to allow. On my own, while "
+            "you're away, I read this machine's system logs and hardware "
+            "sensors continuously; I read the configuration under /etc "
+            "and keep dated copies, so I can tell you what changed; and I "
+            "run a nightly check and write you a morning summary. When "
+            "you ask me to, I run a command in a terminal under your user "
+            "account; change a configuration file after showing you the "
+            "exact difference; take one picture of a display or a window "
+            "with passwords and keys blanked out first; and hear you "
+            "while you hold the talk button. I always stop and ask first "
+            "for anything rated high risk — with the exact command "
+            "shown, not a summary of it; for anything needing your "
+            "administrator password, and I ask for it again every single "
+            "time; and for any change to a file the system owns. Never, "
+            "under this setup: I do not watch your screen or listen to "
+            "the room when you haven't asked; I do not turn on the "
+            "camera; I do not learn or match anyone's voice; I do not "
+            "send anything you say, see or store off this machine; I do "
+            "not do something risky on my own, even if I'm certain; and I "
+            "do not read your mail, messages, photos, keys, keychains, "
+            "browser profiles or password store. Silent capture is off "
+            "and stays off. What you allow here is written to a record "
+            "you can read and I cannot edit, with the date, the surface "
+            "you granted it from, and a fingerprint of these exact words "
+            "— and every part of it is revocable afterwards on one page."
+        ),
+    },
+    "profile:present.review": {
+        "v1": (
+            "Here is everything you're about to allow. Everything in the "
+            "previous setup, plus the room: I keep the microphone open "
+            "and listen for my name; I keep an eye on the screen and the "
+            "cameras you've set up, continuously and by name; I can act "
+            "on the house through Home Assistant at the tiers you "
+            "expose; I speak answers aloud without you pressing a key; "
+            "and I reach other machines on your local network when you "
+            "approve it each time. Privileged actions still ask for your "
+            "administrator password again every single time, with no "
+            "exception and no way to turn that off. The cost is the one "
+            "on the card: the privacy of this room, for you and for "
+            "everyone else in it — other people, guests, anyone who "
+            "walks in, can be recorded. Choose it deliberately. Nothing "
+            "I hold ever leaves this machine, I never learn or match "
+            "anyone's voice, and silent capture is off and stays off. "
+            "What you allow here is written to a record you can read and "
+            "I cannot edit, with the date, the surface you granted it "
+            "from, and a fingerprint of these exact words — and every "
+            "part of it is revocable afterwards on one page."
+        ),
+    },
 }
 
 
@@ -303,6 +382,37 @@ def digest_for(capability: str, version: str = CURRENT_VERSION) -> str:
 def available_versions(capability: str) -> Tuple[str, ...]:
     """Every copy version shipped for a capability, oldest first."""
     return tuple(sorted(COPY[capability]))
+
+
+#: The review-screen copy keys, one per shipped profile (D3-P4). The
+#: key space is closed alongside the three profile names; the manifest
+#: test cross-checks it against the profiles registry.
+PROFILE_REVIEW_KEYS: Tuple[str, ...] = (
+    "profile:reserved.review",
+    "profile:attentive.review",
+    "profile:present.review",
+)
+
+#: The prefix that marks a copy key as a profile review screen rather
+#: than a capability row.
+PROFILE_REVIEW_PREFIX = "profile:"
+
+
+def review_copy_key(profile_name: str) -> str:
+    """The copy key for one profile's review screen."""
+    return f"{PROFILE_REVIEW_PREFIX}{profile_name}.review"
+
+
+def review_copy_for(profile_name: str, version: str = CURRENT_VERSION) -> str:
+    """The exact review-screen wording an acceptance of this profile
+    hashes into every record it writes (§3.2 Screen 6)."""
+    return copy_for(review_copy_key(profile_name), version)
+
+
+def review_digest_for(profile_name: str, version: str = CURRENT_VERSION) -> str:
+    """The SHA-256 of the review-screen wording — the
+    ``text_shown_sha256`` a profile acceptance batch carries."""
+    return digest_for(review_copy_key(profile_name), version)
 
 
 def copy_manifest_path() -> Path:
