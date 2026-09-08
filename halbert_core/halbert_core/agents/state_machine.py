@@ -3763,6 +3763,7 @@ class AgentStateMachine:
                     should_speak,
                     spoken_segment_lines,
                 )
+                from ..integrations.speech_summarizer import make_speech_summarizer
                 from ..integrations.tts_quality import adapt_for_speech
                 payload = demux_response(
                     clean_response,
@@ -3804,9 +3805,19 @@ class AgentStateMachine:
                         # through spoken_segment_lines so the spoken copy is
                         # TTS-adapted (code-heavy -> one fallback line;
                         # prose -> fence-stripped) while the on-screen text
-                        # is untouched.
+                        # is untouched. Packet 04 C2: a long spoken copy is
+                        # summarized to 1-2 sentences by the utility model
+                        # before synthesis (the summarizer is fail-soft and
+                        # gated on length — short replies are never sent to
+                        # a model, and any failure speaks the original).
+                        # The speech_text above stays the full adapted
+                        # spoken copy (screen-side record); only what is
+                        # synthesized is summarized.
                         spoken_segments: List[tuple] = []
-                        for line in spoken_segment_lines(clean_response, payload):
+                        summarizer = make_speech_summarizer(self.ctx.session_id)
+                        for line in spoken_segment_lines(
+                            clean_response, payload, summarizer=summarizer
+                        ):
                             seg_text = apply_pronunciation(line["text"])
                             seg_rate = float(line.get("rate") or 1.0)
                             spoken_segments.append((seg_text, seg_rate))

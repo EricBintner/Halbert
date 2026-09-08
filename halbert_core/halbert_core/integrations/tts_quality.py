@@ -14,11 +14,15 @@ the segment path:
     noise is stripped from the SPOKEN copy only. The on-screen text is
     never touched — this module has no write path to it.
 
-Pure text in, pure text out: no engine, no model, no imports beyond
-re. Anything model-owned (spoken summarization of long replies, C2)
-stays out until a utility-model slot exists — the ``summarizer``
-parameter is the recorded hook for it and deliberately changes
-nothing today.
+Pure text in, pure text out: no engine, no imports beyond re. The one
+model-owned step — spoken summarization of long replies (C2) — arrives
+through the ``summarizer`` callable the caller supplies (the C2 seam,
+:func:`.speech_summarizer.make_speech_summarizer`); this module never
+resolves or calls a model itself. Composition order is fixed: the
+code-heavy fallback decision is made FIRST and wins — a code-heavy
+reply speaks the fallback line and is never summarized — and the
+summarizer, when it fires, summarizes the already-stripped spoken
+copy, keeping only a strictly-shorter result.
 """
 from __future__ import annotations
 
@@ -104,16 +108,34 @@ def adapt_for_speech(
         fallback: The deterministic line spoken for a code-heavy reply,
             returned verbatim (no wrapper — a wrapper reads as a
             meta-instruction).
-        summarizer: Recorded hook for C2 (spoken summarization of long
-            replies), deferred until a utility-model slot exists. Accepted
-            and deliberately unused today.
+        summarizer: Optional C2 seam (packet 04, :func:
+            ``.speech_summarizer.make_speech_summarizer``). When given,
+            the STRIPPED spoken copy of a long reply is offered to it
+            and a strictly-shorter summary is spoken instead. The
+            callable owns the length gate and every failure mode (it
+            returns its input unchanged whenever it does not fire), and
+            this module defends the composition anyway: a summarizer
+            that raises or returns anything longer or empty is ignored.
 
     Returns:
         The text to synthesize. The on-screen text is untouched.
     """
-    del summarizer  # C2 hook: no utility-model slot yet (see packet 04)
     if not text:
         return text
     if is_code_heavy(text):
+        # The fallback decision is first and final: a code-heavy reply
+        # speaks the fallback line and is NEVER summarized (packet 04
+        # C2 composition rule).
         return fallback
-    return strip_code_noise(text)
+    spoken = strip_code_noise(text)
+    if summarizer is None or not spoken:
+        return spoken
+    try:
+        summary = summarizer(spoken)
+    except Exception:
+        # Belt and braces: the C2 seam is fail-soft by contract; a
+        # foreign callable that is not must not break speech either.
+        return spoken
+    if not summary or len(summary) >= len(spoken):
+        return spoken
+    return summary
