@@ -815,6 +815,29 @@ class TestHTTPTransport:
         assert type(excinfo.value) is not _SessionExpired
         assert type(excinfo.value) is MCPConnectionError
 
+    async def test_concurrent_double_expiry_retypes_both_waiters(
+            self, http_transport_factory):
+        """Two concurrent requests against an always-expiring server: the
+        first waiter takes the re-handshake path, the second retries on
+        the rotated session — and BOTH failures surface as plain
+        MCPConnectionError, never the internal _SessionExpired. The
+        waiter branch used to let its retry's _SessionExpired escape to
+        the caller (B1 residual, fixed with B2)."""
+        fake = ExpiringSessionPost(always_expire=True)
+        transport = http_transport_factory(fake)
+        await transport.connect()
+        results = await asyncio.gather(
+            transport.request("tools/list"),
+            transport.request("ping"),
+            return_exceptions=True,
+        )
+        from halbert_core.mcp.client import _SessionExpired
+        assert len(results) == 2
+        for result in results:
+            assert isinstance(result, MCPConnectionError)
+            assert type(result) is not _SessionExpired
+            assert "expired again" in str(result)
+
     async def test_202_answer_to_a_request_names_the_mode(
             self, http_transport_factory):
         """A request (not a notification) answered 202 means the server

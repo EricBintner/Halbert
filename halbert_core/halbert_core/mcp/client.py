@@ -773,8 +773,17 @@ class HTTPTransport:
         async with self._handshake_lock:
             if self._session_id != expired_session_id:
                 # Another coroutine re-handshook while we queued: the
-                # session was already rotated — just retry.
-                return await self._exchange(message)
+                # session was already rotated — just retry. That retry
+                # can 404 too (a server expiring sessions faster than we
+                # can rotate them); re-type it here so _SessionExpired
+                # never escapes to a caller on the waiter branch (B1
+                # residual, folded into B2).
+                try:
+                    return await self._exchange(message)
+                except _SessionExpired as e:
+                    raise MCPConnectionError(
+                        f"MCP server '{self.name}': session expired again "
+                        f"after another recovery ({e})") from None
             logger.info(
                 "MCP server '%s': session expired, re-handshaking", self.name)
             try:

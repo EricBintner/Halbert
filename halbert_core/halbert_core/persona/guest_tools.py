@@ -209,6 +209,13 @@ GUEST_DENIED_TOOLS: FrozenSet[str] = frozenset({
     "set_autonomy_level",
     "approve_proposal",
     "run_scanner",
+    # MCP bridge tools (B2) are dynamic names (mcp__{server}__{tool},
+    # decided by whatever remote servers expose) and so cannot be
+    # enumerated on the DENY list the way run_applescript is. The
+    # allowlist above is the whole rule and no mcp__ name is on it:
+    # guests are structurally excluded from every bridged tool. Listed
+    # here as a comment so the intent is on record, same as the
+    # MCP-surface names above.
 })
 
 

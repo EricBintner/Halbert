@@ -332,6 +332,22 @@ def get_agent():
             register_applescript_tools(tool_executor)
         except Exception as e:
             logger.warning(f"Could not register AppleScript tools (non-fatal): {e}")
+
+        # MCP client tools (B2) — CAP_MCP_CLIENT-gated, fully lazy: the
+        # mcp package imports ONLY inside this check (subtractive
+        # contract — a capability-off body never pays for it). The
+        # client instance is created here and owned by this init; the
+        # bridge discovers tools from the configured servers, so a
+        # server that is down simply contributes no tools (graceful
+        # absence) and config edits apply on the next agent start.
+        try:
+            from ...capabilities import CAP_MCP_CLIENT, has_capability
+            if has_capability(CAP_MCP_CLIENT):
+                from ...mcp.bridge import register_mcp_tools
+                from ...mcp.client import MCPClient
+                register_mcp_tools(tool_executor, MCPClient())
+        except Exception as e:
+            logger.warning(f"Could not register MCP tools (non-fatal): {e}")
         _agent_instance = AgentStateMachine(
             llm_client=llm_client,
             tool_executor=tool_executor,

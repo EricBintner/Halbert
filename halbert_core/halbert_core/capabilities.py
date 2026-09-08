@@ -51,6 +51,12 @@ Capabilities:
                        applescript_config.yml switch gates every
                        execution, so the capability is not by itself an
                        execution grant.
+  mcp_client        — external MCP server tools may bridge onto the
+                       agent's tool registry (B2). No probe: a config
+                       decision, not runtime detection — the shipped
+                       mcp_config.yml is empty, so the capability is
+                       inert until a server is configured; a server
+                       that is down simply contributes no tools.
 
 Design:
 - Probes are cheap (config checks, file existence, not network probes).
@@ -85,6 +91,7 @@ CAP_SECURE_MODEL_ALLOWED = "secure_model_allowed"
 CAP_AUDIO = "audio"
 CAP_WEB = "web"
 CAP_APPLESCRIPT = "applescript"
+CAP_MCP_CLIENT = "mcp_client"
 
 ALL_CAPABILITIES: Set[str] = {
     CAP_TERMINAL,
@@ -100,6 +107,7 @@ ALL_CAPABILITIES: Set[str] = {
     CAP_AUDIO,
     CAP_WEB,
     CAP_APPLESCRIPT,
+    CAP_MCP_CLIENT,
 }
 
 # ---------------------------------------------------------------------------
@@ -123,6 +131,11 @@ _PRESET_SYSADMIN: Dict[str, bool] = {
     # The per-call applescript_config.yml switch still gates every tool
     # call, so the capability only controls whether the tools register.
     CAP_APPLESCRIPT: True,
+    # No probe: a config decision (mcp_config.yml, empty by default).
+    # A sysadmin workstation may bridge external MCP servers' tools; the
+    # per-server safety classification (B3) still gates what those tools
+    # may do once bridged.
+    CAP_MCP_CLIENT: True,
 }
 
 _PRESET_HOME: Dict[str, bool] = {
@@ -142,6 +155,9 @@ _PRESET_HOME: Dict[str, bool] = {
     CAP_AUDIO: True,           # any node can be the voice terminal (probe gates)
     CAP_WEB: False,            # egress: never on by preset (C3-08)
     CAP_APPLESCRIPT: False,    # osascript stays off for the home appliance
+    # The home appliance talks to no external MCP servers: its surface
+    # is the governed HA/Frigate tool set, not arbitrary bridged tools.
+    CAP_MCP_CLIENT: False,
 }
 
 
