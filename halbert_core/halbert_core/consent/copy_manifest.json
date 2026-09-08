@@ -1,0 +1,111 @@
+{
+  "auto.act": {
+    "v1": "ef2c97e58ef93dc5a26b964fe5bc129cd81548f245a2d0656e3eaabaec02c143"
+  },
+  "auto.capture_on_error": {
+    "v1": "1b8989cc8afe56f9f9b6b2b9014764b8d3f708e34c70b6f7d82b79f688dde224"
+  },
+  "auto.capture_on_intent": {
+    "v1": "f8304b4403a2a1611636cfa83910f146707af040da40283562e22d6c6873f921"
+  },
+  "auto.observe": {
+    "v1": "f53d37af180f62c2e429b6c29a2ae30ecb914a43cf81192a1082e75966ba4284"
+  },
+  "auto.scheduler": {
+    "v1": "2db207905b6f62561ffd764c783783aa0cc3696027138fed1f25cca15b4b9f8a"
+  },
+  "auto.speak": {
+    "v1": "176d2b07192799dc7c543dd7a7cf25f3b6a63cb6b16c9cdd2479be18b4f050ab"
+  },
+  "egress.acoustid": {
+    "v1": "72eacf9d79d908b2996cf2d1816afa8c25aa585acbad38bc58a3275e472fb28e"
+  },
+  "egress.cloud_model": {
+    "v1": "e167ffc753166b4605a6c84dcb9b40018d47a83949ea1b6cfc16bff3e1cbae55"
+  },
+  "egress.peer": {
+    "v1": "9989152b9d04b8804d601ef0c9eee83e89aaae35d6b0ba1a3fa25bb8c4814a1b"
+  },
+  "egress.telemetry": {
+    "v1": "0865e469d9def47f007103b2177de0f7edeec46709229e719e3124eb21124388"
+  },
+  "egress.web_fetch": {
+    "v1": "159d39cb8bfe47c1651810ddd22ff8a870a4ec3d77cd4b84ca6aa356a6e81e90"
+  },
+  "egress.web_search": {
+    "v1": "a92d4d7f9e945e849ab48060ce8ed072d38515d4a13e52477667b733d0b786a4"
+  },
+  "reach.config.read": {
+    "v1": "a4fe18e13823829e61b7004e683c9d247533425f760fc31cd1a6b1dbe15a66c9"
+  },
+  "reach.config.write": {
+    "v1": "11b14e1f299aa97eea015b320ebd28ade880fe6c543f80ba4ef2b2dbb829c227"
+  },
+  "reach.display_power": {
+    "v1": "6a8d70caf3178ffc87bab4023b4da272beae965aadc3a2179dfc8e33539e0e7f"
+  },
+  "reach.fs.read": {
+    "v1": "f6c48f07d73261683756e53cf4ef00e6796e34df03a20afe078b1525d79c2b68"
+  },
+  "reach.fs.write": {
+    "v1": "0bc0a4b43bdb5d4e967849116a8ca5c3a72fb059d066cb295d5014882a0cf41a"
+  },
+  "reach.home": {
+    "v1": "d39ce1d93ea0e2a824408c65d828e051e0511917909e132679c246ada5e79942"
+  },
+  "reach.network": {
+    "v1": "af0f9b8ae5e75e9fd9d3b12552012a1031e1f6b4fcb06b23459307d2d75123c3"
+  },
+  "reach.package": {
+    "v1": "1c389ddae75921c8df51a72c196ace1a6bdd8fdeed714b8e81e478e9b3595b03"
+  },
+  "reach.privileged": {
+    "v1": "506fde1f9e09815bb0f2a4abafb2c629b27d86c4e227e2203848f81b4c48e7ff"
+  },
+  "reach.service": {
+    "v1": "b779700c6e5132516c5c37364ade587164c1e09f84db043aed5b3641ccb94438"
+  },
+  "reach.terminal": {
+    "v1": "697a35d40b89f6df763c84a8e60d9b5376c5542c5a41ac39a7e9a3f2771cc6b7"
+  },
+  "sensor.camera": {
+    "v1": "bbeb073cdf451e1bbc38c6329124f8f4c2ef939c5e5e91c1612dad062869fd38"
+  },
+  "sensor.camera.continuous": {
+    "v1": "73398b9bd9addea09c60b81ece388e992f6b956f51a47749e536eef3d8760c11"
+  },
+  "sensor.camera.network": {
+    "v1": "2643376e637628ec830a78ce1e2fc80830f053cc11dfeee576558710b76cc2a1"
+  },
+  "sensor.config_watch": {
+    "v1": "dcd6e2a19289bc05e5eb06e41ced52ad2f95a5ecc4a7d929523033f12d0395e6"
+  },
+  "sensor.hardware": {
+    "v1": "694cb5d3d54889f821f03b34841e1f55345bbef438acfa3f5554ab0e9b210e35"
+  },
+  "sensor.journal": {
+    "v1": "bd5624edb7cb48bc529d34d4dd67b464ffba23db6c01f46c0c8845db08ea1d9d"
+  },
+  "sensor.mic.continuous": {
+    "v1": "d3670c94007824367a3047969802faa0713c0c654cfeb9dfbe9ea7b72e4edb12"
+  },
+  "sensor.mic.push_to_talk": {
+    "v1": "04e7fdd308bec8ab6dc45eebeef5b798528f1e92b0ec946019df9a2c57fff493"
+  },
+  "sensor.photos": {
+    "v1": "91619e13a5b79da21ac886e54f165e07558d5d98b247314a6d3e6758cdeaaf08"
+  },
+  "sensor.screen": {
+    "v0": "1997cdd7ac27a64574ee46393a8aa767c7231de4abdbbc17bbe91272719913e8",
+    "v1": "e007287c0c59c6ede691a01fea92d8771e74b2a8e3521e417b5339c7c5a0c328"
+  },
+  "sensor.screen.continuous": {
+    "v1": "0a41ebb833b979129a3ea6f83d6ca2b1db284f51ee024ea85ab34fe1de3f9fdf"
+  },
+  "sensor.voiceprint": {
+    "v1": "83dbb7a6b1550c4c3f13e4b7236a62848a6eeb39d208150a5f2f2f27826cae1a"
+  },
+  "sensor.window_titles": {
+    "v1": "4a9197b3336de34481d253878eea9ae3c36813b83b7174a3814f2410f47d2419"
+  }
+}
