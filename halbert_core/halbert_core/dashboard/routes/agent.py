@@ -1623,9 +1623,15 @@ if FASTAPI_AVAILABLE:
         # nothing is silently dropped. Arrivals carrying images keep the
         # queue-a-turn path below: images ride the per-turn context, and no
         # mid-turn seam for them exists yet.
+        #
+        # C3 (busy-mode unification): the arrival's resolved channel rides
+        # the call — the verbs this arrival may use are the channel's own
+        # busy_verbs, so a spoken or terminal "/stop" degrades to a steer
+        # (neither channel declares stop) while the dashboard's "/stop"
+        # still claims the generation.
         if not request.images:
             _decision, arrival_events = agent.handle_midturn_arrival(
-                session_id, request.message
+                session_id, request.message, channel=channel
             )
             if arrival_events is not None:
                 async def arrival_stream():

@@ -493,6 +493,16 @@ class AgentStateMachine:
             yield StreamEvent.conversation_status(
                 session_id, "waiting", waiting_for="previous turn"
             )
+            # C3 (busy-mode unification): the honest queued-turn event —
+            # a whole turn queuing on the lock (an image arrival over
+            # the dashboard door, a terminal client's first-class queue)
+            # is its own observable state, not just a waiting badge. The
+            # design's one addition to the dashboard's whole-turn queue
+            # path (§4 table); rides alongside the status event above,
+            # never replacing it.
+            yield StreamEvent.turn_queued(
+                session_id, waiting_for="previous turn"
+            )
 
         # One turn at a time (spec §12). Everything below, including the
         # finally, runs under the lock; asyncio.Lock is not task-bound, so
@@ -1724,13 +1734,27 @@ class AgentStateMachine:
             ctx.add_observation(f"[steered] {text}")
         self._pending_steer.pop(ctx.session_id, None)
 
-    def handle_midturn_arrival(self, session_id: str, text: str) -> tuple:
+    def handle_midturn_arrival(
+        self, session_id: str, text: str, channel=None
+    ) -> tuple:
         """Route one arrival that reached the machine while a turn runs.
 
-        Packet 07 B1/B2. Returns ``(decision, events)``: ``events is None``
-        means NORMAL_TURN and the caller runs an ordinary turn; otherwise
-        the events are the arrival's own observable verdict — a steer
-        rides the single pending slot, a stop claims the running turn's
+        Packet 07 B1/B2, plus C3's busy-mode unification: the verbs this
+        arrival may use are the *arrival's channel's* ``busy_verbs``
+        (D-4 design §4 — busy behavior is a capability of the channel,
+        not a user setting). A verb the channel does not declare
+        degrades before the algebra ever sees it: over the voice and
+        terminal channels (``{steer}`` / ``{queue, steer}``) a ``/stop``
+        is not a command — it steers, the corrective verb both declare —
+        and the generation-claiming stop path is the dashboard's own
+        (``{stop, steer}``). ``channel=None`` (the Wyoming seam and any
+        embedder predating the channel layer) keeps the dashboard's
+        verb set exactly — today's behavior.
+
+        Returns ``(decision, events)``: ``events is None`` means
+        NORMAL_TURN and the caller runs an ordinary turn; otherwise the
+        events are the arrival's own observable verdict — a steer rides
+        the single pending slot, a stop claims the running turn's
         activity generation — so no mid-turn arrival is ever silently
         dropped. The running turn is ``self.ctx``'s (the lock serialises
         everything), not the arrival's own session id.
@@ -1740,11 +1764,24 @@ class AgentStateMachine:
                 decide_midturn(turn_active=False, is_command=False, text=text),
                 None,
             )
+        # The channel's declared verbs govern this arrival. An absent
+        # channel is the dashboard's set (stop declared) — the
+        # pre-C3 behavior every existing caller relies on.
+        stop_declared = True
+        if channel is not None:
+            stop_declared = "stop" in (channel.busy_verbs or frozenset())
         tokens = (text or "").strip().split()
         # Only "/stop" is a machine command today: the composer's other
         # slash commands ("/model") are parsed away client-side, and an
         # unknown "/anything" is text the model should see, not a verb.
-        is_command = bool(tokens) and tokens[0].lower() == "/stop"
+        # C3: a channel that does not declare stop never sees its
+        # arrivals as commands — "/stop" spoken over the voice channel
+        # is text, and text steers.
+        is_command = (
+            stop_declared
+            and bool(tokens)
+            and tokens[0].lower() == "/stop"
+        )
         tool_batch_in_flight = self.current_state in (
             AgentState.EXECUTING,
             AgentState.SEARCHING,
@@ -1827,9 +1864,9 @@ class AgentStateMachine:
         old_state = self.current_state
         self.current_state = new_state
         self.ctx.state_history.append(new_state.value)
-        
+
         logger.debug(f"State transition: {old_state.value} → {new_state.value}")
-        
+
         return StreamEvent.state_change(
             self.ctx.session_id,
             new_state.value,

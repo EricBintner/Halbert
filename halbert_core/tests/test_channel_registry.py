@@ -312,7 +312,7 @@ class _FakeAgent:
 
         return gen()
 
-    def handle_midturn_arrival(self, session_id, text):
+    def handle_midturn_arrival(self, session_id, text, channel=None):
         from halbert_core.agents.steering import decide_midturn
         return decide_midturn(turn_active=False, is_command=False, text=text), None
 
