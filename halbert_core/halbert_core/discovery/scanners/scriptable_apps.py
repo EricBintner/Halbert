@@ -63,11 +63,6 @@ DEFAULT_APP_DIRS = (
     Path.home() / "Applications",
 )
 
-#: Per-app cap on the reported command-name list. The full count is
-#: always reported in ``data["command_count"]``; the cap exists so a
-#: huge dictionary (Finder, Outlook) never floods the prompt in A4.
-#: Lives on ScriptableAppsScanner (see MAX_COMMANDS_PER_APP there).
-
 
 def parse_sdef(path: Path) -> Optional[dict]:
     """
@@ -136,6 +131,7 @@ class ScriptableAppsScanner(BaseScanner):
         """Scan the configured app directories for scriptable apps."""
         discoveries: List[Discovery] = []
         seen: set[str] = set()  # dedupe: bundle_id, then resolved path
+        used_ids: set[str] = set()  # id collision suffix (same name, distinct apps)
 
         for app_dir in self._app_dirs:
             for app_path in self._iter_app_bundles(app_dir):
@@ -150,6 +146,12 @@ class ScriptableAppsScanner(BaseScanner):
 
                 discovery = self._discovery_for(app_path, sdef_files)
                 if discovery:
+                    if discovery.id in used_ids:
+                        n = 2
+                        while f"{discovery.id}-{n}" in used_ids:
+                            n += 1
+                        discovery.id = f"{discovery.id}-{n}"
+                    used_ids.add(discovery.id)
                     discoveries.append(discovery)
 
         self.logger.info(f"Found {len(discoveries)} scriptable app discoveries")

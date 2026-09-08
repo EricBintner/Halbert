@@ -207,6 +207,16 @@ class TestScriptableAppsScanner:
         for i in ids:
             assert i.startswith("app/")
 
+    def test_same_name_different_bundle_ids_get_distinct_ids(self, tmp_path):
+        other = tmp_path / "elsewhere"
+        other.mkdir()
+        _make_app(tmp_path, "Notes", bundle_id="com.apple.Notes")
+        _make_app(other, "Notes", bundle_id="com.other.notes")
+        scanner = ScriptableAppsScanner(app_dirs=[tmp_path, other])
+        discoveries = scanner.scan()
+        assert len(discoveries) == 2
+        assert len({d.id for d in discoveries}) == 2
+
     def test_non_app_entries_ignored(self, tmp_path):
         (tmp_path / "notes.txt").write_text("hi")
         (tmp_path / "SomeFolder.app").mkdir()  # .app dir without Contents
