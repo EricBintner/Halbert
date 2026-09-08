@@ -18,6 +18,7 @@ from .context import (
     RAGResult,
     RAGFormatter,
 )
+from .applescript_context import AppleScriptContextInjector
 from .safety import (
     SafetyValidator,
     SafetyCheckResult,
@@ -36,6 +37,8 @@ __all__ = [
     "AgentPromptBuilder",
     # Context (Phase 42)
     "ContextInjector",
+    # Scriptable-apps prompt context (A4)
+    "AppleScriptContextInjector",
     "SystemContext",
     "UserPreferences",
     # RAG (Phase 45)

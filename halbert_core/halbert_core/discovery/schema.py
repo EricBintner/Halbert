@@ -16,6 +16,48 @@ from enum import Enum
 from typing import Any, Optional
 import json
 import hashlib
+import re
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Untrusted-text normalization
+# ─────────────────────────────────────────────────────────────────────────────
+
+#: Control characters (including \n, \r, \t): a newline in discovery data
+#: would let injected content pose as prompt structure when the text is
+#: interpolated into an LLM prompt block.
+_PROMPT_CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
+
+#: Angle brackets let data masquerade as prompt XML tags
+#: (e.g. "</applescript_context>") even on a single line.
+_PROMPT_BRACKET_RE = re.compile(r"[<>]")
+
+#: Per-item length cap for discovery text that reaches a prompt.
+_SANITIZE_MAX_CHARS = 64
+
+
+def sanitize_discovery_text(value: Any, max_chars: int = _SANITIZE_MAX_CHARS) -> str:
+    """
+    Normalize untrusted discovery text for LLM-prompt use.
+
+    Discovery metadata (app names, command names, ...) is read from the
+    filesystem and app bundles — an attacker who can plant a .app bundle
+    controls its ``CFBundleName`` and .sdef command names. Before such
+    text is interpolated into a prompt block it must be sanitized so it
+    can neither escape the enclosing tag (via a newline) nor impersonate
+    prompt structure (via angle brackets), and so one hostile item cannot
+    dominate the block (length cap).
+
+    Returns:
+        The cleaned string — "" for non-string input or when nothing
+        survives cleaning.
+    """
+    if not isinstance(value, str):
+        return ""
+    cleaned = _PROMPT_CONTROL_RE.sub(" ", value)
+    cleaned = _PROMPT_BRACKET_RE.sub("", cleaned)
+    cleaned = " ".join(cleaned.split())
+    return cleaned[:max_chars].strip()
 
 
 class DiscoveryType(str, Enum):
@@ -35,6 +77,7 @@ class DiscoveryType(str, Enum):
     FILESYSTEM = "filesystem"                     # 04
     SERVICE = "service"                           # 05
     PACKAGE = "package"                           # 06
+    APP = "app"                                   # A3: scriptable macOS apps (.sdef)
     SECURITY = "security"                         # 07
     DESKTOP = "desktop"                           # 08
     

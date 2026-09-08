@@ -42,7 +42,13 @@ class SafetyRule:
 
 @dataclass
 class SafetyCheckResult:
-    """Result of a safety classification check."""
+    """Result of a safety classification check.
+
+    ``allowed`` is the executor's refusal contract: False means refuse
+    outright, regardless of confirmation — no confirmed=True path may
+    override it (CRITICAL classifications and RoleGate speaker-role
+    blocks both carry allowed=False).
+    """
     risk_level: RiskLevel
     allowed: bool
     requires_confirmation: bool
@@ -522,6 +528,28 @@ class ToolSafetyFramework:
                 requires_confirmation=False,
                 reason="Local vision capture (read-only)"
             )
+        elif tool_name in ("run_applescript", "run_jxa"):
+            # A2: AppleScript/JXA scripts classify by script CONTENT — one
+            # script is the whole machine (Finder deletes, Mail sends, `do
+            # shell script` runs shell). This branch takes precedence over
+            # the unknown-tool MEDIUM default below: the founder ruling is
+            # HIGH for anything not positively identified as read-only
+            # (see tools/applescript_safety.py).
+            from .applescript_safety import classify_applescript_tool
+            return classify_applescript_tool(tool_name, args)
+        elif tool_name.startswith("mcp__"):
+            # B3: MCP tools are remote — there is no local text to
+            # pattern-match (the shell-command rules above read command
+            # text; a `tools/call` payload says nothing about what the
+            # server does with it). Classification comes from config
+            # overrides (per-tool `tool_risk` > per-server
+            # `risk_override`, mcp_config.yml), re-read on EVERY call so
+            # a config flip gates the next call, with an explicit MEDIUM
+            # default (execute with warning). Lazy import for the same
+            # cycle-shape reason as the applescript branch above
+            # (mcp.config imports this module for RiskLevel).
+            from .mcp_safety import classify_mcp_tool
+            return classify_mcp_tool(tool_name, args)
         else:
             # Unknown tools get MEDIUM by default
             return SafetyCheckResult(
@@ -732,6 +760,42 @@ class ToolSafetyFramework:
             return (
                 f"**Execute command:**\n"
                 f"```\n{cmd}\n```\n\n"
+                f"**Risk Level:** {result.risk_level.value.upper()}\n"
+                f"**Reason:** {result.reason}"
+            )
+        elif tool_name in ("run_applescript", "run_jxa"):
+            # A2: the script IS the action, so show it — the speaker
+            # confirms what will actually run, not a summary. A PREVIEW,
+            # not the whole script (same shape as write_file's content
+            # preview): an oversized script must not flood the
+            # confirmation surface with megabytes. Non-dict args are
+            # tolerated (the executor's HIGH branch calls this
+            # un-wrapped), mirroring classify_applescript_tool's guard.
+            script = args.get("script", "") if isinstance(args, dict) else ""
+            label = "AppleScript (JXA)" if tool_name == "run_jxa" else "AppleScript"
+            preview = script[:1000]
+            omitted = ""
+            if len(script) > 1000:
+                omitted = f"\n… ({len(script)} characters total; truncated)"
+            return (
+                f"**Run {label}:**\n"
+                f"```\n{preview}\n```\n{omitted}\n\n"
+                f"**Risk Level:** {result.risk_level.value.upper()}\n"
+                f"**Reason:** {result.reason}"
+            )
+        elif tool_name.startswith("mcp__"):
+            # B3: the analog of the applescript branch showing the
+            # script — show what the call actually is: the SERVER, the
+            # TOOL, and a capped preview of the ARGS (the args are what
+            # the remote server receives, and they can be arbitrarily
+            # large; the confirmation surface must not flood). Non-dict
+            # args tolerated, mirroring the applescript branch's guard.
+            from .mcp_safety import describe_mcp_tool, mcp_args_preview
+            server, tool = describe_mcp_tool(tool_name)
+            return (
+                f"**MCP tool:** `{server}` → `{tool}`\n\n"
+                f"**Args preview:**\n"
+                f"```\n{mcp_args_preview(args)}\n```\n\n"
                 f"**Risk Level:** {result.risk_level.value.upper()}\n"
                 f"**Reason:** {result.reason}"
             )

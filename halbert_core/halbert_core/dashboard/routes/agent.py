@@ -337,6 +337,41 @@ def get_agent():
             register_accelerator_tools(tool_executor)
         except Exception as e:
             logger.warning(f"Could not register accelerator tools (non-fatal): {e}")
+
+        # AppleScript / JXA tools (A1) — macOS only, CAP_APPLESCRIPT-gated
+        # (register_applescript_tools checks both). The per-call
+        # applescript_config.yml switch still gates every execution, so
+        # registering here only controls whether the schema is offered.
+        try:
+            from ...tools.applescript_tools import register_applescript_tools
+            register_applescript_tools(tool_executor)
+        except Exception as e:
+            logger.warning(f"Could not register AppleScript tools (non-fatal): {e}")
+
+        # MCP client tools (B2) — CAP_MCP_CLIENT-gated, fully lazy: the
+        # mcp package imports ONLY inside this check (subtractive
+        # contract — a capability-off body never pays for it). The
+        # client instance is created here and owned by this init; the
+        # bridge discovers tools from the configured servers, so a
+        # server that is down simply contributes no tools (graceful
+        # absence) and config edits apply on the next agent start.
+        # B4: the same init starts the health monitor for that client
+        # (periodic ping sweeps, backoff-capped reconnection, and the
+        # config-refresh re-registration that keeps the bridged tool
+        # set honest mid-process). The monitor supersedes any previous
+        # one (a re-init must not leak the old tick) and is stopped in
+        # the dashboard's shutdown event.
+        try:
+            from ...capabilities import CAP_MCP_CLIENT, has_capability
+            if has_capability(CAP_MCP_CLIENT):
+                from ...mcp.bridge import register_mcp_tools
+                from ...mcp.client import MCPClient
+                from ...mcp.health import start_mcp_health_monitor
+                client = MCPClient()
+                register_mcp_tools(tool_executor, client)
+                start_mcp_health_monitor(client, tool_executor=tool_executor)
+        except Exception as e:
+            logger.warning(f"Could not register MCP tools (non-fatal): {e}")
         _agent_instance = AgentStateMachine(
             llm_client=llm_client,
             tool_executor=tool_executor,

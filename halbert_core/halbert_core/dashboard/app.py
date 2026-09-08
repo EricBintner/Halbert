@@ -1052,7 +1052,7 @@ def create_app(enable_cors: bool = True) -> FastAPI:
 
     # Register routes
     from ..federation import compute_endpoint
-    from .routes import approvals, jobs, memory, settings, system, websocket, persona, discovery, terminal, alerts, rag, services, web_search, gpu, containers, development, editor, storage, downloads, agent, compression, being, modules, llm, legal, compute, vision, home, frigate, instance, peers, fleet, audio, conversations, devices, findings, state, guest as guest_persona
+    from .routes import approvals, jobs, memory, settings, system, websocket, persona, discovery, terminal, alerts, rag, services, web_search, gpu, containers, development, editor, storage, downloads, agent, compression, being, modules, llm, legal, compute, vision, home, frigate, instance, peers, fleet, audio, conversations, devices, findings, state, mcp as mcp_status_routes, guest as guest_persona
 
     mount_api(system.router, prefix="/api", tags=["system"])
     mount_api(agent.router, tags=["agent"])  # Phase 36: Agent state machine
@@ -1104,6 +1104,7 @@ def create_app(enable_cors: bool = True) -> FastAPI:
     # the G12 design both call /api/devices/* — Settings > Devices was a 404
     # from the day it shipped (ROUTE-01 / R10-N1).
     mount_api(devices.router, prefix="/api", tags=["devices"])  # P7a: Devices page & entity mode
+    mount_api(mcp_status_routes.router, prefix="/api", tags=["mcp"])  # B4: MCP server status (B5 renders it)
     mount_api(fleet.router, tags=["fleet"])  # Phase 9.9: Fleet Cockpit
     mount_api(conversations.router, prefix="/api/conversations", tags=["conversations"])  # P3b: Peer conversation API
     
@@ -1629,6 +1630,15 @@ def create_app(enable_cors: bool = True) -> FastAPI:
             await stop_thread_tick_heartbeat(app)
         except Exception as e:
             logger.warning(f"Failed to stop thread tick heartbeat: {e}")
+
+        # B4: stop the MCP health monitor and disconnect its servers
+        # (cancels the sweep + in-flight reconnects, reaps the client's
+        # stdio subprocesses). Non-fatal like every starter it mirrors.
+        try:
+            from ..mcp.health import stop_mcp_health_monitor
+            await stop_mcp_health_monitor()
+        except Exception as e:
+            logger.warning(f"Failed to stop MCP health monitor: {e}")
 
         # Stop config watcher (T5a.2 + T7e.1)
         if _config_watcher is not None:

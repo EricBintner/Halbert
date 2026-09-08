@@ -348,6 +348,69 @@ class TestTheWindowTools:
         assert "senses" in (dropped or []), dropped
 
 
+class TestTheMcpBridgeTools:
+    """MCP bridge tools (B2): ``mcp__{server}__{tool}`` names a REMOTE
+    server decides, so they cannot be enumerated on the denylist the way
+    the window tools are — the allowlist is the whole rule, and no
+    ``mcp__`` name is on it. Pinned at all three layers anyway, same
+    rationale as the window tools: a guest inherits a conversation whose
+    history holds Halbert's own earlier calls, and a model imitates
+    calls it was not offered."""
+
+    def _executor_with_mcp_tool(self) -> ToolExecutor:
+        """A real executor with one really-bridged MCP tool on it: the
+        bridge run against a minimal fake client, producing exactly the
+        name a live server would (``mcp__fs__read_file``)."""
+        from halbert_core.mcp.bridge import register_mcp_tools
+
+        class _FakeClient:
+            async def connect(self, server_name=None):
+                pass
+
+            async def list_tools(self, server_name):
+                return [{
+                    "name": "read_file", "description": "Read a file",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {"path": {"type": "string"}}},
+                }]
+
+            def connected_servers(self):
+                return ["fs"]
+
+        executor = ToolExecutor(web_search=False)
+        register_mcp_tools(executor, _FakeClient())
+        return executor
+
+    def test_the_tool_is_registered_at_all(self):
+        """Asserting it is denied means nothing if the bridge never
+        produces the name."""
+        executor = self._executor_with_mcp_tool()
+        assert "mcp__fs__read_file" in executor.tools
+
+    def test_it_is_denied_to_a_guest(self):
+        assert "mcp__fs__read_file" not in GUEST_ALLOWED_TOOLS
+        assert not is_tool_allowed_for_guest("mcp__fs__read_file")
+
+    def test_a_guest_is_never_offered_it(self):
+        executor = self._executor_with_mcp_tool()
+        _front()
+        offered = {s["function"]["name"] for s in executor.get_schemas()}
+        assert "mcp__fs__read_file" not in offered
+        assert set(offered) <= GUEST_ALLOWED_TOOLS
+
+    @pytest.mark.asyncio
+    async def test_a_guest_naming_one_anyway_is_refused(self):
+        """Schema masking hides it from a prompt that never saw it; the
+        execute path must still refuse a guest that names it."""
+        executor = self._executor_with_mcp_tool()
+        _front()
+        result = await executor.execute(
+            "mcp__fs__read_file", {"path": "/etc/hosts"})
+        assert not result.success
+        assert "not available while" in (result.error or "")
+
+
 class TestTheBecomeTool:
     """N5's chat half. "Be Marnie" said in the conversation rather than
     clicked in the pill — and denied to a guest, which is the whole safety

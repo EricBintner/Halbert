@@ -47,6 +47,7 @@ import {
   Code2,
   CheckCircle,
   ShieldAlert,
+  Plug,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -119,6 +120,7 @@ export const navSections: NavSection[] = [
       { id: '/network', label: 'Network', icon: Wifi },
       { id: '/sharing', label: 'Sharing', icon: Share2 },
       { id: '/development', label: 'Development', icon: Code2 },
+      { id: '/mcp', label: 'MCP', icon: Plug },
       { id: '/findings', label: 'Findings', icon: Shield },
       { id: '/approvals', label: 'Approvals', icon: CheckCircle },
     ],
