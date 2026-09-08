@@ -535,6 +535,23 @@ class ConsentStore:
                 halt_reason=HaltReason.INTEGRITY_MISSING,
             )
         if not self.ledger_dir.is_dir():
+            # A ledger that cannot exist is unreadable, not empty: a
+            # non-directory sitting where the ledger would live (or in
+            # its data dir) must never let "cannot check" read as
+            # "checked and found nothing" — the audit-verify discipline.
+            if os.path.exists(self.ledger_dir):
+                raise ConsentUnavailable(
+                    f"the consent ledger path {self.ledger_dir} exists but is "
+                    f"not a directory; nothing was checked",
+                    halt_reason=HaltReason.CONSENT_UNREADABLE,
+                )
+            parent = self.ledger_dir.parent
+            if parent.exists() and not parent.is_dir():
+                raise ConsentUnavailable(
+                    f"the data dir {parent} is not a directory; the consent "
+                    f"ledger cannot live there and nothing was checked",
+                    halt_reason=HaltReason.CONSENT_UNREADABLE,
+                )
             return VerifyResult(ok=True, checked=0, signed=0)
         events = self._log()
         handle = _flock_file(events.directory, _LOCK_FILENAME)
