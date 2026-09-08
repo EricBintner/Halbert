@@ -116,7 +116,12 @@ _REFERENCE_SCHEMA: Dict[str, str] = {
                         unread     INTEGER NOT NULL DEFAULT 0,
                         paused_at  REAL,
                         turns_since_pause INTEGER NOT NULL DEFAULT 0,
-                        title_source TEXT NOT NULL DEFAULT 'provisional'
+                        title_source TEXT NOT NULL DEFAULT 'provisional',
+                        edge_kind TEXT NOT NULL DEFAULT 'root',
+                        persona TEXT,
+                        compact_streak INTEGER NOT NULL DEFAULT 0,
+                        compact_cooldown_until REAL,
+                        compact_last_at REAL
                     )""",
     "messages": """CREATE TABLE IF NOT EXISTS messages (
                         id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -132,7 +137,8 @@ _REFERENCE_SCHEMA: Dict[str, str] = {
                         blocks_json      TEXT NOT NULL DEFAULT '[]',
                         terminal_block_ids TEXT NOT NULL DEFAULT '[]',
                         diff_proposals_json TEXT NOT NULL DEFAULT '[]',
-                        visible_in_timeline INTEGER NOT NULL DEFAULT 1
+                        visible_in_timeline INTEGER NOT NULL DEFAULT 1,
+                        context_included INTEGER NOT NULL DEFAULT 1
                     )""",
     "session_somatic_blocks": """CREATE TABLE IF NOT EXISTS session_somatic_blocks (
                         id         TEXT PRIMARY KEY,
@@ -151,7 +157,11 @@ _REFERENCE_SCHEMA: Dict[str, str] = {
                         post_tokens           INTEGER,
                         preserved_message_ids TEXT NOT NULL DEFAULT '[]',
                         summary_message_id    INTEGER,
-                        created_at            REAL NOT NULL
+                        created_at            REAL NOT NULL,
+                        coverage_end_id       INTEGER,
+                        generation            INTEGER NOT NULL DEFAULT 1,
+                        unresolved_request    TEXT NOT NULL DEFAULT '',
+                        trigger_detail        TEXT NOT NULL DEFAULT ''
                     )""",
     "terminal_blocks": """CREATE TABLE IF NOT EXISTS terminal_blocks (
                         block_id    TEXT PRIMARY KEY,
@@ -242,6 +252,31 @@ _THREAD_FLAGS = ("stale", "ephemeral", "unread")
 _THREAD_UPDATABLE = {"title", "updated_at", "user_id", "metadata"} | {
     name for name, _ in _THREAD_COLUMNS
 }
+
+# ---------------------------------------------------------------------------
+# Session-tree T1 (design: .handoff/DESIGN-SESSION-TREE-AND-COMPACTION-
+# 2026-09-07.md §1.1, §1.2, §1.4). Everything below lands additive-only:
+# columns via ``_REFERENCE_SCHEMA`` + ``_reconcile_columns`` (packet 08's
+# machinery -- no version bump, no row backfill), one unwired transaction
+# primitive, and the title CAS inside ``update_thread``. No reader in this
+# file changes.
+# ---------------------------------------------------------------------------
+
+#: Edge kinds a ``move_leaf`` can stamp (design §1.1: root | continuation |
+#: branch | delegate | merged). ``root`` is excluded from *moves*: a move
+#: always records a departure, and a root has no parent by definition. The
+#: typed column replaces Hermes's JSON markers -- indexable, legible in
+#: ``PRAGMA table_info`` dumps, and checkable here at the one writer.
+_EDGE_KINDS = frozenset({"continuation", "branch", "delegate", "merged"})
+
+#: Title-provenance CAS ladder (design §1.4: provisional < refined < user).
+#: The middle tier covers the repo's real vocabulary -- ``receipt`` is what
+#: ``ThreadManager._refined_title_fields`` writes, ``model`` a model-given
+#: new-thread title -- plus the design's reserved ``refined`` name. Anything
+#: not in this map (``redacted``, ``forgotten``, future values) is terminal:
+#: no update through ``update_thread`` may re-title a redacted or forgotten
+#: thread (A11b: nothing re-derives a title from a redacted row).
+_TITLE_RANKS = {"provisional": 0, "model": 1, "receipt": 1, "refined": 1, "user": 2}
 
 # Thread-metadata keys holding entity sets *derived from message text*, which
 # is why a redaction has to reach into them (``ThreadManager``'s
@@ -1555,7 +1590,16 @@ class SqliteConversationStore:
             return False
 
     def update_thread(self, thread_id: str, **fields: Any) -> bool:
-        """Update thread columns. Lists/dicts are JSON-encoded; flags coerced to 0/1."""
+        """Update thread columns. Lists/dicts are JSON-encoded; flags coerced to 0/1.
+
+        Title updates are a compare-and-swap over the provenance ladder
+        (design §1.4: ``provisional < refined < user``): an update may only
+        land at or above the row's current rank, so an LLM-refined title
+        never clobbers a founder-typed one, and no update through this path
+        may ever re-title a redacted or forgotten thread. A refused title
+        update refuses the whole call: the fields ride one UPDATE gated as
+        a unit, so a demotion attempt cannot land its side effects either.
+        """
         if self._conn is None or not fields:
             return False
         sets: List[str] = []
@@ -1575,6 +1619,9 @@ class SqliteConversationStore:
         params.append(thread_id)
         try:
             with self._lock, self._conn:
+                if "title" in fields or "title_source" in fields:
+                    if not self._title_cas_allows(thread_id, fields):
+                        return False
                 cur = self._conn.execute(
                     f"UPDATE conversations SET {', '.join(sets)} WHERE id = ?", params
                 )
@@ -1582,6 +1629,53 @@ class SqliteConversationStore:
         except Exception as e:
             logger.warning(f"update_thread {thread_id} failed: {e}")
             return False
+
+    def _title_cas_allows(self, thread_id: str, fields: Dict[str, Any]) -> bool:
+        """Whether the CAS ladder (design §1.4) lets this update's title half
+        through. Called from inside ``update_thread``'s open transaction.
+
+        The ladder maps the repo's real vocabulary onto the design's three
+        ranks: ``receipt`` (what ``_refined_title_fields`` writes) and
+        ``model`` sit at the ``refined`` tier; ``user`` outranks both. Two
+        deliberate widenings of the design's strict ``title_source IN
+        (<lower ranks>)`` gate, both forced by merged callers:
+
+        - *equal* ranks pass, so ``migrations.py``'s idempotent
+          ``title_source='provisional'`` re-stamp over a provisional row
+          still lands -- the ladder exists to stop demotions, not re-stamps;
+        - a bare ``title`` with no ``title_source`` (the P3a peer wire's
+          rename) counts as a refinement and leaves the source column
+          untouched.
+
+        Anything outside ``_TITLE_RANKS`` -- ``redacted``, ``forgotten``, a
+        future value -- is terminal on the row and refused as incoming.
+        """
+        row = self._conn.execute(
+            "SELECT title_source FROM conversations WHERE id = ?", (thread_id,)
+        ).fetchone()
+        if row is None:
+            return False
+        current_source = str(row["title_source"] or "provisional")
+        current = _TITLE_RANKS.get(current_source)
+        if "title_source" in fields:
+            incoming_source = str(fields["title_source"])
+        else:
+            incoming_source = "refined"
+        incoming = _TITLE_RANKS.get(incoming_source)
+        if incoming is None:
+            logger.warning(
+                "update_thread %s: unknown title_source %r refused (CAS ladder)",
+                thread_id, fields.get("title_source"),
+            )
+            return False
+        if current is None or incoming < current:
+            logger.info(
+                "update_thread %s: refused title update at source %r over %r "
+                "(CAS ladder)",
+                thread_id, incoming_source, current_source,
+            )
+            return False
+        return True
 
     @staticmethod
     def _row_to_thread(row: sqlite3.Row) -> Dict[str, Any]:
@@ -1649,6 +1743,112 @@ class SqliteConversationStore:
         except Exception as e:
             logger.warning(f"current_open_thread failed: {e}")
             return None
+
+    # ------------------------------------------------------------------
+    # Leaf moves (session-tree T1, design §1.2)
+    # ------------------------------------------------------------------
+
+    def move_leaf(
+        self,
+        old_thread_id: str,
+        new_thread_id: str,
+        edge_kind: str,
+        *,
+        now: Optional[float] = None,
+    ) -> bool:
+        """One transaction: the open leaf becomes ``paused`` and ``new`` becomes
+        ``open`` with the departure edge stamped on it (design §1.2:
+        "move_leaf(old, new, edge) -- a single transaction that sets old
+        status='paused', sets new status='open', stamps parent_thread_id /
+        edge_kind on the child").
+
+        T1 ships the primitive unwired: no caller in this repo uses it yet --
+        T2 rewires topic switching, auto-reopen, explicit ``new_thread`` and
+        ``resume_thread`` onto it, and T2 also adds the branch-summary
+        minting (design §2.3) inside this same transaction. Until then the
+        leaf invariant stays the writer-discipline one (``_pause_thread`` /
+        ``_reopen_thread`` in threads.py); the design's partial unique index
+        that would make it structural is held for the founder's §7 Q3
+        answer (see the T1 report: it conflicts with the P3d shared-store
+        race and legacy duplicate-open rows as speced).
+
+        Rules, from the design's own text:
+
+        - ``old`` must be the open leaf; a target may be any non-``merged``
+          row (a paused or closed thread being reopened, or a second open
+          row -- a leaf move can also *collapse* two opens into one).
+        - The edge is stamped only when the child records no parent yet:
+          "the leaf moves, rows never re-parent" (design §0, §1.3). A child
+          that already carries provenance keeps it; the move then only
+          swaps statuses.
+        - ``edge_kind`` must be a move kind (``continuation`` / ``branch``
+          / ``delegate`` / ``merged``); ``root`` is not a departure.
+        """
+        if self._conn is None:
+            return False
+        if not old_thread_id or not new_thread_id or old_thread_id == new_thread_id:
+            return False
+        if edge_kind not in _EDGE_KINDS:
+            logger.warning(
+                "move_leaf %s -> %s: unknown edge_kind %r refused",
+                old_thread_id, new_thread_id, edge_kind,
+            )
+            return False
+        ts = float(now) if now is not None else time.time()
+        try:
+            with self._lock, self._conn:
+                old = self._conn.execute(
+                    "SELECT status FROM conversations WHERE id = ?", (old_thread_id,)
+                ).fetchone()
+                new = self._conn.execute(
+                    "SELECT status, parent_thread_id FROM conversations WHERE id = ?",
+                    (new_thread_id,),
+                ).fetchone()
+                if old is None or new is None:
+                    logger.info(
+                        "move_leaf %s -> %s: no such thread(s)", old_thread_id, new_thread_id
+                    )
+                    return False
+                if old["status"] != "open":
+                    logger.info(
+                        "move_leaf %s -> %s: %r is not the open leaf (status=%r)",
+                        old_thread_id, new_thread_id, old_thread_id, old["status"],
+                    )
+                    return False
+                if new["status"] == "merged":
+                    # merged_into is a terminal supersession edge (design
+                    # §1.2): a merged row never becomes the leaf again.
+                    logger.info(
+                        "move_leaf %s -> %s: target is merged", old_thread_id, new_thread_id
+                    )
+                    return False
+                self._conn.execute(
+                    "UPDATE conversations SET status = 'paused', paused_at = ?, "
+                    "updated_at = ? WHERE id = ?",
+                    (ts, ts, old_thread_id),
+                )
+                if new["parent_thread_id"] is None:
+                    self._conn.execute(
+                        """UPDATE conversations
+                           SET status = 'open', paused_at = NULL, turns_since_pause = 0,
+                               updated_at = ?, parent_thread_id = ?, edge_kind = ?
+                           WHERE id = ?""",
+                        (ts, old_thread_id, edge_kind, new_thread_id),
+                    )
+                else:
+                    self._conn.execute(
+                        """UPDATE conversations
+                           SET status = 'open', paused_at = NULL, turns_since_pause = 0,
+                               updated_at = ?
+                           WHERE id = ?""",
+                        (ts, new_thread_id),
+                    )
+            return True
+        except Exception as e:
+            logger.warning(
+                f"move_leaf {old_thread_id} -> {new_thread_id} failed: {e}"
+            )
+            return False
 
     # ------------------------------------------------------------------
     # Message readers
