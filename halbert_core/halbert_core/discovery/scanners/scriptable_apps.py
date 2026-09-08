@@ -31,6 +31,9 @@ Documented decisions:
 - No caching yet: a full scan is only filesystem globs + reads of the
   .sdef files that exist, cheap enough now. If A4 puts this on the
   prompt path per turn, add change-based caching there (future work).
+- Depth-1 globs only: apps nested in subfolders (e.g.
+  "/Applications/Adobe Creative Cloud/Adobe Photoshop.app") are a known
+  blind spot — accepted scope, revisit alongside A4 if the gap matters.
 """
 
 from __future__ import annotations
@@ -39,6 +42,7 @@ import logging
 import os
 import platform
 import re
+import shlex
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from plistlib import load as _plist_load
@@ -139,12 +143,14 @@ class ScriptableAppsScanner(BaseScanner):
                 if not sdef_files:
                     continue
 
-                key = self._bundle_id(app_path) or str(app_path.resolve())
+                # One Info.plist read per bundle feeds dedupe + discovery.
+                bundle_id, name = self._read_info(app_path)
+                key = bundle_id or str(app_path.resolve())
                 if key in seen:
                     continue
                 seen.add(key)
 
-                discovery = self._discovery_for(app_path, sdef_files)
+                discovery = self._discovery_for(app_path, sdef_files, name, bundle_id)
                 if discovery:
                     if discovery.id in used_ids:
                         n = 2
@@ -162,7 +168,7 @@ class ScriptableAppsScanner(BaseScanner):
         try:
             candidates = sorted(app_dir.glob("*.app"))
         except OSError as e:
-            logger.debug(f"Cannot list {app_dir}: {e}")
+            self.logger.debug(f"Cannot list {app_dir}: {e}")
             return []
         bundles = []
         for c in candidates:
@@ -170,7 +176,7 @@ class ScriptableAppsScanner(BaseScanner):
                 if (c / "Contents").is_dir():
                     bundles.append(c)
             except OSError as e:
-                logger.debug(f"Skipping unreadable bundle {c}: {e}")
+                self.logger.debug(f"Skipping unreadable bundle {c}: {e}")
         return bundles
 
     def _sdef_files(self, app_path: Path) -> List[Path]:
@@ -184,39 +190,44 @@ class ScriptableAppsScanner(BaseScanner):
     # Per-app extraction
     # ─────────────────────────────────────────────────────────────
 
-    def _bundle_id(self, app_path: Path) -> Optional[str]:
-        """CFBundleIdentifier from the bundle's Info.plist, or None."""
-        plist_path = app_path / "Contents" / "Info.plist"
-        try:
-            with open(plist_path, "rb") as f:
-                info = _plist_load(f)
-            bundle_id = info.get("CFBundleIdentifier")
-            return bundle_id if isinstance(bundle_id, str) else None
-        except (OSError, ValueError, AttributeError) as e:
-            logger.debug(f"No readable Info.plist for {app_path}: {e}")
-            return None
+    def _read_info(self, app_path: Path) -> tuple[Optional[str], str]:
+        """
+        Read the bundle's Info.plist once.
 
-    def _app_name(self, app_path: Path) -> str:
-        """Bundle display name: CFBundleName, else the .app folder stem."""
+        Returns:
+            (bundle_id, name) — bundle_id is None when the plist is
+            missing/unreadable or lacks CFBundleIdentifier; name falls
+            back to the .app folder stem when no CFBundleName/Display.
+        """
         try:
             with (app_path / "Contents" / "Info.plist").open("rb") as f:
                 info = _plist_load(f)
+            bundle_id = info.get("CFBundleIdentifier")
+            if not isinstance(bundle_id, str):
+                bundle_id = None
+            name = None
             for key in ("CFBundleName", "CFBundleDisplayName"):
-                name = info.get(key)
-                if isinstance(name, str) and name:
-                    return name
-        except (OSError, ValueError, AttributeError):
-            pass
-        return app_path.stem
+                value = info.get(key)
+                if isinstance(value, str) and value:
+                    name = value
+                    break
+        except (OSError, ValueError, AttributeError) as e:
+            self.logger.debug(f"No readable Info.plist for {app_path}: {e}")
+            bundle_id, name = None, None
+        return bundle_id, name or app_path.stem
 
-    def _discovery_for(self, app_path: Path, sdef_files: List[Path]) -> Optional[Discovery]:
+    def _discovery_for(
+        self,
+        app_path: Path,
+        sdef_files: List[Path],
+        name: str,
+        bundle_id: Optional[str],
+    ) -> Optional[Discovery]:
         """Aggregate the bundle's dictionaries into one Discovery."""
-        name = self._app_name(app_path)
-        bundle_id = self._bundle_id(app_path)
-
         # Merge all .sdef files of the bundle (some apps ship more than
         # one); document order preserved, duplicates dropped.
         commands: List[str] = []
+        seen_commands: set[str] = set()
         class_count = 0
         property_count = 0
         for sdef in sdef_files:
@@ -224,7 +235,8 @@ class ScriptableAppsScanner(BaseScanner):
             if parsed is None:
                 continue  # corrupt/non-XML dictionary — skip it
             for cmd in parsed["commands"]:
-                if cmd not in commands:
+                if cmd not in seen_commands:
+                    seen_commands.add(cmd)
                     commands.append(cmd)
             class_count += len(parsed["classes"])
             property_count += len(parsed["properties"])
@@ -267,7 +279,7 @@ class ScriptableAppsScanner(BaseScanner):
                 DiscoveryAction(
                     id="open-in-script-editor",
                     label="Open in Script Editor",
-                    command=f"open -a 'Script Editor' '{app_path}'",
+                    command=f"open -a 'Script Editor' {shlex.quote(str(app_path))}",
                 ),
             ],
             chat_context=(

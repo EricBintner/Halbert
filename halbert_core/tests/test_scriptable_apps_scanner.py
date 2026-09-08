@@ -12,11 +12,8 @@ parsing logic is exercised against synthetic .sdef fixtures.
 """
 from __future__ import annotations
 
-import platform
 import textwrap
 from pathlib import Path
-
-import pytest
 
 from halbert_core.discovery.schema import DiscoveryType, DiscoverySeverity
 from halbert_core.discovery.scanners.scriptable_apps import (
@@ -223,7 +220,7 @@ class TestScriptableAppsScanner:
         scanner = _scanner_for(tmp_path)
         assert scanner.scan() == []
 
-    def test_missing_and_unreadable_dirs_are_tolerated(self, tmp_path, monkeypatch):
+    def test_missing_and_unreadable_dirs_are_tolerated(self, tmp_path):
         ghost = tmp_path / "does-not-exist"
         _make_app(tmp_path, "Mail")
         locked = tmp_path / "locked"
