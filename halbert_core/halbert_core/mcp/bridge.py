@@ -21,7 +21,12 @@ risk classification wraps):
   ``tool_executor.register(name, handler, schema)``.
 
 Sync entry point: :func:`register_mcp_tools`. Discovery is async, but
-agent init (``dashboard/routes/agent.py``) is sync, so the entry point
+agent init (``dashboard/routes/agent.py``) is sync and never awaits the
+scheduled task, so the never-raise contract is enforced twice: the
+discovery coroutine carries a top-level net (log with the server names,
+return 0) and every scheduled task gets an exception-logging done
+callback — an escaping exception would otherwise be an unretrieved-task
+GC warning with the agent silently at zero MCP tools. The entry point
 detects its threading context:
 
   * no running loop (CLI, tests, worker threads) — ``asyncio.run`` the
@@ -69,7 +74,7 @@ import json
 import logging
 from typing import Any, Dict, List, Optional, Set
 
-from .client import _join_text_content
+from .client import join_text_content
 from .registry import MCPToolRegistry
 
 logger = logging.getLogger("halbert.mcp.bridge")
@@ -139,7 +144,7 @@ def format_tool_result(result: Any) -> str:
         return result
     if isinstance(result, dict):
         if "content" in result:
-            text = _join_text_content(result.get("content"))
+            text = join_text_content(result.get("content"))
             if text:
                 return text
         return _json_dump(result)
@@ -224,7 +229,15 @@ def _register_server_tools(
     qualified_names = registry.register(server_name, tool_schemas)
     for qualified in qualified_names:
         ref = registry.get(qualified)
-        assert ref is not None  # register() just produced it
+        if ref is None:
+            # register() just produced this name, so this is unreachable
+            # today — but a plain guard rather than an assert, so a future
+            # registry edit degrades to a skipped tool, never a crash
+            # under ``python -O``.
+            logger.warning(
+                "MCP registry lost tool '%s' between register and lookup, "
+                "skipping", qualified)
+            continue
         tool_executor.register(
             qualified,
             make_tool_handler(mcp_client, ref.server, ref.tool),
@@ -237,7 +250,13 @@ def _unregister_stale_mcp_tools(tool_executor) -> None:
     """Drop every previously bridged tool before a fresh discovery, so a
     server that vanished from the config does not leave its tools behind
     (the executor has no unregister of its own). The ``mcp__`` prefix is
-    exclusively the bridge's — no native tool carries it."""
+    exclusively the bridge's — no native tool carries it.
+
+    The drop runs BEFORE connect(), so a re-registration whose connect
+    fails totally yields ZERO MCP tools rather than keeping the previous
+    (still working) set. B4's health refresh must move this drop after a
+    successful connect, or diff old-vs-new registration sets.
+    """
     stale = [name for name in tool_executor.tools if name.startswith("mcp__")]
     for name in stale:
         tool_executor.tools.pop(name, None)
@@ -249,8 +268,32 @@ def _unregister_stale_mcp_tools(tool_executor) -> None:
 async def discover_and_register(tool_executor, mcp_client) -> int:
     """Connect every configured server and bridge its tools. Returns the
     number of tools registered. NEVER raises — a broken client, a dead
-    server, or a garbage tools/list is zero tools, not a dead agent.
+    server, a garbage tools/list, or a B3 wrapper blowing up mid-discovery
+    is zero tools (logged, with the server names), not a dead agent.
     """
+    try:
+        return await _discover_and_register(tool_executor, mcp_client)
+    except Exception as e:
+        # The last-ditch net. Every step below already handles its own
+        # expected failures; this catches the unexpected — including an
+        # exception escaping a B3 wrapper around _collect_server_tools.
+        # Production fire-and-forgets the discovery task (agent init
+        # never awaits it), so anything raised here would surface as an
+        # unretrieved-task GC warning with the agent silently at zero
+        # MCP tools. Log it loudly instead.
+        connected: List[str] = []
+        try:
+            connected = list(mcp_client.connected_servers())
+        except Exception:
+            pass
+        logger.error(
+            "MCP discovery failed (connected server(s): %s): %s",
+            ", ".join(connected) or "(none)", e, exc_info=e)
+        return 0
+
+
+async def _discover_and_register(tool_executor, mcp_client) -> int:
+    """The discovery body, run under discover_and_register's net."""
     _unregister_stale_mcp_tools(tool_executor)
 
     try:
@@ -274,19 +317,40 @@ async def discover_and_register(tool_executor, mcp_client) -> int:
     for server_name in servers:
         try:
             tool_schemas = await _collect_server_tools(mcp_client, server_name)
+            # Registration is inside the same try: a conversion or
+            # registry failure costs THIS server's tools, not the rest
+            # of the loop.
+            registered += _register_server_tools(
+                tool_executor, mcp_client, registry, server_name, tool_schemas)
         except Exception as e:
             logger.warning(
                 "MCP server '%s': tools unavailable, skipping: %s",
                 server_name, e)
             continue
-        registered += _register_server_tools(
-            tool_executor, mcp_client, registry, server_name, tool_schemas)
 
     if registered:
         logger.info(
             "Registered %d MCP tool(s) from %d server(s)",
             registered, len(servers))
     return registered
+
+
+def _task_finished(task: "asyncio.Task") -> None:
+    """Done callback for a scheduled discovery task: release the
+    bookkeeping reference and log any exception the task is carrying.
+
+    Production fire-and-forgets the task (agent init never awaits it),
+    so an exception escaping :func:`discover_and_register` would
+    otherwise surface only as an unretrieved-task GC warning with no
+    log naming the cause. This callback is that log — and the
+    completion hook B4's health monitoring / B5 can hook into.
+    """
+    _PENDING_DISCOVERY_TASKS.discard(task)
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        logger.error("MCP discovery task failed: %s", exc, exc_info=exc)
 
 
 def register_mcp_tools(tool_executor, mcp_client) -> Optional["asyncio.Task"]:
@@ -297,6 +361,14 @@ def register_mcp_tools(tool_executor, mcp_client) -> Optional["asyncio.Task"]:
     most the per-server timeouts), or schedules it on the running loop
     and returns the task (callers on a loop get their agent immediately;
     discovery lands a tick later on the same loop the handlers use).
+
+    The no-loop path is single-shot: ``asyncio.run`` binds stdio
+    transports to an ephemeral loop that CLOSES when it returns, so
+    registration and tool use must share one loop lifetime — a caller
+    that discovers on one loop and executes on another pays a
+    relaunch-per-call (the transports read as dead). Every production
+    callsite (dashboard routes, wyoming) runs on the loop that executes
+    tools, which is why the bridge never moves a client between loops.
 
     Either way a server that is down, misbehaving, or absent contributes
     no tools and no error — graceful absence is the whole point.
@@ -309,5 +381,5 @@ def register_mcp_tools(tool_executor, mcp_client) -> Optional["asyncio.Task"]:
         return None
     task = loop.create_task(coro)
     _PENDING_DISCOVERY_TASKS.add(task)
-    task.add_done_callback(_PENDING_DISCOVERY_TASKS.discard)
+    task.add_done_callback(_task_finished)
     return task

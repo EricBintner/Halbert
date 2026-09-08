@@ -16,6 +16,7 @@ session-expiry tests.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 import sys
@@ -519,6 +520,59 @@ class TestSyncEntry:
         executor = ToolExecutor()
         task = register_mcp_tools(executor, GarbageClient())
         await task  # must not raise
+        assert _mcp_tools(executor) == []
+
+
+# =============================================================================
+# The never-raise contract on the schedule path
+# =============================================================================
+
+class TestNeverRaiseContract:
+    """Agent init fire-and-forgets the discovery task, so an escaping
+    exception would be an unretrieved-task GC warning with the agent
+    silently at zero MCP tools and no log naming the cause. The contract
+    is enforced twice: the coroutine's top-level net, and an
+    exception-logging done callback on the task."""
+
+    async def test_internal_explosion_is_logged_and_yields_zero(
+            self, caplog, monkeypatch):
+        """An exception escaping the discovery BODY (the seam a B3
+        wrapper sits on) is caught by the top-level net: logged with the
+        connected server names, zero tools, and the scheduled task
+        completes without raising."""
+        from halbert_core.mcp import bridge
+
+        async def _explode(tool_executor, mcp_client):
+            raise RuntimeError("B3 wrapper blew up")
+
+        monkeypatch.setattr(bridge, "_discover_and_register", _explode)
+        client = FakeMCPClient(tools={"fs": FS_TOOLS})
+        client.connected.append("fs")  # so the net can name the server
+        executor = ToolExecutor()
+        task = bridge.register_mcp_tools(executor, client)
+        await task  # the net holds: no raise out of the awaited task
+        assert _mcp_tools(executor) == []
+        assert "MCP discovery failed" in caplog.text
+        assert "fs" in caplog.text
+
+    async def test_escaping_task_exception_is_logged_not_lost(
+            self, caplog, monkeypatch):
+        """Defensive depth: if something escapes even the net, the done
+        callback logs it — production never awaits the task, so this log
+        is the only place the cause would ever be named."""
+        from halbert_core.mcp import bridge
+
+        async def _explode(tool_executor, mcp_client):
+            raise RuntimeError("escaped every net")
+
+        monkeypatch.setattr(bridge, "discover_and_register", _explode)
+        executor = ToolExecutor()
+        task = bridge.register_mcp_tools(executor, FakeMCPClient())
+        with contextlib.suppress(RuntimeError):
+            await task
+        await asyncio.sleep(0)  # let the done callback run
+        assert "MCP discovery task failed" in caplog.text
+        assert "escaped every net" in caplog.text
         assert _mcp_tools(executor) == []
 
 

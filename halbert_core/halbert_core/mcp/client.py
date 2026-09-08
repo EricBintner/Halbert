@@ -166,7 +166,7 @@ def _validate_initialize_result(result: Any, server_name: str) -> str:
     return version
 
 
-def _join_text_content(content: Any) -> str:
+def join_text_content(content: Any) -> str:
     """Join a result's text content items into one string."""
     parts: List[str] = []
     if isinstance(content, list):
@@ -1048,7 +1048,7 @@ class MCPClient:
             "arguments": arguments or {},
         })
         if isinstance(result, dict) and result.get("isError"):
-            text = _join_text_content(result.get("content"))
+            text = join_text_content(result.get("content"))
             raise MCPToolError(
                 f"MCP server '{server_name}' tool '{tool_name}' reported "
                 f"an error: {text or '(no detail)'}",
