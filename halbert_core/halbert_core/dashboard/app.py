@@ -87,6 +87,8 @@ SPA_ROUTES = (
     "/voice",
     "/voice-hud",
     "/frigate",
+    "/compute",
+    "/mcp",
 )
 
 _NO_STORE = {"Cache-Control": "no-cache, no-store, must-revalidate"}
