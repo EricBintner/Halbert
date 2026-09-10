@@ -144,12 +144,29 @@ def block(
     )
 
 
+#: What a denial says when nobody wrote words for its code (A12-G5). The
+#: origin makes an unregistered code a compile error; here the code is a
+#: bare ``str``, so the safety net is this line plus a test that reads
+#: every ``block(...)`` call site in the tree.
+UNREGISTERED_REASON_TEXT = (
+    "That was refused. The reason has no plain-language text yet; the "
+    "machine-readable code is in this response and in the log."
+)
+
+
 def deny_payload(decisive_gate: str, reason_code: str) -> dict[str, Any]:
-    """The one denial body: which gate, why, and what to say about it."""
+    """The one denial body: which gate, why, and what to say about it.
+
+    A12-G5: this used to fall back to ``REASON_TEXT.get(code, code)``, so
+    an unmapped code was echoed to the person as though it were the
+    explanation -- ``session_owned_by_other_peer`` is a fact, not a
+    sentence. The code still travels, in its own field, where a client
+    and a log can both read it.
+    """
     return {
         "reason_code": reason_code,
         "decisive_gate": decisive_gate,
-        "message": REASON_TEXT.get(reason_code, reason_code),
+        "message": REASON_TEXT.get(reason_code, UNREGISTERED_REASON_TEXT),
     }
 
 

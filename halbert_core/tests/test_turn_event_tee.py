@@ -74,15 +74,30 @@ async def _run_turn(agent, **process_kwargs):
 # The hub: subscribe, publish, unsubscribe — observe-only
 # ---------------------------------------------------------------------------
 
+#: A09 (tee half) added two things every delivered event now carries, and
+#: one rule about what is delivered at all: `seq` and `ts` ride on every
+#: payload, and a TURN-SCOPED event with no `session_id` is dropped rather
+#: than fanned out to be guessed at. The tests below are about the HUB --
+#: who receives what, and that a subscriber cannot break a turn -- so they
+#: attribute their events and compare the payload without the stamps. The
+#: stamps and the drop have their own tests in
+#: tests/test_admission_receipts_and_tee.py.
+def _payload(event):
+    return {k: v for k, v in event.items() if k not in ("seq", "ts")}
+
+
 class TestTheTeeHub:
 
     def test_a_subscriber_receives_what_was_published(self):
         tee = _tee()
         seen = []
         unsub = tee.subscribe(seen.append)
-        tee.publish({"event": "state_change", "from": "planning", "to": "searching"})
+        tee.publish({"event": "state_change", "session_id": "s1",
+                     "from": "planning", "to": "searching"})
         unsub()
-        assert seen == [{"event": "state_change", "from": "planning", "to": "searching"}]
+        assert [_payload(e) for e in seen] == [
+            {"event": "state_change", "session_id": "s1",
+             "from": "planning", "to": "searching"}]
 
     def test_unsubscribe_stops_delivery(self):
         tee = _tee()
@@ -97,8 +112,11 @@ class TestTheTeeHub:
         a, b = [], []
         tee.subscribe(a.append)
         tee.subscribe(b.append)
-        tee.publish({"event": "conversation_status", "status": "in_progress"})
-        assert a == b == [{"event": "conversation_status", "status": "in_progress"}]
+        tee.publish({"event": "conversation_status", "session_id": "s1",
+                     "status": "in_progress"})
+        assert [_payload(e) for e in a] == [_payload(e) for e in b] == [
+            {"event": "conversation_status", "session_id": "s1",
+             "status": "in_progress"}]
 
     def test_a_failing_subscriber_never_breaks_the_turn(self):
         """Observe-only, both directions: a subscriber that raises must
@@ -110,8 +128,9 @@ class TestTheTeeHub:
         ok = []
         tee.subscribe(broken)
         tee.subscribe(ok.append)
-        tee.publish({"event": "state_change"})
-        assert ok == [{"event": "state_change"}]
+        tee.publish({"event": "state_change", "session_id": "s1"})
+        assert [_payload(e) for e in ok] == [
+            {"event": "state_change", "session_id": "s1"}]
 
     def test_the_tee_exposes_no_verb(self):
         """The observe-only rule, as a surface pin: the hub has no
@@ -148,6 +167,7 @@ class TestTheTeeHub:
             tee.subscribe(seen.append)
             tee.publish({
                 "event": "state_change",
+                "session_id": "s1",
                 "detail": f"the key was {secret_material}",
             })
             assert seen, "the payload never reached the subscriber"

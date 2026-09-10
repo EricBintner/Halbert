@@ -587,18 +587,27 @@ class ToolExecutor:
         # inherits the cap too — never looser, which a re-defaulted role
         # would be.
         effective_role = speaker_role
+        # A12-G7: the capping fact is recorded, not just the result. The
+        # cap is the moment a claim changes what a turn may DO, and it
+        # used to leave a WARNING on one branch and nothing at all on the
+        # other -- so "why was that refused?" had to be answered from a
+        # log line that might not exist. `capped=False` is a fact too: it
+        # says the claim was looked at.
+        claim_observation = None
         if self.role_gate is not None:
             turn_claim = current_turn_claim.get()
-            if turn_claim is not None:
-                from .role_gate import effective_voice_role
-                effective_role = effective_voice_role(
-                    speaker_role, turn_claim.strength
-                )
+            from .role_gate import observe_role
+            claim_observation = observe_role(
+                speaker_role,
+                turn_claim.strength if turn_claim is not None else None,
+            )
+            effective_role = claim_observation.effective_role
             safety_result = self.role_gate.classify(
                 tool_name, args, speaker_role=effective_role
             )
         else:
             safety_result = self.safety.classify(tool_name, args)
+        self._claim_observation = claim_observation
         
         # Block CRITICAL
         if safety_result.risk_level == RiskLevel.CRITICAL:
@@ -799,16 +808,36 @@ class ToolExecutor:
         success: bool = True,
         error: str = None
     ):
-        """Log tool execution for audit."""
+        """Log tool execution for audit.
+
+        A12-G7: the claim observation rides along when one was taken, so
+        the record can answer "a weaker claim narrowed the role" rather
+        than leaving that on a WARNING line somewhere else. Passed as
+        keywords with defaults, so an audit_fn written before this keeps
+        working -- and a TypeError from one that does not accept them
+        costs the record, never the call.
+        """
         if self.audit_fn:
+            fields = dict(
+                tool=tool_name,
+                args=args,
+                session_id=session_id,
+                success=success,
+                error=error,
+            )
+            observation = getattr(self, "_claim_observation", None)
+            if observation is not None:
+                fields.update(observation.as_audit_fields())
             try:
-                self.audit_fn(
-                    tool=tool_name,
-                    args=args,
-                    session_id=session_id,
-                    success=success,
-                    error=error
-                )
+                self.audit_fn(**fields)
+            except TypeError:
+                try:
+                    self.audit_fn(
+                        tool=tool_name, args=args, session_id=session_id,
+                        success=success, error=error,
+                    )
+                except Exception as e:
+                    logger.error(f"Audit logging failed: {e}")
             except Exception as e:
                 logger.error(f"Audit logging failed: {e}")
     

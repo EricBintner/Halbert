@@ -247,9 +247,25 @@ async def _admit(
             status_code=403, detail=_deny_payload(
                 "route_registry", "no_gate_list_configured"),
         )
+    # A12-G3: the walk STOPS at the first decisive gate. `decide_ingress`
+    # already picked the first BLOCK out of a completed list, but every
+    # builder still RAN -- and the builders are documented as read-only
+    # and are not. On /api/guest/private/assign and /api/guest/forget the
+    # second builder calls `current_guest()`, which can fire the session
+    # keepalive (an outbound HTTP request to a sibling home) and can end a
+    # live session and notify observers. So an off-machine caller refused
+    # 403 at the local-admin gate could still make this machine talk to a
+    # sibling home, and end somebody's guest session, while being told no.
+    #
+    # It is also what makes the gate graph honest: a denial is answerable
+    # with "dropped at gate X, reason Y", and a graph listing gates that
+    # were never evaluated answers with something that did not happen.
     gates = []
     for build in builders:
-        gates.append(await build(request, peer, body))
+        gate = await build(request, peer, body)
+        gates.append(gate)
+        if gate.effect != GateEffect.ALLOW:
+            break
     decision = decide_ingress(gates)
     if decision.admission != ADMISSION_DISPATCH:
         status = 403
