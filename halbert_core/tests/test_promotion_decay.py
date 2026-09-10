@@ -42,11 +42,19 @@ def test_recency_is_derived_from_the_timestamp_not_the_snapshot():
 
 
 def test_a_stale_key_ranks_below_a_fresh_one():
+    """10 days, not 60.
+
+    A01-G7 added the origin's MAX_AGE_DAYS gate and its MIN_SCORE, so a
+    60-day-old key is not a candidate at all now and this would be
+    asserting the order of a one-item list. The property under test --
+    decay lowers a rank among ELIGIBLE candidates -- is unchanged; the
+    age and score gates have their own tests in test_promotion_gates.py.
+    """
     now = 1_000_000.0
     fresh = PromotionCandidate(("a", "b"), _signals())
     stale = PromotionCandidate(("c", "d"), _signals())
     fresh.signals.last_recalled_at = now
-    stale.signals.last_recalled_at = now - (60 * 86400)
+    stale.signals.last_recalled_at = now - (10 * 86400)
 
     ranked = rank_candidates([stale, fresh], limit=2, now=now)
     assert [c.key for c in ranked] == [("a", "b"), ("c", "d")]

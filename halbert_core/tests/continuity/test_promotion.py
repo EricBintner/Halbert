@@ -56,16 +56,39 @@ def test_decay_is_a_ranking_multiplier_never_a_delete():
     # never removes one. (Both candidates here pass the hard gates, so this
     # isolates the recency multiplier — see test_gates_block_noise for the
     # one-off trivia those gates exclude.)
+    #
+    # A01-G7 added the origin's four calibrated gates, and the fixture had
+    # to grow to clear them: four distinct phrasings on four distinct days
+    # with a real relevance score is what "a durable fact" looks like on
+    # the scale MIN_SCORE was fitted to. The old fixture -- three recalls,
+    # all on one day, score 0.0 -- was noise by the origin's own bands,
+    # and asserting a ranking order over it was asserting the order of
+    # things that should not have been ranked at all.
     store = PromotionStore()
     old_key = ("subject:old", "predicate:p")
     fresh_key = ("subject:fresh", "predicate:p")
-    for key, days in ((old_key, 45), (fresh_key, 0)):
-        store.record_recall(key, query="first phrasing", days_ago=days)
-        store.record_recall(key, query="second phrasing", days_ago=days)
-        store.record_recall(key, query="third phrasing", days_ago=days)
+    phrasings = ("first phrasing", "second phrasing",
+                 "third phrasing", "fourth phrasing")
+    for key, offset in ((old_key, 10), (fresh_key, 0)):
+        # Newest last, so ``last_recalled_at`` ends up at the offset.
+        for step, phrasing in zip((3, 2, 1, 0), phrasings):
+            store.record_recall(key, query=phrasing,
+                                days_ago=offset + step, score=0.9)
     ranked = rank_candidates(
         [PromotionCandidate(key=old_key, signals=store.signals(old_key)),
          PromotionCandidate(key=fresh_key, signals=store.signals(fresh_key))],
         limit=5)
     # the stale one is still present, ranked lower than the fresh equal signal
     assert [c.key for c in ranked] == [fresh_key, old_key]
+
+    # ...and "never a delete" said precisely: a key aged past the promotion
+    # window keeps its signal. The gate refuses to promote it; nothing
+    # erases it, and a recall tomorrow makes it a candidate again.
+    ancient = ("subject:ancient", "predicate:p")
+    for step, phrasing in zip((3, 2, 1, 0), phrasings):
+        store.record_recall(ancient, query=phrasing,
+                            days_ago=90 + step, score=0.9)
+    assert store.signals(ancient) is not None
+    assert rank_candidates(
+        [PromotionCandidate(key=ancient, signals=store.signals(ancient))],
+        limit=5) == []

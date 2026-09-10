@@ -476,3 +476,61 @@ class TimelineStore:
         except (json.JSONDecodeError, TypeError):
             d["data"] = {}
         return d
+
+
+# ---------------------------------------------------------------------------
+# Module-level append (A01-G9)
+# ---------------------------------------------------------------------------
+#
+# The ledger is ratified (DECISIONS.md CD-5) and every writer so far builds
+# its own ``TimelineStore``. A pure module like ``continuity/promotion.py``
+# should not be opening a database to say a sweep happened, and it must not
+# raise into the sweep if the ledger is unavailable -- so the seam is here,
+# beside the store, rather than as a fourth private copy of "construct,
+# try, swallow".
+
+_STORE: Optional["TimelineStore"] = None
+_STORE_LOCK = threading.Lock()
+
+
+def get_timeline_store() -> Optional["TimelineStore"]:
+    """The process's timeline store, or None when it cannot be opened."""
+    global _STORE
+    with _STORE_LOCK:
+        if _STORE is None:
+            try:
+                _STORE = TimelineStore()
+            except Exception as e:
+                logger.warning("timeline unavailable: %s", e)
+                return None
+        return _STORE
+
+
+def reset_timeline_store() -> None:
+    """Drop the process store (tests, and a deliberate re-root)."""
+    global _STORE
+    with _STORE_LOCK:
+        _STORE = None
+
+
+def append_event(event_type: str, *, source: str = "", entity_id: str = "",
+                 severity: str = "info", title: str = "",
+                 description: str = "", data: Optional[Dict[str, Any]] = None
+                 ) -> Optional[int]:
+    """Record one event. Never raises.
+
+    An observation that can break the thing it observes is not an
+    observation, it is a dependency -- the same rule the turn-event tee
+    and the skills telemetry seam already follow.
+    """
+    store = get_timeline_store()
+    if store is None:
+        return None
+    try:
+        return store.record_simple(
+            event_type=event_type, source=source, entity_id=entity_id,
+            severity=severity, title=title, description=description,
+            data=data or {})
+    except Exception as e:
+        logger.debug("timeline append skipped (non-fatal): %s", e)
+        return None
