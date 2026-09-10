@@ -1349,9 +1349,15 @@ class AgentStateMachine:
         change to the whole registry for one field. See
         continuity/provenance.current_turn.
         """
-        from ..continuity.provenance import current_turn
+        from ..continuity.provenance import current_turn, current_user_message
 
         self._turn_scope_token = current_turn.set(turn_id)
+        # The user's own words, for the same reason and with the same
+        # lifetime. ``remember`` checks a recorded reason against them; a
+        # writer that cannot see them refuses rather than trusting the model.
+        self._turn_message_token = current_user_message.set(
+            getattr(self.ctx, "user_query", "") or ""
+        )
 
     def _leave_turn_scope(self) -> None:
         """Restore whatever was in scope before this turn.
@@ -1362,19 +1368,21 @@ class AgentStateMachine:
         after it on no turn at all. Called from an outer finally that may fire
         for a turn that never began, so a missing token is not an error.
         """
-        from ..continuity.provenance import current_turn
+        from ..continuity.provenance import current_turn, current_user_message
 
-        token = getattr(self, "_turn_scope_token", None)
-        if token is None:
-            return
-        self._turn_scope_token = None
-        try:
-            current_turn.reset(token)
-        except ValueError:
-            # The token belongs to another context (the turn began on a
-            # different task). Nothing to restore here; leaving the id set
-            # would be worse than leaving it alone.
-            pass
+        for attr, var in (("_turn_scope_token", current_turn),
+                          ("_turn_message_token", current_user_message)):
+            token = getattr(self, attr, None)
+            if token is None:
+                continue
+            setattr(self, attr, None)
+            try:
+                var.reset(token)
+            except ValueError:
+                # The token belongs to another context (the turn began on a
+                # different task). Nothing to restore here; leaving the value
+                # set would be worse than leaving it alone.
+                pass
 
     def _end_turn(self, status: str) -> None:
         """Hand the finished turn to the ThreadManager (spec §4.7).

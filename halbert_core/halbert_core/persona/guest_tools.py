@@ -236,6 +236,19 @@ GUEST_DENIED_TOOLS: FrozenSet[str] = frozenset({
     "list_windows",
     # Writes to the NVR
     "frigate_review_event",
+    # A fact about the person — denied in BOTH modes, unlike the
+    # conversation store above it.
+    #
+    # The 2026-09-10 ruling shares Halbert's memory with a fronting guest in
+    # normal mode, and I6 permits that because the read is symmetric there:
+    # `route_write` already sends `conversation.message` to HALBERT, so the
+    # guest writes what it then reads. That symmetry does not exist here.
+    # `remember` has a member floor (`RQ-8`) that no mode lifts, so a guest
+    # can never write a fact about a person — and a read granted without the
+    # matching write is exactly the one-way valve I6 exists to close.
+    # Mode-scoping this one would therefore be a wider ruling than the one
+    # that was made, not an application of it.
+    "remember",
     # The world
     "web_search",
     # Becoming someone else. A guest that could call this would walk out of

@@ -319,6 +319,16 @@ class ToolExecutor:
 
         self.register("recall_memory", recall_memory, RECALL_MEMORY_SCHEMA)
 
+        # RQ-3: the explicit write path for a fact about the person, beside
+        # the read one. Registered unconditionally for the same reason
+        # recall_memory is -- it gates itself on the speaker's role and on
+        # the person having actually asked, which is a stronger check than a
+        # capability could make, and a tool that is absent cannot refuse
+        # legibly when a model tries to use it.
+        from .remember import REMEMBER_SCHEMA, remember
+
+        self.register("remember", remember, REMEMBER_SCHEMA)
+
         # Thread meta-tools (Plan A, spec §7). The schemas are what the model
         # sees; PLANNING handles the calls inline and never dispatches them
         # here, so the handler is a stub (see execute()). Descriptions stay

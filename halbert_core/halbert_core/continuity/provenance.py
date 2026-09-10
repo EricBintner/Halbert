@@ -56,6 +56,22 @@ __all__ = [
 #: turn -- the config watcher and the editor both write with no conversation
 #: in scope, and an invented id would point the timeline at one that never
 #: happened.
+#: The user's own words for the turn being handled, when there is one.
+#:
+#: Rides here beside :data:`current_turn` and for the same reason: a tool
+#: handler takes only its args dict, so a writer four layers down cannot ask
+#: for it. ``remember`` needs it because its central rule is that a recorded
+#: reason must be a substring of what the person actually said -- a rule that
+#: cannot be checked against a value the model supplied.
+#:
+#: Unset outside a turn, and a writer that finds it unset must refuse rather
+#: than write unverified: an unverifiable reason is the model-chosen write by
+#: another route.
+current_user_message: ContextVar[Optional[str]] = ContextVar(
+    "halbert_current_user_message", default=None
+)
+
+
 current_turn: ContextVar[Optional[str]] = ContextVar(
     "halbert_current_turn", default=None
 )
