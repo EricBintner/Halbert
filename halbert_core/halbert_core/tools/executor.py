@@ -52,6 +52,21 @@ current_turn_claim: ContextVar[Optional["IdentifierClaim"]] = ContextVar(
 )
 
 
+def _provenance_of(tool_name: str) -> str:
+    """Whose answer this is (A17-G7).
+
+    An MCP tool's result is a third party's text; Halbert's own tools
+    are the machine's own finding. The distinction is the tool
+    namespace, which is the same fact ``tools/mcp_safety.py`` classifies
+    on -- read from one place so the two cannot disagree.
+    """
+    try:
+        from ..mcp.registry import MCP_TOOL_PREFIX
+    except Exception:  # pragma: no cover - import-time only
+        return "halbert"
+    return "mcp" if str(tool_name or "").startswith(MCP_TOOL_PREFIX) else "halbert"
+
+
 @dataclass
 class ExecutionResult:
     """Result of a tool execution."""
@@ -62,6 +77,12 @@ class ExecutionResult:
     risk_level: RiskLevel = RiskLevel.SAFE
     requires_confirmation: bool = False
     confirmation_message: Optional[str] = None
+    #: Where this result came from (A17-G7). ``"halbert"`` is the
+    #: machine's own tool; ``"mcp"`` is a third-party server's answer,
+    #: which the model must be able to tell apart from a finding the
+    #: machine made itself. Recorded here so the observation writer and
+    #: the audit line can both read it from one place.
+    provenance: str = "halbert"
 
 
 # The web_search tool's schema, kept apart from _register_builtins because
@@ -652,7 +673,8 @@ class ToolExecutor:
                 success=True,
                 result=result,
                 execution_time_ms=elapsed,
-                risk_level=safety_result.risk_level
+                risk_level=safety_result.risk_level,
+                provenance=_provenance_of(tool_name),
             )
             
         except asyncio.TimeoutError:
@@ -674,7 +696,8 @@ class ToolExecutor:
                 success=False,
                 error=str(e),
                 execution_time_ms=elapsed,
-                risk_level=safety_result.risk_level
+                risk_level=safety_result.risk_level,
+                provenance=_provenance_of(tool_name),
             )
 
         finally:

@@ -1351,7 +1351,8 @@ class TestRealClientIntegration:
             result = await executor.execute(
                 "mcp__fakesrv__echo", {"text": "hello"})
             assert result.success is True
-            assert result.result == '{"text": "hello"}'
+            # A17-G7: the answer is fenced and attributed to its server.
+            assert '{"text": "hello"}' in result.result
         finally:
             await client.disconnect()
 

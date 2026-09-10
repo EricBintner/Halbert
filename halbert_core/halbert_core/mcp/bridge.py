@@ -95,6 +95,7 @@ import logging
 from typing import Any, Dict, List, Optional, Set
 
 from .client import join_text_content
+from .metadata import MAX_METADATA_CHARS, sanitize_metadata_text
 from .registry import (
     MCP_TOOL_PREFIX,
     MCPToolRegistry,
@@ -150,6 +151,15 @@ def convert_schema(
     description = tool_schema.get("description")
     if not isinstance(description, str) or not description.strip():
         description = f"MCP tool '{tool_name}' from MCP server '{server_name}'"
+    else:
+        # A17-G5: a description is third-party text rendered straight
+        # into messages[0]. Bound it, strip the characters that render as
+        # nothing, defang the phrases that address the model as its
+        # operator. The attribution rides in the text so the model reads
+        # the tool as somebody else's, not the machine's own.
+        description = sanitize_metadata_text(
+            description, limit=MAX_METADATA_CHARS)
+        description = f"[from MCP server '{server_name}'] {description}"
 
     return {
         "name": qualified_name,
@@ -158,25 +168,106 @@ def convert_schema(
     }
 
 
-def format_tool_result(result: Any) -> str:
+#: How much of one result reaches the model. The executor's own
+#: observation cap sits downstream of this; a server that returns a
+#: megabyte should not get that far in the first place.
+MAX_RESULT_CHARS = 8000
+
+#: An embedded resource small enough to inline is inlined; anything
+#: larger becomes a named size fact.
+MAX_EMBEDDED_RESOURCE_CHARS = 4000
+
+#: The data fence around an MCP result (A17-G7). An MCP result used to
+#: be indistinguishable from Halbert's own tool output -- a third party's
+#: answer read like a finding the machine had made itself. The open
+#: marker names the server, so the model can weigh "the weather server
+#: said" differently from "I read the file and it said".
+MCP_RESULT_OPEN = "[mcp_result server={server}]"
+MCP_RESULT_CLOSE = "[/mcp_result]"
+
+
+def _fence(server_name: str, body: str) -> str:
+    """Wrap a server's answer so it reads as data, from a named source.
+
+    A server that echoes the closing marker cannot end the fence early:
+    the marker is neutralised in the body before the wrapper goes on.
+    """
+    body = body.replace(MCP_RESULT_CLOSE, "[/mcp_result-escaped]")
+    return (
+        f"{MCP_RESULT_OPEN.format(server=server_name)}\n"
+        f"{body}\n{MCP_RESULT_CLOSE}"
+    )
+
+
+def _project_content(content: Any) -> str:
+    """Project one result's content blocks into what the model sees.
+
+    A17-G6. Text joins as before. A non-text block -- an image, an
+    embedded resource -- used to be JSON-dumped whole, so a base64 PNG
+    became tens of thousands of tokens of noise that displaced the
+    conversation. Each becomes a fact about itself instead: its kind,
+    its media type or URI, and its size. Nothing is silently discarded;
+    what is dropped is said.
+    """
+    if not isinstance(content, list):
+        return ""
+    parts = []
+    for item in content:
+        if not isinstance(item, dict):
+            continue
+        kind = item.get("type")
+        if kind == "text" and isinstance(item.get("text"), str):
+            parts.append(sanitize_metadata_text(
+                item["text"], limit=MAX_RESULT_CHARS))
+        elif kind in ("image", "audio"):
+            data = item.get("data")
+            size = len(data) if isinstance(data, str) else 0
+            mime = sanitize_metadata_text(item.get("mimeType") or "unknown", limit=80)
+            parts.append(f"[{kind}: {mime}, {size} encoded bytes]")
+        elif kind == "resource":
+            resource = item.get("resource") or {}
+            uri = sanitize_metadata_text(resource.get("uri") or "unknown", limit=300)
+            body = resource.get("text")
+            if isinstance(body, str) and len(body) <= MAX_EMBEDDED_RESOURCE_CHARS:
+                parts.append(f"[resource: {uri}]\n" + sanitize_metadata_text(
+                    body, limit=MAX_EMBEDDED_RESOURCE_CHARS))
+            else:
+                size = len(body) if isinstance(body, str) else 0
+                parts.append(f"[resource: {uri}, {size} characters, not inlined]")
+        else:
+            parts.append(f"[{sanitize_metadata_text(kind or 'unknown', limit=40)} block]")
+    return "\n".join(p for p in parts if p)
+
+
+def format_tool_result(result: Any, server_name: str = "") -> str:
     """Convert a raw ``tools/call`` result into what the model sees.
 
     Text content items are joined (the same join rule the client uses
-    for ``MCPToolError.text``). A result with non-text content (images,
-    embedded resources) or no content at all is JSON-dumped so nothing
-    the server produced is silently discarded.
+    for ``MCPToolError.text``); non-text blocks are projected as facts
+    about themselves (A17-G6); the whole thing is fenced and attributed
+    to its server (A17-G7). A result with no content at all is
+    JSON-dumped, bounded, so nothing the server produced disappears
+    without a word.
     """
     if isinstance(result, str):
-        return result
-    if isinstance(result, dict):
+        body = sanitize_metadata_text(result, limit=MAX_RESULT_CHARS)
+    elif isinstance(result, dict):
+        body = ""
         if "content" in result:
-            text = join_text_content(result.get("content"))
-            if text:
-                return text
-        return _json_dump(result)
-    if result is None:
-        return "(no output)"
-    return _json_dump(result)
+            body = _project_content(result.get("content"))
+        if not body:
+            body = sanitize_metadata_text(
+                _json_dump(result), limit=MAX_RESULT_CHARS)
+    elif result is None:
+        body = "(no output)"
+    else:
+        body = sanitize_metadata_text(_json_dump(result), limit=MAX_RESULT_CHARS)
+    if not server_name:
+        # Back-compat for callers that predate the fence; nothing in
+        # production takes this branch (the handler always names its
+        # server) and the bound still applies.
+        return body
+    return _fence(server_name, body)
 
 
 def _json_dump(value: Any) -> str:
@@ -207,7 +298,7 @@ def make_tool_handler(mcp_client, server_name: str, tool_name: str):
 
     async def handler(args: Dict[str, Any]) -> Any:
         raw = await mcp_client.call_tool(server_name, tool_name, args or {})
-        return format_tool_result(raw)
+        return format_tool_result(raw, server_name=server_name)
 
     return handler
 

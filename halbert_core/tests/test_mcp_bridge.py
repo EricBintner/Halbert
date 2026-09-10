@@ -214,7 +214,11 @@ class TestRegistration:
         # Halbert's tool schema shape: name + description + parameters,
         # where parameters is the JSON-Schema object MCP calls inputSchema.
         assert schema["name"] == "mcp__fs__read_file"
-        assert schema["description"] == "Read a file from disk"
+        # A17-G5/G7: the description is sanitized and attributed -- the
+        # model reads the tool as somebody else's, not the machine's own.
+        assert schema["description"] == (
+            "[from MCP server 'fs'] Read a file from disk"
+        )
         assert schema["parameters"] == {
             "type": "object",
             "properties": {"path": {"type": "string"}},
@@ -431,7 +435,11 @@ class TestCalling:
         result = await executor.execute(
             "mcp__fs__read_file", {"path": "/etc/hosts"})
         assert result.success is True
-        assert result.result == "file body"
+        # A17-G7: the answer is fenced and named, not indistinguishable
+        # from Halbert's own tool output.
+        assert result.provenance == "mcp"
+        assert "[mcp_result server=fs]" in result.result
+        assert "file body" in result.result
         assert client.tool_calls == [("fs", "read_file", {"path": "/etc/hosts"})]
 
     async def test_multi_part_text_content_is_joined(self):
@@ -449,9 +457,13 @@ class TestCalling:
         result = await executor.execute(
             "mcp__fs__read_file", {"path": "/x"})
         assert result.success is True
-        assert result.result == "line one\nline two"
+        assert "line one\nline two" in result.result
 
-    async def test_non_text_result_is_json(self):
+    async def test_a_non_text_block_is_projected_not_inlined(self):
+        """A17-G6: this used to assert the base64 payload reached the
+        model verbatim. An image block is a fact about an image now --
+        its media type and size -- because tens of thousands of tokens of
+        base64 displace the conversation and tell the model nothing."""
         from halbert_core.mcp.bridge import register_mcp_tools
 
         executor = ToolExecutor()
@@ -463,7 +475,8 @@ class TestCalling:
         await task
         result = await executor.execute("mcp__fs__read_file", {"path": "/x"})
         assert result.success is True
-        assert "base64bytes" in result.result
+        assert "base64bytes" not in result.result
+        assert "[image:" in result.result
 
     @pytest.mark.parametrize("exc,fragment", [
         (MCPToolError(
@@ -624,7 +637,8 @@ class TestEndToEnd:
             result = await executor.execute(
                 "mcp__fakesrv__add", {"a": 2, "b": 3})
             assert result.success is True
-            assert result.result == "5"
+            assert "5" in result.result
+            assert "[mcp_result server=fakesrv]" in result.result
         finally:
             await client.disconnect()
 

@@ -208,3 +208,37 @@ def redact_result(payload: Any) -> Any:
     Returns a new structure; the input is not mutated.
     """
     return _redact_value(payload)
+
+
+#: How much of an error string may reach the model or the UI. Server- and
+#: tool-controlled error text is the one path the executor's 2000-char
+#: observation cap does not cover (A17 bug 6, A03 bug 5).
+MAX_ERROR_CHARS = 2000
+
+
+def redact_error_text(text: Any, *, limit: int = MAX_ERROR_CHARS) -> str:
+    """The one treatment every error string gets before it is shown.
+
+    A03-G5. Error messages are the quietest egress in the system: they
+    are assembled from whatever failed -- a server's reply, a config
+    line, an exception's ``str()`` -- and then interpolated into a
+    message that reaches the model, the UI and the log. Three things
+    happen here, in this order: pattern redaction, then the acknowledged-
+    value registry (exact-value, so it is safe to run after key-shape
+    redaction), then a cap that says it capped.
+
+    Never raises: an error path that fails to render is worse than one
+    that renders bluntly, so a failure inside the redactors falls back
+    to the capped raw text rather than propagating.
+    """
+    if text is None:
+        return ""
+    raw = text if isinstance(text, str) else str(text)
+    try:
+        out = redact_text(raw, prose=True)
+        out = get_global_registry().redact_text(out)
+    except Exception:  # pragma: no cover - defensive
+        out = raw
+    if len(out) > limit:
+        out = out[:limit].rstrip() + f"\n[error text truncated at {limit} characters]"
+    return out

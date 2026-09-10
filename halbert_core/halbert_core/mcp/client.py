@@ -242,6 +242,26 @@ def join_text_content(content: Any) -> str:
     return "\n".join(parts)
 
 
+def _tool_error_message(server_name: str, tool_name: str, text: str) -> str:
+    """The message an ``MCPToolError`` carries (A17 bug 6, A03 bug 5).
+
+    The server wrote ``text``, and this string is interpolated into a
+    failed ``ExecutionResult`` -- the one path the executor's 2000-char
+    observation cap does not cover, and one that reaches both the model
+    and the UI. It goes through the shared error-text treatment (pattern
+    redaction, the acknowledged-value registry, a cap) and the metadata
+    sanitizer, so a hostile server cannot address the model through its
+    own failure message either.
+    """
+    from ..mcp.metadata import sanitize_metadata_text
+    from ..security.result_redaction import redact_error_text
+    detail = sanitize_metadata_text(redact_error_text(text or "")) or "(no detail)"
+    return (
+        f"MCP server '{server_name}' tool '{tool_name}' reported "
+        f"an error: {detail}"
+    )
+
+
 def _redact(text: str) -> str:
     """Last-ditch redaction of any message leaving this module (see
     server.py's dispatch catch-all for the same pattern)."""
@@ -1221,8 +1241,7 @@ class MCPClient:
         if isinstance(result, dict) and result.get("isError"):
             text = join_text_content(result.get("content"))
             raise MCPToolError(
-                f"MCP server '{server_name}' tool '{tool_name}' reported "
-                f"an error: {text or '(no detail)'}",
+                _tool_error_message(server_name, tool_name, text),
                 result=result, text=text)
         return result
 
