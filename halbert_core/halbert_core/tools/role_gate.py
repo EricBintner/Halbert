@@ -166,6 +166,30 @@ def voice_role_ceiling(claim_strength: ClaimStrength) -> str:
     return "member"
 
 
+def turn_role_order(
+    speaker_role: Optional[str],
+    claim_strength: Optional[ClaimStrength] = None,
+) -> int:
+    """Where a speaker stands on the role table, claim cap included.
+
+    The comparable form of ``effective_voice_role``: the stated role's
+    risk cap, lowered by the claim ceiling when a claim is bound. Two
+    speakers are comparable by this number and nothing else -- R-01
+    needed a floor check for mid-turn arrivals, and the rule is that it
+    reuses this module's existing vocabulary (``ROLE_MAX_RISK`` and the
+    ``voice_role_ceiling`` ladder) rather than minting a second one.
+
+    Silent by design, unlike ``effective_voice_role``: this answers a
+    comparison, it does not apply a cap to a live turn, so a capped
+    reading here is not an audit event.
+    """
+    order = _RISK_ORDER[ROLE_MAX_RISK.get(speaker_role or "unknown", "medium")]
+    if claim_strength is not None:
+        ceiling = voice_role_ceiling(claim_strength)
+        order = min(order, _RISK_ORDER[ROLE_MAX_RISK.get(ceiling, "medium")])
+    return order
+
+
 def effective_voice_role(speaker_role: str, claim_strength: ClaimStrength) -> str:
     """The role RoleGate should hear for a voice turn with this claim.
 

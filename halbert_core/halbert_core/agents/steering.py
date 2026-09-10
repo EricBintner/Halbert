@@ -32,6 +32,11 @@ from typing import Any, Dict, List, Optional
 
 STEER_MARKER = "\n[steered] "
 
+#: The one refusal code the algebra emits today. A closed set, the way
+#: the admission module's ``reason_code`` is a closed set: the caller
+#: renders it, it never renders a free-text reason at a user.
+REASON_BELOW_TURN_ROLE_FLOOR = "below_turn_role_floor"
+
 
 class Verdict(enum.Enum):
     """Which protocol verb applies to a mid-turn arrival."""
@@ -40,6 +45,11 @@ class Verdict(enum.Enum):
     STOP = "stop"
     STEER = "steer"
     REDIRECT = "redirect"
+    #: The arrival may not act on the running turn at all (R-01 Phase A):
+    #: its speaker stands below the floor the running turn was admitted
+    #: at. A refusal is a verb, not an error -- the arrival's own stream
+    #: carries it, the same way an accepted steer carries its receipt.
+    REFUSED = "refused"
 
 
 @dataclass
@@ -52,6 +62,8 @@ class Decision:
     tool_batch_in_flight: bool = False
     in_model_request: bool = False
     notes: List[str] = field(default_factory=list)
+    #: Closed-set code for a REFUSED verdict; empty for every other verb.
+    reason_code: str = ""
 
 
 def decide_midturn(
@@ -60,6 +72,7 @@ def decide_midturn(
     text: str,
     tool_batch_in_flight: bool = False,
     in_model_request: bool = False,
+    below_role_floor: bool = False,
 ) -> Decision:
     """Route one mid-turn arrival to its verb.
 
@@ -71,6 +84,22 @@ def decide_midturn(
     # arrival while the agent is idle is just an ordinary turn.
     if not turn_active:
         return Decision(Verdict.NORMAL_TURN, "agent idle; ordinary turn", text)
+
+    # Rule 0.5 (R-01 Phase A, the OSS pass's #1 finding): authority
+    # first. Every verb below acts ON the running turn -- a steer joins
+    # its context, a stop ends it -- so a speaker who stands below the
+    # floor that turn was admitted at may use none of them. Ordered
+    # ahead of the command bypass on purpose: "/stop" is the strongest
+    # verb, not an exemption from the check.
+    if below_role_floor:
+        return Decision(
+            Verdict.REFUSED,
+            "arrival stands below the running turn's role floor",
+            text,
+            tool_batch_in_flight=tool_batch_in_flight,
+            in_model_request=in_model_request,
+            reason_code=REASON_BELOW_TURN_ROLE_FLOOR,
+        )
 
     # Rule 1 (Hermes run_inbound.py busy branch, command bypass): explicit
     # commands bypass steering — they act, they don't append.

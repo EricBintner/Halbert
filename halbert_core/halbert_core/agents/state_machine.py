@@ -135,6 +135,19 @@ def _defang_system_row(text: str) -> str:
     return fenced[: RECEIPT_ROW_MAX - 1].rstrip() + "\u2026"
 
 
+def _unverified_claim():
+    """The claim a turn carries when the ladder could not derive one.
+
+    R-01 Phase A (A12 bug 1). ``None`` is not "a weak claim" -- it is no
+    claim at all, and no claim means the executor's voice ceiling never
+    runs, so a derivation *failure* left the stated role standing
+    uncapped. UNVERIFIED is the ladder's own fail-closed reading of an
+    unknown source; a failure to reach the ladder gets the same answer.
+    """
+    from ..persona.claims import ClaimStrength, IdentifierClaim
+    return IdentifierClaim(kind="speaker", strength=ClaimStrength.UNVERIFIED)
+
+
 def _default_conversation_tokens() -> int:
     """The conversation bucket a turn gets when the route did not name one.
 
@@ -543,11 +556,33 @@ class AgentStateMachine:
         # machine). The modality is normalized to the three enumerated
         # ingress values so a client cannot invent a fourth; the inline
         # defaults below are only the registry's non-fatal fallback.
+        #
+        # A09 bug 1 (R-01 Phase A): "normalized to the three enumerated
+        # values" used to mean "anything unrecognised becomes text" --
+        # and text is the dashboard channel, whose default_role is
+        # admin. An in-process caller passing modality='mcp' therefore
+        # got an admin turn, contradicting the route's fail-closed
+        # registry. Resolve through the one registry instead: an
+        # unadmitted modality is refused here exactly as it is at the
+        # door, in the admission module's payload shape.
         normalized_modality = str(modality or "").strip().lower()
-        if normalized_modality in ("voice", "terminal"):
-            turn_modality = normalized_modality
-        else:
-            turn_modality = "text"
+        try:
+            from .channels import ChannelRefused, resolve_channel
+            turn_modality = resolve_channel(normalized_modality).id
+            if turn_modality == "dashboard":
+                # The registry's id for the typed door; process() has
+                # always called that modality "text" on the context.
+                turn_modality = "text"
+        except ChannelRefused as refusal:
+            logger.warning(
+                "turn refused: no channel for modality %r", modality
+            )
+            yield StreamEvent(
+                type="error",
+                session_id=session_id,
+                data=refusal.payload(),
+            )
+            return
         if speaker_role:
             turn_speaker_role = speaker_role
         else:
@@ -597,7 +632,12 @@ class AgentStateMachine:
                 from ..persona.claims import claim_from_source
                 turn_identifier_claim = claim_from_source(claim_source, value=speaker_name)
             except Exception as e:
-                logger.debug(f"identifier claim not derived (non-fatal): {e}")
+                # A12 bug 1 (R-01 Phase A): this used to be non-fatal and
+                # leave the claim None -- and a None claim is not a weak
+                # claim, it is NO cap: the executor's voice ceiling never
+                # runs and the stated role stands. Fail closed instead.
+                logger.warning(f"identifier claim not derived; failing closed: {e}")
+                turn_identifier_claim = _unverified_claim()
         elif turn_modality == "terminal":
             # C5 (founder ruling 2026-09-07): the terminal channel's
             # identity IS the dashboard token the door validated —
@@ -616,7 +656,8 @@ class AgentStateMachine:
                 claim_source = CHANNEL_CLAIM_STAMP["terminal"]
                 turn_identifier_claim = claim_from_source(claim_source)
             except Exception as e:
-                logger.debug(f"identifier claim not derived (non-fatal): {e}")
+                logger.warning(f"identifier claim not derived; failing closed: {e}")
+                turn_identifier_claim = _unverified_claim()
         claim_strength_label = (
             turn_identifier_claim.strength.name.lower()
             if turn_identifier_claim is not None else "none"
@@ -1755,8 +1796,56 @@ class AgentStateMachine:
             ctx.add_observation(f"[steered] {text}")
         self._pending_steer.pop(ctx.session_id, None)
 
+    def _arrival_below_turn_floor(
+        self, speaker_role, identifier_claim, channel
+    ) -> bool:
+        """Does this arrival stand below the running turn's role floor?
+
+        R-01 Phase A. Every mid-turn verb acts ON the running turn, so
+        the speaker who arrives must stand at least where the speaker
+        who started it stands. Both sides are read through
+        ``role_gate.turn_role_order`` -- the existing role table capped
+        by the existing claim ladder -- so this adds no role vocabulary
+        of its own (the packet's STOP condition).
+
+        Fail-closed defaulting: an arrival whose caller stamped no role
+        reads as its channel's own ``default_role`` (voice: unknown),
+        and only a caller with no channel at all -- the back-compat seam
+        for embedders predating the channel layer -- reads as the
+        dashboard's admin.
+        """
+        running = self.ctx
+        if running is None:
+            return False
+        try:
+            from ..tools.role_gate import turn_role_order
+        except Exception as e:  # pragma: no cover - import-time only
+            logger.warning("role floor unavailable; refusing arrival: %s", e)
+            return True
+        if speaker_role:
+            arrival_role = speaker_role
+        elif channel is not None:
+            arrival_role = channel.default_role
+        else:
+            arrival_role = "admin"
+        arrival = turn_role_order(
+            arrival_role,
+            identifier_claim.strength if identifier_claim is not None else None,
+        )
+        running_claim = getattr(running, "identifier_claim", None)
+        floor = turn_role_order(
+            getattr(running, "speaker_role", None) or "admin",
+            running_claim.strength if running_claim is not None else None,
+        )
+        return arrival < floor
+
     def handle_midturn_arrival(
-        self, session_id: str, text: str, channel=None
+        self,
+        session_id: str,
+        text: str,
+        channel=None,
+        speaker_role=None,
+        identifier_claim=None,
     ) -> tuple:
         """Route one arrival that reached the machine while a turn runs.
 
@@ -1776,9 +1865,17 @@ class AgentStateMachine:
         NORMAL_TURN and the caller runs an ordinary turn; otherwise the
         events are the arrival's own observable verdict — a steer rides
         the single pending slot, a stop claims the running turn's
-        activity generation — so no mid-turn arrival is ever silently
-        dropped. The running turn is ``self.ctx``'s (the lock serialises
-        everything), not the arrival's own session id.
+        activity generation, a refusal says which floor it stood below —
+        so no mid-turn arrival is ever silently dropped. The running
+        turn is ``self.ctx``'s (the lock serialises everything), not the
+        arrival's own session id.
+
+        ``speaker_role`` and ``identifier_claim`` are the arrival's
+        STAMPED identity — what the door derived from the credential it
+        validated, never what the wire said (R-01 Phase A). The talk
+        door stamps them before it calls here; that ordering is the fix
+        for the OSS pass's #1 finding, and this signature is what makes
+        the old order impossible to restore by accident.
         """
         if not self._turn_in_flight() or self.ctx is None:
             return (
@@ -1818,7 +1915,35 @@ class AgentStateMachine:
             # so the predicate is never reported and redirect stays
             # dormant, degrading to steer by decide_midturn's rules.
             in_model_request=False,
+            below_role_floor=self._arrival_below_turn_floor(
+                speaker_role, identifier_claim, channel
+            ),
         )
+        if decision.verb == Verdict.REFUSED:
+            # The refusal is the arrival's verdict, and the room hears
+            # that one was refused — never the words that were refused.
+            self._tee_publish(
+                "steer_refused", session_id,
+                reason_code=decision.reason_code,
+                running_turn=self.ctx.session_id,
+            )
+            logger.warning(
+                "midturn arrival refused: reason=%s arrival_session=%s "
+                "running_session=%s modality=%s",
+                decision.reason_code, session_id, self.ctx.session_id,
+                getattr(channel, "id", None),
+            )
+            events = [
+                StreamEvent(
+                    type="steer_refused",
+                    session_id=session_id,
+                    data={
+                        "reason_code": decision.reason_code,
+                        "reason": decision.reason,
+                    },
+                )
+            ]
+            return decision, events
         if decision.verb == Verdict.STOP:
             outcome = self.request_stop(self.ctx.session_id)
             # C4: the verdict rides the tee with the arrival's session id

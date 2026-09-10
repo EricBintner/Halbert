@@ -34,6 +34,7 @@ from halbert_core.agents.llm_client import LLMResponse
 from halbert_core.agents.steering import Verdict
 from halbert_core.agents.state_machine import AgentStateMachine
 from halbert_core.tools import ToolExecutor, ToolSafetyFramework
+from halbert_core.persona.claims import ClaimStrength, IdentifierClaim
 
 
 class _SlowLLM:
@@ -63,6 +64,25 @@ def _agent(llm=None, **kw):
 
 async def _collect(stream):
     return [e async for e in stream]
+
+
+def _owner_voice():
+    """An identified owner speaking: the stamped identity the talk door
+    derives from a redeemed relay receipt.
+
+    R-01 Phase A added a role-floor gate ahead of the verb rules: an
+    arrival stamped below the running turn's floor is REFUSED before any
+    busy-verb question is asked. The degradation these tests pin is a
+    property of the *channel*, not of the speaker, so they hand over an
+    owner-class identity and keep testing the verb table.
+    """
+    return {
+        "speaker_role": "admin",
+        "identifier_claim": IdentifierClaim(
+            kind="speaker", strength=ClaimStrength.ASSERTED
+        ),
+    }
+
 
 
 # ---------------------------------------------------------------------------
@@ -118,7 +138,7 @@ class TestBusyVerbsAreEnforced:
         await asyncio.sleep(0.03)
 
         decision, events = agent.handle_midturn_arrival(
-            "arr-1", "/stop", channel=VOICE_CHANNEL,
+            "arr-1", "/stop", channel=VOICE_CHANNEL, **_owner_voice(),
         )
         assert decision.verb is Verdict.STEER
         assert [e.type for e in events] == ["steer_accepted"]
@@ -135,7 +155,8 @@ class TestBusyVerbsAreEnforced:
         await asyncio.sleep(0.03)
 
         decision, events = agent.handle_midturn_arrival(
-            "arr-1", "actually check the logs instead", channel=VOICE_CHANNEL,
+            "arr-1", "actually check the logs instead",
+            channel=VOICE_CHANNEL, **_owner_voice(),
         )
         assert decision.verb is Verdict.STEER
         assert [e.type for e in events] == ["steer_accepted"]
@@ -152,7 +173,7 @@ class TestBusyVerbsAreEnforced:
         await asyncio.sleep(0.03)
 
         decision, events = agent.handle_midturn_arrival(
-            "arr-1", "/stop", channel=TERMINAL_CHANNEL,
+            "arr-1", "/stop", channel=TERMINAL_CHANNEL, **_owner_voice(),
         )
         assert decision.verb is Verdict.STEER
         assert [e.type for e in events] == ["steer_accepted"]
@@ -184,7 +205,7 @@ class TestBusyVerbsAreEnforced:
         await asyncio.sleep(0.03)
 
         decision, events = agent.handle_midturn_arrival(
-            "arr-1", "/stop", channel=VOICE_CHANNEL,
+            "arr-1", "/stop", channel=VOICE_CHANNEL, **_owner_voice(),
         )
         assert events[0].type == "steer_accepted"
         assert events[0].data["replaced"] is False
@@ -203,7 +224,10 @@ class _RecordingAgent:
         self.midturn_calls = []
         self.process_calls = []
 
-    def handle_midturn_arrival(self, session_id, text, channel=None):
+    def handle_midturn_arrival(
+        self, session_id, text, channel=None,
+        speaker_role=None, identifier_claim=None,
+    ):
         self.midturn_calls.append((session_id, text, channel))
         from halbert_core.agents.steering import decide_midturn
         return decide_midturn(turn_active=False, is_command=False, text=text), None

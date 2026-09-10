@@ -1674,69 +1674,16 @@ if FASTAPI_AVAILABLE:
             )
             raise HTTPException(status_code=400, detail=refusal.payload())
 
-        # Packet 07 B1/B2: the interrupt algebra. An arrival that reaches the
-        # machine while a turn is in flight no longer queues as a whole
-        # second turn: "/stop" claims the running turn's activity generation
-        # (a stop that loses the race to a finishing turn declines), and
-        # plain text steers into the next batch boundary through the
-        # machine's single replace-not-grow pending slot. The arrival's own
-        # stream carries its verdict (steer_accepted / the stop outcome), so
-        # nothing is silently dropped. Arrivals carrying images keep the
-        # queue-a-turn path below: images ride the per-turn context, and no
-        # mid-turn seam for them exists yet.
-        #
-        # C3 (busy-mode unification): the arrival's resolved channel rides
-        # the call — the verbs this arrival may use are the channel's own
-        # busy_verbs, so a spoken or terminal "/stop" degrades to a steer
-        # (neither channel declares stop) while the dashboard's "/stop"
-        # still claims the generation.
-        if not request.images:
-            _decision, arrival_events = agent.handle_midturn_arrival(
-                session_id, request.message, channel=channel
-            )
-            if arrival_events is not None:
-                async def arrival_stream():
-                    for event in arrival_events:
-                        yield event.to_sse()
-
-                return StreamingResponse(
-                    arrival_stream(),
-                    media_type="text/event-stream",
-                    headers={
-                        "Cache-Control": "no-cache",
-                        "Connection": "keep-alive",
-                        "X-Accel-Buffering": "no",
-                        "Access-Control-Allow-Origin": "*",
-                    },
-                )
-
-        # In-chat model picker for this turn. "auto" means "no pin" -- it is the
-        # absence of an override, not a third mode.
-        tier_override = request.tier if request.tier in ("guide", "specialist", "vision") else None
-        model_override = request.model or None
-        if model_override or tier_override:
-            logger.info(
-                f"Turn override from picker: model={model_override!r} "
-                f"tier={tier_override!r} endpoint_id={request.endpoint_id!r}"
-            )
-
-        # The budget belongs to the model that will actually answer, resolved
-        # through the same path the answering turn takes (D4). Reading it from
-        # the picker's pin meant a constant for every unpinned turn, which is
-        # every turn by default.
-        history_budget = _history_budget(_answering_model(
-            request.message,
-            model_override=model_override,
-            tier_override=tier_override,
-            endpoint_id=request.endpoint_id,
-            images=request.images,
-        ))
-
-        # Plan A: the state machine persists the turn and resolves the hidden
-        # thread itself (begin_turn under its lock); the route only hands over
-        # the manager. None means "no store": the turn still runs.
-        thread_manager = _thread_manager()
-
+        # R-01 Phase A: STAMP BEFORE THE VERB. This block used to sit
+        # ~100 lines below the mid-turn branch, so an arrival that
+        # steered a running turn was routed on the wire's word alone:
+        # its relay receipt was never redeemed, its claim never
+        # derived, its role never stamped. That ordering was the OSS
+        # solidity pass's #1 finding (A09-G1 = A07-G1 = A07 bug 3 =
+        # A09 bug 2) -- an unidentified speaker in the room could
+        # steer the owner's running admin turn, and the single-use
+        # receipt that should have identified them stayed spendable.
+        # Nothing in the block changed; only where it runs.
         # C1: the server-stamped claim fields. What the wire declared is
         # not what the turn carries:
         #
@@ -1826,6 +1773,93 @@ if FASTAPI_AVAILABLE:
             # channels that predate it; the terminal channel's identity
             # is stamped here instead.
             stamped_claim = CHANNEL_CLAIM_STAMP["terminal"]
+
+        # The stamped identity, in the form the algebra compares
+        # against the running turn's floor. Derived here from the
+        # SAME stamped source process() will derive the turn's own
+        # claim from, so the door and the machine cannot disagree
+        # about who arrived.
+        arrival_claim = None
+        if stamped_claim:
+            try:
+                from ...persona.claims import claim_from_source
+                arrival_claim = claim_from_source(
+                    stamped_claim, value=stamped_speaker_name
+                )
+            except Exception as e:
+                # Fail closed, like the state machine's own ladder: a
+                # claim that cannot be derived is UNVERIFIED, never
+                # absent (an absent claim would lift the cap).
+                logger.warning(f"arrival claim not derived: {e}")
+                from ...persona.claims import ClaimStrength, IdentifierClaim
+                arrival_claim = IdentifierClaim(
+                    kind="speaker", strength=ClaimStrength.UNVERIFIED
+                )
+
+        # Packet 07 B1/B2: the interrupt algebra. An arrival that reaches the
+        # machine while a turn is in flight no longer queues as a whole
+        # second turn: "/stop" claims the running turn's activity generation
+        # (a stop that loses the race to a finishing turn declines), and
+        # plain text steers into the next batch boundary through the
+        # machine's single replace-not-grow pending slot. The arrival's own
+        # stream carries its verdict (steer_accepted / the stop outcome), so
+        # nothing is silently dropped. Arrivals carrying images keep the
+        # queue-a-turn path below: images ride the per-turn context, and no
+        # mid-turn seam for them exists yet.
+        #
+        # C3 (busy-mode unification): the arrival's resolved channel rides
+        # the call — the verbs this arrival may use are the channel's own
+        # busy_verbs, so a spoken or terminal "/stop" degrades to a steer
+        # (neither channel declares stop) while the dashboard's "/stop"
+        # still claims the generation.
+        if not request.images:
+            _decision, arrival_events = agent.handle_midturn_arrival(
+                session_id, request.message, channel=channel,
+                speaker_role=stamped_speaker_role,
+                identifier_claim=arrival_claim,
+            )
+            if arrival_events is not None:
+                async def arrival_stream():
+                    for event in arrival_events:
+                        yield event.to_sse()
+
+                return StreamingResponse(
+                    arrival_stream(),
+                    media_type="text/event-stream",
+                    headers={
+                        "Cache-Control": "no-cache",
+                        "Connection": "keep-alive",
+                        "X-Accel-Buffering": "no",
+                        "Access-Control-Allow-Origin": "*",
+                    },
+                )
+
+        # In-chat model picker for this turn. "auto" means "no pin" -- it is the
+        # absence of an override, not a third mode.
+        tier_override = request.tier if request.tier in ("guide", "specialist", "vision") else None
+        model_override = request.model or None
+        if model_override or tier_override:
+            logger.info(
+                f"Turn override from picker: model={model_override!r} "
+                f"tier={tier_override!r} endpoint_id={request.endpoint_id!r}"
+            )
+
+        # The budget belongs to the model that will actually answer, resolved
+        # through the same path the answering turn takes (D4). Reading it from
+        # the picker's pin meant a constant for every unpinned turn, which is
+        # every turn by default.
+        history_budget = _history_budget(_answering_model(
+            request.message,
+            model_override=model_override,
+            tier_override=tier_override,
+            endpoint_id=request.endpoint_id,
+            images=request.images,
+        ))
+
+        # Plan A: the state machine persists the turn and resolves the hidden
+        # thread itself (begin_turn under its lock); the route only hands over
+        # the manager. None means "no store": the turn still runs.
+        thread_manager = _thread_manager()
 
         async def event_stream():
             """Generate SSE events from agent processing."""
