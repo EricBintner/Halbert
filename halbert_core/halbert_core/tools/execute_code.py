@@ -62,6 +62,18 @@ MAX_SCRIPT_BYTES = 256 * 1024
 #: productive run is never killed mid-thought.
 INACTIVITY_SECONDS = 30.0
 
+#: How long the abandon path waits after the first interrupt injection
+#: before giving up on the worker entirely (A04-G1). The worker is a
+#: daemon thread, so abandoning it costs the process nothing at exit.
+GRACE_SECONDS = 10.0
+
+#: The most a script may spill to disk (A04-G3, fix-first row 13). The
+#: spill was UNBOUNDED and every byte written counted as activity, so
+#: ``while True: print('x'*4096)`` never timed out and filled the volume.
+#: Past this the spill stops, output stops counting as activity, and the
+#: run ends with a structured "output cap exceeded".
+MAX_SPILL_BYTES = 5 * 1024 * 1024
+
 #: The stdout contract: 50 KiB head + 50 KiB tail enter context; the whole
 #: stream is spilled to disk first so the model recovers instead of rerunning.
 STDOUT_HEAD_BYTES = 50 * 1024
@@ -115,7 +127,13 @@ EXECUTE_CODE_SCHEMA: Dict = {
         "properties": {
             "script": {
                 "type": "string",
-                "description": "The Python script to run (imports halbert_tools).",
+                "description": (
+                    "The Python script to run (imports halbert_tools). "
+                    "It runs with __name__ == '__main__', so a "
+                    "`if __name__ == \"__main__\":` block does fire. "
+                    "stdout AND stderr come back, and a script that "
+                    "raises still returns whatever it printed first."
+                ),
             },
             "max_tool_calls": {
                 "type": "integer",
@@ -203,6 +221,23 @@ _BANNED_MODULES = frozenset({"subprocess"})
 _BANNED_OS_CALLS = frozenset({"system", "popen"})
 
 
+def resolve_budget(args: Dict) -> int:
+    """The tool-call budget for one run (A04 bug 6).
+
+    ``args.get("max_tool_calls") or DEFAULT`` read a deliberate ZERO as
+    "unset" and handed the script the full default of 25 calls — the one
+    value a caller passes when it means "none".
+    """
+    raw = args.get("max_tool_calls")
+    if raw is None:
+        return DEFAULT_TOOL_CALL_BUDGET
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return DEFAULT_TOOL_CALL_BUDGET
+    return max(0, min(value, MAX_TOOL_CALL_BUDGET))
+
+
 def scan_script_text(script: str) -> list:
     """The deterministic gate on script text: an AST scan, no LLM.
 
@@ -219,24 +254,43 @@ def scan_script_text(script: str) -> list:
         return []  # exec reports the syntax error itself, as a script error
 
     violations = []
+    # A04 bug 1: the gate missed the obvious spellings. ``import os as o``
+    # bound the module to a name the Attribute check never looked at, and
+    # ``from os import system`` bound the FUNCTION directly so no
+    # attribute access existed to see. Both are resolved by walking the
+    # bindings first.
+    os_aliases = {"os"}
+    banned_names = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
-                if alias.name.split(".")[0] in _BANNED_MODULES:
+                root = alias.name.split(".")[0]
+                if root in _BANNED_MODULES:
                     violations.append(f"import {alias.name}")
+                if root == "os" and alias.asname:
+                    os_aliases.add(alias.asname)
         elif isinstance(node, ast.ImportFrom):
             root = (node.module or "").split(".")[0]
             if node.level == 0 and root in _BANNED_MODULES:
                 violations.append(f"from {node.module} import ...")
-        elif isinstance(node, ast.Attribute):
+            if node.level == 0 and root == "os":
+                for alias in node.names:
+                    if alias.name in _BANNED_OS_CALLS:
+                        banned_names.add(alias.asname or alias.name)
+                        violations.append(f"from os import {alias.name}")
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute):
             if (
                 isinstance(node.value, ast.Name)
-                and node.value.id == "os"
+                and node.value.id in os_aliases
                 and node.attr in _BANNED_OS_CALLS
             ):
-                violations.append(f"os.{node.attr}(...)")
+                violations.append(f"{node.value.id}.{node.attr}(...)")
         elif isinstance(node, ast.Call):
             func = node.func
+            if isinstance(func, ast.Name) and func.id in banned_names:
+                violations.append(f"{func.id}(...)")
             if isinstance(func, ast.Name) and func.id == "__import__":
                 if (
                     node.args
@@ -262,7 +316,10 @@ class _OutputCapture:
     return never re-reads the file.
     """
 
-    def __init__(self, activity: list, spill_path: Optional[str]):
+    def __init__(
+        self, activity: list, spill_path: Optional[str],
+        max_spill: int = MAX_SPILL_BYTES,
+    ):
         self.activity = activity
         self.spill_path = spill_path
         self.total = 0
@@ -271,14 +328,30 @@ class _OutputCapture:
         self._closed = False
         self._head = bytearray()
         self._tail = bytearray()
+        self._max_spill = max(0, int(max_spill))
+        #: A04-G3: whether the run blew the output budget.
+        self.cap_exceeded = False
 
     # file-object surface used by print()
     def write(self, s) -> int:
         if not s:
             return 0
         data = s.encode("utf-8", "replace") if isinstance(s, str) else bytes(s)
-        self.activity[0] = time.monotonic()
+        # A04-G3: output counts as activity only while the run is still
+        # inside its output budget. A script printing in a tight loop
+        # kept refreshing its own liveness stamp, so the inactivity
+        # deadline never fired -- the loop was, in the watchdog's eyes,
+        # working the whole time.
         self.total += len(data)
+        if self._max_spill and self.total > self._max_spill:
+            if not self.cap_exceeded:
+                self.cap_exceeded = True
+                self._close_spill()
+            # Not even the write that crosses the cap counts: once the
+            # run is over budget, output is no longer evidence that it is
+            # doing something worth waiting for.
+            return len(s)
+        self.activity[0] = time.monotonic()
         # A worker wedged in C code can outlive the run; once the run is
         # over and the spill deleted, a late write must not resurrect it.
         if self._spill is None and self.spill_path and not self._closed:
@@ -294,6 +367,15 @@ class _OutputCapture:
             if len(self._tail) > _TAIL_KEEP:
                 del self._tail[: len(self._tail) - _TAIL_KEEP]
         return len(s)
+
+    def _close_spill(self) -> None:
+        if self._spill is not None:
+            try:
+                self._spill.flush()
+                self._spill.close()
+            except Exception:
+                pass
+            self._spill = None
 
     def flush(self) -> None:
         if self._spill is not None:
@@ -350,8 +432,61 @@ def _interrupt_worker(thread: threading.Thread) -> None:
     )
 
 
-async def run_script(executor, args: Dict) -> Dict:
-    """Execute one script run; the registered tool's handler body."""
+#: A04-G11 + bug 4: one script at a time in this process. The run
+#: mutates ``sys.stdout``, ``sys.stderr``, ``sys.path`` and
+#: ``sys.modules["halbert_tools"]`` -- all process-wide. Two overlapping
+#: runs corrupted each other's capture (each seeing the other's print
+#: output) and raced the stub module. The in-process execution model is
+#: accepted (F-1), so serialising is the fix rather than isolating.
+_RUN_LOCK = asyncio.Lock()
+
+
+def _stop_requested() -> bool:
+    """Whether the turn running this script has been stopped (A04-G9).
+
+    Reads the machine's own cancelled flag through the ContextVar the
+    executor binds for the turn, so a user stop ends the SCRIPT and not
+    only the turn wrapped around it. Nothing beyond that ContextVar is
+    reached for -- the packet's STOP condition.
+    """
+    try:
+        from ..tools.executor import current_agent_session
+        session_id = current_agent_session.get()
+    except Exception:
+        return False
+    if not session_id:
+        return False
+    try:
+        from ..dashboard.routes.agent import _agent_instance
+        agent = _agent_instance
+    except Exception:
+        return False
+    try:
+        return bool(getattr(agent, "cancelled", {}).get(session_id))
+    except Exception:
+        return False
+
+
+async def run_script(
+    executor,
+    args: Dict,
+    inactivity_seconds: float = INACTIVITY_SECONDS,
+    grace_seconds: float = GRACE_SECONDS,
+) -> Dict:
+    """Execute one script run; the registered tool's handler body.
+
+    Serialised process-wide (``_RUN_LOCK``): the run owns ``sys.stdout``,
+    ``sys.stderr``, ``sys.path`` and the stub module for its duration,
+    and two overlapping runs corrupted each other's capture.
+    """
+    async with _RUN_LOCK:
+        return await _run_script_locked(
+            executor, args, inactivity_seconds, grace_seconds)
+
+
+async def _run_script_locked(
+    executor, args: Dict, inactivity_seconds: float, grace_seconds: float,
+) -> Dict:
     script = args.get("script")
     if not isinstance(script, str) or not script.strip():
         raise ValueError("execute_code requires a non-empty 'script' string")
@@ -359,11 +494,7 @@ async def run_script(executor, args: Dict) -> Dict:
         raise ValueError(
             f"script too large ({MAX_SCRIPT_BYTES} byte cap) — split the work"
         )
-    budget = args.get("max_tool_calls") or DEFAULT_TOOL_CALL_BUDGET
-    try:
-        budget = min(int(budget), MAX_TOOL_CALL_BUDGET)
-    except (TypeError, ValueError):
-        budget = DEFAULT_TOOL_CALL_BUDGET
+    budget = resolve_budget(args)
 
     # Deterministic gate on the script text, before anything runs.
     violations = scan_script_text(script)
@@ -439,13 +570,23 @@ async def run_script(executor, args: Dict) -> Dict:
     sys.path.insert(0, tmpdir)
 
     capture = _OutputCapture(activity, spill_path)
+    stderr_capture = _OutputCapture(activity, None)
     done = threading.Event()
     outcome: Dict = {}
 
     def worker() -> None:
+        original_stderr = sys.stderr
         try:
             sys.stdout = capture
-            g: Dict = {"__name__": "__halbert_script__"}
+            # A04-G8: stderr was not captured at all, so a script's
+            # warnings and its own diagnostics went to the daemon's
+            # stderr and were lost to the caller entirely.
+            sys.stderr = stderr_capture
+            # A04-G5 (FD-18): ``__name__`` was "__halbert_script__", so
+            # every ``if __name__ == "__main__":`` block a person pasted
+            # in silently did nothing. The marker stays available as its
+            # own name, so a script CAN still tell where it is running.
+            g: Dict = {"__name__": "__main__", "__halbert_script__": True}
             exec(compile(script, "<halbert_script>", "exec"), g)
             outcome["exc"] = None
         except BaseException as e:  # the script's failure is data, not ours
@@ -453,43 +594,105 @@ async def run_script(executor, args: Dict) -> Dict:
         finally:
             if sys.stdout is capture:
                 sys.stdout = capture.original
+            if sys.stderr is stderr_capture:
+                sys.stderr = original_stderr
             capture.close()
+            stderr_capture.close()
             done.set()
 
     thread = threading.Thread(target=worker, daemon=True, name="halbert-script")
     result: Optional[Dict] = None
     timed_out = False
+    abandoned = False
+    cap_exceeded = False
+    stopped = False
     try:
         thread.start()
-        while not done.is_set():
+        # A04-G1 + bug 2 (fix-first row 12): this loop used to run
+        # ``while not done.is_set()`` with the grace loop AFTER it, so
+        # the grace was only ever entered once the worker had already
+        # finished. An ``except BaseException`` retry wrapper, an
+        # ``input()``, or an ``Event().wait()`` swallowed every injection
+        # and run_script NEVER RETURNED -- the turn hung holding the turn
+        # lock. The deadline breaks the first loop; the grace follows;
+        # then the daemon thread is abandoned and the run returns.
+        while not done.is_set() and not timed_out:
             await asyncio.sleep(0.25)
-            if time.monotonic() - activity[0] > INACTIVITY_SECONDS:
+            if capture.cap_exceeded and not cap_exceeded:
+                cap_exceeded = True
                 timed_out = True
                 _interrupt_worker(thread)
+                break
+            # A04-G9: a user stop ends a script, not just the turn around
+            # it. The predicate is the machine's own cancelled flag,
+            # read through the ContextVar the executor already binds.
+            if _stop_requested():
+                stopped = True
+                timed_out = True
+                _interrupt_worker(thread)
+                break
+            if time.monotonic() - activity[0] > inactivity_seconds:
+                timed_out = True
+                _interrupt_worker(thread)
+                break
         if timed_out:
             # Keep nudging until the injection lands or the grace runs out.
-            grace_deadline = time.monotonic() + 10
+            grace_deadline = time.monotonic() + grace_seconds
             while not done.is_set() and time.monotonic() < grace_deadline:
                 _interrupt_worker(thread)
                 await asyncio.sleep(0.25)
+            abandoned = not done.is_set()
+            if abandoned:
+                logger.warning(
+                    "execute_code: worker did not settle within %.0fs of the "
+                    "interrupt; abandoning the daemon thread and returning",
+                    grace_seconds,
+                )
 
         calls = host.calls_dispatched
         remaining = host.budget_remaining
 
+        # A04-G4: everything below crosses to the MODEL and the store, so
+        # it goes through the shared redaction core -- the packet-05 open
+        # item 05-C, resolved for scripts (FD-24).
+        stdout, truncated = capture.assemble()
+        stderr_text, _ = stderr_capture.assemble()
         if timed_out:
-            result = {
-                "error": (
-                    f"script stopped: {INACTIVITY_SECONDS:g}s with no tool "
+            if cap_exceeded:
+                reason = (
+                    f"script stopped: output exceeded the {MAX_SPILL_BYTES} "
+                    f"byte cap. Print what matters, not everything."
+                )
+            elif stopped:
+                reason = "script stopped: you asked me to stop."
+            else:
+                reason = (
+                    f"script stopped: {inactivity_seconds:g}s with no tool "
                     f"call or output byte. If the work needs longer "
                     f"stretches of silence, print progress as you go."
-                ),
+                )
+            if abandoned:
+                reason += (
+                    " The script did not respond to the interrupt and was "
+                    "abandoned; anything it started may still be running."
+                )
+            result = {
+                "error": reason,
+                # FD-17: the partial stdout survives. A script that
+                # printed for two minutes and then hung used to return
+                # nothing at all, which is the least useful moment to
+                # discard the output.
+                "stdout": stdout,
+                "stderr": stderr_text,
+                "truncated": truncated,
+                "spill_path": spill_path if truncated else None,
                 "tool_calls_made": calls,
                 "budget_remaining": remaining,
             }
         elif outcome.get("exc") is None:
-            stdout, truncated = capture.assemble()
             result = {
                 "stdout": stdout,
+                "stderr": stderr_text,
                 "truncated": truncated,
                 "spill_path": spill_path if truncated else None,
                 "tool_calls_made": calls,
@@ -501,24 +704,54 @@ async def run_script(executor, args: Dict) -> Dict:
                 traceback.format_exception(type(exc), exc, exc.__traceback__)
             )[-2000:]
             result = {
+                # FD-17: partial stdout on failure, and the spill kept.
+                # The error stays its own structured field, so nothing
+                # has to guess which half is which.
                 "error": f"script raised {type(exc).__name__}: {exc}",
                 "traceback_tail": tb_tail,
+                "stdout": stdout,
+                "stderr": stderr_text,
+                "truncated": truncated,
+                "spill_path": spill_path if truncated else None,
                 "tool_calls_made": calls,
                 "budget_remaining": remaining,
             }
+        # A04-G4: the TEXT fields only. Running the whole dict through
+        # the redactor rewrote ``spill_path`` -- a temp filename whose
+        # random segment reads like a token -- into "<token>.txt", which
+        # broke the one field a caller needs in order to re-read the
+        # output the cap elided. Structural fields are not prose.
+        try:
+            from ..security.result_redaction import redact_string
+            for field in ("stdout", "stderr", "error", "traceback_tail"):
+                value = result.get(field)
+                if isinstance(value, str) and value:
+                    result[field] = redact_string(value)
+        except Exception as e:  # pragma: no cover - defensive
+            logger.warning("execute_code result redaction failed: %s", e)
     finally:
         # Per-run hygiene. The worker's finally restores stdout, but a
         # thread wedged in C code may never reach it, so the async side
-        # restores too — idempotently.
-        if sys.stdout is capture:
-            sys.stdout = capture.original
+        # restores too — idempotently, and A04 bug 4: UNCONDITIONALLY.
+        # ``if sys.stdout is capture`` left the process's stdout pointing
+        # at a dead run's capture whenever an abandoned worker had
+        # already swapped it for something else.
+        sys.stdout = capture.original
+        sys.stderr = stderr_capture.original
         capture.close()
+        stderr_capture.close()
+        # A04-G2 (fix-first row 11): the host retires. The hook used to
+        # stay wired, so a thread the script left behind could dispatch
+        # tools under the old session and role after the run returned.
+        host.retire()
         sys.modules.pop("halbert_tools", None)
         if tmpdir in sys.path:
             sys.path.remove(tmpdir)
         import shutil
 
         shutil.rmtree(tmpdir, ignore_errors=True)
+        # FD-17: the spill is kept on a FAILED run too -- that is the
+        # run whose output someone most needs.
         keep_spill = capture.total > STDOUT_HEAD_BYTES + STDOUT_TAIL_BYTES
         if not keep_spill and os.path.exists(spill_path):
             try:
@@ -545,4 +778,21 @@ def register_execute_code(executor) -> None:
     async def _execute_code(args: Dict) -> Dict:
         return await run_script(executor, args)
 
-    executor.register(TOOL_NAME, _execute_code, EXECUTE_CODE_SCHEMA)
+    # A04-G7: the schema NAMES the stub set this executor actually
+    # offers, instead of describing "Halbert tools" in the abstract. A
+    # model writing a script had to guess which functions exist, and a
+    # guess that misses fails at import time with a NameError the model
+    # then has to debug from a traceback tail.
+    schema = dict(EXECUTE_CODE_SCHEMA)
+    try:
+        stub_set, _allow = derive_script_tool_sets(executor)
+        if stub_set:
+            names = ", ".join(sorted(stub_set))
+            schema["description"] = (
+                schema["description"]
+                + f" Available in halbert_tools: {names}."
+            )
+    except Exception as e:  # pragma: no cover - defensive
+        logger.debug("execute_code schema stub list unavailable: %s", e)
+
+    executor.register(TOOL_NAME, _execute_code, schema)
