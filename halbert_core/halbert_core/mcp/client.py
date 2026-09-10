@@ -50,6 +50,12 @@ Security model:
   * Every operation is timeout-bounded (default 30s, per-server
     ``timeout_seconds``). A hung, crashed, or garbage-spewing server
     produces a clean ``MCPClientError``, never a hang.
+  * FD-10: before a stdio server is launched for the first time (and
+    again whenever its config signature changes), an OPT-IN preflight
+    resolves what the entry would install and asks an advisory source
+    about that exact artifact — ``run_package_preflight`` below, gate in
+    mcp/package_preflight.py. Off by default; when on, a refusal is
+    ``MCPPreflightRefused`` and stops that ONE server, never the daemon.
 
 Lifecycle: ``MCPClient`` manages connections to multiple servers. The
 config is re-read on EVERY call (memoized by file identity — config.py);
@@ -212,6 +218,14 @@ class MCPToolError(MCPClientError):
         super().__init__(message)
         self.result = result
         self.text = text
+
+
+class MCPPreflightRefused(MCPClientError):
+    """FD-10: the package this server's entry would install has a known
+    problem, or could not be identified well enough to have one ruled
+    out. Deliberately NOT in the MCPConnectionError family — nothing was
+    launched and nothing was contacted, so "not connected" would be the
+    wrong thing to tell a caller. See mcp/package_preflight.py."""
 
 
 class _SessionExpired(MCPConnectionError):
@@ -1152,6 +1166,86 @@ class HTTPTransport:
 
 
 # ---------------------------------------------------------------------------
+# The launch-time gate (FD-10)
+# ---------------------------------------------------------------------------
+
+#: Wall-clock margin over the advisory request's own timeout, so a socket
+#: that answers the TCP handshake and then says nothing cannot hold a
+#: connect open past what the operator configured. The same margin
+#: ``HTTPTransport._exchange`` puts over its ``requests`` timeout.
+PREFLIGHT_WALL_CLOCK_MARGIN = 5.0
+
+
+async def run_package_preflight(server_config: MCPServerConfig) -> None:
+    """FD-10's second gate, at the launch point. Raises on a refusal.
+
+    ``entry_guard`` screened the entry's SHAPE at config-parse time; this
+    asks an advisory source about the package the entry would actually
+    install. It is opt-in and off by default, so the common path is one
+    stat of a file that is usually absent and an immediate return.
+
+    Three properties this function owns, rather than the module it calls:
+
+    * it runs on a worker thread — ``requests`` is synchronous and the
+      event loop must not stop while an advisory source thinks about it;
+    * it is bounded by wall clock, with the same margin over the request
+      timeout that :meth:`HTTPTransport._exchange` uses, so a socket that
+      never answers cannot hold a connect open forever;
+    * a failure to even RUN the check is treated as the switch being off,
+      not as a refusal of every server. The gate's OFF state is the
+      shipped one; a typo in its config file must not take the daemon's
+      MCP surface down with it.
+    """
+    try:
+        from .package_preflight import (
+            REASON_UNPINNED,
+            REASON_UNSUPPORTED_LAUNCHER,
+            check_server,
+            load_preflight_config,
+            report_finding,
+            _safe,
+        )
+
+        cfg = load_preflight_config()
+    except Exception:
+        logger.debug("MCP package preflight unavailable", exc_info=True)
+        return
+    if not cfg.enabled:
+        return
+
+    try:
+        result = await asyncio.wait_for(
+            asyncio.to_thread(check_server, server_config, config=cfg),
+            timeout=cfg.timeout_seconds + PREFLIGHT_WALL_CLOCK_MARGIN,
+        )
+    except asyncio.TimeoutError:
+        # ``_safe`` because the server NAME is a config string too, and a
+        # planted config controls it as surely as it controls the command.
+        raise MCPPreflightRefused(
+            f"MCP server '{_safe(server_config.name, 64)}': package preflight "
+            f"timed out; the server is refused rather than launched "
+            f"unchecked") from None
+
+    # R9: the operator's surface, before the log line. A warn outcome that
+    # only ever reached a log changed nothing anyone would see, which made
+    # it a pass with extra steps. Never raises; a findings store that
+    # cannot be written must not stop a server launching.
+    report_finding(server_config.name, result)
+
+    if result.refused:
+        # ERROR, and distinct in wording from the entry guard's refusal:
+        # that one says "this entry is not a server", this one says "this
+        # server's package has a known problem".
+        logger.error("%s", result.message(server_config.name))
+        raise MCPPreflightRefused(result.message(server_config.name))
+    if result.advisories or result.reason in (
+            REASON_UNSUPPORTED_LAUNCHER, REASON_UNPINNED):
+        logger.warning("%s", result.message(server_config.name))
+    else:
+        logger.debug("%s", result.message(server_config.name))
+
+
+# ---------------------------------------------------------------------------
 # Transport factory
 # ---------------------------------------------------------------------------
 
@@ -1268,6 +1362,15 @@ class MCPClient:
                     server_name, reason)
                 await connection.close()
                 del self._connections[server_name]
+            # FD-10: before anything is spawned. Runs on a first
+            # launch and on every signature change -- and a signature
+            # change is what a version bump in the entry IS -- so a
+            # pinned package is asked about once and a re-pinned one is
+            # asked about again. A refusal here is not a connection
+            # state: it propagates as MCPPreflightRefused, which
+            # connect() collects per server like any other MCPClientError,
+            # so one refused server never stops the daemon coming up.
+            await run_package_preflight(server_config)
             transport = build_transport(server_config)
             try:
                 await transport.connect()
