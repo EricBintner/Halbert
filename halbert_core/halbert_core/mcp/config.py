@@ -169,6 +169,63 @@ def _tool_filter(include: Optional[Tuple[str, ...]], exclude: Tuple[str, ...]):
     return keep
 
 
+def _register_secret(value: Optional[str]) -> None:
+    """Teach the redaction registry one credential (A03-G7).
+
+    The registry is a LEARNED layer: it protects values Halbert has
+    watched cross a boundary it controls. MCP bearer tokens were never
+    registered, so the one class of secret this process resolves on
+    every single request was invisible to the exact-value pass -- if a
+    token reached an error string, a log line, a tool result or a
+    confirmation preview, only the pattern heuristics stood between it
+    and the model.
+
+    Resolve time is the right seam: it is where the value exists, it
+    runs on every request so a rotated token is registered too, and it
+    costs one bounded insert against a cached alternation.
+    """
+    if not value:
+        return
+    try:
+        from ..ingestion.redaction_registry import get_global_registry
+        get_global_registry().register(value)
+    except Exception as e:  # pragma: no cover - defensive
+        logger.debug("MCP credential not registered for redaction: %s", e)
+
+
+def register_server_secrets(env: Optional[Mapping[str, str]]) -> int:
+    """Register the credential-shaped values in a server's env block.
+
+    Deliberately NOT wholesale. A server's ``env`` carries paths,
+    feature flags and hostnames as often as credentials, and registering
+    a path would replace every mention of that directory with
+    ``<secret>`` in every tool result and log line on the machine --
+    which is worse than the leak it prevents, because a redactor that
+    fires constantly is one people learn to look past.
+
+    The classification rule is name-shaped, and it is the one the
+    codebase already has: ``ingestion.redaction._is_secret_key`` decides
+    what reads as a credential name (``*_TOKEN``, ``*_KEY``,
+    ``*_SECRET``, ``*_PASSWORD`` and their kin). A value whose NAME does
+    not read that way is left to the pattern pass.
+
+    Returns how many values were registered, for the caller's log line.
+    """
+    if not env:
+        return 0
+    try:
+        from ..ingestion.redaction import _is_secret_key
+    except Exception:  # pragma: no cover - import-time only
+        return 0
+    registered = 0
+    for name, value in env.items():
+        if not value or not _is_secret_key(str(name)):
+            continue
+        _register_secret(str(value))
+        registered += 1
+    return registered
+
+
 def config_path() -> Path:
     """Path to mcp_config.yml in the user's config directory."""
     try:
@@ -237,9 +294,11 @@ class MCPAuthConfig:
         must not flood the log).
         """
         if self.token:
+            _register_secret(self.token)
             return self.token
         if self.token_env:
             value = os.environ.get(self.token_env)
+            _register_secret(value)
             if not value:
                 if self.token_env in _WARNED_MISSING_TOKEN_ENVS:
                     logger.debug(
@@ -505,6 +564,15 @@ def _parse_server(entry: Any, index: int, default_timeout: float) -> Optional[MC
         logger.warning("MCP config: server '%s' env is not a mapping, ignoring env", name)
         raw_env = {}
     env = {str(k): str(v) for k, v in raw_env.items()}
+    # A03-G7: the credential-shaped values in this server's env become
+    # known secrets the moment the config is read, so a later mention of
+    # one in an error, a log line or a tool result is caught by the
+    # exact-value pass rather than left to the pattern heuristics.
+    registered = register_server_secrets(env)
+    if registered:
+        logger.debug(
+            "MCP config: registered %d credential(s) from server '%s' for "
+            "redaction", registered, name)
 
     try:
         auth = _parse_auth(entry)

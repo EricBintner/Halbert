@@ -54,34 +54,16 @@ Unsubscribe = Callable[[], None]
 
 
 def _scrub_text(text: str) -> str:
-    """The echo-guard seam for one payload string (packet-05 B2): scan,
-    warn with a HASH only, redact. Mirrors ``_echo_guard_egress`` — same
-    two calls, same warn-and-redact posture — implemented here so the
-    tee does not import the state machine to reach a staticmethod."""
-    try:
-        from ..security.echo_guard import get_global_echo_guard
-        from ..ingestion.redaction_registry import get_global_registry
+    """The tee's call into the one scrub seam (A05-G4).
 
-        matched = get_global_echo_guard().find_match(text)
-        if matched is None:
-            return text
-        logger.warning(
-            json.dumps(
-                {
-                    "event": "tee_echo_guard_flagged",
-                    "match_sha256": hashlib.sha256(
-                        matched.encode("utf-8")
-                    ).hexdigest(),
-                    "matched_chars": len(matched),
-                    "payload_chars": len(text),
-                    "redacted": True,
-                }
-            )
-        )
-        return get_global_registry().redact_text(text)
-    except Exception as e:  # non-fatal by construction — never cost the turn
-        logger.debug(f"tee echo-guard scan skipped (non-fatal): {e}")
-        return text
+    This used to be a copy of ``AgentStateMachine._echo_guard_egress``,
+    with a comment saying it mirrored it "so the tee does not import the
+    state machine to reach a staticmethod". Two copies of a security
+    seam drift, and the one that drifts is the one nobody is looking at.
+    The seam lives in ``security/scrub.py`` now; this is the call.
+    """
+    from ..security.scrub import scrub_for_egress
+    return scrub_for_egress(text, surface="tee")
 
 
 class TurnEventTee:

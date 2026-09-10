@@ -4183,46 +4183,29 @@ class AgentStateMachine:
     def _echo_guard_egress(
         text: str, *, session_id: str, request_id: Optional[str] = None
     ) -> str:
-        """Echo guard at the outbound seam — warn-and-redact (Packet 05 B2).
+        """Echo guard at the outbound reply seam (A05-G4, R-05 Phase E).
 
-        The guard's window set holds the material Halbert deliberately
-        egressed through the acknowledged config path (noted at that site).
-        A reply that reproduces a long verbatim chunk of it means the model
-        echoed context it should have paraphrased: log a structured warning
-        carrying only a HASH of the matched material (never the material),
-        then redact the reply through the variant registry. The reply is
-        never dropped — single-user assistant; the warning is the review
-        signal and may be upgraded to suppression later.
+        The body of this moved to ``security/scrub.py``: it existed twice
+        -- here and in ``turn_event_tee`` -- and two copies of a security
+        seam drift. Two things changed with the move, both of them the
+        point of the change:
 
-        Non-fatal by construction: a guard failure must never cost the user
-        their answer.
+        * a PARTIAL echo is now actually redacted. This matched on a
+          normalised window and then called ``registry.redact_text``,
+          which replaces whole registered forms, so a reply carrying the
+          first 85 characters of a 98-character acked value matched,
+          changed nothing, and was delivered -- while the warning said
+          ``redacted: true`` (A05-G1 + bug 1);
+        * the seam fails CLOSED. It was "non-fatal by construction": any
+          failure returned the text raw, on the reasoning that a guard
+          failure must not cost the user their answer. A scrub that
+          cannot run is not evidence that there was nothing to scrub.
         """
-        try:
-            from ..security.echo_guard import get_global_echo_guard
-            from ..ingestion.redaction_registry import get_global_registry
-
-            matched = get_global_echo_guard().find_match(text)
-            if matched is None:
-                return text
-            logger.warning(
-                json.dumps(
-                    {
-                        "event": "echo_guard_flagged",
-                        "session_id": session_id,
-                        "request_id": request_id,
-                        "match_sha256": hashlib.sha256(
-                            matched.encode("utf-8")
-                        ).hexdigest(),
-                        "matched_chars": len(matched),
-                        "reply_chars": len(text),
-                        "redacted": True,
-                    }
-                )
-            )
-            return get_global_registry().redact_text(text)
-        except Exception as e:
-            logger.debug(f"echo guard scan skipped (non-fatal): {e}")
-            return text
+        from ..security.scrub import scrub_for_egress
+        return scrub_for_egress(
+            text, surface="reply",
+            session_id=session_id, request_id=request_id or "",
+        )
 
     def _tee_publish(self, event: str, session_id: str, **fields: Any) -> None:
         """Publish one reduced event to the turn-event tee (C4).

@@ -71,6 +71,11 @@ Append-only. One line per decision, dated, with its source. Status values: **dec
 | Date | Item | What was done | Ratify? |
 |---|---|---|---|
 | 2026-08-30 | U6 D2 | <4 GB = offload-only; 4 GB stays local-capable. | pending |
+| 2026-09-09 | `FD-24` (packet-05 open item 05-C) | Internal tool results — scripts, MCP, skills — route through the shared redaction core. R-05's Tier-2 choke point coerces non-JSON-native values before redacting and re-scans the serialized text; R-07 Phase C and R-09 Phase D consume the same helpers, so the assumption those packets were written on is now the code's. | pending |
+| 2026-09-09 | `FD-15` | Minimum registrable secret length raised 4 → 6 (the origin's bound). A 4–5-character acked value is protected by the pattern pass, not the exact-value registry: matching four characters exactly blanks out ordinary prose. | pending |
+| 2026-09-09 | `FD-16` | The display seam gains the deterministic pattern pass. A05-G3 was confirmed and A03-G12 refuted-as-deliberate, so the `display_transport.py:20-25` decision is superseded. | pending |
+| 2026-09-09 | `FD-5`, `FD-6`, `FD-7` | Halt persisted at `<data_dir>/runtime/halt.json` with a minted resume token (removing that half from D3-P6's scope); ask-every-use enforced through one `ApprovalReceipt` carrying the artefact digest, no new UI surface; R-08 owns the runtime QUIET check. | pending |
+| 2026-09-09 | `FD-8`, `FD-10` | MCP `destructiveHint` → HIGH, `readOnlyHint` stays MEDIUM, per-tool overrides still win. The opt-in OSV malware preflight (`FD-10`) is recorded and **not** built. | pending |
 | 2026-08-30 | U6 D4, Q3, Q4 | home-light merged into home; `vision_model` kept; `advance_turn` kept. | pending |
 | 2026-09-01 | `R9-F01` | Wyoming loopback + token (above). | pending |
 | 2026-09-01 | `R10-F1` | Pairing handshake with host-side approval API, 60 s PIN, attempt cap (UI not built). | pending |
