@@ -63,10 +63,15 @@ def test_registered_secret_redacted_from_text():
 def test_50kb_result_arrives_capped():
     blob = "x" * 50_000
     out = verbose_text(blob)
-    assert "[output truncated]" in out
+    # R-06 (A05 bug 5): the header names WHICH cut happened, and
+    # both when both did. "[output truncated]" said neither.
+    assert "cut to the last" in out
     # the tail is kept, and the wire copy is bounded
     assert out.endswith("x" * MAX_DISPLAY_CHARS)
-    assert len(out) <= len("[output truncated]\n") + MAX_DISPLAY_CHARS
+    # R-06 (A05-G5/bug 5): the header names which cut happened, so it is
+    # longer than the old fixed string. The BODY is what the budget
+    # bounds, and it still is.
+    assert len(out.split("\n", 1)[1]) <= MAX_DISPLAY_CHARS
 
 
 def test_many_lines_arrives_capped_with_omitted_marker():
@@ -82,7 +87,11 @@ def test_cap_bounds_after_line_drop():
     """When the kept tail is itself huge (few very long lines), the char cap
     still bounds the wire copy."""
     out = verbose_text("\n".join("y" * 2000 for _ in range(20)))
-    assert len(out) <= len("[omitted 4 lines]\n") + MAX_DISPLAY_CHARS
+    # R-06 (A05-G5): the header is longer now because it names both
+    # cuts instead of one. The BODY is still inside the budget, which is
+    # what the bound is about.
+    body = out.split("\n", 1)[1]
+    assert len(body) <= MAX_DISPLAY_CHARS
 
 
 def test_structures_recurse_strings_only():
@@ -142,8 +151,13 @@ def test_tool_complete_50kb_result_arrives_capped():
     event = StreamEvent.tool_complete("sess1", "exec-1", True, result=blob)
     out = event.data["result"]
     assert isinstance(out, str)
-    assert "[output truncated]" in out
-    assert len(out) <= len("[output truncated]\n") + MAX_DISPLAY_CHARS
+    # R-06 (A05 bug 5): the header names WHICH cut happened, and
+    # both when both did. "[output truncated]" said neither.
+    assert "cut to the last" in out
+    # R-06 (A05-G5/bug 5): the header names which cut happened, so it is
+    # longer than the old fixed string. The BODY is what the budget
+    # bounds, and it still is.
+    assert len(out.split("\n", 1)[1]) <= MAX_DISPLAY_CHARS
 
 
 def test_tool_complete_short_result_untouched():

@@ -52,6 +52,17 @@ current_turn_claim: ContextVar[Optional["IdentifierClaim"]] = ContextVar(
 )
 
 
+def _record_digest_status_impl(tool_name, args, status) -> None:
+    """Record a non-success outcome in the turn digest (A05-G9)."""
+    try:
+        from ..persona.guest_tools import WRITE_PLANE_TOOLS
+        from ..security.turn_digest import record_effect
+        if tool_name in WRITE_PLANE_TOOLS:
+            record_effect(tool_name, args, status=status)
+    except Exception as e:
+        logger.debug(f"turn digest record skipped (non-fatal): {e}")
+
+
 def _provenance_of(tool_name: str) -> str:
     """Whose answer this is (A17-G7).
 
@@ -663,9 +674,17 @@ class ToolExecutor:
             # digest is bound (executor used outside an agent turn).
             try:
                 from ..persona.guest_tools import WRITE_PLANE_TOOLS
-                from ..security.turn_digest import record_effect
+                from ..security.turn_digest import record_effect, status_for_result
                 if tool_name in WRITE_PLANE_TOOLS:
-                    record_effect(tool_name, args)
+                    # A05-G9 + bug 6: what BECAME of it. ``success`` here
+                    # means "the tool ran without raising", which for
+                    # run_command is true of a command that returned 1 --
+                    # so "I restarted sshd" was spoken for a restart that
+                    # failed. The exit code is read off the result string
+                    # the executor itself formats ("Exit code N"), not by
+                    # parsing tool-specific output.
+                    record_effect(
+                        tool_name, args, status=status_for_result(True, result))
             except Exception as e:
                 logger.debug(f"turn digest record skipped (non-fatal): {e}")
 
@@ -677,9 +696,17 @@ class ToolExecutor:
                 provenance=_provenance_of(tool_name),
             )
             
+        except asyncio.CancelledError:
+            # A05-G9: a stopped tool is a fact about the turn. The user
+            # asked for it and it did not finish; saying nothing is the
+            # same shape of dishonesty as saying it succeeded.
+            _record_digest_status_impl(tool_name, args, "cancelled")
+            raise
+
         except asyncio.TimeoutError:
             elapsed = (time.time() - start) * 1000
             logger.error(f"Tool timeout: {tool_name}")
+            _record_digest_status_impl(tool_name, args, "failed")
             self._audit(tool_name, args, session_id, success=False, error="Timeout")
             return ExecutionResult(
                 success=False,
@@ -691,6 +718,7 @@ class ToolExecutor:
         except Exception as e:
             elapsed = (time.time() - start) * 1000
             logger.error(f"Tool execution error: {tool_name}: {e}")
+            _record_digest_status_impl(tool_name, args, "failed")
             self._audit(tool_name, args, session_id, success=False, error=str(e))
             return ExecutionResult(
                 success=False,

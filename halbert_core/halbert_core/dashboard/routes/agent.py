@@ -1664,6 +1664,19 @@ if FASTAPI_AVAILABLE:
         # modality that resolves to no registered channel is refused in
         # the admission module's shape (fail closed, never silently
         # treated as typed).
+        # A05-G15: the message is normalised before anything stores or
+        # prompts with it. Chat input reached the store and messages[0]
+        # as the bytes the client sent, so a null byte or a C0 control
+        # travelled the whole way. NFC so two spellings of a word are one
+        # string in the store and in a search; a NUL is refused outright,
+        # because it terminates a C string and several things downstream
+        # of here are C.
+        from ...security.display_transport import sanitize_chat_input
+        try:
+            request.message = sanitize_chat_input(request.message or "")
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
         # R-01 Phase E (A12-G6): the door produces an IngressDecision like
         # the guest routes do -- "dropped at gate X, reason Y", walked
         # through the one gate list and rendered by the one deny payload,
@@ -2313,6 +2326,51 @@ if FASTAPI_AVAILABLE:
 
     _EMPTY_TIMELINE: Dict[str, Any] = {"turns": [], "has_more": False, "current_thread": None}
 
+    def _project_timeline_blocks(turns) -> None:
+        """Project stored tool blocks the way live events are (A05-G4).
+
+        A live ``tool_complete`` crosses the wire through
+        ``display_transport.verbose_text``: registry- and pattern-redacted,
+        capped, with the cut named. A HISTORY read of the same turn came
+        straight out of SQLite -- so a value that was redacted when it
+        happened was delivered raw the moment the page was reloaded, and a
+        50 KB result that was capped live arrived whole.
+
+        The store keeps full fidelity, as it should: this is the projection
+        at the wire, not a rewrite of the record. Mutates the page in place;
+        never raises, because a timeline that cannot be projected must still
+        render as an empty page rather than a 500 (the route's own rule).
+        """
+        try:
+            from ...security.display_transport import verbose_block
+        except Exception:  # pragma: no cover - import-time only
+            return
+        for turn in turns or []:
+            for message in (turn.get("messages") or []):
+                blocks = message.get("blocks")
+                if not isinstance(blocks, list):
+                    continue
+                for block in blocks:
+                    if not isinstance(block, dict):
+                        continue
+                    for field in ("result", "error"):
+                        value = block.get(field)
+                        if not isinstance(value, str) or not value:
+                            continue
+                        try:
+                            projected = verbose_block(value)
+                        except Exception:
+                            # Fail closed at the wire: an unprojectable
+                            # block shows nothing rather than everything.
+                            block[field] = "[withheld: this output could not be checked]"
+                            continue
+                        block[field] = projected["text"]
+                        if projected.get("truncated"):
+                            block.setdefault("truncated", {})[field] = {
+                                k: v for k, v in projected.items() if k != "text"
+                            }
+
+
     def _hydrate_terminal_blocks(tm, turns: List[Dict[str, Any]]) -> None:
         """Fill each run_command block in with what its terminal block holds.
 
@@ -2400,6 +2458,7 @@ if FASTAPI_AVAILABLE:
                 if has_more:
                     turns = turns[-page:]
             _hydrate_terminal_blocks(tm, turns)
+            _project_timeline_blocks(turns)
             return {"turns": turns, "has_more": has_more, "current_thread": _thread_summary(tm.current())}
         except Exception as e:
             logger.warning(f"Timeline unavailable (non-fatal): {e}")

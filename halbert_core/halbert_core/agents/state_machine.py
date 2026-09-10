@@ -4623,6 +4623,10 @@ class AgentStateMachine:
                                     mode="rollup",
                                     request_id=self.ctx.request_id,
                                     ok=True,
+                                    # A05 bug 7: the SAME scrubbed string
+                                    # the tail speaks. ``tail`` already
+                                    # came through the egress seam; the
+                                    # rollup used to be built separately.
                                     summary=tail,
                                     reason="voice turn mutation digest",
                                 )

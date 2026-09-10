@@ -121,7 +121,12 @@ class TestExecutorWiring:
         )
         assert result.success  # no digest bound: nothing recorded, no error
 
-    def test_failed_tool_records_nothing(self):
+    def test_a_failed_tool_is_recorded_as_failed(self):
+        """R-06 (A05-G9): this used to assert the digest recorded NOTHING
+        for a failed tool -- so a turn that tried to restart sshd and was
+        refused halfway through spoke "no side effects". The attempt is a
+        fact about the turn; what changed is that its OUTCOME is recorded
+        with it rather than the attempt being dropped."""
         from halbert_core.tools.executor import ToolExecutor
         from halbert_core.tools.safety import ToolSafetyFramework
 
@@ -140,7 +145,8 @@ class TestExecutorWiring:
         finally:
             current_turn_digest.reset(token)
         assert not result.success
-        assert len(d) == 0
+        assert len(d) == 1
+        assert "failed" in d.summary().lower()
 
 
 class TestSpokenTail:
