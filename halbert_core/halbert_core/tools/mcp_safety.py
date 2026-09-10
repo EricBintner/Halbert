@@ -155,6 +155,28 @@ def _absent_reason(server_component: str, config) -> str:
     )
 
 
+def _annotation_risk(qualified_name: str):
+    """Risk implied by the tool's own advertised annotations, or None.
+
+    A17-G8. The server describes its own tools, so an annotation is a
+    claim by the party being gated: it may TIGHTEN the classification
+    and never loosen it. Only ``destructiveHint`` does anything today
+    (FD-8: destructive -> HIGH, read-only stays MEDIUM).
+    """
+    try:
+        from ..mcp.registry import tool_annotations
+        annotations = tool_annotations(qualified_name)
+    except Exception:  # pragma: no cover - import-time only
+        return None
+    if annotations.get("destructiveHint") is True:
+        return (
+            RiskLevel.HIGH,
+            "The server annotates this tool as destructive "
+            "(destructiveHint) — classified HIGH, which asks first",
+        )
+    return None
+
+
 def classify_mcp_tool(tool_name: str, args: Any) -> SafetyCheckResult:
     """Classify one ``mcp__{server}__{tool}`` call by risk level.
 
@@ -215,6 +237,17 @@ def classify_mcp_tool(tool_name: str, args: Any) -> SafetyCheckResult:
                 f"{server.risk_override.value.upper()}",
                 "mcp.risk_override",
             )
+        # A17-G8 (FD-8): the server's OWN word about the tool, when the
+        # operator has not written one. ``destructiveHint`` raises to
+        # HIGH, which is the level that asks; ``readOnlyHint`` is left at
+        # the MEDIUM default rather than lowered -- a hint is a claim by
+        # the party being gated, so it may tighten and must never loosen.
+        # Both operator overrides above still win: this is the floor of
+        # the precedence chain, not a new top.
+        annotation = _annotation_risk(tool_name)
+        if annotation is not None:
+            level, why = annotation
+            return _result(level, why, "mcp.annotation")
         return _result(
             MCP_DEFAULT_RISK,
             "MCP tool with no risk override in mcp_config.yml — "

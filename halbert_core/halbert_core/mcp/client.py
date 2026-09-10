@@ -68,6 +68,7 @@ import asyncio
 import json
 import logging
 import os
+import signal
 from typing import Any, Dict, List, Optional, Tuple
 
 import requests
@@ -100,6 +101,16 @@ _CLIENT_INFO = {"name": "halbert-mcp-client", "version": "0.1.0"}
 #: hits it; bounded so a server cannot make the client allocate without
 #: limit.
 MAX_STDIO_FRAME_BYTES = 16 * 1024 * 1024
+
+#: The one server notification this client acts on (A17-G11).
+TOOLS_CHANGED_NOTIFICATION = "notifications/tools/list_changed"
+
+#: Indirection so a test can observe the group signal without a real
+#: process group. Production binds ``os.killpg``.
+_killpg = os.killpg
+
+#: How long a group gets between SIGTERM and SIGKILL.
+_GROUP_TERM_GRACE_SECONDS = 3.0
 
 #: How much of an oversized frame to discard per read while draining it.
 _FRAME_DRAIN_CHUNK = 64 * 1024
@@ -321,6 +332,16 @@ class StdioTransport:
         self.env = child_env(env)
         self.timeout = float(timeout)
         self._proc: Optional[asyncio.subprocess.Process] = None
+        #: The child's process group (A17-G10), recorded at connect so
+        #: close() can reach the grandchildren an npx-shaped server
+        #: leaves behind.
+        self._pgid: Optional[int] = None
+        #: Set by the read loop when the server sends
+        #: ``notifications/tools/list_changed`` (A17-G11). Read by the
+        #: health monitor, which re-runs discovery for THIS server off
+        #: the read loop -- refreshing inline would wedge the stream
+        #: while a request is in flight.
+        self.tools_changed = False
         self._reader: Optional[asyncio.Task] = None
         self._pending: Dict[Any, "asyncio.Future"] = {}
         self._next_id = 0
@@ -353,6 +374,12 @@ class StdioTransport:
                     # took asyncio's 64 KiB default and a large
                     # tools/list or text result killed the transport.
                     limit=MAX_STDIO_FRAME_BYTES,
+                    # A17-G10: the child gets its own session, so
+                    # close() can signal the whole GROUP. npx spawns
+                    # npm spawns node -- killing the direct child left
+                    # the grandchildren running, and nothing at all
+                    # survived a SIGKILL of Halbert itself.
+                    start_new_session=True,
                     # stderr is the server's log channel, not ours to
                     # relay; DEVNULL so a chatty server can't fill a pipe
                     # nobody drains.
@@ -368,6 +395,11 @@ class StdioTransport:
             raise MCPConnectionError(
                 f"MCP server '{self.name}': failed to launch "
                 f"'{self.command}': {e}") from None
+
+        try:
+            self._pgid = os.getpgid(self._proc.pid)
+        except Exception:  # pragma: no cover - platform/timing
+            self._pgid = None
 
         self._pending = {}
         self._reader = asyncio.get_running_loop().create_task(self._read_loop())
@@ -404,6 +436,7 @@ class StdioTransport:
             except Exception:
                 pass
         proc, self._proc = self._proc, None
+        pgid, self._pgid = self._pgid, None
         if proc is not None:
             try:
                 if proc.returncode is None:
@@ -414,13 +447,61 @@ class StdioTransport:
                     try:
                         await asyncio.wait_for(proc.wait(), timeout=5.0)
                     except asyncio.TimeoutError:
-                        proc.kill()
-                        await proc.wait()
+                        pass
+                # A17-G10: the direct child exiting is not the server
+                # exiting. npx spawns npm spawns node; the launcher
+                # returns and the actual server keeps running with its
+                # pipes closed. Sweep the whole GROUP either way --
+                # SIGTERM, a grace, then SIGKILL. An empty group raises
+                # ProcessLookupError, which is the answer "nothing was
+                # left", not an error.
+                await self._terminate_group(proc, pgid)
             except Exception:
                 logger.debug("MCP server '%s': error during close", self.name,
                              exc_info=True)
         self._fail_pending(MCPDisconnectedError(
             f"MCP server '{self.name}': connection closed"))
+
+    async def _terminate_group(self, proc, pgid) -> None:
+        """SIGTERM the child's process group, wait, then SIGKILL (A17-G10).
+
+        Reaps grandchildren the launcher left behind. The residual risk
+        the origin documents and accepts applies here too: a pgid can in
+        principle be reused between the spawn and this call. Halbert is
+        a single-host steward with a handful of servers, and the
+        alternative -- leaving a node process running with closed pipes
+        -- is the worse of the two.
+        """
+        if pgid is None:
+            if proc.returncode is None:
+                proc.kill()
+                await proc.wait()
+            return
+        try:
+            _killpg(pgid, signal.SIGTERM)
+        except ProcessLookupError:
+            # Nothing left in the group: the clean exit took everything.
+            if proc.returncode is None:
+                await proc.wait()
+            return
+        except (PermissionError, OSError) as e:
+            logger.debug(
+                "MCP server '%s': could not signal group %s: %s",
+                self.name, pgid, e)
+            return
+        try:
+            if proc.returncode is None:
+                await asyncio.wait_for(proc.wait(), timeout=3.0)
+            else:
+                await asyncio.sleep(_GROUP_TERM_GRACE_SECONDS)
+        except asyncio.TimeoutError:
+            pass
+        try:
+            _killpg(pgid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError, OSError):
+            pass
+        if proc.returncode is None:
+            await proc.wait()
 
     # -- protocol ----------------------------------------------------------
 
@@ -478,6 +559,19 @@ class StdioTransport:
                     # notification (method, no id). NEVER a response.
                     if "id" in message:
                         await self._reject_server_request(message["id"])
+                    elif message.get("method") == TOOLS_CHANGED_NOTIFICATION:
+                        # A17-G11: the one notification this client
+                        # acts on. A FLAG, not a refresh: re-running
+                        # discovery from inside the read loop wedges
+                        # the stdio stream while a request is in
+                        # flight, so the health monitor picks this up
+                        # on its own tick and diffs the registrations.
+                        # prompts/ and resources/list_changed stay
+                        # dropped -- nothing consumes them.
+                        logger.info(
+                            "MCP server '%s' reports its tool list changed",
+                            self.name)
+                        self.tools_changed = True
                     continue
                 if "result" not in message and "error" not in message:
                     continue  # neither request nor response: drop

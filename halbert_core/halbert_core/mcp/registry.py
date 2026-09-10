@@ -165,6 +165,7 @@ class MCPToolRegistry:
         """
         self.unregister_server(server_name)
         names: List[str] = []
+        seen_here: Dict[str, str] = {}
         for schema in tool_schemas:
             if not isinstance(schema, dict):
                 continue
@@ -175,10 +176,27 @@ class MCPToolRegistry:
                     "name, skipping", server_name)
                 continue
             base = qualify_tool_name(server_name, tool_name)
+            # A17-G12: an INTRA-server collision is excluded, not
+            # suffixed. Two tools from one server whose names sanitize
+            # to the same component ("read-file" and "read_file") both
+            # used to register, the second as ..._2 -- and a per-tool
+            # risk override in mcp_config.yml matches the sanitized
+            # component, so it would then name two different tools and
+            # fence neither. The first registrant keeps the name; the
+            # colliding one is skipped with a warning naming both.
+            if base in seen_here:
+                logger.warning(
+                    "MCP registry: server '%s' advertises '%s' and '%s', "
+                    "which share the sanitized name '%s' — skipping '%s' "
+                    "(a per-tool risk override could not tell them apart)",
+                    server_name, seen_here[base], tool_name, base, tool_name)
+                continue
+            seen_here[base] = tool_name
             qualified = base
             counter = 1
-            # Deterministic collision suffix: bare name to the first
-            # registrant, then _2, _3, ... in registration order.
+            # Deterministic collision suffix ACROSS servers: two servers
+            # may legitimately both offer "read_file". Bare name to the
+            # first registrant, then _2, _3, ... in registration order.
             while qualified in self._by_name:
                 counter += 1
                 qualified = f"{base}_{counter}"
@@ -197,6 +215,18 @@ class MCPToolRegistry:
         """Drop every tool registered for *server_name*."""
         for qualified in self._by_server.pop(server_name, []):
             self._by_name.pop(qualified, None)
+
+    def retain_only(self, server_names) -> None:
+        """Drop every server not in *server_names*.
+
+        The registry outlives one discovery pass now (A17-G8), so a
+        server the config no longer names has to be forgotten here as
+        well as deregistered from the executor -- otherwise its
+        annotations would still answer for a tool nobody can call.
+        """
+        keep = set(server_names or ())
+        for server in [s for s in self._by_server if s not in keep]:
+            self.unregister_server(server)
 
     # -- lookup ---------------------------------------------------------------
 
@@ -218,3 +248,37 @@ class MCPToolRegistry:
 
     def __len__(self) -> int:
         return len(self._by_name)
+
+
+# ---------------------------------------------------------------------------
+# The process registry
+# ---------------------------------------------------------------------------
+
+#: One registry per process. A17-G8 is why it is a singleton rather than
+#: a per-discovery local: the risk classifier runs on the CALL path, long
+#: after discovery returned, and it needs the tool's own advertised
+#: annotations to know whether the server called it destructive. A
+#: registry that was built and thrown away could not answer that.
+_REGISTRY: Optional[MCPToolRegistry] = None
+
+
+def get_tool_registry() -> MCPToolRegistry:
+    """The process-wide MCP tool registry."""
+    global _REGISTRY
+    if _REGISTRY is None:
+        _REGISTRY = MCPToolRegistry()
+    return _REGISTRY
+
+
+def tool_annotations(qualified_name: str) -> Dict[str, Any]:
+    """The ``annotations`` block a server advertised for one tool.
+
+    Empty when the tool is unknown or advertised none -- an absent
+    annotation says nothing, and "says nothing" must not read as
+    "said harmless".
+    """
+    ref = get_tool_registry().get(qualified_name)
+    if ref is None:
+        return {}
+    annotations = ref.schema.get("annotations")
+    return annotations if isinstance(annotations, dict) else {}

@@ -597,15 +597,28 @@ class TestBackoff:
         assert _health(monitor, "fs").reconnect_attempts == 2
         assert _health(monitor, "fs").backoff_seconds == pytest.approx(0.02)
 
-        # …then the server comes back.
+        # …then the server comes back. A17-G14: the handshake makes it
+        # healthy, but the budget it owes stands until the session
+        # proves itself -- a server that handshakes and then dies looks
+        # healthy at exactly the instant of a reset, which is how one
+        # used to be relaunched every tick forever.
         client.fail_reconnect.clear()
         clock.advance(1.0)
         await sweep(monitor)
         record = _health(monitor, "fs")
         assert record.health == "healthy"
+        assert record.proven is False
+        assert record.reconnect_attempts == 2
+        assert record.last_error == ""
+
+        # One full probe interval later the session has proved itself
+        # and the budget clears.
+        clock.advance(monitor.interval + 1)
+        await sweep(monitor)
+        record = _health(monitor, "fs")
+        assert record.proven is True
         assert record.reconnect_attempts == 0
         assert record.backoff_seconds is None
-        assert record.last_error == ""
 
         # And the next failure starts the sequence over, not at ×2^2.
         client.fail_reconnect.add("fs")

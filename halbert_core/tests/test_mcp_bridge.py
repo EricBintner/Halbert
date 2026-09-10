@@ -268,7 +268,11 @@ class TestRegistration:
         assert _mcp_tools(executor) == [
             "mcp__calc__add", "mcp__fs__list_dir", "mcp__fs__read_file"]
 
-    def test_colliding_names_get_deterministic_suffixes(self):
+    def test_one_servers_colliding_names_exclude_the_second(self):
+        """A17-G12: this used to assert both registered, the second with
+        a suffix. A per-tool risk override in mcp_config.yml matches the
+        sanitized component, so a suffixed twin means the override names
+        two tools and fences neither. The second is skipped."""
         from halbert_core.mcp.bridge import register_mcp_tools
 
         executor = ToolExecutor()
@@ -276,10 +280,7 @@ class TestRegistration:
             "fs": [_tool_schema("read-file"), _tool_schema("read_file")],
         })
         register_mcp_tools(executor, client)
-        # Both sanitize to mcp__fs__read_file; the first keeps the bare
-        # name, the second gets a suffix (B1's registry rule).
-        assert _mcp_tools(executor) == [
-            "mcp__fs__read_file", "mcp__fs__read_file_2"]
+        assert _mcp_tools(executor) == ["mcp__fs__read_file"]
 
 
 class TestGracefulAbsence:

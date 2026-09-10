@@ -94,11 +94,12 @@ import json
 import logging
 from typing import Any, Dict, List, Optional, Set
 
-from .client import join_text_content
+from .client import MCPDisconnectedError, join_text_content
 from .metadata import MAX_METADATA_CHARS, sanitize_metadata_text
 from .registry import (
     MCP_TOOL_PREFIX,
     MCPToolRegistry,
+    get_tool_registry,
     iter_server_tool_names,
     parse_qualified_tool_name,
     sanitize_component,
@@ -281,6 +282,58 @@ def _json_dump(value: Any) -> str:
 # Handler construction
 # ---------------------------------------------------------------------------
 
+def _refuse_if_server_is_down(server_name: str, tool_name: str) -> None:
+    """Fail fast when the health record already says the server is down.
+
+    A17-G13. Nothing consulted a breaker in the CALL path: a dead server
+    cost a full per-call timeout, every call, and the error the model
+    got back was a diagnostic ("no response to tools/call") rather than
+    an instruction. A loop that cannot tell "the server is gone" from
+    "that took a while" retries until its iteration budget is spent.
+
+    The breaker is the health monitor's own record -- the same fact the
+    dashboard shows -- not a second failure counter that could disagree
+    with it. No monitor running means no opinion, and the call proceeds.
+    """
+    try:
+        from .health import DOWN, get_active_monitor
+        monitor = get_active_monitor()
+        if monitor is None:
+            return
+        record = monitor.health_record(server_name)
+    except Exception:  # pragma: no cover - import/lookup only
+        return
+    if record is None or getattr(record, "health", None) != DOWN:
+        return
+    retry_at = getattr(record, "next_retry_at", 0.0) or 0.0
+    try:
+        remaining = max(0, int(retry_at - monitor._now()))
+    except Exception:
+        remaining = 0
+    when = (
+        f"Auto-retry available in about {remaining}s."
+        if remaining else "A reconnect is due on the next health tick."
+    )
+    raise MCPDisconnectedError(
+        f"MCP server '{server_name}' is down, so the call to "
+        f"'{tool_name}' never reached it. This is not a timeout. "
+        f"Do NOT retry this tool now. {when} "
+        f"If it stays down, the server's command or its log is what to "
+        f"check — nothing here will fix it."
+    )
+
+
+def _note_served_call(server_name: str) -> None:
+    """Tell the health monitor this server answered a real call (A17-G14)."""
+    try:
+        from .health import get_active_monitor
+        monitor = get_active_monitor()
+        if monitor is not None:
+            monitor.note_served_call(server_name)
+    except Exception:  # pragma: no cover - bookkeeping only
+        pass
+
+
 def make_tool_handler(mcp_client, server_name: str, tool_name: str):
     """Build the async handler the executor registers for one MCP tool.
 
@@ -297,7 +350,11 @@ def make_tool_handler(mcp_client, server_name: str, tool_name: str):
     """
 
     async def handler(args: Dict[str, Any]) -> Any:
+        _refuse_if_server_is_down(server_name, tool_name)
         raw = await mcp_client.call_tool(server_name, tool_name, args or {})
+        # A17-G14: a served call proves the session -- more than a
+        # handshake can -- so the reconnect budget may clear.
+        _note_served_call(server_name)
         return format_tool_result(raw, server_name=server_name)
 
     return handler
@@ -576,7 +633,13 @@ async def _discover_and_register(tool_executor, mcp_client) -> int:
     if configured_names is not None:
         _drop_unconfigured_server_tools(tool_executor, configured_names)
 
-    registry = MCPToolRegistry()
+    # A17-G8: the process registry, not a per-discovery local. The risk
+    # classifier runs on the CALL path and reads the tool's advertised
+    # annotations from here; a registry thrown away at the end of
+    # discovery could not answer that.
+    registry = get_tool_registry()
+    if configured_names is not None:
+        registry.retain_only(configured_names)
     registered = 0
     for server_name in servers:
         try:

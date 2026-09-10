@@ -119,6 +119,16 @@ class ServerHealth:
     last_probe_at: Optional[float] = None       # wall clock, display only
     reconnect_attempts: int = 0
     backoff_seconds: Optional[float] = None     # the delay now in force
+    #: When the current session handshook (A17-G14). A session is not
+    #: "working" the instant it answers -- a server that handshakes and
+    #: then dies looks healthy at exactly that moment.
+    connected_at: float = 0.0
+    #: Whether the current session has earned the right to clear the
+    #: reconnect budget: it survived a full probe interval, or it served
+    #: a real call. Zeroing the budget on any successful probe meant a
+    #: server that died right after every handshake was relaunched every
+    #: tick forever, never charging the backoff.
+    proven: bool = False
     next_retry_at: float = 0.0                  # time.monotonic() timeline
 
     def as_dict(self) -> Dict[str, Any]:
@@ -364,11 +374,40 @@ class MCPHealthMonitor:
         if identity != self._last_config_identity:
             self._last_config_identity = identity
             self._needs_refresh = True
+        # A17-G11: a server that told us its tool list changed. The
+        # transport sets a flag from its read loop and the refresh
+        # happens HERE, on the monitor's own tick -- re-running
+        # discovery from inside the read loop wedges the stdio stream
+        # while a request is in flight. The bridge's diff decides what
+        # is dropped and what is kept; a live turn may hold a tool-call
+        # id pointing at an existing handler.
+        if self._consume_tools_changed():
+            self._needs_refresh = True
         if self._needs_refresh:
             self._needs_refresh = False
             if self._tool_executor is not None:
                 from .bridge import discover_and_register
                 await discover_and_register(self._tool_executor, self._client)
+
+    def _consume_tools_changed(self) -> bool:
+        """Whether any live transport reported a tool-list change (A17-G11).
+
+        Reads and clears the per-transport flag, so one notification
+        costs one refresh however many ticks it takes to be noticed.
+        """
+        connections = getattr(self._client, "_connections", None)
+        if not isinstance(connections, dict):
+            return False
+        changed = False
+        for name, connection in list(connections.items()):
+            transport = getattr(connection, "transport", None)
+            if getattr(transport, "tools_changed", False):
+                transport.tools_changed = False
+                changed = True
+                logger.info(
+                    "MCP server '%s': refreshing tools after a "
+                    "list_changed notification", name)
+        return changed
 
     async def _probe(self, name: str, record: ServerHealth) -> None:
         """Ping one live connection. An answer of ANY kind — a result,
@@ -393,11 +432,22 @@ class MCPHealthMonitor:
         self._probe_succeeded(record)
 
     def _probe_succeeded(self, record: ServerHealth) -> None:
-        was = record.health
         record.health = HEALTHY
         record.connected = True
         record.last_error = ""
         record.last_probe_at = time.time()
+        # A17-G14: only a PROVEN session clears the budget. The session
+        # is proven once it has survived a full probe interval past its
+        # handshake (or served a real call, which ``note_served_call``
+        # records). Until then the counters stand: a server that
+        # handshakes and dies looks healthy at the instant of the reset,
+        # so resetting there meant it was relaunched every tick forever
+        # and the backoff never charged.
+        if not record.proven:
+            age = self._now() - (record.connected_at or self._now())
+            if age < self.interval:
+                return
+            record.proven = True
         if record.reconnect_attempts or record.backoff_seconds is not None:
             logger.info(
                 "MCP server '%s' is healthy again (backoff reset after %d "
@@ -405,6 +455,17 @@ class MCPHealthMonitor:
         record.reconnect_attempts = 0
         record.backoff_seconds = None
         record.next_retry_at = 0.0
+
+    def note_served_call(self, name: str) -> None:
+        """A real tool call was served: the session is proven (A17-G14).
+
+        The other half of the proof. A server that answers a call has
+        demonstrated more than a handshake can, so it need not also wait
+        out a probe interval.
+        """
+        record = self.health_record(name)
+        if record is not None and not record.proven:
+            record.proven = True
 
     def _probe_failed(
         self, name: str, record: ServerHealth, error: Exception,
@@ -484,22 +545,24 @@ class MCPHealthMonitor:
                 "retry in %gs): %s", name, record.reconnect_attempts,
                 record.backoff_seconds, record.last_error)
             return
-        # The answered initialize handshake IS a probe.
+        # The answered initialize handshake IS a probe -- but only a
+        # probe. A17-G14: a NEW session starts unproven, and the budget
+        # it owes stands until it earns the reset (a full probe interval
+        # survived, or a served call). This is the exact reset that made
+        # a handshake-then-die server free to be relaunched forever.
         record.connected = True
         record.health = HEALTHY
         record.last_probe_at = time.time()
         record.last_error = ""
-        attempts = record.reconnect_attempts
-        record.reconnect_attempts = 0
-        record.backoff_seconds = None
-        record.next_retry_at = 0.0
+        record.connected_at = self._now()
+        record.proven = False
         # A server that was down at registration time has NO tools on
         # the executor — recovery is the moment to (re-)register them.
         self._needs_refresh = True
         logger.info(
-            "MCP server '%s' reconnected%s", name,
-            f" (backoff reset after {attempts} failed attempt(s))"
-            if attempts else "")
+            "MCP server '%s' reconnected (attempt %d; the backoff is "
+            "cleared once the session proves itself)",
+            name, record.reconnect_attempts)
 
     async def drain(self) -> None:
         """Await every in-flight reconnect task (tests drive the sweep
