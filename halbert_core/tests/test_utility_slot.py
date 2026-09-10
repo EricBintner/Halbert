@@ -177,6 +177,151 @@ class TestCatalogRung:
         assert source == AuxSource.CHAT
 
 
+class TestTaskProvenanceLogging:
+    """own-bug: task is documented as 'names the log line' but nothing ever
+    logged it — only failure paths logged, at DEBUG."""
+
+    def test_a_successful_resolution_logs_the_task_and_rung(
+        self, models_config_dir, monkeypatch, caplog
+    ):
+        _configured(models_config_dir, chat_model=("e_local", "chat-a"),
+                    utility_model=None)
+        with caplog.at_level("DEBUG", logger="halbert.model.utility_slot"):
+            aux.resolve_aux_model(task="title")
+        assert any("title" in r.message and "chat" in r.message for r in caplog.records)
+
+
+class TestNonChatSiblingsExcluded:
+    """A14-G3: only 'embed' was disqualified; a reasoning/thinking or vision
+    sibling of the anchor's family could still be picked as the utility
+    model, which is not a plain chat task."""
+
+    def test_reasoning_and_vision_siblings_are_skipped(self, models_config_dir, monkeypatch):
+        _configured(models_config_dir, chat_model=("e_local", "family-a:32b"),
+                    utility_model=None)
+        monkeypatch.setattr(
+            aux, "_fetch_catalog",
+            lambda url, provider, api_key="": [
+                {"name": "family-a:1b-thinking", "details": {"parameter_size": "1B"}},
+                {"name": "family-a-vl:2b", "details": {"parameter_size": "2B"}},
+                {"name": "family-a:3b", "details": {"parameter_size": "3B"}},
+            ],
+        )
+        resolved, source = aux._resolve_aux(prefer_fast=True)
+        assert source == AuxSource.CATALOG
+        assert resolved.model == "family-a:3b"
+
+    def test_only_non_chat_siblings_falls_through_to_chat_floor(self, models_config_dir, monkeypatch):
+        _configured(models_config_dir, chat_model=("e_local", "family-a:32b"),
+                    utility_model=None)
+        monkeypatch.setattr(
+            aux, "_fetch_catalog",
+            lambda url, provider, api_key="": [
+                {"name": "family-a:1b-thinking", "details": {"parameter_size": "1B"}},
+            ],
+        )
+        resolved, source = aux._resolve_aux(prefer_fast=True)
+        assert source == AuxSource.CHAT
+
+
+class TestSameFamilyFusion:
+    """own-bug: _same_family's raw-prefix rule fused any family sharing a
+    >=3-char prefix ('abc' matched 'abcd', 'abc-vision', 'abcx-coder')."""
+
+    def test_unrelated_family_sharing_a_prefix_is_not_fused(self):
+        assert aux._same_family("abcx", "abc") is False
+        assert aux._same_family("abcd", "abc") is False
+
+    def test_a_dash_delimited_variant_is_still_the_same_family(self):
+        assert aux._same_family("family-a-coder", "family-a") is True
+        assert aux._same_family("family-a", "family-a-coder") is True
+
+    def test_family_token_strips_hyphen_style_size_tags(self):
+        # A02-G9: OpenAI-wire/LM-Studio catalogs use 'family-a-3b-instruct',
+        # not Ollama's 'family-a:3b'; the token extraction was colon-only.
+        assert aux._family_token("family-a-3b-instruct") == "family-a"
+        assert aux._family_token("org/family-a-8b") == "family-a"
+
+
+class TestOpenAIWireCatalogRanking:
+    """A02-G9: the catalog rung must rank a hyphen-styled (LM Studio /
+    OpenAI-wire) catalog, not just Ollama's colon-styled one."""
+
+    def test_ranks_a_hyphen_styled_catalog(self, models_config_dir, monkeypatch):
+        _configured(models_config_dir,
+                    chat_model=("e_local", "family-a-32b-instruct"),
+                    utility_model=None)
+        monkeypatch.setattr(
+            aux, "_fetch_catalog",
+            lambda url, provider, api_key="": [
+                {"name": "family-a-3b-instruct"},
+                {"name": "family-a-32b-instruct"},
+            ],
+        )
+        resolved, source = aux._resolve_aux(prefer_fast=True)
+        assert source == AuxSource.CATALOG
+        assert resolved.model == "family-a-3b-instruct"
+
+
+class TestRequireLocal:
+    """A14-G4: the utility pick must never bypass the locality/secure policy.
+
+    A ':cloud' catalog sibling or a cloud-provider utility slot must not
+    receive a secure turn's spoken copy — the ladder must honour
+    require_local exactly the way the secure slot already does (SEC-21).
+    """
+
+    def test_cloud_tagged_catalog_sibling_is_never_picked(self, models_config_dir, monkeypatch):
+        _configured(models_config_dir, chat_model=("e_local", "family-a:32b"),
+                    utility_model=None)
+        monkeypatch.setattr(
+            aux, "_fetch_catalog",
+            lambda url, provider, api_key="": [
+                {"name": "family-a:3b:cloud", "details": {"parameter_size": "3B"}},
+                {"name": "family-a:8b", "details": {"parameter_size": "8B"}},
+            ],
+        )
+        resolved, source = aux._resolve_aux(prefer_fast=True, require_local=True)
+        assert source == AuxSource.CATALOG
+        assert resolved.model == "family-a:8b"
+
+    def test_declared_on_a_remote_endpoint_is_skipped_and_floors_on_secure(
+        self, models_config_dir, monkeypatch
+    ):
+        _configured(
+            models_config_dir,
+            utility_model={"enabled": True, "endpoint_id": "e_remote", "model": "gpt-a"},
+            secure_model=("e_local", "secure-a"),
+        )
+        raw = yaml.safe_load((models_config_dir / "models.yml").read_text())
+        raw["llm_config"]["saved_endpoints"].append(
+            {"id": "e_remote", "name": "Remote", "provider": "openai",
+             "url": "https://api.example.com", "api_key": "k"})
+        (models_config_dir / "models.yml").write_text(yaml.safe_dump(raw))
+        monkeypatch.setattr(aux, "_fetch_catalog",
+                            lambda *a, **k: pytest.fail("no probe without prefer_fast"))
+        resolved, source = aux._resolve_aux(require_local=True)
+        assert source == AuxSource.SECURE
+        assert resolved.model == "secure-a"
+
+    def test_no_local_candidate_anywhere_returns_none(self, models_config_dir, monkeypatch):
+        _configured(models_config_dir, chat_model=("e_local", "chat-a"),
+                    utility_model=None, secure_model=None)
+        monkeypatch.setattr(aux, "_fetch_catalog",
+                            lambda *a, **k: pytest.fail("no probe without prefer_fast"))
+        assert aux._resolve_aux(require_local=True) == (None, AuxSource.NONE)
+
+    def test_require_local_false_is_unaffected(self, models_config_dir, monkeypatch):
+        """The default ladder (require_local=False) keeps today's behaviour."""
+        _configured(models_config_dir, chat_model=("e_local", "family-a:32b"),
+                    utility_model=None)
+        monkeypatch.setattr(aux, "_fetch_catalog",
+                            lambda *a, **k: pytest.fail("no probe without prefer_fast"))
+        resolved, source = aux._resolve_aux()
+        assert source == AuxSource.CHAT
+        assert resolved.model == "family-a:32b"
+
+
 class TestLegacyRung:
     """A pre-migration small_model entry — the legacy dict rung — still serves."""
 

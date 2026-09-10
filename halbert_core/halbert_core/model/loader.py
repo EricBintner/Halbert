@@ -13,6 +13,8 @@ from pathlib import Path
 import json
 import logging
 
+import yaml
+
 logger = logging.getLogger('halbert.model')
 
 
