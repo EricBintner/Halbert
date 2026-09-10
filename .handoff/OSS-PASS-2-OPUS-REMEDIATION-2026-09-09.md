@@ -169,6 +169,44 @@ Commit `e510262f`, under FD-3.
 
 **A16-G1 + bug 1**: `compact_boundaries` shipped with a schema, an index and no writer. `continuity/rotation.py` extracts rather than composes — the exact command, path and error string — and a test greps the module for a model so one cannot arrive by accident. The guards (**A16-G6**, **A16-G10**) each refuse with a reason, because a rotation that quietly does not happen is indistinguishable from one that happened and lost everything. The store side is one transaction. **A16-G3** `context_included` has both halves.
 
+### R-11 Phases C, D and E — the skills plane, closed out
+
+| Phase | Commit | What |
+|---|---|---|
+| C | `4bc526ad` | The catalog says what it is for, and stays bounded |
+| D | `4bc526ad` | It follows the disk; runtime tools are reserved; ids survive a restart |
+| E | `b9bf7757` | The body is read; the declared gates are consulted |
+| E | `27639116` | The CC flags, a colon in a description, what `extends` means |
+| tail | `ef15d8eb` | A receipt for a read that happened; a suite that reads CI's skills |
+
+- **A13-G3** (the audit's "cheapest high-leverage" row): the block listed nine skills and never said what a skill is FOR. Track B is progressive disclosure and it worked only if the model already guessed the convention. Four lines above the block, outside `<available_skills>` where the origin puts them, so the element stays byte-for-byte the ecosystem shape — with a test on that specifically, because the ingest contract is the reason the shape exists.
+- **A13-G4**: between the parse ceiling (4096, a DoS bound) and the ladder's cap sat rung 0, where a description renders in full because the total happens to fit — so one pack entry with a 4000-character description became the catalog. The ceiling is 200, not the 60-character create bar: clamping to that would cut founder copy mid-sentence, which is FD-20's to trim in words.
+- **A13 bug 7**: the notice told the operator to audit with `halbert skills list`. There is no such command. The one line in the render whose only job is honesty was the line that was not true. While fixing it I had the render ask itself whether it said "truncated" — this module's own documented anti-pattern, and wrong on top of it, since a skill installed under a path containing the word answers yes. The ladder returns the flag.
+- **A13-G2**: `get_agent()` is a process singleton, so an edited SKILL.md never reached the running daemon — while `read_file`, following the `<location>` the catalog had just printed, served the NEW body. Hermes's manifest shape, restatted at turn start. Two invariants have tests because both are ways a fix for this reintroduces it: the matcher keeps its identity across a reload, and the signature is committed only on success.
+- **A13-G13**: "tool registration is static per process" — which the cache rested on — is simply false. HA registers two tools, Frigate six, and an MCP server whatever it likes. The static half stays cached; a live half is asked every check.
+- **A13-G8**: an id-less skill got a fresh random ULID at every load, so every skill was a new row in the telemetry table after every restart. Derived from the canonical path, **not** written into the sidecar: the origin's fix would make the load path write into the operator's directory and into the installed package.
+- **A13-G5 (SK-5)**: nothing looked at what a skill body SAID. The posture is the design's — bundled fail CI, everything else is refused with the finding logged and never scrubbed. The two severities are explained under FD-notes below; running the scanner over the shipped set is the packet's own STOP condition and it found both a real false positive of mine (`<user>` as a forged-role tag, which `home-ops` writes as placeholder prose) and the `chmod 777` case.
+- **A13-G6**, **G10**: `SkillRequirements` said outright "parsed — not evaluated. Evaluation is SK-4's", and nothing was SK-4. Four answers, because they are four facts an operator acts on differently. An explicit `/name` ignores TRIGGERS now, not gates.
+- **A13-G9**, **G11**, **G12**, **bugs 3/4/9/10**: the CC invocation flags read and honoured on their own surfaces; one colon-rich `description` line recovered and nothing else; `extends` can declare a default back and unions `requires`; `skill_for_path` no longer gives a bare-layout skill the whole root; the read receipt follows the read; the suite stops reading the developer's own skill directory.
+
+### R-02 Phases C and E — receipts, and the tee's other half
+
+Commit `d2ca50ad`.
+
+- **A12-G3, the live half.** `decide_ingress` stopped at the first BLOCK; the BUILDER loop did not. The builders are documented read-only and are not: on `/api/guest/private/assign` and `/api/guest/forget` the second one calls `current_guest()`, which can fire the session keepalive — an outbound request to a sibling home — and can end a live session. An off-machine caller refused 403 could still make this machine talk to a sibling home while being told no.
+- **A12-G5**, **G7**, **G8**: a denial no longer echoes its machine code as the human message, and an AST walk of every `block(...)` call site fails CI instead of a person's screen; the role cap records what capped it *and* records that nothing did, which is what tells a reader the claim was looked at; `guest_homes.yml` holds a bearer token and is fsync'd before the rename.
+- **A09 bug 3**: the tee scrubbed top-level strings and a tool result's stdout sits one layer down. Depth-bounded, because a recursion limit reached inside an *observation* would take down the turn being observed. Plus `seq`/`ts` on every delivered event, and a turn-scoped event with no session id dropped rather than guessed at.
+
+### R-14 Phase C — the promotion gates
+
+Commit `af98be77`.
+
+**A01-G7** is two problems. The origin's four calibrated gates arrived here as two, with the diversity floor halved and days not counted — no handoff records a decision to drop the rest, which is what makes it a gap rather than a difference. And importing `MIN_SCORE=0.75` meant fixing the scale first: the score summed an uncapped `log1p` with three fractions and could exceed 1.0, so 0.75 laid over it would have passed anything with three recalls — a gate in name. The weights are fitted to the origin's own three published bands.
+
+**A01-G11** reproduced before it was fixed (three spellings of one question counted as three). **A01-G12** was worse than reported: the failing load left a half-loaded store, so a persisted key came back with zeroed counts rather than absent. **A01-G13**'s liveness predicate keeps a candidate when the check itself raises. **A01-G9**'s two events land on the ratified ledger, carrying keys, counts and scores and never the words that were recalled.
+
+**A01-G1 stays unbuilt and a test says so**: FD-22's Phase-B checkpoint stands, and if someone wires the ranker the test names the decision that was skipped.
+
 ### R-12 Phase C — branch summaries, and a hole Phase B opened
 
 Commit `b017e65e`.
@@ -183,7 +221,14 @@ Also closed: `search_snippets` joins `messages_fts` and skips hidden rows, and r
 
 **The turn-loop wiring**, for both halves of R-12: the rotation writer has no caller in the turn loop, and the branch-summary minting has no caller because `move_leaf` still has none. Both callers live in `agents/threads.py` (`_reopen_thread`, `end_turn`), which is R-12 Phase A's file and belongs to the sonnet batch (`fix/remediation-sonnet-batch-1`) — nothing here touches it, so the two branches merge cleanly and the wiring is one commit after Phase A lands. Naming it is the point: this is the cross-cutting defect shape the whole pass exists to stop recreating ("module ported, consumer never wired"), and it is recorded here rather than left to be rediscovered.
 
-Also left, in each packet's own tail: R-09's A17-G19 (FD-10 says record, do not build); R-01's A07-G11 (FD-1 says no auto-continue) and A07-G8; R-11's remaining phases C–E and R-14's phases C–D, which are the lower-severity gaps in those packets rather than their fix-first rows.
+Also left, and each for a stated reason rather than for lack of time:
+
+- **R-09's A17-G19** — FD-10 says record, do not build.
+- **R-01's A07-G11** — FD-1 says no auto-continue; the interrupted turn heals to a persisted status and nothing re-submits it.
+- **R-01's A07-G8** (low) — the origin's yield-during-a-foreground-command concept has no analogue here at all. It is a feature, not a defect: nothing in this tree claims to yield, so nothing lies about it.
+- **R-14's Phase D consumer (A01-G1)** — FD-22, above.
+
+Everything else in the twelve opus packets is landed. Suite at the end of the batch: **8420 passed, 15 skipped, 6 xfailed, 1 failed** — the one failure being `test_vision_tools.py::TestCaptureScreenshotHandler::test_region_capture`, which reads this host's real display geometry and fails in isolation on a clean checkout of `main`.
 
 ## Two decisions waiting on the founder
 
@@ -199,5 +244,7 @@ Also left, in each packet's own tail: R-09's A17-G19 (FD-10 says record, do not 
 | `understated` | 76 | Says what was noticed in one plain sentence and lets it carry its own weight | *Says what was noticed in one plain sentence, and stops* (53) |
 
 Every proposal removes words only; none introduces a term the original did not use. `config-ops` still exceeds 60 with words alone — it needs a real edit, not a trim, which is why it is not made here.
+
+Two notes for whoever applies these. The `frigate-ops` and `home-ops` proposals introduce a colon, which is exactly the shape A13-G11 was about: a colon-rich `description` used to make the whole skill unparseable. It is recovered now, and the recovery logs a warning telling you to quote it — so write those two as `description: "Frigate NVR: …"` and the recovery never runs. And `skills.catalog.descriptions_over_limit(registry)` is the sweep as a lint: `tests/test_skills_catalog_guidance.py` asserts the over-limit set can only SHRINK, so each approved trim makes the test's known list smaller and a new long description fails CI.
 
 **The OS re-auth handler (A11-G12's residual).** Named above under R-08: it is what unblocks first-run acceptance, and until it exists no grant requiring a live re-auth can be recorded.
