@@ -15,6 +15,8 @@ judge (its output channel is broken — fail closed), while TRANSPORT failures
 fail open to CONTINUE on singles and only circuit-break on repeats.
 """
 
+import time
+
 import pytest
 
 from halbert_core.continuity import verdict as verdict_module
@@ -70,7 +72,8 @@ class TestGatesBeforeJudge:
             judge_calls.append(c)
             return "DONE the file exists at /tmp/out with 40 lines"
 
-        result = verdict(claims, gates=[Gate(name="g", check=lambda c: True, output="")], judge=judge)
+        result = verdict(claims, gates=[Gate(name="g", check=lambda c: True, output="")],
+                          judge=judge, circuit=verdict_module.JudgeCircuit())
         assert judge_calls == [claims]
         assert result.kind is VerdictKind.DONE
         assert result.source == "judge"
@@ -79,6 +82,51 @@ class TestGatesBeforeJudge:
         result = verdict({}, gates=[_gate(name="output-exists")], judge=_never_called)
         assert "output-exists" in result.reason
 
+    def test_gate_output_truncation_keeps_the_tail_where_the_diagnostic_is(self):
+        # A02-G4 + own-bug 2: the origin keeps the TAIL of gate output (that
+        # is where a test runner's failure line lives), and the truncation
+        # marker must survive gate_output_limit's own re-slicing.
+        output = "ok\n" * 3000 + "FAILED test_x: AssertionError"
+        result = verdict({}, gates=[Gate(name="g", check=lambda c: False, output=output)],
+                          judge=_never_called)
+        assert "FAILED test_x" in result.continuation_prompt
+        assert len(result.continuation_prompt) <= verdict_module.MAX_GATE_OUTPUT_CHARS
+
+    def test_a_raising_gate_is_a_failed_gate_not_a_crash(self):
+        # A02-G5: the origin converts a raising gate into a failed gate with
+        # a diagnostic; today it propagates and crashes verdict().
+        gate = Gate(name="flaky", check=lambda c: 1 / 0, output="the deliverable is missing")
+        result = verdict({}, gates=[gate], judge=_never_called)
+        assert result.kind is VerdictKind.CONTINUE
+        assert result.source == "gate"
+        assert "flaky" in result.reason
+        assert "ZeroDivisionError" in result.reason
+
+    def test_gate_exhausts_after_max_retries_and_blocks(self):
+        # A02-G6: a permanently failing gate must not CONTINUE forever once
+        # it has a retry budget.
+        circuit = verdict_module.JudgeCircuit()
+        gate = Gate(name="never-passes", check=lambda c: False, output="still missing",
+                    max_retries=2)
+        first = verdict({}, gates=[gate], judge=_never_called, circuit=circuit)
+        second = verdict({}, gates=[gate], judge=_never_called, circuit=circuit)
+        third = verdict({}, gates=[gate], judge=_never_called, circuit=circuit)
+        assert first.kind is VerdictKind.CONTINUE
+        assert second.kind is VerdictKind.CONTINUE
+        assert third.kind is VerdictKind.BLOCKED
+        assert third.source == "gate-exhausted"
+
+    def test_turn_budget_exhausted_blocks_without_calling_the_judge(self):
+        # A02-G6: a turn counter caps the whole loop, independent of any one
+        # gate's own retry budget.
+        circuit = verdict_module.JudgeCircuit(max_turns=2)
+        gate = Gate(name="g", check=lambda c: True, output="")
+        verdict({}, gates=[gate], judge=lambda c: "CONTINUE ok", circuit=circuit)
+        verdict({}, gates=[gate], judge=lambda c: "CONTINUE ok", circuit=circuit)
+        result = verdict({}, gates=[gate], judge=_never_called, circuit=circuit)
+        assert result.kind is VerdictKind.BLOCKED
+        assert result.source == "turn-budget"
+
 
 class TestClosedVocabulary:
     def test_parse_accepts_each_closed_term(self):
@@ -86,10 +134,12 @@ class TestClosedVocabulary:
             ("DONE", VerdictKind.DONE),
             ("BLOCKED", VerdictKind.BLOCKED),
             ("CONTINUE", VerdictKind.CONTINUE),
-            ("WAIT", VerdictKind.WAIT),
         ]:
             parsed = parse_verdict(word)
             assert parsed.kind is kind
+        # WAIT is exercised with a target elsewhere (test_wait_directive_carried_structured);
+        # a bare WAIT has no target and is a parse failure (test_bare_wait_with_no_target_is_a_parse_failure).
+        assert parse_verdict("WAIT wait_on_pid=1").kind is VerdictKind.WAIT
 
     def test_parse_rejects_unknown_verdict(self):
         with pytest.raises(VerdictParseError):
@@ -114,8 +164,12 @@ class TestClosedVocabulary:
         parsed = parse_verdict("WAIT wait_for_seconds=30")
         assert parsed.wait == WaitDirective(wait_for_seconds=30.0)
 
-    def test_wait_directive_is_optional(self):
-        assert parse_verdict("WAIT").wait is None
+    def test_bare_wait_with_no_target_is_a_parse_failure(self):
+        # A02-G8: a WAIT with nothing to wait on is not a valid barrier —
+        # the origin downgrades it to CONTINUE; Halbert's closed vocabulary
+        # is stricter everywhere else, so a targetless WAIT raises too.
+        with pytest.raises(VerdictParseError):
+            parse_verdict("WAIT")
 
     def test_wait_rejects_unknown_directive_key(self):
         with pytest.raises(VerdictParseError):
@@ -124,6 +178,24 @@ class TestClosedVocabulary:
     def test_wait_rejects_non_integer_pid(self):
         with pytest.raises(VerdictParseError):
             parse_verdict("WAIT wait_on_pid=systemd")
+
+    def test_wait_rejects_non_positive_pid(self):
+        # A02-G8: pid 0 and negative pids are not real targets.
+        with pytest.raises(VerdictParseError):
+            parse_verdict("WAIT wait_on_pid=0")
+        with pytest.raises(VerdictParseError):
+            parse_verdict("WAIT wait_on_pid=-4")
+
+    def test_wait_rejects_zero_seconds(self):
+        # A02-G8: a zero-second wait is not a wait.
+        with pytest.raises(VerdictParseError):
+            parse_verdict("WAIT wait_for_seconds=0")
+
+    def test_wait_for_seconds_is_clamped_to_the_barrier_ceiling(self):
+        # A02-G18: an unbounded wait target is a stuck loop by another name.
+        parsed = parse_verdict(
+            f"WAIT wait_for_seconds={verdict_module.MAX_BARRIER_WAIT_S + 500}")
+        assert parsed.wait.wait_for_seconds == verdict_module.MAX_BARRIER_WAIT_S
 
     def test_non_wait_verdict_cannot_carry_directive(self):
         with pytest.raises(VerdictParseError):
@@ -202,6 +274,60 @@ class TestFailureModeSeparation:
         verdict({}, gates=[], judge=judge, circuit=circuit)
         assert circuit.parse_failures == 1
         assert circuit.transport_failures == 0
+
+    def test_a_transport_failure_resets_the_parse_counter(self):
+        # A02-G9: a flaky transport interleaved with parse failures must not
+        # trip the parse breaker on non-consecutive failures.
+        circuit = verdict_module.JudgeCircuit()
+        calls = []
+
+        def judge(claims):
+            calls.append(1)
+            n = len(calls)
+            if n in (1, 3, 5):
+                return "not a verdict at all"  # parse failure
+            if n in (2, 4):
+                raise JudgeTransportError("connection reset")  # transport failure
+            return "CONTINUE more work remains"
+
+        for _ in range(5):
+            result = verdict({}, gates=[], judge=judge, circuit=circuit)
+            assert result.kind is not VerdictKind.BLOCKED
+        assert circuit.parse_failures == 1  # reset by each intervening transport failure
+
+    def test_judge_call_exceeding_timeout_counts_as_transport_failure(self):
+        # A02-G7: a hung judge must not stall the turn — it counts as a
+        # transport failure like an unreachable one.
+        circuit = verdict_module.JudgeCircuit()
+
+        def slow_judge(claims):
+            time.sleep(0.3)
+            return "CONTINUE more work remains"
+
+        result = verdict({}, gates=[], judge=slow_judge, circuit=circuit, judge_timeout=0.05)
+        assert result.kind is VerdictKind.CONTINUE
+        assert result.source == "transport-fail-open"
+        assert circuit.transport_failures == 1
+
+    def test_judge_wired_without_an_explicit_circuit_raises(self):
+        # A02-G10: a circuit created on demand and discarded cannot persist
+        # breaker state across calls — the origin persists counters in
+        # session state, so a caller that skips this silently loses the
+        # breakers entirely. Fail loudly instead.
+        with pytest.raises(TypeError):
+            verdict({}, gates=[], judge=lambda c: "CONTINUE ok")
+
+    def test_judge_input_is_bounded(self):
+        # A02-G16: the origin caps judge input; today it is unbounded.
+        received = []
+
+        def judge(claims):
+            received.append(claims)
+            return "CONTINUE ok"
+
+        big_claims = "x" * 100_000
+        verdict(big_claims, gates=[], judge=judge, circuit=verdict_module.JudgeCircuit())
+        assert len(received[0]) <= verdict_module.JUDGE_INPUT_CHARS
 
 
 class TestFlagOff:
