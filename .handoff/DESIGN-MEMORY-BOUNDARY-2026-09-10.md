@@ -1,7 +1,14 @@
 # Where the line between Halbert's memory and Haloysius's goes
 
-**Status:** design memo, founder decision pending. Supersedes the curated-core
-half of Packet 01 Phase B as designed.
+**Status:** design memo, founder decision pending (§8). Supersedes the
+curated-core half of Packet 01 Phase B as designed.
+
+**Revised 2026-09-10** against `REVIEW-DUAL-MEMORY-INHOUSE-2026-09-10.md`.
+Three things in the first draft were wrong and are marked where they changed:
+the defence in §1 was rationalisation; §4.1's partition needed a classifier
+and so was not a partition; and §4.3's supersession vocabulary was dead
+columns on most rows. Fable's second opinion on two remaining questions is
+outstanding.
 
 **The question, as the founder put it:** *"we need to think about nuance and if
 the computer can resolve ambiguity or slight mismatches in memory (which I
@@ -35,12 +42,31 @@ browser at `help.openai.com`, page updated 2026-08-31):
 Neither company reconciled better. **Both removed a store.**
 
 That is a real signal against our architecture and it should be stated
-plainly rather than explained away. The mitigating difference: OpenAI's two
-stores held *the same kind of fact by different capture routes*. Ours hold
-**different kinds of fact** — machine-observed state versus
-conversationally-asserted preference. That distinction is what makes §4
-possible, and it is the whole of our defence. If we cannot hold that line,
-the field's revealed preference is to not have two stores.
+plainly rather than explained away.
+
+**Revised 2026-09-10 after an in-house second read, which found the first
+draft's defence to be rationalisation.** That draft argued OpenAI's stores
+held "the same kind of fact by different capture routes" while ours hold
+different *kinds* of fact — but §4.1 below partitions by observed-versus-told,
+which *is* a capture route. The memo contradicted itself, and the defence has
+to be dropped.
+
+**The two better arguments:**
+
+**(a) The evidence indicts the curated core, not the split.** Mem0's and
+OpenAI's stores held *the same predicates* and *competed for the same prompt
+slot* at retrieval. Halbert and Haloysius do that in exactly one place —
+Packet 01 Phase B's curated core, which would render user facts into Halbert's
+`messages[0]` beside whatever Haloysius says about the same user. **Deleting
+the curated core (§6) IS the response to this evidence.** After that deletion
+the split is outside its blast radius.
+
+**(b) The costs are not comparable.** Halbert and Haloysius are two
+*deployables*, with two lifecycles, two distribution contracts (the
+subtractive two-dependency rule) and two ownership/privacy boundaries (the
+guest-persona ownership divide, the R9 fence). OpenAI's collapse was a
+data-model simplification with no organisational cost. Ours would delete a
+**product** boundary. That is the ground to ratify §8.1 on.
 
 ## 2. The evidence against automatic merging
 
@@ -124,41 +150,84 @@ true in unstated contexts), **behaviour-oscillation**, and
 **source-contradiction** — and only the third is the case we have been
 worrying about. A preference that *changed* is not a store being wrong.
 
-### 4.1 Make each fact single-writer
+### 4.1 Partition by acquisition mode — not by fact type
 
-Home Assistant has no contradiction problem because **each entity has exactly
-one writer**. Contradiction only exists once two sources can assert the same
-fact — and unlike the memory vendors, we control what writes what.
+**Revised 2026-09-10.** The first draft said "assign every fact *type* to
+exactly one store." The in-house read killed that, and the argument is the
+strongest thing in the review:
 
-Assign every fact *type* to exactly one store as sole writer:
+> §4.1's single-writer partition is enforced by a **classifier**, so it is not
+> single-writer. Home Assistant has one writer per entity because entity
+> identity is *structural* — the device writes its own entity. "My editor is
+> nvim" is host state if Halbert observed the process and a preference if the
+> user said it; **the same sentence yields either, and an extractor decides.**
+> A partition that depends on a fallible judgment call has the contradiction
+> problem back, one layer down.
 
-| Fact type | Sole writer |
+Correct, and fatal to the original step. Partition instead by **acquisition
+mode**, which is known with certainty at write time and needs no judgment:
+
+| Acquisition mode | Meaning | Store |
+|---|---|---|
+| **observed** | a probe, a log, a process table, a sensor | **Halbert** |
+| **asserted** | a sentence someone said | **Haloysius** |
+
+This is structural in the way Home Assistant's is structural: the *writer*
+knows which it is without inferring anything. Two consequences follow free.
+
+**Never flatten attribution at read time.** The prompt gets *"my log shows A
+(observed 03:12); Haloysius reports B (asserted Tuesday)"* — **two true
+statements that cannot contradict**, rather than "A vs B, pick one". This is
+also the only place §4.5's authority inversion can be countered: by
+deterministic framing text, never by a model judgment.
+
+**Step 0 needs a failure branch.** "Go look" is right, but when the probe
+cannot run — device gone, process exited, historical question — the memory
+answer must come back **stamped with its observation time**, not suppressed.
+Otherwise the best line in the design degrades to "I don't know" at exactly
+the moment memory is the only source there is.
+
+### 4.2 Declare a merge type per predicate
+
+**Revised 2026-09-10**, collapsing the first draft's §4.2 and §4.3. The review
+observed that if §4.1 and the functional-predicate list do their jobs, then
+for every *non*-functional predicate nothing is ever superseded — so
+`superseded_by` / `superseded_at` would be dead columns on the majority of
+rows, and trap 6 says a validity mark the read path does not honour is worse
+than none at all. So there is no general supersession vocabulary. There is one
+declaration:
+
+| Merge type | Behaviour |
 |---|---|
-| host state, uptime, what was observed on this machine | **Halbert** |
-| threads, receipts, recall signals, open loops | **Halbert** |
-| preferences, opinions, interests, identity | **Haloysius** |
+| **`LWW`** | Functional predicate. Recency-ordered **within a store**. The only place supersession exists. |
+| **`SET`** | Accumulates. Attributed on read. Never picked between. **The default.** |
+| **`ASK`** | The undecided zone (trap 9). Surfaced, never guessed. |
 
-Most of the overlap evaporates rather than being resolved, and partitioning
-is free. What remains after this step is the *real* problem, and it is small.
+**Unlisted defaults to `SET` and never silently picks.** That inverts the
+usual failure: an unclassified predicate accumulates harmlessly rather than
+being adjudicated by something that does not know it is guessing.
 
-### 4.2 Declare the functional predicates
+**Cross-store ordering is unsolved and is fenced off accordingly.** `max(serial)`
+orders within one store; across two independently-writing stores a later
+timestamp can derive from an *earlier* conversation. Until that is answered,
+**`LWW` orders within a store only, and cross-store disagreement on a
+functional key routes to `ASK`.**
 
-For the residue where both stores genuinely claim the same fact, maintain a
-**hand-written list of single-valued relations** — `current_host_os`,
-`primary_editor`, `current_display_name`. **Only those are ever superseded,
-and only by deterministic recency.** Everything else accumulates.
+### 4.3 Build the consumer before the column
 
-Cognee ships this, Mem0's #4956 names the same category ("mutable state"),
-Wikidata's ranks are the same idea under human curation. Three independent
-arrivals. It converts our hardest problem from an LLM judgement with a
-documented 41% production false-positive rate into a **dictionary lookup**.
+The review's best idea, and it answers §8.3 without a hand-maintained list:
 
-### 4.3 Everything else accumulates, and reconciles at read time
+**A disagreement meter.** Per-claim-key, the rate at which the two stores
+disagree — surfaced as (a) a health signal and (b) **the discovery mechanism
+for predicates behaving functionally in the data**, which are the candidates
+for `LWW`. So the answer to "who maintains the functional list" is *the data
+proposes, the founder ratifies.*
 
-Never delete, never overwrite. Supersede with `superseded_by` /
-`superseded_at`, default the retrieval filter to **current-only**, and surface
-superseded records only when the query is historical — with explicit dates, so
-the model is told which is no longer current rather than left to guess.
+It also satisfies trap 10 — this project's own recurring defect — by giving
+the conflict machinery a consumer whose job is **not** "resolve it". Build
+this before any provenance column, including the `ClaimStrength`
+generalisation: ordinal is the right shape, but adding the column before the
+retrieval filter reads it is the wrong order.
 
 ### 4.4 On "weight the computer more"
 
@@ -320,16 +389,35 @@ production caller, so this cannot be skipped silently.
 
 ## 8. Founder decisions needed
 
-1. **Does the two-store split hold**, given that both major vendors abandoned
-   theirs in 2026? The memo argues yes, because ours divides *kinds of fact*
-   rather than *capture routes* — but that is the load-bearing claim and it is
-   the founder's to accept or reject.
-2. **Approve the §4.1 partition table**, which is the actual boundary and
-   needs to be right.
-3. **Who maintains the §4.2 functional-predicate list**, and where does it
-   live?
-4. **Replace Packet 01 Phase B's curated core** with claim-keys-to-Haloysius,
-   per §6? This is one decision affecting both repos.
+**Revised 2026-09-10 after the in-house second read**
+(`REVIEW-DUAL-MEMORY-INHOUSE-2026-09-10.md`). Ordered; the first two are
+deletions, and each is small.
+
+1. **Ratify that the split holds** — on the *deployable and ownership* ground
+   in §1(b), **not** the "kinds of fact" argument, which was rationalisation
+   and has been withdrawn.
+2. **Replace the curated core** with ranked claim keys handed to Haloysius
+   (§6). This is the entire response to the vendor evidence, and it turns
+   `FD-22` from a checkpoint into a decision.
+3. **Approve the §4.1 acquisition-mode partition** — observed versus asserted
+   — replacing the fact-type table the first draft proposed.
+4. **Approve the §4.2 merge-type declaration**: `LWW` / `SET` / `ASK`,
+   defaulting to `SET`, with no supersession machinery outside `LWW`.
+5. **Approve building the disagreement meter first** (§4.3), before any
+   provenance column — including deferring the `ClaimStrength` generalisation
+   until a retrieval filter reads it.
+
+**Still open, and deliberately not decided here:**
+
+- **Whose namespace are the claim keys?** Decision 2 hands keys to Haloysius,
+  which makes Halbert the de-facto schema author. That may be wrong. It is the
+  one unresolved seam in the recommended path.
+- **Cross-store ordering for `LWW`** when both stores hold the same functional
+  predicate. Fenced off in §4.2 until answered.
+- **Fable's Q1 and Q3** — whether "merge" is the wrong verb entirely, and
+  whether there is a failure worse than the classifier problem. The in-house
+  read deliberately went unsent to Fable so the second opinion stays
+  unbiased.
 
 ## 9. Verification notes
 

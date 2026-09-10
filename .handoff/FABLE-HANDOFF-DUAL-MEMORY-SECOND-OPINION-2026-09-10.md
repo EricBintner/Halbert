@@ -162,29 +162,59 @@ Haloysius owns the fact.
 
 ## 6. What we actually want from you
 
-**Answer as many as your budget allows, in order. Question 1 alone is worth
-the credits.**
+**Narrowed 2026-09-10.** An in-house second read has since answered three of
+the five questions this section originally asked. **Only two remain, and both
+are the kind a literature search cannot produce.** Spend everything on these.
 
-1. **Is there a frame we have not considered?** Everything above treats this
-   as a *truth-reconciliation* problem and then tries to avoid reconciling.
-   Is that the wrong shape entirely? Is there a way to think about two
-   memories belonging to two entities that we have not reached for — from
-   distributed systems, cognitive science, organisational theory, law,
-   archival practice, anywhere?
+### Q1 — is the shape wrong? *(worth the whole budget on its own)*
 
-2. **Is the two-store split defensible at all**, given §4a? Our defence is
-   that ours divides *kinds of fact* where OpenAI's divided *capture routes*.
-   Is that a real distinction or are we rationalising?
+Everything in §4 and §5 treats this as a **truth-reconciliation** problem and
+then works very hard to avoid reconciling. Every mechanism we reached for —
+precedence, discounting, supersession, validity intervals — comes from
+database fusion and belief revision, and all of it assumes the job is to
+arrive at one true value.
 
-3. **What is the strongest argument against our own §5** that we have not
-   made? We are more worried about being wrong here than about being
-   incomplete.
+Is that the wrong shape entirely? Is there a way to think about **two memories
+belonging to two entities** that we have not reached for — from distributed
+systems, cognitive science, organisational theory, law, archival practice,
+diplomacy, anywhere? We are not asking for a better merge rule. We are asking
+whether "merge" is the wrong verb.
 
-4. **What should we research next** that the passes in §4 would not have
-   surfaced? Name a specific direction, not a topic.
+### Q3 — beat our best argument against ourselves
 
-5. **Anything in §5 that is more complexity than it is worth?** We would
-   rather delete a step than add one.
+The in-house read produced this, and we think it is strong. **We want a
+stronger one, or a reason this one is wrong.**
+
+> §5 step 1's single-writer partition is enforced by a **classifier**, so it
+> is not single-writer. Home Assistant has one writer per entity because
+> entity identity is *structural* — the device writes its own entity. But
+> "my editor is nvim" is host state if Halbert observed the process and a
+> preference if the user said it. **The same sentence yields either, and an
+> extractor decides.** A partition that depends on a fallible judgment call
+> has the contradiction problem back, one layer down.
+>
+> Proposed fix: partition by **acquisition mode** — *observed* (a probe, a
+> log, a process table) versus *asserted* (a sentence) — which is known with
+> certainty at write time and needs no classifier.
+
+Is the acquisition-mode fix sound, or does it just move the problem again? And
+is there a failure in §5 worse than this one that we have not seen?
+
+### Already answered in-house — do not spend credits here
+
+- **Q2 (is the split defensible):** yes, but not for the reason §1 gives. The
+  "kinds of fact vs capture routes" defence is rationalisation — §5 step 1
+  partitions by capture route, which is the thing it claims we don't do. The
+  real defence is that Halbert and Haloysius are two *deployables* with two
+  lifecycles, two distribution contracts and two ownership boundaries;
+  OpenAI's collapse cost them a data model, ours would delete a product
+  boundary.
+- **Q4 (what to research next):** cross-store ordering without a shared
+  clock; and Katsuno–Mendelzon *update* vs AGM *revision* — every operator we
+  cited is a revision operator, but a preference that changed is an update,
+  and conflating them is a known category error.
+- **Q5 (what to delete):** the general supersession vocabulary, folded into
+  the functional-predicate set.
 
 ## 7. Things you do not need to tell us
 
@@ -196,3 +226,79 @@ building a column with no consumer is this project's own recurring defect.
 
 The full memo is `.handoff/DESIGN-MEMORY-BOUNDARY-2026-09-10.md` if you have
 budget left. **You do not need it to answer §6.**
+
+---
+
+## Addendum — in-house second read, 2026-09-10 (after the first draft)
+
+A second in-house reader has answered §6 questions 2, 4 and 5; they are off
+your plate. **Spend everything on question 1, then 3.** So you do not spend
+credits re-deriving what we now hold, §7 grows, and §6 gets sharper.
+
+### 7b. Frames we have now reached ourselves
+
+Do not offer these back. Either name one we have not listed, or tell us
+**which of these, if any, changes what we *build* rather than how we
+*describe* it** — that answer alone is worth the credits.
+
+- **Complementary learning systems** (McClelland/McNaughton/O'Reilly 1995):
+  fast episodic teacher → slow semantic student, one-directional, interleaved
+  replay, episodic trace retained. §4b's "rises then degrades" is catastrophic
+  interference from fast consolidation; §5's claim-keys-to-Haloysius is this
+  arrow.
+- **Source monitoring** (Johnson, Hashtroudi & Lindsay 1993): the dominant
+  human failure is *misattribution*, not contradiction.
+- **Archival respect des fonds**: never interfile records of two creators;
+  build a *finding aid* across fonds. The cross-store artifact is a union
+  index of claim keys, never a merged fact.
+- **CRDT merge type per predicate** (LWW-register / MV-register / OR-set):
+  "conflict" is a *schema* property, not a data property; Dynamo hands both
+  siblings to the application because only it knows the cardinality.
+- **Nested belief**: Halbert never holds "the user prefers X", only "Haloysius
+  asserts the user prefers X" — which cannot contradict "I observed Y".
+  Flattening the modality *manufactures* the conflict.
+- **Distributed cognition** (Hutchins 1995): redundant, deliberately unmerged
+  representations are the error detector. Disagreement is a signal to
+  instrument, not a defect to resolve.
+- **Testimony / trier of fact**: resolve per *decision*, not per fact, and
+  never store the resolution.
+
+### 3b. The bar for question 3
+
+We now hold one argument against §5 ourselves: **single-writer by fact *type*
+is enforced by a classifier, so it is not single-writer** ("my editor is
+nvim" is host state if observed and a preference if told — same sentence). A
+partition by *acquisition mode* (observed vs asserted) is structural and
+certain at write time. §5 step 1 is being revised to that. Find something
+stronger, or tell us why that revision is itself wrong.
+
+### 6b. New questions, specific — after 1 and 3, in this order
+
+6. **Cross-store ordering.** §5 step 2 says "deterministic recency". Two
+   independently-writing stores share no clock; a Haloysius record stamped
+   later may derive from an earlier conversation. Observation time, write
+   time, or a per-claim-key version vector — which, and is there prior art
+   for two-source causal ordering that isn't a full vector-clock build?
+7. **Belief *update* vs *revision*** (Katsuno & Mendelzon 1991). Every merge
+   result in §4d is a revision operator (static world, my beliefs were
+   wrong). A preference that changed is *update* (the world changed). Are we
+   applying revision machinery to an update problem, and what breaks?
+8. **Who owns the claim-key namespace?** If Halbert defines the keys Haloysius
+   must speak, Halbert is the schema authority over Haloysius's facts — the
+   `MEM-01` line crossed by another door. A mediated schema owned by neither
+   (Lenzerini, PODS 2002)? A third artifact?
+9. **When the probe fails.** Step 0 says go look. When looking is impossible
+   (device unplugged, process exited, remote host) or the question is
+   historical, do we return the memory answer *stamped with its observation
+   time*, or refuse? Is there a name for "stale-with-timestamp beats silence"?
+10. **The undecided zone's UX.** Trap 9 justifies "ask, don't guess"; nothing
+    designs the ask. How do shipped three-outcome linkage systems surface the
+    clerical queue to an *end user* — batching, cadence, never mid-task?
+11. **Sycophancy contamination, measured.** §4.5 says Store B is poisoned at
+    the source; nobody has measured what fraction of Haloysius's persona
+    insights trace to a user assertion made in reply to a leading agent
+    question. Is there a published protocol we could run on our own store?
+
+### If credits run out
+
+Q1 (as sharpened in 7b) > Q3 (against the bar in 3b) > 6b.6 > 6b.7 > the rest.
