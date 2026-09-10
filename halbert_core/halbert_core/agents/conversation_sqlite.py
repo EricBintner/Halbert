@@ -2389,6 +2389,19 @@ class SqliteConversationStore:
                         "canonical rows are deleted (the index is rebuilt "
                         "from them at the next open)")
                 self._conn.execute(f"DELETE FROM messages WHERE id IN ({marks})", ids)
+                # A13-G7 (FD-19): skill telemetry is erased WITH the run.
+                # It records which skills a person's words matched, which
+                # is a fact about them -- and "forget me" that leaves it
+                # behind is a forget that did not happen. Keyed by
+                # run_id, which is the request_id the messages carry.
+                try:
+                    self._conn.execute(
+                        "DELETE FROM skill_events WHERE run_id = ?",
+                        (request_id,))
+                except sqlite3.DatabaseError as e:
+                    logger.warning(
+                        "forget_request: skill telemetry for %s could not "
+                        "be erased: %s", request_id, e)
         except Exception as e:
             logger.error("forget_request %s failed: %s", request_id, e)
             return 0

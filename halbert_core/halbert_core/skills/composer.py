@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import dataclasses
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from .parser import Skill, SkillSafety
@@ -239,6 +239,12 @@ def compose(skills: Sequence[Skill]) -> ComposedSkills:
             scope, lead.name,
         )
 
+    allowed_tools = merge_allowed_tools(ordered)
+    safety = merge_safety(ordered)
+    # A13 bug 6: the allowlist rides the SAFETY object, which is the one
+    # thing the turn actually installs into the classifier. Merged onto
+    # ComposedSkills alone it was a field with a warning and no gate.
+    safety = replace(safety, allowed_tools=allowed_tools)
     return ComposedSkills(
         skills=tuple(ordered),
         prompt=merge_prompts(ordered),
@@ -247,8 +253,8 @@ def compose(skills: Sequence[Skill]) -> ComposedSkills:
         knowledge_scope=knowledge_scope,
         trace_expand=any(s.trace_expand for s in ordered),
         tier=merge_tier(ordered),
-        safety=merge_safety(ordered),
-        allowed_tools=merge_allowed_tools(ordered),
+        safety=safety,
+        allowed_tools=allowed_tools,
         budget_appetite=merge_budget_appetite(ordered),
     )
 

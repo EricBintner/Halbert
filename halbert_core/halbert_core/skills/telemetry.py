@@ -129,6 +129,23 @@ def _turn_ids() -> Dict[str, Optional[str]]:
     return out
 
 
+def _telemetry_permitted() -> bool:
+    """Whether this turn's conversation may leave telemetry (FD-19).
+
+    Fails CLOSED: a predicate that cannot be read is not permission. The
+    thread manager owns the question -- the same one it already asks
+    before recording promotion evidence -- so there is one answer rather
+    than two that can disagree.
+    """
+    try:
+        from ..agents.threads import _conversation_is_halberts
+        return bool(_conversation_is_halberts())
+    except Exception as e:
+        logger.debug("skill telemetry suppressed (cannot tell whose "
+                     "conversation this is): %s", e)
+        return False
+
+
 def record_skill_event(skill_id: str, event: str, *,
                        session_id: Optional[str] = None,
                        run_id: Optional[str] = None,
@@ -144,6 +161,16 @@ def record_skill_event(skill_id: str, event: str, *,
                        event)
         return False
     if not skill_id:
+        return False
+    # A13-G7 (FD-19): telemetry is suppressed entirely when the
+    # conversation is not Halbert's. A guest fronting, or a private-mode
+    # turn, would otherwise leave a durable record of which skills their
+    # words matched -- evidence about a person who never agreed to be
+    # measured, in a table their "forget me" did not reach.
+    if not _telemetry_permitted():
+        logger.debug(
+            "skill event %s for %s suppressed: this conversation is not "
+            "Halbert's", event, skill_id)
         return False
     try:
         store = _store()

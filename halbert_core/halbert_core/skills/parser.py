@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import logging
 import os
+import math
 import re
 import threading
 import time
@@ -148,6 +149,41 @@ def new_skill_id() -> str:
     return "sk_" + "".join(reversed(chars))
 
 
+#: The hard ceiling on a description AT PARSE TIME (A13 bug 1, fix-first
+#: row 25). Distinct from the 60-char routing budget below, which is a
+#: discipline about usefulness: this one is about not materialising a
+#: five-million-character string. A downloaded pack with nine chained
+#: YAML alias lists allocates gigabytes the moment ``str()`` touches the
+#: aliased node, and ``SkillRegistry.from_disk`` is where that lands --
+#: at daemon start, on a file the operator merely dropped in a folder.
+MAX_PARSED_DESCRIPTION_CHARS = 4096
+
+
+def _parsed_description(value: Any) -> str:
+    """The description, bounded and refused before it is stringified.
+
+    Order is load-bearing. The type check comes FIRST: ``str()`` on an
+    aliased YAML node is the allocation, so checking the length of the
+    result would be checking it after the damage. A list or a mapping is
+    not a description whatever it expands to.
+    """
+    if value is None:
+        return ""
+    if not isinstance(value, (str, int, float, bool)):
+        raise SkillParseError(
+            f"description must be a single line of text, not "
+            f"{type(value).__name__} (an aliased YAML node expands before "
+            f"it can be measured)"
+        )
+    text = str(value).strip()
+    if len(text) > MAX_PARSED_DESCRIPTION_CHARS:
+        raise SkillParseError(
+            f"description is {len(text)} characters; the parse ceiling is "
+            f"{MAX_PARSED_DESCRIPTION_CHARS}"
+        )
+    return text
+
+
 def validate_description(description: str) -> Optional[str]:
     """The create-time hard rejection for over-budget descriptions.
 
@@ -229,10 +265,16 @@ class SkillSafety:
     protected_paths: Tuple[str, ...] = ()
     protected_services: Tuple[str, ...] = ()
     blocked_commands: Tuple[str, ...] = ()
+    #: A13 bug 6 (fix-first row 26): the composed tool allowlist. It was
+    #: merged, warned about ("all tools denied") and enforced NOWHERE --
+    #: an empty intersection logged that line and then ran with every
+    #: tool available. ``None`` means no skill restricted tools.
+    allowed_tools: Optional[Tuple[str, ...]] = None
 
     def is_empty(self) -> bool:
         return not (
-            self.destructive_requires_approval
+            self.allowed_tools is not None
+            or self.destructive_requires_approval
             or self.protected_paths
             or self.protected_services
             or self.blocked_commands
@@ -523,6 +565,16 @@ def parse_skill(text: str, *, name: Optional[str] = None,
         multiplier = float(reader.get("budget_multiplier", 1.0))
     except (TypeError, ValueError) as e:
         raise SkillParseError(f"budget_multiplier must be a number: {e}") from e
+    # A13 bug 2: ``float()`` accepts "nan" and "inf". A
+    # ``budget_multiplier: .nan`` parsed cleanly and then raised out of
+    # ContextAssembler.assemble on every matching turn -- a failure
+    # landing nowhere near the file that caused it. A budget is a finite
+    # positive number or it is not a budget.
+    if not math.isfinite(multiplier) or multiplier <= 0:
+        raise SkillParseError(
+            f"budget_multiplier must be a finite positive number, "
+            f"not {reader.get('budget_multiplier')!r}"
+        )
 
     # CC writes `allowed-tools` with a hyphen (§1.2: "accepted as CC writes
     # it"); the Halbert spelling maps onto the same tuple. CC writes the
@@ -578,7 +630,7 @@ def parse_skill(text: str, *, name: Optional[str] = None,
 
     return Skill(
         name=skill_name,
-        description=str(meta.get("description") or "").strip(),
+        description=_parsed_description(meta.get("description")),
         aliases=_as_tuple(reader.get("aliases")),
         id=skill_id,
         state=state,

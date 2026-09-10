@@ -11,6 +11,7 @@ from enum import Enum
 from dataclasses import dataclass
 from typing import Dict, List, Set, Pattern, Optional
 import fnmatch
+import os
 import re
 import logging
 from pathlib import Path
@@ -90,6 +91,42 @@ def _command_segments(command: str) -> List[str]:
         tokens[0] = tokens[0].rsplit("/", 1)[-1]
         segments.append(" ".join(tokens))
     return segments
+
+
+def _normalise_path(value: str) -> str:
+    """One canonical form for a path, for comparison only (A13 bug 5).
+
+    Expands ``~``, makes it absolute, collapses ``.`` and ``..``, and
+    resolves symlinks where it can. Comparison only: nothing is opened
+    with the result, and a path that cannot be resolved (it does not
+    exist yet -- a write target usually does not) still gets the textual
+    normalisation, which is what catches ``/./tank/data/x``.
+    """
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    try:
+        expanded = os.path.abspath(os.path.expanduser(text))
+    except Exception:
+        return text
+    try:
+        return os.path.realpath(expanded)
+    except OSError:
+        return expanded
+
+
+def _within_path(candidate: str, root: str) -> bool:
+    """Whether ``candidate`` is ``root`` or sits inside it.
+
+    Segment-aware, so ``/bootleg`` is not inside ``/boot`` -- the
+    over-match the refuter named as the other half of this bug.
+    """
+    if not candidate or not root:
+        return False
+    root = root.rstrip(os.sep) or os.sep
+    if candidate == root:
+        return True
+    return candidate.startswith(root + os.sep)
 
 
 def _platform_sensitive_dirs() -> tuple:
@@ -404,6 +441,28 @@ class ToolSafetyFramework:
         if safety is None:
             return None
 
+        # A13 bug 6 (fix-first row 26): the composed allowlist is
+        # ENFORCED. It was merged and warned about -- "all tools denied"
+        # in the log -- and then every tool ran anyway. A skill that says
+        # which tools it may use is stating a boundary, and a boundary
+        # nothing checks is a sentence in a file.
+        allowed = getattr(safety, "allowed_tools", None)
+        if allowed is not None and tool_name not in allowed:
+            named = ", ".join(sorted(allowed)) or "(none)"
+            logger.warning(
+                "BLOCKED by the active skills' tool allowlist: %s "
+                "(permitted: %s)", tool_name, named)
+            return SafetyCheckResult(
+                risk_level=RiskLevel.CRITICAL,
+                allowed=False,
+                requires_confirmation=False,
+                reason=(
+                    f"The active skills permit only {named}; {tool_name} is "
+                    f"not among them"
+                ),
+                matched_rule="skill.allowed_tools",
+            )
+
         command = str(args.get("command", "") or "").strip()
         path = str(args.get("path", "") or "").strip()
         # The directory the command runs in is part of what it does:
@@ -427,10 +486,33 @@ class ToolSafetyFramework:
 
         needs_approval = bool(getattr(safety, "destructive_requires_approval", False))
 
-        for pattern in getattr(safety, "protected_paths", ()) or ():
-            hit = (path and (fnmatch.fnmatch(path, pattern) or path.startswith(pattern.rstrip("*"))))
+        # A13 bug 5 (fix-first row 26): the comparison was against the RAW
+        # argument. ``write_file path=/./tank/data/x``, a relative path, or
+        # a symlink alias all missed a skill-declared protected path --
+        # and unlike the base classifier's SENSITIVE_PATHS (whose
+        # substring test happens to cover /boot), a skill declares paths
+        # nothing else guards. Normalised on both sides before comparing.
+        normalised_path = _normalise_path(path)
+        normalised_cwd = _normalise_path(cwd)
+        for raw_pattern in getattr(safety, "protected_paths", ()) or ():
+            pattern = raw_pattern
+            norm_pattern = _normalise_path(str(raw_pattern).rstrip("*"))
+            # The bare ``startswith(pattern.rstrip("*"))`` that used to
+            # be here is gone: it made ``/opt/bootleg`` match a rule about
+            # ``/opt/boot``, which is the over-match half of A13 bug 5.
+            # ``_within_path`` is segment-aware, and an operator who
+            # means "everything under here" writes the glob.
+            hit = bool(path and (
+                fnmatch.fnmatch(path, pattern)
+                or (normalised_path and norm_pattern
+                    and _within_path(normalised_path, norm_pattern))
+            ))
             if not hit and cwd:
-                hit = fnmatch.fnmatch(cwd, pattern) or cwd.startswith(pattern.rstrip("*"))
+                hit = bool(
+                    fnmatch.fnmatch(cwd, pattern)
+                    or (normalised_cwd and norm_pattern
+                        and _within_path(normalised_cwd, norm_pattern))
+                )
             if not hit and command:
                 hit = fnmatch.fnmatch(command, f"*{pattern}*") or pattern.rstrip("/*") in command
             if hit:

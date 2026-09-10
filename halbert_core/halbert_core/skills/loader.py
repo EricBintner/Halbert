@@ -126,6 +126,24 @@ def load_skills_from_dir(directory: Path) -> List[Skill]:
             logger.warning("skipping unparseable skill: %s", e)
         except OSError as e:
             logger.warning("skipping unreadable skill %s: %s", path, e)
+        except (KeyboardInterrupt, SystemExit):
+            # The operator's own Ctrl-C, and a deliberate exit. A
+            # per-file guard that swallowed these would be a guard
+            # against the person running the machine.
+            raise
+        except BaseException as e:
+            # A13-G1: one bad file never costs the plane. This used to
+            # catch only SkillParseError and OSError, so a file that
+            # raised anything else -- a MemoryError from a YAML alias
+            # bomb, a RecursionError from a self-referential anchor --
+            # took the whole directory walk with it, and every skill on
+            # the machine went with the one somebody dropped in a folder.
+            logger.error(
+                "skipping skill %s: it failed to parse in a way the parser "
+                "did not anticipate (%s: %s). The other skills in %s are "
+                "unaffected.",
+                path, type(e).__name__, e, directory,
+            )
     return skills
 
 
