@@ -169,9 +169,19 @@ Commit `e510262f`, under FD-3.
 
 **A16-G1 + bug 1**: `compact_boundaries` shipped with a schema, an index and no writer. `continuity/rotation.py` extracts rather than composes — the exact command, path and error string — and a test greps the module for a model so one cannot arrive by accident. The guards (**A16-G6**, **A16-G10**) each refuse with a reason, because a rotation that quietly does not happen is indistinguishable from one that happened and lost everything. The store side is one transaction. **A16-G3** `context_included` has both halves.
 
+### R-12 Phase C — branch summaries, and a hole Phase B opened
+
+Commit `b017e65e`.
+
+**A16-G7**: leave the Samba subject for the scanner-share subject, come back six turns later, and the reopened thread's history is its last twelve rows — the detour and what it decided are nowhere in the transcript. What existed was an ephemeral one-turn note that stored nothing and a recall chip carrying `{thread_id, title, date, status, at}`: a pointer, not a sentence. `move_leaf` had no message insert at all, and its own docstring said T2 would add one.
+
+`continuity/branch_summary.py` builds both rows by template (FD-3's rule and the tiered-sensitivity rule are the same rule here), and the titles go through `threads.py`'s `_fence` rather than a fourth private copy of the sanitizer this tree already has three of. The crossing is keyed on the last **turn** in the thread being left, not the last row — one choice that does both jobs the design asked of the key: a retried crossing writes only the half that is missing, and a switch loop with nothing said in between writes nothing at all. `context_included` is 0 on the departure row and 1 on the return row, per §2.3.
+
+Also closed: `search_snippets` joins `messages_fts` and skips hidden rows, and rotation hides every covered turn — so **this branch's own Phase B** made a compacted thread's scrolled-away history unfindable, because the summary row was written with raw SQL and there are no triggers on that table. `_index_message_fts` puts `append_message`'s three rules in one place and `write_compact_boundary` calls it.
+
 ## Left
 
-**R-12 Phase C** (A16-G7, T2 branch summaries) and the turn-loop wiring of the Phase B rotation writer. Both want `agents/threads.py`, which is R-12 Phase A's file and belongs to the sonnet batch (`fix/remediation-sonnet-batch-1`) — nothing here touches it, so the two branches merge cleanly. Wire it after Phase A lands.
+**The turn-loop wiring**, for both halves of R-12: the rotation writer has no caller in the turn loop, and the branch-summary minting has no caller because `move_leaf` still has none. Both callers live in `agents/threads.py` (`_reopen_thread`, `end_turn`), which is R-12 Phase A's file and belongs to the sonnet batch (`fix/remediation-sonnet-batch-1`) — nothing here touches it, so the two branches merge cleanly and the wiring is one commit after Phase A lands. Naming it is the point: this is the cross-cutting defect shape the whole pass exists to stop recreating ("module ported, consumer never wired"), and it is recorded here rather than left to be rediscovered.
 
 Also left, in each packet's own tail: R-09's A17-G19 (FD-10 says record, do not build); R-01's A07-G11 (FD-1 says no auto-continue) and A07-G8; R-11's remaining phases C–E and R-14's phases C–D, which are the lower-severity gaps in those packets rather than their fix-first rows.
 
