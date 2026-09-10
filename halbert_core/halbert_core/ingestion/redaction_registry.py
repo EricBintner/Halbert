@@ -21,12 +21,21 @@ early return.
 from __future__ import annotations
 
 import json
+import re
+import threading
 import urllib.parse
 from collections import OrderedDict
-from typing import List, Optional, Tuple
+from typing import List, Optional, Pattern, Tuple
 
 REDACTION_PLACEHOLDER = "<secret>"
-MIN_SECRET_VARIANT_LEN = 4
+
+#: The shortest value worth registering (A03-G6, FD-15). The origin's
+#: bound, and for the origin's reason: an exact-value match on four
+#: characters blanks out ordinary prose, so a short acked value is
+#: protected by the PATTERN pass rather than by this one. Lowering this
+#: does not buy coverage; it buys false positives that teach people to
+#: ignore the placeholder.
+MIN_SECRET_VARIANT_LEN = 6
 
 
 class SecretVariantRegistry:
@@ -36,11 +45,45 @@ class SecretVariantRegistry:
         self._max = max_entries
         self._variants: "OrderedDict[str, None]" = OrderedDict()
         self._sorted_cache: Optional[Tuple[str, ...]] = None
+        self._pattern_cache: Optional[Pattern[str]] = None
+        # A03: the registry is written from request threads (a config
+        # egress ack, an MCP token resolve) and read from the turn's. The
+        # OrderedDict and its caches were unguarded.
+        self._lock = threading.RLock()
 
     @staticmethod
     def _variants_of(value: str) -> List[str]:
-        forms = {value, urllib.parse.quote(value), json.dumps(value)[1:-1]}
-        return sorted(f for f in forms if len(f) >= MIN_SECRET_VARIANT_LEN)
+        """Every form this value can wear on the way out, RAW LAST.
+
+        A03-G4: four encoders, not one. ``quote`` with its default
+        ``safe='/'`` is what a URL path builder produces and was the only
+        form registered; ``quote(safe="")`` is what a browser's
+        ``encodeURIComponent`` produces (it percent-encodes the slash);
+        ``quote_plus`` writes a space as ``+``, which is what a form
+        encoder produces; and the JSON-escaped form is what a serialized
+        capture holds. A secret egressed through any of the last three
+        used to wear a shape the registry had never seen. Registering
+        all four costs at most three extra entries per secret and covers
+        every encoder that actually appears on an egress path.
+
+        A03 bug 2: the order is load-bearing. This returned its forms
+        SORTED, so insertion order was alphabetical and FIFO eviction
+        could drop the RAW value while keeping a percent-encoded variant
+        of it -- and the raw form is the one most likely to appear.
+        Encoded forms first, raw last, so the raw form is the newest
+        entry and survives eviction longest.
+        """
+        encoded = {
+            urllib.parse.quote(value),            # URL path builder
+            urllib.parse.quote(value, safe=""),   # encodeURIComponent
+            urllib.parse.quote_plus(value),       # form encoding
+            json.dumps(value)[1:-1],              # serialized capture
+        }
+        encoded.discard(value)
+        forms = [f for f in sorted(encoded) if len(f) >= MIN_SECRET_VARIANT_LEN]
+        if len(value) >= MIN_SECRET_VARIANT_LEN:
+            forms.append(value)
+        return forms
 
     def register(self, value: str) -> None:
         """Register a secret's exact value and its encoded variants.
@@ -51,14 +94,16 @@ class SecretVariantRegistry:
         """
         if not value or len(value) < MIN_SECRET_VARIANT_LEN:
             return
-        for form in self._variants_of(value):
-            if form in self._variants:
-                self._variants.move_to_end(form)
-            else:
-                self._variants[form] = None
-                if len(self._variants) > self._max:
-                    self._variants.popitem(last=False)
-        self._sorted_cache = None
+        with self._lock:
+            for form in self._variants_of(value):
+                if form in self._variants:
+                    self._variants.move_to_end(form)
+                else:
+                    self._variants[form] = None
+                    if len(self._variants) > self._max:
+                        self._variants.popitem(last=False)
+            self._sorted_cache = None
+            self._pattern_cache = None
 
     def _sorted_forms(self) -> Tuple[str, ...]:
         """Registered forms, longest first.
@@ -67,15 +112,40 @@ class SecretVariantRegistry:
         shorter prefix of itself. Cached: rebuilding a sorted view on every
         redaction call would put the cost on the hot MCP response path.
         """
-        if self._sorted_cache is None:
-            self._sorted_cache = tuple(sorted(self._variants, key=len, reverse=True))
-        return self._sorted_cache
+        with self._lock:
+            if self._sorted_cache is None:
+                self._sorted_cache = tuple(
+                    sorted(self._variants, key=len, reverse=True))
+            return self._sorted_cache
+
+    def _alternation(self) -> Optional[Pattern[str]]:
+        """One compiled longest-first alternation over every form.
+
+        A03 bug 3: replacement used to be a SEQUENCE of ``str.replace``
+        calls, so a form could match inside the placeholder an earlier
+        form had just written -- the ``<secret>`` self-collision -- and
+        the output was mangled in a way that could reveal where a value
+        had been. One alternation and one pass cannot collide with its
+        own output: ``re.sub`` never re-scans what it has written.
+        Longest-first so a shorter form never claims a prefix of a
+        longer one.
+        """
+        with self._lock:
+            if self._pattern_cache is None:
+                forms = self._sorted_forms()
+                if not forms:
+                    return None
+                self._pattern_cache = re.compile(
+                    "|".join(re.escape(f) for f in forms))
+            return self._pattern_cache
 
     def __contains__(self, text: str) -> bool:
-        return text in self._variants
+        with self._lock:
+            return text in self._variants
 
     def __len__(self) -> int:
-        return len(self._variants)
+        with self._lock:
+            return len(self._variants)
 
     def redact_text(self, text: str) -> str:
         """Replace every registered form found in ``text`` with the placeholder.
@@ -83,13 +153,12 @@ class SecretVariantRegistry:
         An empty registry returns the text untouched in O(1) — the common
         case on the MCP response path before anything has been egress-acked.
         """
-        forms = self._sorted_forms()
-        if not forms:
+        if not text:
             return text
-        for form in forms:
-            if form in text:
-                text = text.replace(form, REDACTION_PLACEHOLDER)
-        return text
+        pattern = self._alternation()
+        if pattern is None:
+            return text
+        return pattern.sub(REDACTION_PLACEHOLDER, text)
 
 
 _GLOBAL: Optional[SecretVariantRegistry] = None

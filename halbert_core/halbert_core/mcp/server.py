@@ -1315,8 +1315,20 @@ class MCPServer:
                 # reachable — which is now, because Frigate cameras became
                 # real CV sources.
                 result = mcp_response(gate_response(tool_name, handler(tool_args)))
+                # A03-G1: the SERIALIZED text is re-scanned. ``default=str``
+                # is a second stringifier running downstream of the
+                # redaction pass -- it is what turned an object the pass
+                # could not see into text, and that text used to leave
+                # unexamined. redact_result now coerces before redacting,
+                # so this is the belt on those braces: whatever json.dumps
+                # produces gets one more look before it crosses.
+                from ..security.result_redaction import rescan_serialized
                 return self._success(req_id, {
-                    "content": [{"type": "text", "text": json.dumps(result, default=str)}],
+                    "content": [{
+                        "type": "text",
+                        "text": rescan_serialized(
+                            json.dumps(result, default=str)),
+                    }],
                 })
 
             if method == "ping":

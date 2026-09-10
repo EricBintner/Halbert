@@ -81,7 +81,7 @@ caller's internal copy retains the raw value if it held one.
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Optional
 
 from ..ingestion.redaction import _is_secret_key, redact_text
 from ..ingestion.redaction_registry import get_global_registry
@@ -102,34 +102,106 @@ _MCP_FIELD_NAMES = frozenset({
 })
 
 
-def _redact_value(value: Any) -> Any:
+def redact_string(text: str) -> str:
+    """The two passes every string gets, in the order that works.
+
+    A03-G2: the REGISTRY runs first. Pattern redaction rewrites parts of
+    what it matches, and an exact-value registry cannot match a value
+    that has already been partly rewritten -- so running patterns first
+    could silently disarm the exact half. The registry is exact-value, so
+    running it first costs the pattern pass nothing.
+    """
+    return redact_text(get_global_registry().redact_text(text))
+
+
+def rescan_serialized(text: str) -> str:
+    """One more look at text that has already been serialized (A03-G1).
+
+    ``json.dumps(..., default=str)`` is a SECOND stringifier running
+    downstream of the redaction pass: it is what turns an object the
+    pass could not see into text, and that text used to leave
+    unexamined. ``redact_result`` coerces before redacting now, so this
+    is the belt on those braces.
+
+    The REGISTRY only, deliberately. The pattern pass rewrites
+    ``key: value`` shapes -- including in prose mode -- and run over a
+    whole JSON document that produces text which is no longer JSON, so
+    the caller's own reply becomes unparseable. Every string INSIDE the
+    structure has already had both passes from ``_redact_value``; what
+    is left for this one is exact-value forms in text that only exists
+    after serialization, and exact-value replacement is safe inside a
+    JSON string literal.
+    """
+    if not text:
+        return text
+    try:
+        return get_global_registry().redact_text(text)
+    except Exception:  # pragma: no cover - defensive
+        return text
+
+
+def _coerce(value: Any) -> Any:
+    """Turn a non-JSON-native value into the text it will serialize as.
+
+    A03-G1 + bug 1 (the pass's fix-first row 7). This function used to
+    return anything that was not a str, dict or list UNTOUCHED -- and the
+    MCP dispatcher then ran ``json.dumps(result, default=str)`` AFTER the
+    redaction pass. So ``{'blob': b'password=hunter2'}``, a
+    ``PurePosixPath``, an Enum or any object with a ``__str__``
+    serialized its secret raw, downstream of the one place that was
+    supposed to catch it.
+
+    Numbers, booleans and ``None`` stay themselves: they are structure,
+    not text, and stringifying them would change the payload's shape for
+    no gain.
+    """
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        return bytes(value).decode("utf-8", "replace")
+    return str(value)
+
+
+def _redact_value(value: Any, _seen: Optional[set] = None) -> Any:
     """Recursively redact every string in a nested structure.
 
-    Two passes on strings, in this order: ``redact_text()`` (key-shape and
-    pattern redaction) first, then the secret variant registry (exact-value,
-    so it is safe after key-based redaction). The registry holds the
-    encoded forms of values that were deliberately egressed through the
-    acknowledged path — see ``ingestion.redaction_registry``.
+    Strings take the two passes above. Containers recurse. Anything else
+    is COERCED to the text it would serialize as and then redacted --
+    see ``_coerce``.
 
     Note the acked ``value`` field in ``_redact_dict`` deliberately does NOT
     reach this branch (it is passed through raw) — the registry protects
     every other path, never the one that was acked.
 
+    A03-G3: ``_seen`` is the circular-reference guard. A payload that
+    refers to itself (a tool result carrying its own context, a graph)
+    recursed until the stack gave out, which on the MCP path is a crash
+    at the egress boundary rather than a redaction.
+
     Returns a new structure; the input is not mutated.
     """
+    if _seen is None:
+        _seen = set()
     if isinstance(value, str):
-        redacted = redact_text(value)
-        return get_global_registry().redact_text(redacted)
+        return redact_string(value)
+    if isinstance(value, (dict, list, tuple)):
+        marker = id(value)
+        if marker in _seen:
+            return "<circular>"
+        _seen = _seen | {marker}
     if isinstance(value, dict):
-        return _redact_dict(value)
+        return _redact_dict(value, _seen)
     if isinstance(value, list):
-        return [_redact_value(v) for v in value]
+        return [_redact_value(v, _seen) for v in value]
     if isinstance(value, tuple):
-        return tuple(_redact_value(v) for v in value)
-    return value
+        return tuple(_redact_value(v, _seen) for v in value)
+    coerced = _coerce(value)
+    if isinstance(coerced, str):
+        return redact_string(coerced)
+    return coerced
 
 
-def _redact_dict(d: dict) -> dict:
+def _redact_dict(d: dict, _seen: Optional[set] = None) -> dict:
     """Redact a dict, handling both MCP payload shapes and config-key shapes.
 
     Two rules, checked in order:
@@ -188,7 +260,7 @@ def _redact_dict(d: dict) -> dict:
                 result[k] = _SECRET_MARKER
                 continue
 
-        result[k] = _redact_value(v)
+        result[k] = _redact_value(v, _seen)
 
     return result
 
