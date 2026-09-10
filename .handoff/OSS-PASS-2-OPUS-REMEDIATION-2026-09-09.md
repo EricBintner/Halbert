@@ -86,6 +86,108 @@ Two environmental failures to know about, neither caused by this work:
 
 **REPORTED, per the packet's STOP condition — A11-G12's `os_reauth` leg cannot be minted.** `dashboard/auth.py` validates a session credential and a Host header; nothing in the tree performs an OS re-authentication (no LocalAuthentication, no polkit, no sudo challenge). `SurfaceReceipt.for_session` therefore always records `os_reauth=False`, and a grant requiring a live re-auth cannot be recorded until that handler lands. That is the correct state rather than a gap — the packet forbids accepting a caller-supplied `authn` string as an interim, and a promise the code cannot keep is worse than a missing one. Nothing in production records grants yet (`accept_profile` has no route caller), so nothing regresses today; **the OS re-auth handler is what unblocks first-run acceptance**, and it is named here so it cannot be forgotten.
 
+### R-05 — redaction registry, Tier-2 choke point, error-text hygiene
+
+| Phase | Commit | What |
+|---|---|---|
+| A+B | `a270d3cc` | Every encoded form registered; nothing crosses uncoerced |
+| C+D+E | `09d7a5e6` | MCP credentials registered; logs redacted; one scrub seam |
+
+- **A03-G6 (FD-15)** min length 4 → 6; **bug 2** the raw form was evicted first because `_variants_of` returned its forms sorted, so insertion order was alphabetical; **A03-G4** one encoder was registered where four are needed (`quote` default, `quote(safe="")`, `quote_plus`, JSON-escaped); **bug 3** replacement was a sequence of `str.replace` calls, so a form could match inside the placeholder an earlier one had just written — one compiled longest-first alternation, one `re.sub`, which cannot collide with its own output. The registry is locked: it is written from request threads and read from the turn's.
+- **A03-G1 + bug 1** (fix-first row 7): `redact_result` returned anything that was not a str/dict/list untouched, and the MCP dispatcher then ran `json.dumps(result, default=str)` *after* the pass. Coerce first; re-scan the serialized text with the registry only (the pattern pass rewrites `key: value` shapes and would leave the reply unparseable). **A03-G2** registry before patterns. **A03-G3** circular-reference guard. **bug 5** the confirmation dialog's args preview showed an MCP call's arguments verbatim.
+- **A03-G7** MCP bearer tokens were never registered, so the one class of secret this process resolves on every request was invisible to the exact-value pass. **A03-G8** `JsonFormatter` wrote whatever it was handed, and there are several hundred `logger.warning(f"...")` call sites.
+
+### R-06 — echo guard, display projection, turn digest
+
+| Phase | Commit | What |
+|---|---|---|
+| A | `09d7a5e6` | `EchoGuard.redact` + the shared seam (landed with R-05) |
+| B–E | `261ab8b2` | Digest truth and bounds; history projected like live |
+
+- **A05-G1 + bug 1** (row 8): the guard matched on a normalised window then called `registry.redact_text`, which replaces whole forms — so a reply carrying the first 85 characters of a 98-character acked value matched, changed nothing, and was delivered while the log said `redacted: true`. `EchoGuard.redact` replaces maximal RUNS, joined with `\s+` so a re-wrapped echo is caught too.
+- **A05-G4** the seam existed twice, the copy commented as "mirrors" the original. **R-05 Phase E** both were "non-fatal by construction" and returned the text RAW on failure.
+- **A05-G9 + bug 6** the digest recorded successes only, and `success` is True for a command that returned 1 — "I restarted sshd" was spoken for a restart that failed. **G8** forty files meant forty spoken lines. **G10** a binary target rendered as its own length in characters of noise. **bug 7** the tail and the audit rollup bypassed the egress seam.
+- **A05-G3 (FD-16)**, **G5 + bug 5**, **G6**, **G7**, **G11**, **G15**: the display seam gains the pattern pass; the cap stops cutting mid-line and names both cuts; a capped block carries structured facts; the budget is per-payload not per-string; the seam fails closed; chat input is NFC-normalised with NUL refused.
+- **A05-G4 (history half)**: a live `tool_complete` crossed the wire projected and a HISTORY read came straight out of SQLite, so a value redacted when it happened was delivered raw on the next page load.
+- Recorded, not changed (**A05 bug 2**): the streaming draft is emitted before the guard by design.
+
+### R-10 — speech egress
+
+Commit `f82cbc5a`, under FD-4.
+
+- **A10-G5** (row 9): the satellite path collected `response_chunk` events — raw model output that bypasses the module-invocation parser, the echo guard, the engine's word cap and `tts_quality` — and read the concatenation aloud on the one screenless surface. It takes the committed `speech_segment` text now; the chunk fallback goes through the same pipeline. **The STOP condition asked whether `response_complete` is observable there: it is, and carries no content, so the committed text comes from the speech segments and no event-stream contract changed.**
+- **A10-G1** reasoning and control tokens were spoken as words. **G3 + bug 1** the fence scanner was a non-greedy regex matching any closer, so an unclosed fence counted as nothing and a four-backtick container closed on the first inner three. **G12** the shaping facts were recorded nowhere.
+- **A10-G7** `get_modality_prompt_builder` appears exactly once in the tree, at its own `def`, so the engine's budget block was never reached: every voice reply was written at essay length and cut mid-sentence at 12–35 words. The prompt now carries the budget; the cap itself is untouched (FD-4) and no engine file is edited. **The `AreaContext(multi_occupant=True)` STOP condition did not fire** — the hint reads the resolved policy's own `max_spoken_words`.
+- **A10-G6** barge-in told the model nothing, and the commonest reason a person interrupts is that the answer had already gone wrong.
+- **A14-G4/G7 (summarizer halves)**, **A14 bug 3**, **A10 bug 3**: `require_local` on a secure turn, one retry excluding a failed pick, an off-loop form, and a docstring that stops claiming a seam that has never run — with the arithmetic pinned (600-char gate behind a 12–35-word cap), so a later change to either number is a change someone has to look at.
+
+### R-07 — execute_code hardening
+
+Commit `7b3910a3`, under FD-17 and FD-18. F-1's in-process model is accepted: no child process, no sandbox.
+
+- **A04-G1 + bug 2** (row 12): the wait loop ran `while not done.is_set()` with the grace loop AFTER it, so an `except BaseException` retry wrapper, an `input()` or an `Event().wait()` made `run_script` never return — the turn hung holding the turn lock.
+- **A04-G2** (row 11) the dispatch hook was never cleared. **G3** (row 13) the spill was unbounded and every byte counted as activity. **bug 1** (row 34) the AST gate missed `import os as o` and `from os import system`. **bug 4 + G11** two overlapping runs corrupted each other's `sys.stdout`. **bug 6** `max_tool_calls=0` became 25.
+- **A04-G5/G6** `__name__` was `"__halbert_script__"` so no `if __name__ == "__main__":` block ever fired; a raising script lost its partial stdout. **G8** stderr was not captured. **G9** a user stop ended the turn but not the script. **G4** stdout/stderr/error/traceback go through the shared redaction core — the TEXT fields only, because redacting the whole dict rewrote `spill_path` into `<token>.txt`. **G7** the schema names the stub set.
+
+### R-04 — conversation store and state ledger hardening
+
+Commit `1d9497f7`.
+
+**The fixture came first, and it reproduces.** `_corrupt_fts_for_test` raised a MOCKED exception, so every corruption test exercised the handler and none exercised SQLite. Dropping the `messages_fts_data` shadow table produces `sqlite3.DatabaseError('vtable constructor failed')` deterministically — the `CREATE VIRTUAL TABLE IF NOT EXISTS` still succeeds, so the open looks fine and the first USE raises.
+
+- **A08-G2 + bug 3** (row 14): that is the PARENT class and the store caught only `OperationalError`, so it escaped, `_conn` went None, and the store was bricked on that open and every reopen — the conversation was never recorded again. The breadcrumb is read at the TOP of the migration now, not after the DDL that runs against the index it distrusts.
+- **A08-G1**: the predicate matches the origin, deliberately narrow — "vtable constructor failed" is a missing shadow table, which a rebuild fixes. **Recorded (FD-11's other half): `sqlite_errorcode` does not exist before Python 3.11 and this venv is 3.10.9, so that arm of any classifier is dead here.**
+- **A08-G3 + bug 7** (row 15) `rebuild_fts` had no caller and `search_snippets` returned `[]` while degraded — permanently. **G7/G8** an unopenable store said only `connected is False`; a zeroed or NOT-A-DB file is moved aside, never deleted. **bug 2** (row 23) `add_open_loop`/`close_open_loop` committed outside the lock. **bug 5** (row 24) `forget_request` had no error handling at all. **G12 + bug 4** the default path was a module constant computed at import; the pytest guard fires only when nothing has redirected the data directory. **A16-G4** a newer schema is refused rather than migrated backwards.
+- **A08-G5 (FD-11)**: SQLite 3.39.4 is in the WAL-reset range. Said once at the first store open; the journal mode is NOT changed, because doing that would quietly alter the durability of the operator's existing database.
+
+### R-02 — claims, admission graph, guest routes, voice provenance
+
+Commit `b41f3626`.
+
+- **A12 bug 4** (row 27): the loopback predicate accepted the hostname strings `'localhost'` and `'testclient'`, and it fronts eleven of the fifteen guest routes including the camera. Four suites relied on that string and now map the TestClient host to local explicitly — the audit's own remedy — while the tests that want a REMOTE caller keep working on real addresses.
+- **A12 bugs 5 and 6** (row 28): `persona_id` went into a sibling home's URL PATH raw and a remote home's listing supplies it; and the `home:` namespace was never fenced from operator-chosen node ids. **A12-G1** the walk did not stop at the first BLOCK. **A12-G4** SKIP and OBSERVE dispatched nowhere.
+- **A09 bug 4** `weakest_claim([])` raised out of the claim ladder. **bug 5** (row 29) a match whose profile lookup failed kept its speaker_id, which is what stamps a verification claim. **bug 6** one utterance could become two turns — two answers, and for a command two executions.
+
+### R-11 — skills plane
+
+Commit `c1d844e5`.
+
+- **A13 bug 1** (row 25) the YAML alias bomb: the type check comes first and the bound second, because measuring the result is measuring it after the damage. **bug 2** `float()` accepts nan/inf, and a `.nan` multiplier raised out of `ContextAssembler.assemble` on every matching turn. **A13-G1** the loader caught two exception types, so one bad file cost every skill on the machine (`KeyboardInterrupt`/`SystemExit` deliberately re-raised).
+- **A13 bug 5** (row 26) protected paths were compared raw, and the bare `startswith` made `/opt/bootleg` match a rule about `/opt/boot`. **bug 6** `allowed_tools` was merged, warned about, and enforced nowhere.
+- **A13-G7 (FD-19)** telemetry is erased with the run and suppressed when the conversation is not Halbert's; the permission check fails closed and asks the thread manager the same question it already asks before recording promotion evidence.
+
+### R-14 — memory promotion follow-through
+
+Commit `8448280b`.
+
+- **A01-G2 + bug 2** (row 21): "decay multiplies ranking" was a no-op — the field is a snapshot and both callers passed 0.0, so a key recalled once sixty days ago ranked as if recalled today. Derived at rank time, calibrated against the origin's 0.25-at-60-days figure.
+- **A01 bug 6 + G5** (row 35): a guest's recall persisted evidence about them that "forget me" could not reach. Both closed, and `ERASURE_LIMITS` states the residual honestly (signals a PREVIOUS process recorded are keyed by claim and outlive their run id).
+
+### R-12 Phase B — deterministic compaction v0
+
+Commit `e510262f`, under FD-3.
+
+**A16-G1 + bug 1**: `compact_boundaries` shipped with a schema, an index and no writer. `continuity/rotation.py` extracts rather than composes — the exact command, path and error string — and a test greps the module for a model so one cannot arrive by accident. The guards (**A16-G6**, **A16-G10**) each refuse with a reason, because a rotation that quietly does not happen is indistinguishable from one that happened and lost everything. The store side is one transaction. **A16-G3** `context_included` has both halves.
+
 ## Left
 
-R-05, R-06, R-07, R-10, R-04, R-02, R-11, R-14 and R-12 Phases B/C, in the plan's dispatch order (R-05 before R-06/R-07/R-10; R-04 before R-11/R-12/R-14; R-08 is done, which unblocks R-02).
+**R-12 Phase C** (A16-G7, T2 branch summaries) and the turn-loop wiring of the Phase B rotation writer. Both want `agents/threads.py`, which is R-12 Phase A's file and belongs to the sonnet batch (`fix/remediation-sonnet-batch-1`) — nothing here touches it, so the two branches merge cleanly. Wire it after Phase A lands.
+
+Also left, in each packet's own tail: R-09's A17-G19 (FD-10 says record, do not build); R-01's A07-G11 (FD-1 says no auto-continue) and A07-G8; R-11's remaining phases C–E and R-14's phases C–D, which are the lower-severity gaps in those packets rather than their fix-first rows.
+
+## Two decisions waiting on the founder
+
+**FD-20 — the six bundled SKILL.md description trims.** The packet's STOP condition is explicit: this is founder-authored copy, to be proposed and not invented. Measured on this branch (limit 60):
+
+| Skill | Now | Current text | Proposed trim |
+|---|---|---|---|
+| `config-ops` | 72 | Configuration files — what they say, what changed, and what reads them | *Configuration files — what they say, what changed, what reads them* (69) |
+| `frigate-ops` | 82 | Frigate NVR, camera streams, object tracking, Coral Edge TPU, and MQTT integration | *Frigate NVR: camera streams, object tracking, Coral TPU, MQTT* (58) |
+| `home-ops` | 80 | Home Assistant, smart home devices, room lighting, climate, and spatial presence | *Home Assistant: devices, lighting, climate, and room presence* (59) |
+| `security-ops` | 61 | SSH, authentication, permissions, certificates, and hardening | *SSH, authentication, permissions, certificates, hardening* (57) |
+| `service-ops` | 65 | Services and daemons — start, stop, enable, and why they failed | *Services and daemons — start, stop, enable, why they failed* (58) |
+| `understated` | 76 | Says what was noticed in one plain sentence and lets it carry its own weight | *Says what was noticed in one plain sentence, and stops* (53) |
+
+Every proposal removes words only; none introduces a term the original did not use. `config-ops` still exceeds 60 with words alone — it needs a real edit, not a trim, which is why it is not made here.
+
+**The OS re-auth handler (A11-G12's residual).** Named above under R-08: it is what unblocks first-run acceptance, and until it exists no grant requiring a live re-auth can be recorded.
