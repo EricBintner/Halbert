@@ -41,7 +41,11 @@ from ...persona.admission import (
     Gate,
     GateEffect,
     IngressDecision,
+    REASON_TEXT,
+    allow,
+    block,
     decide_ingress,
+    deny_payload,
 )
 from ...persona.guest_announce import (
     EVENT_TYPE as _EVENT_TYPE,
@@ -125,42 +129,15 @@ class BecomeRequest(BaseModel):
 # identity claims and the warrant layer grades legitimacy; neither is
 # chained behind the other.
 
-# Human words for the machine-readable codes; the payload carries both.
-_REASON_TEXT = {
-    "not_local_admin": "This control is available only from the machine it configures.",
-    "peer_token_missing": "A pairing token is required for this route.",
-    "guest_already_fronting": "Another persona is already fronting here.",
-    "no_such_session": "No live guest session with that id.",
-    "session_owned_by_other_peer": "That session was offered by another peer.",
-    "no_guest_fronting": "No guest persona is fronting.",
-    "no_session_to_forget": "No guest is fronting; say which session to forget.",
-    "no_gate_list_configured": "This route has no admission policy configured.",
-}
-
-
-def _allow(gate_id: str, phase: str, reason: str = "ok", **facts) -> Gate:
-    return Gate(
-        id=gate_id, phase=phase, effect=GateEffect.ALLOW,
-        allowed=True, reason_code=reason, facts=facts,
-    )
-
-
-def _block(
-    gate_id: str, phase: str, reason: str, http_status: int, **facts
-) -> Gate:
-    return Gate(
-        id=gate_id, phase=phase, effect=GateEffect.BLOCK,
-        allowed=False, reason_code=reason,
-        facts={"http_status": http_status, **facts},
-    )
-
-
-def _deny_payload(decisive_gate: str, reason_code: str) -> Dict[str, Any]:
-    return {
-        "reason_code": reason_code,
-        "decisive_gate": decisive_gate,
-        "message": _REASON_TEXT.get(reason_code, reason_code),
-    }
+# R-01 Phase E (A12-G6): the reason-text registry and these three
+# helpers moved to persona/admission.py, beside the decision they render,
+# so the talk door answers in the same shape instead of hand-copying it.
+# The names are kept as module-local aliases: they are used a few dozen
+# times below, and the gate builders read better without a prefix.
+_REASON_TEXT = REASON_TEXT
+_allow = allow
+_block = block
+_deny_payload = deny_payload
 
 
 # Gate builders. Each sees the raw request, the authenticated peer (the

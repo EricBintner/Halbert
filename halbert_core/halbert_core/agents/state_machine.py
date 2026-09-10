@@ -270,6 +270,19 @@ class AgentStateMachine:
     # spends no measurable time waking up.
     STOP_POLL_SECONDS: float = 0.05
 
+    # A07-G10: how long a turn may make no progress at all before the
+    # liveness watchdog ends it. TURN_LOCK_TIMEOUT_S bounds a *waiter*;
+    # this bounds the *holder*, which nothing did -- a turn wedged on an
+    # un-returning await held the lock for the life of the process and
+    # every later message queued behind a badge that never changed.
+    # Generous on purpose: a long command that prints nothing still
+    # stamps at start and completion, so this is the "nothing at all
+    # happened" threshold, not a step budget. A turn parked on a
+    # confirmation is exempt -- waiting on a person is not wedging.
+    TURN_STALL_SECONDS: float = 900.0
+    #: How often the watchdog samples the turn's liveness clock.
+    STALL_POLL_SECONDS: float = 5.0
+
     # How many times an inline thread meta-tool may re-enter PLANNING in one
     # turn. Meta-tools are handled inline and deliberately do not raise
     # loop_count, so max_loops never ends a PLANNING→PLANNING chain, and
@@ -858,8 +871,19 @@ class AgentStateMachine:
                 # machine is stranded mid-state and the next turn cannot
                 # start.
                 yield await self._transition(AgentState.PLANNING)
-                async for event in self._drive():
-                    yield event
+                # A07-G10: the liveness watchdog for THIS turn, bound to
+                # the generation it stamped at start. Started here rather
+                # than at the top of process() so it never watches a turn
+                # that is still assembling its context, and torn down in
+                # the finally below so it cannot outlive the turn.
+                watchdog = asyncio.ensure_future(
+                    self._turn_watchdog(session_id, self._turn_generation)
+                )
+                try:
+                    async for event in self._drive():
+                        yield event
+                finally:
+                    watchdog.cancel()
             finally:
                 # end_turn before the state reset: the status is derived
                 # from where the machine stopped (spec §4.7, §12).
@@ -1477,6 +1501,8 @@ class AgentStateMachine:
             # Execute handler for current state
             handler = self._get_handler()
             if handler:
+                # A07-G10: handler entry is progress.
+                self._touch_activity(self.current_state.value.lower())
                 try:
                     async for event in handler():
                         yield event
@@ -2120,6 +2146,55 @@ class AgentStateMachine:
             ]
             return decision, events
         return decision, None
+
+    def _touch_activity(self, note: str) -> None:
+        """Stamp the running turn's liveness clock (A07-G10).
+
+        One clock, on the turn's own context: handler entry, tool start
+        and completion, and every stream chunk. The watchdog reads this
+        and nothing else -- a second derived clock is how "stalled" and
+        "working" start disagreeing.
+        """
+        ctx = self.ctx
+        if ctx is not None:
+            ctx.touch(note)
+
+    async def _turn_watchdog(self, session_id: str, generation: int) -> None:
+        """End a turn that has stopped making progress (A07-G10).
+
+        Bound to the generation it observed: the abort goes through the
+        same single-shot ``TurnActivity`` claim a stop uses, so a sampler
+        that wakes late can only ever end the turn it was watching, never
+        a later one under the same session id.
+
+        A turn paused on a confirmation is not stalled -- a person may
+        take a quarter of an hour to answer, and waiting is not wedging.
+        """
+        while True:
+            await asyncio.sleep(self.STALL_POLL_SECONDS)
+            ctx = self.ctx
+            if ctx is None or ctx.session_id != session_id:
+                return
+            if self.current_state == AgentState.AWAITING_CONFIRMATION:
+                # Not stalled, and not this watchdog's turn to end: the
+                # pause has its own teardown path.
+                return
+            if ctx.idle_seconds() < self.TURN_STALL_SECONDS:
+                continue
+            note = ctx.last_activity_note
+            idle = ctx.idle_seconds()
+
+            def _abort() -> bool:
+                logger.error(
+                    "turn liveness watchdog: session=%s idle=%.0fs "
+                    "last_activity=%r -- ending the turn",
+                    session_id, idle, note,
+                )
+                self._flag_cancelled(session_id)
+                return True
+
+            self.turn_activity.claim(generation, _abort)
+            return
 
     async def _model_call(self, coro):
         """Await a model request, abandoning it if the turn is stopped.
@@ -3682,6 +3757,7 @@ class AgentStateMachine:
         """
         bus = get_terminal_event_bus()
         queue = bus.subscribe(self.ctx.session_id)
+        self._touch_activity(f"tool started: {tool_name}")
         task = asyncio.ensure_future(self.tools.execute(
             tool_name,
             tool_args,
@@ -3724,6 +3800,9 @@ class AgentStateMachine:
                     continue
                 if getter in done:
                     payload = getter.result()
+                    # Output from a running command is progress: a long
+                    # build is not a wedged turn.
+                    self._touch_activity(f"tool output: {tool_name}")
                     self._note_terminal_payload(payload, execution_id)
                     event = self._terminal_event(
                         self.ctx.session_id, payload, execution_id
@@ -3746,6 +3825,7 @@ class AgentStateMachine:
                     yield event
 
             sink.append(await task)
+            self._touch_activity(f"tool completed: {tool_name}")
         finally:
             bus.unsubscribe(self.ctx.session_id, queue)
             if not task.done():
@@ -4290,6 +4370,7 @@ class AgentStateMachine:
                         self.ctx.session_id, **selected[-1]
                     )
                 chunk_count += 1
+                self._touch_activity("responding: stream chunk")
                 logger.debug(f"Chunk {chunk_count}: {repr(chunk[:50])}...")
                 self.ctx.response_chunks.append(chunk)
                 yield StreamEvent.response_chunk(self.ctx.session_id, chunk)

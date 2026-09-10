@@ -1664,15 +1664,28 @@ if FASTAPI_AVAILABLE:
         # modality that resolves to no registered channel is refused in
         # the admission module's shape (fail closed, never silently
         # treated as typed).
+        # R-01 Phase E (A12-G6): the door produces an IngressDecision like
+        # the guest routes do -- "dropped at gate X, reason Y", walked
+        # through the one gate list and rendered by the one deny payload,
+        # rather than an ad-hoc raise whose body was hand-copied in
+        # agents/channels.py.
         from ...agents.channels import ChannelRefused, resolve_channel
+        from ...persona.admission import ADMISSION_DISPATCH, admit, allow, deny_payload
         try:
             channel = resolve_channel(request.modality)
+            ingress_gates = [allow("channel_registry", "ingress", "channel_resolved")]
         except ChannelRefused as refusal:
             logger.info(
                 "channel ingress refused: modality=%r (%s)",
                 request.modality, refusal.reason_code,
             )
-            raise HTTPException(status_code=400, detail=refusal.payload())
+            ingress_gates = [refusal.gate()]
+        decision = admit(ingress_gates)
+        if decision.admission != ADMISSION_DISPATCH:
+            raise HTTPException(
+                status_code=400,
+                detail=deny_payload(decision.decisive_gate, decision.reason_code),
+            )
 
         # R-01 Phase A: STAMP BEFORE THE VERB. This block used to sit
         # ~100 lines below the mid-turn branch, so an arrival that
