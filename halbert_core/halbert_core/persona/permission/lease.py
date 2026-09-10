@@ -42,8 +42,11 @@ Fail-closed rules built in:
 """
 from __future__ import annotations
 
+import logging
 import os
+import re
 import threading
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from types import MappingProxyType
@@ -58,6 +61,7 @@ from .consent import (
     ConsentRecord,
     consent_state,
     latest_for,
+    mandatory_ttl_days,
 )
 from .effective import (
     _HALT_REQUIRED,
@@ -79,6 +83,8 @@ from .effective import (
 )
 from .halt import HaltReason, HaltState
 from .os_grant import DEFAULT_OS_GRANTS, OsGrantTable
+
+logger = logging.getLogger("halbert.permission.lease")
 
 __all__ = [
     "DEFAULT_REGISTRY",
@@ -291,6 +297,26 @@ class LeaseRegistry:
             count += 1
         return count
 
+    def revoke_capability(
+        self, capability: str, reason_code: str, *,
+        by: str = "", surface: str = "",
+    ) -> int:
+        """Revoke every open lease for one capability (A11-G3).
+
+        Narrowing consent reached the ledger and nothing else: a camera
+        lease opened under a grant the owner then revoked kept running,
+        because no open lease was ever told. "Failing the next call is
+        not enough; the loop must end" was already this module's rule --
+        it simply had no trigger. This is the trigger.
+        """
+        count = 0
+        for lease in self.open_leases():
+            if lease.capability != capability:
+                continue
+            lease.revoke(reason_code, by=by, surface=surface)
+            count += 1
+        return count
+
     def __contains__(self, lease: object) -> bool:
         with self._lock:
             return lease in self._open
@@ -327,6 +353,12 @@ class Lease:
         "_reason", "_registry", "_requested_scope", "_revoked",
         "_revoked_by", "_revoked_reason", "_stop_event", "_actor",
         "_capability", "_turn_id",
+        # A11-G8: the session ceiling this lease was opened under, and
+        # the monotonic clock it is measured on (a seam for the test;
+        # wall time would let a clock change extend a lease).
+        "_max_session_seconds", "_opened_monotonic", "_monotonic",
+        # A11-G11: what has to be undone when the lease ends.
+        "_cleanups",
     )
 
     def __init__(self, *, _mint: object = None, **fields) -> None:
@@ -351,6 +383,10 @@ class Lease:
         self._revoked = False
         self._revoked_reason = ""
         self._revoked_by = ""
+        self._monotonic = time.monotonic
+        self._opened_monotonic = time.monotonic()
+        self._max_session_seconds = fields.get("max_session_seconds")
+        self._cleanups: list = []
 
     # -- identity ------------------------------------------------------
 
@@ -405,6 +441,19 @@ class Lease:
                 f"the {self._capability} lease is closed; a closed lease has "
                 f"no loop to check"
             )
+        # A11-G8: the session ceiling the grant declared. Checked here
+        # because check() is what every loop calls -- an expiry nobody
+        # reads is the same as no expiry, which is what
+        # ``max_session_lease`` was: written on the Present profile's
+        # continuous-screen row and read by nothing.
+        if (
+            self._max_session_seconds is not None
+            and not self._revoked
+            and self._monotonic() - self._opened_monotonic
+            > self._max_session_seconds
+        ):
+            self.revoke(
+                REASON_NOT_GRANTED, by="lease", surface="max_session_lease")
         if self._revoked:
             raise Denied(
                 self._capability,
@@ -490,17 +539,55 @@ class Lease:
 
     # -- lifecycle --------------------------------------------------------
 
+    def retain(self, cleanup) -> None:
+        """Register something to undo when this lease ends (A11-G11).
+
+        A capture that must be deleted when the lease closes, a temp
+        file, a device handle: the lease is the thing that knows when
+        the work is over, so it is the thing that should be told. Runs
+        on close whether the lease ended normally or was revoked.
+        """
+        if self._closed:
+            raise RuntimeError(
+                f"the {self._capability} lease is closed; there is nothing "
+                f"left to retain against"
+            )
+        self._cleanups.append(cleanup)
+
+    def _run_cleanups(self) -> None:
+        """Run every retained cleanup, in registration order.
+
+        One failing cleanup must not strand the others -- the whole point
+        is that the retained things go away.
+        """
+        cleanups, self._cleanups = list(self._cleanups), []
+        for cleanup in cleanups:
+            try:
+                cleanup()
+            except Exception as e:
+                logger.warning(
+                    "lease cleanup for %s failed: %s", self._capability, e)
+
     def close(self) -> None:
         """Deregister the lease — the indicator row goes when the work
         ends. Idempotent."""
         if self._closed:
             return
         self._closed = True
+        self._run_cleanups()
         if self._registry is not None:
             self._registry.deregister(self)
 
     def __enter__(self) -> "Lease":
-        self.check()
+        try:
+            self.check()
+        except BaseException:
+            # A11 bug 4: check() raises for a lease revoked between the
+            # mint and the `with`, and the lease is ALREADY registered --
+            # so the indicator kept showing an open lease that nothing
+            # would ever close. A failed enter closes what it opened.
+            self.close()
+            raise
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:
@@ -508,8 +595,76 @@ class Lease:
 
 
 # ---------------------------------------------------------------------------
+# The narrowing hook (A11-G3)
+# ---------------------------------------------------------------------------
+
+#: Which registry a narrowing decision reaches. The consent store cannot
+#: import the lease module's DEFAULT_REGISTRY without a cycle, and more
+#: importantly the wiring should be able to say WHICH registry is live
+#: (tests hold their own). Unset means the default.
+_REVOCATION_REGISTRY: Optional[LeaseRegistry] = None
+
+
+def set_revocation_registry(registry: Optional[LeaseRegistry]) -> None:
+    """Point the narrowing hook at a registry (None restores the default)."""
+    global _REVOCATION_REGISTRY
+    _REVOCATION_REGISTRY = registry
+
+
+def notify_consent_narrowed(
+    capability: str, *, reason_code: str = REASON_NOT_GRANTED,
+    by: str = "", surface: str = "",
+) -> int:
+    """Tell the open leases that a capability's consent narrowed (A11-G3).
+
+    Called by the consent store's writer on any decision that is not a
+    grant. Returns how many leases were revoked, so the caller's audit
+    line can say what the narrowing actually stopped.
+    """
+    registry = _REVOCATION_REGISTRY or DEFAULT_REGISTRY
+    count = registry.revoke_capability(
+        capability, reason_code, by=by, surface=surface)
+    if count:
+        logger.warning(
+            "consent narrowed for %s: revoked %d open lease(s)",
+            capability, count,
+        )
+    return count
+
+
+# ---------------------------------------------------------------------------
 # require() — the only mint.
 # ---------------------------------------------------------------------------
+
+
+def _max_session_seconds(scope: Optional[Scope]):
+    """The grant's ``max_session_lease``, in seconds, or None (A11-G8).
+
+    Accepts the ISO-8601 duration the profile rows are written in
+    (``PT30M``) and a plain number of seconds. An unparseable value is
+    treated as ABSENT rather than as a bound the code invented -- and
+    said in the log, because a ceiling nobody can read is a ceiling that
+    is not being applied.
+    """
+    if scope is None:
+        return None
+    raw = scope.provenance.get("max_session_lease")
+    if raw in (None, ""):
+        return None
+    if isinstance(raw, (int, float)):
+        return float(raw)
+    text = str(raw).strip().upper()
+    match = re.fullmatch(r"PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?", text)
+    if match and any(match.groups()):
+        hours, minutes, seconds = (int(g or 0) for g in match.groups())
+        return float(hours * 3600 + minutes * 60 + seconds)
+    try:
+        return float(text)
+    except ValueError:
+        logger.warning(
+            "max_session_lease %r is not a duration this code can read; "
+            "the lease is unbounded", raw)
+        return None
 
 
 def require(
@@ -625,6 +780,25 @@ def require(
     if not decision.allowed:
         raise Denied.from_decision(decision)
 
+    # A11-G10: a capability with a mandatory TTL may not be held under a
+    # grant that has none. A biometric template is a body measurement,
+    # not a preference: the expiry is part of what makes the grant
+    # legible, so a grant missing one is refused at use rather than
+    # quietly living forever.
+    ttl_days = mandatory_ttl_days(capability)
+    if ttl_days is not None and granted_record is not None:
+        if not granted_record.expires_at:
+            raise Denied(
+                capability,
+                REASON_NOT_GRANTED,
+                decisive_axis=AXIS_CONSENT,
+                detail=(
+                    f"{capability} may only be held under a grant that "
+                    f"expires (the design's {ttl_days}-day ceiling); this "
+                    f"grant records no expiry"
+                ),
+            )
+
     # A11-G1 + G9 (FD-6): an ask-every-use grant needs THIS use approved.
     # The grant says the owner is willing to be asked; the receipt says
     # they were asked and said yes, about this artefact, once.
@@ -667,6 +841,7 @@ def require(
 
     target_registry = registry if registry is not None else DEFAULT_REGISTRY
     lease = Lease(
+        max_session_seconds=_max_session_seconds(granted_scope),
         _mint=_MINT,
         capability=capability,
         decision=decision,

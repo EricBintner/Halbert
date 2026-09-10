@@ -477,6 +477,26 @@ class ConsentStore:
             "consent decision recorded: %s %s (seq %d)",
             capability, decision.value, event.seq,
         )
+        # A11-G3: a narrowing reaches the OPEN LEASES, not just the
+        # ledger. A camera lease opened under a grant the owner then
+        # revoked used to keep running -- the record said DENIED and the
+        # capture continued, because nothing told the lease. Only a
+        # non-grant narrows; a fresh grant does not disturb work already
+        # authorised. Best-effort: a hook failure must never make the
+        # decision itself unrecordable, and the record is already
+        # committed by this point.
+        if decision is not ConsentDecision.GRANTED:
+            try:
+                from ..persona.permission.lease import notify_consent_narrowed
+                notify_consent_narrowed(
+                    capability,
+                    by=principal.id or principal.kind,
+                    surface=surface,
+                )
+            except Exception as e:  # pragma: no cover - defensive
+                log.warning(
+                    "consent narrowing recorded for %s but open leases "
+                    "could not be revoked: %s", capability, e)
         return record
 
     @staticmethod

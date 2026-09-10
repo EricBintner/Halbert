@@ -77,6 +77,20 @@ ASK_OFF = "off"
 ASK_EVERY_USE = "every_use"
 ASK_DISPOSITIONS = frozenset({ASK_OFF, ASK_EVERY_USE})
 
+#: A11-G10: capabilities whose grant MUST carry a TTL, and how long the
+#: design allows. A biometric template is not a preference -- it is a
+#: body measurement, and a grant to hold one has to expire whether or not
+#: anyone remembers to set an expiry. A grant recorded without one is
+#: refused at use rather than silently living forever.
+MANDATORY_TTL_DAYS = {
+    "sensor.voiceprint": 400,
+}
+
+
+def mandatory_ttl_days(capability: str):
+    """The mandatory TTL for a capability in days, or None."""
+    return MANDATORY_TTL_DAYS.get(capability)
+
 
 @dataclass(frozen=True)
 class Principal:
