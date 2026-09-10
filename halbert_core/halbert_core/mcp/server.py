@@ -26,6 +26,7 @@ from __future__ import annotations
 import argparse
 import inspect
 import json
+from dataclasses import dataclass
 import logging
 import os
 import re
@@ -592,6 +593,32 @@ def _get_autonomy_gate():
         return None
 
 
+def run_coroutine_blocking(coro):
+    """Run one coroutine to completion from synchronous code (A17 bug 5).
+
+    The Home Assistant handlers called ``asyncio.run`` directly, which
+    raises ``RuntimeError`` when a loop is already running on the calling
+    thread. MCP-04 -- whether this server is hosted inside the
+    dashboard's loop or run standalone -- is an open topology question,
+    so the handlers have to work either way rather than betting on one.
+
+    No loop running: ``asyncio.run``, exactly as before. A loop running:
+    a worker thread with its own loop, and this call blocks on it. The
+    handler was synchronous either way, so nothing gains or loses
+    concurrency here -- what changes is that the hosted mode stops
+    raising.
+    """
+    import asyncio
+    import concurrent.futures
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(asyncio.run, coro).result()
+
+
 def _tool_ha_get_entities(params: Dict[str, Any]) -> Dict[str, Any]:
     """List HA entities, optionally filtered by domain."""
     import asyncio
@@ -607,7 +634,7 @@ def _tool_ha_get_entities(params: Dict[str, Any]) -> Dict[str, Any]:
             finally:
                 await client.close()  # REV-03 F12
 
-        states = asyncio.run(_get_and_close())
+        states = run_coroutine_blocking(_get_and_close())
         if domain:
             states = [s for s in states if s.get("entity_id", "").startswith(f"{domain}.")]
         # Strip attributes that might contain sensitive data
@@ -641,7 +668,7 @@ def _tool_ha_get_entity_state(params: Dict[str, Any]) -> Dict[str, Any]:
             finally:
                 await client.close()  # REV-03 F12
 
-        state = asyncio.run(_get_and_close())
+        state = run_coroutine_blocking(_get_and_close())
         return mcp_response({
             "entity_id": entity_id,
             "state": state.get("state", ""),
@@ -708,7 +735,7 @@ def _tool_ha_call_service(params: Dict[str, Any]) -> Dict[str, Any]:
             finally:
                 await client.close()  # REV-03 F12 — was leaked per MCP tool call
 
-        result = asyncio.run(_exec_and_close())
+        result = run_coroutine_blocking(_exec_and_close())
         return mcp_response({
             "executed": True,
             "result": result,
@@ -1254,6 +1281,15 @@ class MCPServer:
                 # three substring checks for every non-camera tool name,
                 # the cached wiring verdict only for camera-named ones.
                 _assert_camera_gate_wired(tool_name)
+                # A17-G9: the door's policy gate. One function, one call
+                # site, ahead of every handler — the question "may this
+                # door do that?" now has a place where it is asked.
+                verdict = mcp_tool_policy(tool_name, tool_args)
+                if not verdict.allowed:
+                    logger.warning(
+                        "MCP door refused tool '%s' (%s)",
+                        tool_name, verdict.reason_code)
+                    return self._error(req_id, -32000, verdict.message)
                 # The egress boundary is enforced HERE, at the single choke
                 # point, not left to each tool author: every tool result
                 # passes through mcp_response() whether or not the handler
@@ -1279,8 +1315,20 @@ class MCPServer:
                 # reachable — which is now, because Frigate cameras became
                 # real CV sources.
                 result = mcp_response(gate_response(tool_name, handler(tool_args)))
+                # A03-G1: the SERIALIZED text is re-scanned. ``default=str``
+                # is a second stringifier running downstream of the
+                # redaction pass -- it is what turned an object the pass
+                # could not see into text, and that text used to leave
+                # unexamined. redact_result now coerces before redacting,
+                # so this is the belt on those braces: whatever json.dumps
+                # produces gets one more look before it crosses.
+                from ..security.result_redaction import rescan_serialized
                 return self._success(req_id, {
-                    "content": [{"type": "text", "text": json.dumps(result, default=str)}],
+                    "content": [{
+                        "type": "text",
+                        "text": rescan_serialized(
+                            json.dumps(result, default=str)),
+                    }],
                 })
 
             if method == "ping":
@@ -1377,6 +1425,114 @@ class MCPServer:
 # source still routes handlers through the gate. An edit that drops the
 # gate turns the next camera-tool registration/dispatch into a loud
 # failure instead of a silent image-data egress path.
+
+# ---------------------------------------------------------------------------
+# The door's policy gate (A17-G9, inside the founder-ruled B6 audit)
+# ---------------------------------------------------------------------------
+
+# A17-G9, and what the audit actually found. The eighteen tools this
+# server exposes do not run through ``ToolSafetyFramework`` the way the
+# agent's own tools do -- but the four that change something are not
+# ungated: ``run_scanner`` requires ``confirm=True``, ``approve_proposal``
+# requires ``confirm`` plus a typed phrase for a critical proposal,
+# ``ha_call_service`` runs through the AutonomyGate, and
+# ``set_autonomy_level`` requires the escalation phrase. Each author
+# wrote their own ask.
+#
+# What was missing is a PLACE where the question is asked at all: nothing
+# said which tools this door serves, nothing recorded what gates each
+# one, and a tool added to TOOL_HANDLERS tomorrow would dispatch with
+# whatever gate its author remembered -- or none. The gap is the absent
+# declaration, not an absent lock.
+#
+# So this is the declaration, enforced at the one dispatch choke point:
+# every served tool names its disposition, a state-changing tool names
+# the gate that guards it, and a tool nobody has classified is refused.
+# It deliberately does not re-implement or duplicate the per-tool asks
+# above -- two asks for one action is how a confirmation stops meaning
+# anything. Raising this door's reach means writing an ask, not widening
+# a list.
+
+#: Tools this door serves outright: they report, they change nothing.
+_MCP_READ_ONLY_TOOLS = frozenset({
+    "get_vitals", "get_discoveries", "get_findings", "get_proposals",
+    "get_proactive_events", "get_being_config", "get_config_value",
+    "get_config_structure", "get_config_diff", "get_config_dependencies",
+    "search_knowledge", "ha_get_entities", "ha_get_entity_state",
+    "get_autonomy_level",
+})
+
+#: Tools that change something, each mapped to the gate that guards it.
+#: The value is the audit's record: what a reviewer should read to check
+#: the claim. A write tool absent from this table cannot be dispatched.
+_MCP_GATED_WRITE_TOOLS = {
+    "run_scanner": "confirm=True on the call",
+    "approve_proposal": "confirm=True, plus the typed phrase for a critical proposal",
+    "ha_call_service": "the AutonomyGate's per-entity evaluation",
+    "set_autonomy_level": "the typed escalation phrase",
+}
+
+
+@dataclass(frozen=True)
+class MCPToolDecision:
+    """Whether this door serves one tool call, and why."""
+
+    allowed: bool
+    reason_code: str
+    message: str = ""
+    #: For a served write tool: what guards it. Empty otherwise.
+    gated_by: str = ""
+
+
+def mcp_tool_policy(tool_name: str, tool_args: Any) -> MCPToolDecision:
+    """The single gate every ``tools/call`` passes through (A17-G9).
+
+    Deliberately one function with one call site, and deliberately not a
+    restructuring of ``TOOL_HANDLERS``: B6 is an audit, and rebuilding
+    the handler registry is different work with a different risk.
+
+    A tool this module does not name is refused. That is the whole point:
+    an unnamed tool is one nobody classified, and unwritten policy
+    denies. A tool that changes something and names no gate is refused
+    the same way -- the table is where a new tool's author is made to
+    say what asks first.
+    """
+    name = str(tool_name or "")
+    if name in _MCP_READ_ONLY_TOOLS:
+        return MCPToolDecision(allowed=True, reason_code="ok")
+    gate = _MCP_GATED_WRITE_TOOLS.get(name)
+    if gate:
+        return MCPToolDecision(allowed=True, reason_code="ok", gated_by=gate)
+    return MCPToolDecision(
+        allowed=False,
+        reason_code="mcp_tool_unclassified",
+        message=(
+            f"'{name}' is not classified for the MCP door. A tool this "
+            f"door serves has to say whether it reports or changes "
+            f"something, and a tool that changes something has to name "
+            f"the gate that asks first. Classify it in mcp/server.py "
+            f"before exposing it."
+        ),
+    )
+
+
+def audit_mcp_tool_classifications() -> Dict[str, str]:
+    """Every registered tool's disposition, for the B6 audit record.
+
+    Names what each tool is and what guards it, or says it is
+    unclassified -- which is a finding, not a default.
+    """
+    out: Dict[str, str] = {}
+    for name in TOOL_HANDLERS:
+        decision = mcp_tool_policy(name, {})
+        if not decision.allowed:
+            out[name] = "UNCLASSIFIED — refused at the door"
+        elif decision.gated_by:
+            out[name] = f"changes state; gated by {decision.gated_by}"
+        else:
+            out[name] = "read-only"
+    return out
+
 
 _CAMERA_TOOL_MARKERS = ("frigate", "vision", "camera")
 # The load-bearing dispatch shape: the gate INSIDE the egress boundary.

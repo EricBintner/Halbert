@@ -35,7 +35,10 @@ recency rather than duplicating.
 """
 from __future__ import annotations
 
+import re
 from collections import OrderedDict
+
+from ..ingestion.redaction_registry import REDACTION_PLACEHOLDER
 from typing import Optional
 
 # The default window matches OpenClaw's 80-char contiguous chunk rule: long
@@ -106,6 +109,64 @@ class EchoGuard:
             if window in self._chunks:
                 return window
         return None
+
+    def redact(self, text: str, session: str = "default") -> str:
+        """Replace every run of matched material with the placeholder.
+
+        A05-G1 + bug 1 (the pass's fix-first row 8). The seams used to
+        match here and then hand the text to
+        ``registry.redact_text``, which replaces WHOLE registered forms
+        -- so a reply containing the first 85 characters of a
+        98-character acked value matched, changed nothing, and was
+        delivered, while the log said ``redacted: true``. Two defects on
+        one line: the secret went out, and the record said it had not.
+
+        The guard matches on NORMALISED text (whitespace runs collapsed),
+        because the injected material and the reply may differ in line
+        wrapping alone. So redacting cannot be a substring replace on the
+        original: the match may span newlines the normalised form does
+        not have. The tokens of every matched window are turned into a
+        pattern that allows any whitespace between them, and that is
+        what is replaced -- which is how a re-wrapped echo is caught as
+        well as a verbatim one.
+        """
+        norm = self._normalize(text)
+        covered = bytearray(len(norm))
+        found = False
+        for offset in range(0, max(1, len(norm) - self._window + 1)):
+            window = norm[offset:offset + self._window]
+            if window in self._chunks:
+                found = True
+                for i in range(offset, min(offset + len(window), len(norm))):
+                    covered[i] = 1
+        if not found:
+            return text
+
+        # Maximal RUNS, not windows. The windows overlap by one character
+        # each, so replacing them one at a time leaves the tail of a long
+        # echo standing: the first replacement mutates the text and every
+        # later window then fails to match. Coalescing the coverage into
+        # runs and replacing each run once is what actually removes the
+        # material.
+        runs = []
+        start = None
+        for i, bit in enumerate(covered):
+            if bit and start is None:
+                start = i
+            elif not bit and start is not None:
+                runs.append(norm[start:i])
+                start = None
+        if start is not None:
+            runs.append(norm[start:])
+
+        result = text
+        for run in sorted(set(runs), key=len, reverse=True):
+            tokens = run.split()
+            if not tokens:
+                continue
+            pattern = re.compile(r"\s+".join(re.escape(t) for t in tokens))
+            result = pattern.sub(REDACTION_PLACEHOLDER, result)
+        return result
 
     def scan_outbound(self, text: str, session: str = "default") -> bool:
         """True when ``text`` reproduces a long verbatim chunk of injected

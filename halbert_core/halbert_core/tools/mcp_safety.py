@@ -146,13 +146,42 @@ def _absent_reason(server_component: str, config) -> str:
             + ", ".join(redact(name) for name in config.skipped_servers))
     state = "; ".join(details) if details else (
         "removed or renamed since registration")
-    return (
+    # A03 bug 5: ``server_component`` comes off the qualified tool name
+    # and ``state`` is assembled from config-written text; both reach a
+    # user-facing refusal and the log. The names are already scrubbed by
+    # the config module's redactor above, and this is the belt on the
+    # braces -- one treatment for every error string that leaves here.
+    from ..security.result_redaction import redact_error_text
+
+    return redact_error_text(
         f"Server '{server_component}' is absent from the current "
         f"mcp_config.yml ({state}). A registered MCP tool exists only "
         f"because its server was configured at registration time, so "
         f"classification fails closed rather than downgrading a live "
         f"tool to the MEDIUM default"
     )
+
+
+def _annotation_risk(qualified_name: str):
+    """Risk implied by the tool's own advertised annotations, or None.
+
+    A17-G8. The server describes its own tools, so an annotation is a
+    claim by the party being gated: it may TIGHTEN the classification
+    and never loosen it. Only ``destructiveHint`` does anything today
+    (FD-8: destructive -> HIGH, read-only stays MEDIUM).
+    """
+    try:
+        from ..mcp.registry import tool_annotations
+        annotations = tool_annotations(qualified_name)
+    except Exception:  # pragma: no cover - import-time only
+        return None
+    if annotations.get("destructiveHint") is True:
+        return (
+            RiskLevel.HIGH,
+            "The server annotates this tool as destructive "
+            "(destructiveHint) — classified HIGH, which asks first",
+        )
+    return None
 
 
 def classify_mcp_tool(tool_name: str, args: Any) -> SafetyCheckResult:
@@ -215,6 +244,17 @@ def classify_mcp_tool(tool_name: str, args: Any) -> SafetyCheckResult:
                 f"{server.risk_override.value.upper()}",
                 "mcp.risk_override",
             )
+        # A17-G8 (FD-8): the server's OWN word about the tool, when the
+        # operator has not written one. ``destructiveHint`` raises to
+        # HIGH, which is the level that asks; ``readOnlyHint`` is left at
+        # the MEDIUM default rather than lowered -- a hint is a claim by
+        # the party being gated, so it may tighten and must never loosen.
+        # Both operator overrides above still win: this is the floor of
+        # the precedence chain, not a new top.
+        annotation = _annotation_risk(tool_name)
+        if annotation is not None:
+            level, why = annotation
+            return _result(level, why, "mcp.annotation")
         return _result(
             MCP_DEFAULT_RISK,
             "MCP tool with no risk override in mcp_config.yml — "
@@ -290,13 +330,25 @@ def mcp_args_preview(args: Any, cap: int = 400) -> str:
     confirmation message. The args are what the REMOTE server will
     receive, so they are the thing to show — capped, because an MCP
     tool's payload can be arbitrarily large and the confirmation
-    surface must not flood."""
+    surface must not flood.
+
+    A03 bug 5: the preview is the args VERBATIM, and an MCP call's args
+    are exactly where a credential rides -- a token argument, a
+    connection string, a path with a key in it. It went to the
+    confirmation dialog unredacted, which is the one place a person is
+    looking. It goes through the shared error-text treatment now
+    (registry, then patterns, then a cap that says it capped) before the
+    preview's own cap applies.
+    """
     import json
+
+    from ..security.result_redaction import redact_error_text
 
     try:
         text = json.dumps(args, default=str)
     except (TypeError, ValueError):
         text = str(args)
+    text = redact_error_text(text, limit=max(cap * 4, 2000))
     if len(text) > cap:
         return text[:cap] + f"… ({len(text)} characters total; truncated)"
     return text if text else "(no arguments)"

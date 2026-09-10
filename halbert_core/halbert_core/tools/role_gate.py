@@ -30,6 +30,7 @@ Usage:
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from typing import Dict, Optional
 
 from .safety import ToolSafetyFramework, RiskLevel, SafetyCheckResult, _RISK_ORDER
@@ -166,6 +167,76 @@ def voice_role_ceiling(claim_strength: ClaimStrength) -> str:
     return "member"
 
 
+def turn_role_order(
+    speaker_role: Optional[str],
+    claim_strength: Optional[ClaimStrength] = None,
+) -> int:
+    """Where a speaker stands on the role table, claim cap included.
+
+    The comparable form of ``effective_voice_role``: the stated role's
+    risk cap, lowered by the claim ceiling when a claim is bound. Two
+    speakers are comparable by this number and nothing else -- R-01
+    needed a floor check for mid-turn arrivals, and the rule is that it
+    reuses this module's existing vocabulary (``ROLE_MAX_RISK`` and the
+    ``voice_role_ceiling`` ladder) rather than minting a second one.
+
+    Silent by design, unlike ``effective_voice_role``: this answers a
+    comparison, it does not apply a cap to a live turn, so a capped
+    reading here is not an audit event.
+    """
+    order = _RISK_ORDER[ROLE_MAX_RISK.get(speaker_role or "unknown", "medium")]
+    if claim_strength is not None:
+        ceiling = voice_role_ceiling(claim_strength)
+        order = min(order, _RISK_ORDER[ROLE_MAX_RISK.get(ceiling, "medium")])
+    return order
+
+
+@dataclass(frozen=True)
+class ClaimObservation:
+    """What the claim axis did to one call's role (A12-G7).
+
+    The cap is the moment a claim changes what a turn may DO, and it left
+    a WARNING and nothing else -- and only when the cap bit. The audit
+    record kept tool, args, session, success and error, and not the fact
+    that a weaker claim had narrowed the role, so an answer to "why was
+    that refused?" had to be reconstructed from a log line that might not
+    exist. ``capped=False`` is a fact too: it is what tells a reader that
+    the claim WAS looked at, as against never having been consulted.
+    """
+
+    stated_role: str
+    effective_role: str
+    claim_strength: Optional[str]
+    capped: bool
+
+    def as_audit_fields(self) -> dict:
+        """The flat form the audit sink records."""
+        return {
+            "stated_role": self.stated_role,
+            "effective_role": self.effective_role,
+            "claim_strength": self.claim_strength,
+            "role_capped": self.capped,
+        }
+
+
+def observe_role(speaker_role: str,
+                 claim_strength: Optional[ClaimStrength] = None) -> ClaimObservation:
+    """The role this call runs under, and why.
+
+    One function for both facts: ``effective_voice_role`` answered only
+    the first, and the second existed as a log line on one branch.
+    """
+    stated = speaker_role or "unknown"
+    if claim_strength is None:
+        return ClaimObservation(stated, stated, None, False)
+    effective = effective_voice_role(stated, claim_strength)
+    try:
+        name = ClaimStrength(claim_strength).name.lower()
+    except (ValueError, KeyError):
+        name = str(claim_strength)
+    return ClaimObservation(stated, effective, name, effective != stated)
+
+
 def effective_voice_role(speaker_role: str, claim_strength: ClaimStrength) -> str:
     """The role RoleGate should hear for a voice turn with this claim.
 
@@ -205,6 +276,17 @@ class RoleGate:
 
     def __init__(self, safety_framework: ToolSafetyFramework):
         self._safety = safety_framework
+
+    @staticmethod
+    def observe_role(speaker_role: str = "unknown",
+                     *, claim_strength=None) -> ClaimObservation:
+        """The role this call runs under and what the claim did to it.
+
+        A method as well as a module function so a caller holding a gate
+        does not have to import the module to ask the question the gate
+        exists to answer (A12-G7).
+        """
+        return observe_role(speaker_role, claim_strength)
 
     def policy_view(
         self,

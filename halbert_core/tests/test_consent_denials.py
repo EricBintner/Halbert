@@ -31,7 +31,7 @@ from halbert_core.persona.permission import (
     effective_capability,
 )
 
-# Every §1.7 outcome, verbatim — the closed vocabulary a Denied may carry.
+# Every §1.7 outcome, verbatim.
 ALL_SECTION_17_OUTCOMES = {
     "HALTED",
     "NO_CEILING",
@@ -43,14 +43,33 @@ ALL_SECTION_17_OUTCOMES = {
     "QUIET",
 }
 
+# Added since, deliberately and with its own reason to exist (R-08,
+# A11-G2): SCOPE_UNREADABLE is what a grant whose scope the code cannot
+# parse denies with. It is not OUT_OF_SCOPE -- the scope check never ran
+# -- and it must not be an exception either, because a refusal the
+# permission system cannot explain is still a refusal it has to TYPE.
+# Before it existed, 24 of the 47 shipped profile rows raised a bare
+# ValueError out of require() on the first call after acceptance.
+#
+# NEEDS_APPROVAL (R-08, A11-G1/G9 under FD-6) is the second: a grant
+# recorded ``ask: every_use`` is a standing permission, not a standing
+# authorisation. It is not NOT_GRANTED, because the remedy is different
+# -- answer the confirmation you were shown, do not grant again.
+ADDED_OUTCOMES = {"SCOPE_UNREADABLE", "NEEDS_APPROVAL"}
+
 
 # ---------------------------------------------------------------------------
 # The closed vocabulary.
 # ---------------------------------------------------------------------------
 
 
-def test_the_denied_vocabulary_is_exactly_the_section_17_outcomes():
-    assert CLOSED_REASONS == frozenset(ALL_SECTION_17_OUTCOMES)
+def test_the_denied_vocabulary_is_the_section_17_outcomes_plus_the_recorded_additions():
+    assert CLOSED_REASONS == frozenset(ALL_SECTION_17_OUTCOMES | ADDED_OUTCOMES)
+
+
+def test_every_section_17_outcome_is_still_carried():
+    """The additions extend the vocabulary; they never replace it."""
+    assert frozenset(ALL_SECTION_17_OUTCOMES) <= CLOSED_REASONS
 
 
 @pytest.mark.parametrize("reason_code", sorted(ALL_SECTION_17_OUTCOMES))
@@ -112,17 +131,23 @@ def _decision_leading_to(reason_code):
         halt = HaltState()
         halt.halt("owner_stop")
         return effective_capability(capability, halt=halt)
+    # R-08 Phase A (A11 bug 6): every branch below passes a live, NOT
+    # halted state. Omitting it used to read as "not halted"; it now
+    # reads as no halt evidence and denies HALTED, which would make
+    # every row of this matrix answer the same thing.
     if reason_code == "NO_CEILING":
-        return effective_capability(capability)
+        return effective_capability(capability, halt=HaltState())
     if reason_code == "NO_AFFORDANCE":
         return effective_capability(
             capability, ceiling=CapabilityCeiling(frozenset({capability})),
+            halt=HaltState(),
         )
     if reason_code == "NOT_GRANTED":
         return effective_capability(
             capability,
             ceiling=CapabilityCeiling(frozenset({capability})),
             affordance=AffordanceTable(present=frozenset({capability})),
+            halt=HaltState(),
         )
     if reason_code == "OS_DENIED":
         return effective_capability(
@@ -131,6 +156,7 @@ def _decision_leading_to(reason_code):
             affordance=AffordanceTable(present=frozenset({capability})),
             consent_records=_records(capability),
             os_grants=OsGrantTable({capability: OsGrantState.DENIED}),
+            halt=HaltState(),
         )
     if reason_code == "OS_UNKNOWN":
         return effective_capability(
@@ -138,6 +164,7 @@ def _decision_leading_to(reason_code):
             ceiling=CapabilityCeiling(frozenset({capability})),
             affordance=AffordanceTable(present=frozenset({capability})),
             consent_records=_records(capability),
+            halt=HaltState(),
         )
     if reason_code == "OUT_OF_SCOPE":
         return effective_capability(
@@ -146,6 +173,7 @@ def _decision_leading_to(reason_code):
             affordance=AffordanceTable(present=frozenset({capability})),
             consent_records=_records(capability),
             os_grants=OsGrantTable({capability: OsGrantState.GRANTED}),
+            halt=HaltState(),
             scope_ok=False,
         )
     raise AssertionError(f"no denial matrix entry for {reason_code}")

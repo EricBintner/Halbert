@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import os
 import sqlite3
 import sys
 import threading
@@ -30,7 +31,88 @@ from .conversation import Conversation, Message
 
 logger = logging.getLogger("halbert.agents.conversation_sqlite")
 
-_DEFAULT_DB = str(Path.home() / ".halbert" / "conversations.db")
+#: SQLite builds whose WAL-reset handling can lose committed
+#: transactions after a crash (A08-G5, FD-11). This venv ships 3.39.4,
+#: which is inside the range.
+_WAL_RESET_VULNERABLE_MIN = (3, 32, 0)
+_WAL_RESET_VULNERABLE_MAX = (3, 51, 2)
+
+_WAL_WARNED = False
+
+
+def warn_if_wal_vulnerable() -> bool:
+    """Log ONCE if this build's SQLite can lose a committed transaction.
+
+    FD-11's default: an ERROR at boot, and no silent journal-mode change.
+    Hermes falls back to DELETE mode on a vulnerable build; doing that
+    here would quietly change the durability characteristics of the
+    operator's existing database without anyone deciding to, which is
+    exactly the kind of change that should be a decision. So this says
+    so and leaves the mode alone.
+
+    Returns whether the warning applies, so a caller can surface it.
+    """
+    global _WAL_WARNED
+    try:
+        version = sqlite3.sqlite_version_info[:3]
+    except Exception:  # pragma: no cover - defensive
+        return False
+    vulnerable = (
+        _WAL_RESET_VULNERABLE_MIN <= tuple(version) <= _WAL_RESET_VULNERABLE_MAX
+    )
+    if vulnerable and not _WAL_WARNED:
+        _WAL_WARNED = True
+        logger.error(
+            "SQLite %s is in the WAL-reset range (%s-%s): a crash can lose a "
+            "committed transaction. The journal mode is NOT being changed -- "
+            "that is a decision, not a default (FD-11). Plan the Python/SQLite "
+            "bump; ENV-01 is the same conversation.",
+            sqlite3.sqlite_version,
+            ".".join(str(n) for n in _WAL_RESET_VULNERABLE_MIN),
+            ".".join(str(n) for n in _WAL_RESET_VULNERABLE_MAX),
+        )
+    return vulnerable
+
+
+def _default_db_path() -> str:
+    """Where the conversation store lives when no path is given (A08-G12).
+
+    This was a MODULE CONSTANT computed at import: ``~/.halbert/…``,
+    hard-coded, resolved once, and wrong twice over -- it ignored
+    ``HALBERT_DATA_DIR`` and the platform data directory that everything
+    else in the tree resolves through, and being import-time it could
+    not see an environment a test set afterwards. Resolved per call, via
+    ``utils.paths``.
+
+    A08 bug 4: and refused under pytest when it resolves to the REAL
+    one. A test that constructs the store with no path used to open the
+    operator's own conversation database and write into it.
+
+    Precise on purpose. The guard fires only when nothing has redirected
+    the data directory -- ``HALBERT_DATA_DIR`` unset -- because a suite
+    that DOES redirect it (as this one's conftest does) is already
+    writing somewhere disposable, and refusing there would guard a
+    hazard that is not present. A fixture that trips this is a fixture
+    to fix; the guard is never the thing to widen.
+    """
+    redirected = bool(
+        os.environ.get("HALBERT_DATA_DIR")
+        or os.environ.get("Halbert_DATA_DIR")
+    )
+    try:
+        from ..utils.paths import data_dir
+        resolved = Path(data_dir()) / "conversations.db"
+    except Exception:
+        resolved = Path.home() / ".halbert" / "conversations.db"
+    if os.environ.get("PYTEST_CURRENT_TEST") and not redirected:
+        raise RuntimeError(
+            f"refusing to open the production conversation store at "
+            f"{resolved} from a test. Pass db_path= (tmp_path or "
+            f"':memory:'), or set HALBERT_DATA_DIR. If a fixture reached "
+            f"here, fix the fixture: "
+            f"this guard is never the thing to widen."
+        )
+    return str(resolved)
 
 #: Bump when a migration step below must run on existing databases.
 #: v5: the one-leaf heal -- duplicate-open rows beyond the single
@@ -454,6 +536,90 @@ class RedactionFailed(RuntimeError):
     """
 
 
+def is_structural_corruption(exc: BaseException) -> bool:
+    """Whether this error means the DATABASE is damaged, not the index.
+
+    A08-G1. The origin's predicate is two arms:
+
+    * ``errorcode`` -- only ``SQLITE_CORRUPT_VTAB`` counts. On this venv
+      (Python 3.10.9) ``sqlite3.Exception.sqlite_errorcode`` does not
+      exist at all -- it arrived in 3.11 -- so this arm is dead here and
+      the message arm is what runs. That is FD-11's other half, recorded
+      rather than papered over;
+    * the message -- ``startswith('fts5:') and 'corrupt structure'``.
+
+    Deliberately NARROW. "vtable constructor failed" is a MISSING shadow
+    table, which a rebuild fixes; treating it as structural would halt
+    the store sticky over something recoverable, which is the opposite of
+    the failure this predicate exists to catch.
+    """
+    code = getattr(exc, "sqlite_errorcode", None)
+    if code is not None:
+        try:
+            from sqlite3 import SQLITE_CORRUPT_VTAB  # type: ignore[attr-defined]
+        except ImportError:
+            SQLITE_CORRUPT_VTAB = 779
+        if code == SQLITE_CORRUPT_VTAB:
+            return True
+    message = str(exc)
+    return message.startswith("fts5:") and "corrupt structure" in message
+
+
+def quarantine_unreadable_db(path: str, reason: str) -> Optional[str]:
+    """Move an unopenable database file aside. Never deletes.
+
+    A08-G8. A zeroed or NOT-A-DB file made every open fail forever, and
+    the standing directive is to leave old data unread and never delete
+    it -- so the file is renamed with a timestamp and the store opens a
+    fresh one beside it. Returns the quarantine path, or None when there
+    was nothing to move.
+    """
+    import time as _time
+
+    if not path or path == ":memory:" or not os.path.exists(path):
+        return None
+    target = f"{path}.corrupt-{int(_time.time())}"
+    try:
+        os.replace(path, target)
+    except OSError as e:
+        logger.error(
+            "could not quarantine the unreadable store at %s (%s); refusing "
+            "to delete it", path, e)
+        return None
+    logger.error(
+        "the conversation store at %s could not be opened (%s); it has been "
+        "moved to %s and a fresh store started. Nothing was deleted.",
+        path, reason, target)
+    return target
+
+
+def _file_is_unreadable_db(path: str) -> Optional[str]:
+    """Why this file cannot be a database, or None if it can.
+
+    Checked BEFORE connecting, because ``sqlite3.connect`` is lazy: it
+    succeeds on a file of zeros and fails on the first statement, by
+    which point the store has already decided it is open.
+    """
+    if not path or path == ":memory:" or not os.path.exists(path):
+        return None
+    try:
+        size = os.path.getsize(path)
+    except OSError:
+        return None
+    if size == 0:
+        return None            # an empty file is a fresh database
+    try:
+        with open(path, "rb") as handle:
+            header = handle.read(16)
+    except OSError as e:
+        return f"unreadable: {e}"
+    if header == b"\x00" * 16:
+        return "the file is zeroed"
+    if not header.startswith(b"SQLite format 3\x00"):
+        return "the file does not carry the SQLite header"
+    return None
+
+
 class SqliteConversationStore:
     """SQLite-backed thread/message store with FTS5 search.
 
@@ -464,7 +630,7 @@ class SqliteConversationStore:
     """
 
     def __init__(self, db_path: Optional[str] = None):
-        self._db_path = db_path or _DEFAULT_DB
+        self._db_path = db_path or _default_db_path()
         self._lock = threading.RLock()
         self._conn: Optional[sqlite3.Connection] = None
         self._fts_ok = False
@@ -472,15 +638,43 @@ class SqliteConversationStore:
         # index write failed until ``rebuild_fts()`` clears it. Persisted in
         # ``store_meta`` so a reopen inherits it.
         self._fts_degraded = False
+        #: A08-G7: WHY the store could not open, for the health route. A
+        #: store that failed to open reported only ``connected is False``
+        #: -- which is the same answer as "not built yet", so an
+        #: operator had no way to tell a broken file from a fresh one.
+        self._last_init_error = ""
+        #: A08-G1: once structural corruption is seen, the store stops
+        #: committing. Sticky, because the alternative is writing more
+        #: rows into a file that is already damaged.
+        self._structurally_corrupt = False
         try:
             if self._db_path != ":memory:":
                 Path(self._db_path).parent.mkdir(parents=True, exist_ok=True)
+            # A08-G8: preflight. sqlite3.connect is lazy -- it succeeds on
+            # a file of zeros and fails on the first statement, by which
+            # point the store has decided it is open.
+            unreadable = _file_is_unreadable_db(self._db_path)
+            if unreadable:
+                self._last_init_error = unreadable
+                quarantine_unreadable_db(self._db_path, unreadable)
+            # A08-G5 (FD-11): said once per process, at the first store
+            # open, which is the earliest point anything durable happens.
+            warn_if_wal_vulnerable()
             self._conn = sqlite3.connect(self._db_path, check_same_thread=False)
             self._conn.row_factory = sqlite3.Row
             self._ensure_schema()
+            if self._conn is None and not self._last_init_error:
+                self._last_init_error = "the schema migration did not complete"
         except Exception as e:
             logger.warning(f"SqliteConversationStore init failed (non-fatal): {e}")
+            self._last_init_error = str(e)
             self._conn = None
+        if self._conn is not None and not self._writable():
+            self._last_init_error = (
+                self._last_init_error or "the store is not writable")
+            logger.error(
+                "conversation store at %s is not writable: %s",
+                self._db_path, self._last_init_error)
 
     # ------------------------------------------------------------------
     # Schema
@@ -637,6 +831,37 @@ class SqliteConversationStore:
                 )
                 row = cur.execute("SELECT MAX(version) FROM schema_version").fetchone()
                 version = int(row[0]) if row and row[0] is not None else 0
+                # A16-G4: a store written by a NEWER build is not a store
+                # this one can safely migrate -- it would reconcile
+                # columns it does not know about and write rows the newer
+                # reader cannot use. Refuse to open rather than damage it.
+                if version > SCHEMA_VERSION:
+                    self._conn.rollback()
+                    self._last_init_error = (
+                        f"the store at {self._db_path} was written by a newer "
+                        f"build (schema v{version}; this build knows "
+                        f"v{SCHEMA_VERSION}). Refusing to open it rather than "
+                        f"migrate it backwards."
+                    )
+                    logger.error(self._last_init_error)
+                    self._conn = None
+                    return
+                # A08-G2 + bug 3: the breadcrumb is read BEFORE any FTS
+                # DDL. It used to be read at the END of the migration --
+                # after the CREATE VIRTUAL TABLE and the NOT-IN backfill
+                # had already run against the very index the breadcrumb
+                # says is untrustworthy. On real corruption that backfill
+                # raises DatabaseError, escapes the OperationalError-only
+                # handler below, and the store is bricked on that open and
+                # every reopen: the conversation is never recorded again.
+                try:
+                    breadcrumb_row = cur.execute(
+                        "SELECT value FROM store_meta WHERE key = 'fts_degraded'"
+                    ).fetchone()
+                except sqlite3.DatabaseError:
+                    breadcrumb_row = None
+                breadcrumb_stands = (
+                    breadcrumb_row is not None and str(breadcrumb_row[0]) == "1")
                 # Tracked locally and only committed to ``self._fts_ok`` once the
                 # whole migration (including the schema_version bump below and
                 # the final commit) has actually succeeded — see the comment on
@@ -690,9 +915,20 @@ class SqliteConversationStore:
                         "WHERE receipt != '' AND id NOT IN "
                         "(SELECT thread_id FROM receipts_fts)"
                     )
-                except sqlite3.OperationalError as e:
-                    logger.warning(f"FTS5 unavailable, falling back to LIKE: {e}")
+                except sqlite3.DatabaseError as e:
+                    # A08-G2 + bug 3: the PARENT class. Real corruption
+                    # raises DatabaseError('vtable constructor failed'),
+                    # not OperationalError, so it escaped this handler
+                    # entirely and took the whole open with it.
+                    logger.warning(
+                        "FTS5 unusable at open, falling back to LIKE: %s", e)
                     fts_ready = False
+                    if is_structural_corruption(e):
+                        self._structurally_corrupt = True
+                        logger.error(
+                            "structural corruption in the conversation store "
+                            "at %s: halting writes rather than committing "
+                            "into a damaged file", self._db_path)
                 # v5 (D-5 ruling: "P3c first, then the index"): the one-leaf
                 # heal, BEFORE the partial unique index below is created --
                 # on an A6b-era store with duplicate opens the CREATE UNIQUE
@@ -752,16 +988,15 @@ class SqliteConversationStore:
                 # persisted its flag in ``store_meta``. While it stands the
                 # index has a gap of unknown extent, so a reopen must not
                 # trust it -- ``_fts_recover`` stays refused and only
-                # ``rebuild_fts()`` clears the flag.
-                breadcrumb = cur.execute(
-                    "SELECT value FROM store_meta WHERE key = 'fts_degraded'"
-                ).fetchone()
-                if breadcrumb is not None and str(breadcrumb[0]) == "1":
+                # ``rebuild_fts()`` clears the flag. Read at the TOP of
+                # this migration now (A08-G2), not here.
+                if breadcrumb_stands:
                     self._fts_degraded = True
                     self._fts_ok = False
             except Exception as e:
                 self._conn.rollback()
                 logger.warning(f"SqliteConversationStore schema failed: {e}")
+                self._last_init_error = str(e)
                 self._fts_ok = False
                 # A half-applied migration (e.g. the messages table missing
                 # thread columns) must not look like a healthy, usable store:
@@ -778,6 +1013,41 @@ class SqliteConversationStore:
         poll this to emit ``thread_store_error`` once instead of finding out
         only when a search silently comes back thin."""
         return self._conn is not None and self._fts_ok
+
+    @property
+    def last_init_error(self) -> str:
+        """Why the store could not open, or "" (A08-G7).
+
+        ``connected is False`` alone is the same answer for "the file is
+        damaged" and "nothing has been written yet", and those need
+        different responses from an operator.
+        """
+        return self._last_init_error
+
+    @property
+    def db_path(self) -> str:
+        return self._db_path
+
+    def _writable(self) -> bool:
+        """A08-G7: can this store actually write? Checked at open, so a
+        read-only volume or a permissions change is reported then rather
+        than at the first lost message."""
+        if self._conn is None:
+            return False
+        try:
+            with self._lock:
+                self._conn.execute(
+                    "CREATE TABLE IF NOT EXISTS store_meta ("
+                    "key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+                self._conn.execute(
+                    "INSERT INTO store_meta(key, value) VALUES "
+                    "('writable_probe', '1') "
+                    "ON CONFLICT(key) DO UPDATE SET value = '1'")
+                self._conn.commit()
+            return True
+        except Exception as e:
+            self._last_init_error = f"not writable: {e}"
+            return False
 
     @property
     def connected(self) -> bool:
@@ -854,8 +1124,12 @@ class SqliteConversationStore:
                     self._conn.commit()
             self._fts_ok = True
             logger.info("FTS5 recovered; search is no longer degraded to title-only")
-        except sqlite3.OperationalError as e:
+        except sqlite3.DatabaseError as e:
+            # A08-G2: the parent class. Real corruption raises
+            # DatabaseError, not OperationalError.
             logger.warning(f"FTS5 still unavailable, staying in LIKE-only fallback: {e}")
+            if is_structural_corruption(e):
+                self._structurally_corrupt = True
         return self._fts_ok
 
     # ------------------------------------------------------------------
@@ -1945,10 +2219,12 @@ class SqliteConversationStore:
         try:
             with self._lock, self._conn:
                 old = self._conn.execute(
-                    "SELECT status FROM conversations WHERE id = ?", (old_thread_id,)
+                    "SELECT status, title FROM conversations WHERE id = ?",
+                    (old_thread_id,),
                 ).fetchone()
                 new = self._conn.execute(
-                    "SELECT status, parent_thread_id FROM conversations WHERE id = ?",
+                    "SELECT status, parent_thread_id, title FROM conversations "
+                    "WHERE id = ?",
                     (new_thread_id,),
                 ).fetchone()
                 if old is None or new is None:
@@ -1990,12 +2266,121 @@ class SqliteConversationStore:
                            WHERE id = ?""",
                         (ts, new_thread_id),
                     )
+                # Design §2.3, and the reason the docstring above named T2:
+                # the divider rows ride the SAME transaction as the status
+                # swap. A leaf that moved with no divider, and a divider
+                # with no move, are both records that lie.
+                self._mint_branch_summaries(
+                    old_thread_id, new_thread_id,
+                    old["title"], new["title"], ts,
+                )
             return True
         except Exception as e:
             logger.warning(
                 f"move_leaf {old_thread_id} -> {new_thread_id} failed: {e}"
             )
             return False
+
+    def _mint_branch_summaries(
+        self,
+        from_thread: str,
+        to_thread: str,
+        from_title: Any,
+        to_title: Any,
+        ts: float,
+    ) -> None:
+        """The two rows one edge crossing leaves behind (A16-G7, design §2.3).
+
+        Called from inside ``move_leaf``'s transaction and lock, so it uses
+        ``self._conn`` directly and never opens one of its own — a failure
+        here rolls the leaf move back with it, which is the point.
+
+        The crossing is identified by the last *turn* in the thread being
+        left. Cross away and back with nothing said in between and the
+        identity has not changed, so the rows are already there and nothing
+        is written: the design's "a thread that has turns since its last
+        branch-summary entry" expressed as a key rather than as a counter
+        someone has to remember to reset. The same key is what lets a
+        retried crossing complete a half-written one.
+
+        Two silences are deliberate:
+
+        - a thread nobody has spoken in is not told it was left (there is no
+          subject there to have been interrupted), and
+        - a thread with no history at all is not told it was returned to.
+          Opening a new subject is not a return, and a divider above the
+          first line of a conversation reconciles nothing.
+        """
+        # Imported here, not at module level: ``agents.threads`` (which owns
+        # the system-row fencing this template reuses) imports THIS module at
+        # its own module level, so a top-level import would be a cycle. Same
+        # shape as ``append_message``'s reach into ``continuity.ownership``.
+        from ..continuity.branch_summary import (
+            BRANCH_ORIGIN,
+            BRANCH_SUMMARY_KIND,
+            SIDE_DEPARTED,
+            SIDE_RETURNED,
+            build_departure_summary,
+            build_return_summary,
+            crossing_key,
+        )
+
+        boundary = self._conn.execute(
+            "SELECT MAX(id) FROM messages "
+            "WHERE conversation_id = ? AND origin != ?",
+            (from_thread, BRANCH_ORIGIN),
+        ).fetchone()[0]
+        if boundary is None:
+            # Nothing was ever said in the thread being left.
+            return
+        key = crossing_key(from_thread, to_thread, boundary)
+
+        def _mint(thread_id: str, side: str, content: str) -> None:
+            already = self._conn.execute(
+                "SELECT 1 FROM messages WHERE conversation_id = ? "
+                "AND origin = ? AND json_extract(metadata, '$.crossing') = ? "
+                "LIMIT 1",
+                (thread_id, BRANCH_ORIGIN, key),
+            ).fetchone()
+            if already is not None:
+                return
+            self._conn.execute(
+                "INSERT INTO messages "
+                "(conversation_id, role, content, timestamp, metadata, "
+                " origin, visible_in_timeline, context_included) "
+                "VALUES (?, 'system', ?, ?, ?, ?, 1, ?)",
+                (
+                    thread_id, content, ts,
+                    json.dumps({
+                        "kind": BRANCH_SUMMARY_KIND,
+                        "crossing": key,
+                        "side": side,
+                        "from_thread": from_thread,
+                        "to_thread": to_thread,
+                        "boundary_message_id": int(boundary),
+                    }),
+                    BRANCH_ORIGIN,
+                    # The departed thread's own replay does not need to be
+                    # told it was departed; the returned-to thread's replay
+                    # is the entire point of the feature.
+                    1 if side == SIDE_RETURNED else 0,
+                ),
+            )
+            # Deliberately NOT indexed into ``messages_fts``: the row carries
+            # no words of its own, only two titles that are already indexed
+            # on their own threads and in ``receipts_fts``. Indexing dividers
+            # would put them in every ``search_snippets`` result that matched
+            # a thread title.
+
+        _mint(from_thread, SIDE_DEPARTED, build_departure_summary(to_title=to_title))
+        target_has_history = self._conn.execute(
+            "SELECT 1 FROM messages WHERE conversation_id = ? LIMIT 1", (to_thread,)
+        ).fetchone()
+        if target_has_history is not None:
+            _mint(
+                to_thread, SIDE_RETURNED,
+                build_return_summary(from_title=from_title, to_title=to_title),
+            )
 
     # ------------------------------------------------------------------
     # Message readers
@@ -2070,6 +2455,157 @@ class SqliteConversationStore:
             logger.warning(f"blank_thread_words failed for {thread_id}: {e}")
             return False
 
+    def _index_message_fts(self, message_id: int, thread_id: str, text: str) -> None:
+        """Give one raw-SQL message row its ``messages_fts`` copy.
+
+        ``append_message`` has always done this inline; the writers that
+        insert with raw SQL (the rotation summary) need the same three
+        rules, which is why they are in one place rather than copied:
+        recover the index first so a stale degraded flag cannot skip a row
+        forever, ``OR REPLACE`` because recovery's backfill may have just
+        written this very rowid, and fail-open on corruption because a
+        derived index must never roll back a canonical write.
+
+        Call from inside the caller's transaction and lock.
+        """
+        if not self._fts_recover():
+            return
+        try:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO messages_fts(rowid, conversation_id, content) "
+                "VALUES (?, ?, ?)",
+                (int(message_id), thread_id, text),
+            )
+        except sqlite3.DatabaseError as e:
+            if self._is_fts_write_corruption_error(e):
+                self._enter_fts_fail_open(e)
+            else:
+                raise
+
+    def write_compact_boundary(self, plan: Any) -> Optional[int]:
+        """Persist one rotation (A16-G1, A16-G10). Returns the row id.
+
+        ``compact_boundaries`` shipped with a schema, an index and no
+        writer, so the typed columns were never populated and a long
+        thread grew until its history was truncated by whatever budget it
+        hit -- and the part that fell off was the part that had scrolled
+        away, which is exactly what a person expects to be remembered.
+
+        The whole rotation is ONE transaction: the summary row, the
+        boundary, and the hiding of the covered turns land together or
+        not at all. A boundary that named turns still visible, or turns
+        hidden with no boundary naming them, are both records that lie.
+        """
+        if self._conn is None or plan is None:
+            return None
+        try:
+            with self._lock, self._conn:
+                summary_id = self._conn.execute(
+                    "INSERT INTO messages "
+                    "(conversation_id, role, content, timestamp, "
+                    " visible_in_timeline, origin) "
+                    "VALUES (?, 'system', ?, ?, 1, 'compaction')",
+                    (plan.thread_id, plan.summary, time.time()),
+                ).lastrowid
+                # The summary is the only searchable copy of the turns this
+                # transaction is about to hide: ``search_snippets`` joins
+                # ``messages_fts`` and skips rows the timeline hides, so
+                # without this the exact command and error strings the
+                # rotation went to the trouble of KEEPING became unfindable
+                # the moment it ran. Raw-SQL inserts do not get an index row
+                # for free -- there are no triggers on this table; every
+                # writer does its own (``append_message``).
+                self._index_message_fts(summary_id, plan.thread_id, plan.summary)
+                if plan.covered_message_ids:
+                    marks = ",".join("?" * len(plan.covered_message_ids))
+                    self._conn.execute(
+                        f"UPDATE messages SET visible_in_timeline = 0 "
+                        f"WHERE id IN ({marks})",
+                        list(plan.covered_message_ids),
+                    )
+                boundary_id = self._conn.execute(
+                    "INSERT INTO compact_boundaries "
+                    "(thread_id, trigger, pre_tokens, post_tokens, "
+                    " preserved_message_ids, summary_message_id, created_at, "
+                    " coverage_end_id, generation, unresolved_request, "
+                    " trigger_detail) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?)",
+                    (
+                        plan.thread_id, plan.trigger,
+                        plan.pre_chars, plan.post_chars,
+                        json.dumps(list(plan.preserved_message_ids)),
+                        summary_id, time.time(), plan.coverage_end_id,
+                        plan.generation, plan.trigger_detail,
+                    ),
+                ).lastrowid
+            logger.info(
+                "compacted thread %s: generation %d, %d turns -> %d chars",
+                plan.thread_id, plan.generation,
+                len(plan.covered_message_ids), plan.post_chars,
+            )
+            return int(boundary_id)
+        except Exception as e:
+            logger.warning("write_compact_boundary failed: %s", e)
+            return None
+
+    def last_compact_boundary(self, thread_id: str) -> Optional[Dict[str, Any]]:
+        """The most recent rotation for a thread, or None.
+
+        The cooldown and the generation both come from here, so the
+        guards read the record rather than a counter someone has to
+        remember to keep.
+        """
+        if self._conn is None:
+            return None
+        try:
+            with self._lock:
+                row = self._conn.execute(
+                    "SELECT * FROM compact_boundaries WHERE thread_id = ? "
+                    "ORDER BY created_at DESC LIMIT 1",
+                    (thread_id,),
+                ).fetchone()
+            return dict(row) if row else None
+        except Exception as e:
+            logger.warning("last_compact_boundary failed: %s", e)
+            return None
+
+    def set_context_included(self, message_id: int, included: bool) -> bool:
+        """Record whether a message was in the context a turn actually saw.
+
+        A16-G3: the column had no writer and no reader, so nothing could
+        answer "did the model see this when it answered?" -- which is the
+        question every argument about a wrong answer turns into.
+        """
+        if self._conn is None:
+            return False
+        try:
+            with self._lock, self._conn:
+                self._conn.execute(
+                    "UPDATE messages SET context_included = ? WHERE id = ?",
+                    (1 if included else 0, int(message_id)),
+                )
+            return True
+        except Exception as e:
+            logger.warning("set_context_included failed: %s", e)
+            return False
+
+    def context_included(self, message_id: int) -> Optional[bool]:
+        """Whether this message was in the context a turn saw, or None."""
+        if self._conn is None:
+            return None
+        try:
+            with self._lock:
+                row = self._conn.execute(
+                    "SELECT context_included FROM messages WHERE id = ?",
+                    (int(message_id),),
+                ).fetchone()
+            if row is None or row["context_included"] is None:
+                return None
+            return bool(row["context_included"])
+        except Exception as e:
+            logger.warning("context_included failed: %s", e)
+            return None
+
     def forget_request(self, request_id: str) -> int:
         """Delete every message written under ``request_id`` — the
         transcript's half of "forget that session" (design §4.2, I7). The
@@ -2077,28 +2613,60 @@ class SqliteConversationStore:
         rows removed; a second call returns 0."""
         if self._conn is None or not request_id:
             return 0
-        with self._lock, self._conn:
-            ids = [
-                int(r[0]) for r in self._conn.execute(
-                    "SELECT id FROM messages WHERE json_extract(metadata, '$.request_id') = ?",
-                    (request_id,),
-                ).fetchall()
-            ]
-            if not ids:
-                return 0
-            marks = ",".join("?" * len(ids))
-            try:
-                self._conn.execute(f"DELETE FROM messages_fts WHERE rowid IN ({marks})", ids)
-            except sqlite3.DatabaseError as e:
-                # Fail-open (packet 08 A2): a "forget that session" is a
-                # canonical write -- a corrupt index must not roll the row
-                # deletion back, and a rolled-back forget that was reported
-                # as performed is the worst outcome available here.
-                if self._is_fts_write_corruption_error(e):
-                    self._enter_fts_fail_open(e)
+        # A08 bug 5 (fix-first row 24): this method had NO error handling
+        # at all -- "database is locked" or "no such module: fts5"
+        # surfaced as an exception out of a forget, and the guest's
+        # "forget me" report then said the transcript was not erased.
+        # Wrapped like every other store method, and the FTS delete is
+        # skipped outright while the index is degraded or absent rather
+        # than attempted unconditionally.
+        try:
+            with self._lock, self._conn:
+                ids = [
+                    int(r[0]) for r in self._conn.execute(
+                        "SELECT id FROM messages WHERE json_extract(metadata, '$.request_id') = ?",
+                        (request_id,),
+                    ).fetchall()
+                ]
+                if not ids:
+                    return 0
+                marks = ",".join("?" * len(ids))
+                if not self._fts_degraded:
+                    try:
+                        self._conn.execute(
+                            f"DELETE FROM messages_fts WHERE rowid IN ({marks})", ids)
+                    except sqlite3.DatabaseError as e:
+                        # Fail-open (packet 08 A2): a "forget that session"
+                        # is a canonical write -- a corrupt index must not
+                        # roll the row deletion back, and a rolled-back
+                        # forget reported as performed is the worst outcome
+                        # available here.
+                        if self._is_fts_write_corruption_error(e):
+                            self._enter_fts_fail_open(e)
+                        else:
+                            raise
                 else:
-                    raise
-            self._conn.execute(f"DELETE FROM messages WHERE id IN ({marks})", ids)
+                    logger.info(
+                        "forget_request: the index is degraded, so only the "
+                        "canonical rows are deleted (the index is rebuilt "
+                        "from them at the next open)")
+                self._conn.execute(f"DELETE FROM messages WHERE id IN ({marks})", ids)
+                # A13-G7 (FD-19): skill telemetry is erased WITH the run.
+                # It records which skills a person's words matched, which
+                # is a fact about them -- and "forget me" that leaves it
+                # behind is a forget that did not happen. Keyed by
+                # run_id, which is the request_id the messages carry.
+                try:
+                    self._conn.execute(
+                        "DELETE FROM skill_events WHERE run_id = ?",
+                        (request_id,))
+                except sqlite3.DatabaseError as e:
+                    logger.warning(
+                        "forget_request: skill telemetry for %s could not "
+                        "be erased: %s", request_id, e)
+        except Exception as e:
+            logger.error("forget_request %s failed: %s", request_id, e)
+            return 0
         logger.info("Forgot %d message(s) written under %s", len(ids), request_id)
         return len(ids)
 
@@ -2580,7 +3148,13 @@ class SqliteConversationStore:
         if not terms:
             return []
         if not self._fts_recover():
-            return []
+            # A08-G3 + bug 7: a degraded index used to mean an EMPTY
+            # answer here -- recall with no matching_messages, and
+            # "forget this" answering 500 -- permanently, because nothing
+            # ever left fts_degraded. The canonical rows are right there;
+            # a LIKE scan over them is slow and correct, which is the
+            # right trade when the alternative is silence.
+            return self._like_snippets(thread_id, terms, limit)
         try:
             with self._lock:
                 rows = self._conn.execute(
@@ -2597,7 +3171,44 @@ class SqliteConversationStore:
             return [r["snip"] for r in rows if r["snip"]]
         except Exception as e:
             logger.warning(f"search_snippets {thread_id} failed: {e}")
+            # A08-G3: the read path fails OPEN to the canonical rows
+            # rather than to nothing.
+            return self._like_snippets(thread_id, terms, limit)
+
+    def _like_snippets(self, thread_id: str, terms, limit: int) -> List[str]:
+        """Snippets from the canonical rows, without the index (A08-G3).
+
+        Same visibility rule as the FTS path: rewound rows stay hidden.
+        """
+        if self._conn is None or not terms:
             return []
+        out: List[str] = []
+        try:
+            with self._lock:
+                for term in list(terms)[:6]:
+                    rows = self._conn.execute(
+                        """SELECT content FROM messages
+                           WHERE conversation_id = ?
+                             AND visible_in_timeline = 1
+                             AND lower(content) LIKE ?
+                           ORDER BY id DESC LIMIT ?""",
+                        (thread_id, f"%{str(term).lower()}%", int(limit)),
+                    ).fetchall()
+                    for row in rows:
+                        text = str(row["content"] or "")
+                        if not text:
+                            continue
+                        needle = str(term).lower()
+                        at = text.lower().find(needle)
+                        start = max(0, at - 60)
+                        snippet = text[start:at + 120].strip()
+                        if snippet and snippet not in out:
+                            out.append(snippet)
+                        if len(out) >= limit:
+                            return out
+        except Exception as e:
+            logger.warning(f"LIKE snippets for {thread_id} failed: {e}")
+        return out[:limit]
 
     # ------------------------------------------------------------------
     # Merge-back (spec §5 "Merge")
@@ -3001,13 +3612,18 @@ class SqliteConversationStore:
             return None
         import time as _time
         try:
-            with self._lock:
+            # A08 bug 2 (fix-first row 23): the commit was OUTSIDE the
+            # lock, so thread A's commit landed thread B's half-built
+            # transaction -- and the second actor here is a live route
+            # (routes/agent.py's open-loop writes), not a hypothetical.
+            # ``with self._lock, self._conn`` is what every other writer
+            # in this file does.
+            with self._lock, self._conn:
                 cur = self._conn.execute(
                     "INSERT INTO open_loops (thread_id, text, domain, created_at, source) "
                     "VALUES (?, ?, ?, ?, ?)",
                     (thread_id, text, domain, created_at or _time.time(), source),
                 )
-            self._conn.commit()
             return cur.lastrowid
         except Exception as e:
             logger.warning(f"add_open_loop failed: {e}")
@@ -3047,12 +3663,12 @@ class SqliteConversationStore:
             return False
         import time as _time
         try:
-            with self._lock:
+            # A08 bug 2 (fix-first row 23): the commit was outside the lock.
+            with self._lock, self._conn:
                 self._conn.execute(
                     "UPDATE open_loops SET closed_at = ? WHERE id = ? AND closed_at IS NULL",
                     (closed_at or _time.time(), loop_id),
                 )
-            self._conn.commit()
             return True
         except Exception as e:
             logger.warning(f"close_open_loop failed: {e}")

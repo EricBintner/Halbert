@@ -290,7 +290,10 @@ def test_message_passes_thread_manager_and_never_force_resets(client, tm, monkey
             yield StreamEvent.session_started("s1", "r1")
             yield StreamEvent.response_complete("s1")
 
-        def handle_midturn_arrival(self, session_id, text, channel=None):
+        def handle_midturn_arrival(
+        self, session_id, text, channel=None,
+        speaker_role=None, identifier_claim=None,
+    ):
             # Packet 07: nothing is in flight on this fake, so every
             # arrival is an ordinary turn and the route falls through to
             # process() exactly as before.
@@ -324,7 +327,12 @@ def test_the_real_thread_manager_resolves_and_feeds_the_timeline(tmp_path, monke
     """
     import halbert_core.agents.threads as threads_mod
 
-    monkeypatch.setattr(threads_mod._cs, "_DEFAULT_DB", str(tmp_path / "conv.db"))
+    # R-04 (A08-G12): the default path is resolved per call through
+    # utils.paths now, not a module constant computed at import --
+    # which ignored HALBERT_DATA_DIR and could not see an environment
+    # a test set afterwards.
+    monkeypatch.setattr(
+        threads_mod._cs, "_default_db_path", lambda: str(tmp_path / "conv.db"))
     monkeypatch.setattr(threads_mod, "_manager", None)
     monkeypatch.setattr(agent_routes, "_agent_instance", None)
     manager = agent_routes._thread_manager()

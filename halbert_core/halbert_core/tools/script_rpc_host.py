@@ -46,6 +46,12 @@ class ScriptRpcHost:
         self._budget: list[int] = [max(0, int(budget))]
         self.dispatch_hook: Optional[DispatchHook] = None
         self.calls_dispatched: int = 0
+        #: A04-G2 (fix-first row 11). The hook used to be left wired when
+        #: ``run_script`` returned, so a thread the script left behind
+        #: could dispatch tools under the OLD session and role -- after
+        #: the turn that authorised them had ended. Retirement is the
+        #: first thing ``handle`` checks.
+        self._retired = False
 
     # -- token ---------------------------------------------------------------
 
@@ -90,10 +96,36 @@ class ScriptRpcHost:
             return False
         return secrets.compare_digest(token, self._token)
 
+    def retire(self) -> None:
+        """Close the seam for good (A04-G2).
+
+        Idempotent, and one-way: a retired host never serves again. The
+        run's ``finally`` calls this and nulls the hook, so a worker
+        wedged in C code that wakes up ten seconds later finds a door
+        that is shut rather than a session that has moved on.
+        """
+        self._retired = True
+        self.dispatch_hook = None
+
+    @property
+    def retired(self) -> bool:
+        return self._retired
+
     def handle(self, token: object, name: str, args: Optional[Dict]) -> Dict:
         """Serve one stub call. Order is fixed; refusals are free and
         structured; the script never sees an exception from here."""
         args = dict(args or {})
+        if self._retired:
+            logger.warning(
+                "script_rpc refusal=retired tool=%s — a late dispatch after "
+                "the run settled", name)
+            return {
+                "refusal": "retired",
+                "error": (
+                    "this script's run has ended; its tools are no longer "
+                    "available"
+                ),
+            }
         if not self._token_ok(token):
             logger.info("script_rpc refusal=bad_token tool=%s", name)
             return {"error": "invalid script token"}

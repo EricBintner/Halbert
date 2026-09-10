@@ -157,14 +157,23 @@ class ChannelRefused(Exception):
         super().__init__(f"no registered channel for modality {modality!r}")
 
     def payload(self) -> Dict[str, str]:
-        """The admission-shape deny payload (guest.py's
-        ``_deny_payload``), so every registry refusal answers with the
-        same decisive_gate/reason_code/message shape."""
-        return {
-            "reason_code": self.reason_code,
-            "decisive_gate": self.decisive_gate,
-            "message": f"No channel is configured for modality {self.modality!r}",
-        }
+        """The admission-shape deny payload.
+
+        R-01 Phase E (A12-G6): this used to hand-copy the shape with a
+        comment saying it mirrored ``guest.py``'s ``_deny_payload``. A
+        comment is not a shared function -- and the modality was
+        interpolated into the message, so the one door every turn arrives
+        at echoed the client's own string back at it. It renders through
+        the shared payload now; the refused modality goes in the log,
+        where a diagnostic belongs.
+        """
+        from ..persona.admission import deny_payload
+        return deny_payload(self.decisive_gate, self.reason_code)
+
+    def gate(self):
+        """This refusal as a named gate, for the door's decision record."""
+        from ..persona.admission import block
+        return block(self.decisive_gate, "ingress", self.reason_code, 400)
 
 
 def resolve_channel(modality: Optional[str]) -> ChannelDeclaration:

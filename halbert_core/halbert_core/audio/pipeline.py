@@ -431,6 +431,19 @@ class AudioPipelineCoordinator:
                     if profile:
                         speaker_name = profile.name
                         speaker_role = profile.role
+                    else:
+                        # A09 bug 5 (fix-first row 29): a matcher hit
+                        # whose PROFILE lookup fails is not a verified
+                        # speaker. It used to keep the speaker_id, which
+                        # is what stamps a voice_speaker_verification
+                        # claim -- so a deleted or unreadable profile
+                        # produced a verified claim with no subject.
+                        logger.warning(
+                            "speaker id %s matched but has no profile; "
+                            "treating the speaker as unidentified",
+                            speaker_id)
+                        speaker_id = ""
+                        speaker_confidence = 0.0
                     await self._set_state(
                         AudioState.RECOGNIZED,
                         {"speaker": speaker_name, "role": speaker_role,

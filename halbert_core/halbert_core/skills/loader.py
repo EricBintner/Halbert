@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional
+from typing import Dict, Iterable, List, Optional, Tuple
 
 from .parser import Skill, SkillParseError, parse_skill_file
 from .reserved import is_reserved_skill_name
@@ -39,13 +39,26 @@ logger = logging.getLogger(__name__)
 
 BUILTIN_DIR = Path(__file__).parent / "builtin"
 
+#: The operator's own skill root. A13 bug 10: this was computed inline
+#: inside ``daemon_skill_dirs``, so nine test call sites read the
+#: developer's REAL ``~/.config/halbert/skills`` -- a machine with skills
+#: in it ran different tests from CI, and neither knew. Named here so
+#: ``tests/conftest.py`` can point it at a scratch directory for the
+#: session, and so there is one place that says where it is.
+def default_user_skill_dir() -> Path:
+    """Where the operator's own skills live: ``~/.config/halbert/skills``."""
+    return Path.home() / ".config" / "halbert" / "skills"
+
+
+USER_SKILL_DIR = default_user_skill_dir()
+
 
 def default_skill_dirs(cwd: Optional[Path] = None) -> List[Path]:
     """The four search locations, in precedence order (last wins)."""
     root = Path(cwd) if cwd else Path.cwd()
     return [
         BUILTIN_DIR,
-        Path.home() / ".config" / "halbert" / "skills",
+        USER_SKILL_DIR,
         root / ".halbert" / "skills",
         root / ".claude" / "skills",
     ]
@@ -63,8 +76,11 @@ def daemon_skill_dirs() -> List[Path]:
 
     ``default_skill_dirs`` keeps the four-location chain for CLI and test
     callers that genuinely want a project-local skill. The daemon uses this.
+
+    Read from the module constant rather than recomputed, so the root has
+    one definition and the test session can move it (A13 bug 10).
     """
-    return [BUILTIN_DIR, Path.home() / ".config" / "halbert" / "skills"]
+    return [BUILTIN_DIR, USER_SKILL_DIR]
 
 
 def _builtin_names() -> set:
@@ -116,16 +132,101 @@ def _skill_files(directory: Path) -> List[Path]:
     return found
 
 
+def skill_manifest(dirs: Optional[Iterable[Path]] = None,
+                   cwd: Optional[Path] = None) -> Tuple[Tuple[str, int, int], ...]:
+    """A signature per skill file: ``(path, st_mtime_ns, st_size)``, sorted.
+
+    A13-G2. The registry is built once inside a process singleton, so an
+    edited SKILL.md never reached a running daemon -- while ``read_file``,
+    following the ``<location>`` the catalog printed, served the NEW body.
+    The disclosure layer and the content layer described different skills.
+
+    Hermes rebuilds exactly this manifest on every prompt build
+    (``agent/prompt_builder.py:1080-1119``) and reparses only when it
+    moved. Two fields, not one: mtime alone misses a rewrite inside the
+    same clock tick, and size alone misses an edit that keeps the length.
+
+    Stat failures are skipped rather than raised: a file that vanished
+    between the walk and the stat is a change like any other, and the next
+    call sees the tree without it.
+    """
+    search = list(dirs) if dirs is not None else default_skill_dirs(cwd)
+    out: List[Tuple[str, int, int]] = []
+    for directory in search:
+        for path in _skill_files(Path(directory)):
+            try:
+                st = path.stat()
+            except OSError:
+                continue
+            out.append((str(path), st.st_mtime_ns, st.st_size))
+    return tuple(sorted(out))
+
+
+def _content_refusal(path: Path, directory: Path) -> bool:
+    """Whether the scanner refuses this file (A13-G5, design §4.1).
+
+    Bundled skills are scanned in CI, never refused here: a runtime refusal
+    on the shipped set would take Halbert's own expertise off the machine
+    over a false positive, and the CI test is what shipping them buys.
+    Everything else -- the operator root, a workspace, an ingested pack --
+    is refused with the finding logged, never scrubbed.
+
+    Review-severity findings are logged and load. The module docstring has
+    the line between the two and why it sits there.
+    """
+    from .scanner import scan_skill_tree
+
+    findings = scan_skill_tree(path)
+    if not findings:
+        return False
+    bundled = Path(directory) == BUILTIN_DIR
+    refusing = [f for f in findings if f.refuses]
+    for finding in findings:
+        if finding.refuses and not bundled:
+            continue
+        logger.warning("skill content review: %s", finding)
+    if not refusing or bundled:
+        return False
+    logger.error(
+        "refusing skill %s: its text trips %s. The file is NOT modified -- "
+        "silently rewriting an instruction file is how you get instruction "
+        "files nobody can audit. Findings: %s",
+        path, ", ".join(sorted({f.rule for f in refusing})),
+        "; ".join(str(f) for f in refusing[:5]),
+    )
+    return True
+
+
 def load_skills_from_dir(directory: Path) -> List[Skill]:
     """Parse every skill in one directory, skipping the ones that don't."""
     skills: List[Skill] = []
     for path in _skill_files(directory):
         try:
+            if _content_refusal(path, directory):
+                continue
             skills.append(parse_skill_file(path))
         except SkillParseError as e:
             logger.warning("skipping unparseable skill: %s", e)
         except OSError as e:
             logger.warning("skipping unreadable skill %s: %s", path, e)
+        except (KeyboardInterrupt, SystemExit):
+            # The operator's own Ctrl-C, and a deliberate exit. A
+            # per-file guard that swallowed these would be a guard
+            # against the person running the machine.
+            raise
+        except BaseException as e:
+            # A13-G1: one bad file never costs the plane. This used to
+            # catch only SkillParseError and OSError, so a file that
+            # raised anything else -- a MemoryError from a YAML alias
+            # bomb, a RecursionError from a self-referential anchor --
+            # took the whole directory walk with it, and every skill on
+            # the machine went with the one somebody dropped in a folder.
+            logger.error(
+                "skipping skill %s: it failed to parse in a way the parser "
+                "did not anticipate (%s: %s). The other skills in %s are "
+                "unaffected.",
+                path, type(e).__name__, e, directory,
+            )
     return skills
 
 

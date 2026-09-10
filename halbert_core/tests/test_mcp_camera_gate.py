@@ -296,6 +296,14 @@ class TestTheGateIsWiredIn:
         from halbert_core.mcp import server as srv
 
         monkeypatch.setitem(srv.TOOL_HANDLERS, tool_name, lambda args: payload)
+        # A17-G9: the door refuses a tool nobody classified, so an
+        # injected one has to declare itself — which is the new contract,
+        # not a workaround for it. These are query tools; the camera gate
+        # this class is about is the SECOND boundary, inside the first.
+        monkeypatch.setattr(
+            srv, "_MCP_READ_ONLY_TOOLS",
+            srv._MCP_READ_ONLY_TOOLS | {tool_name},
+        )
         reply = srv.MCPServer().handle_request({
             "jsonrpc": "2.0", "id": 1, "method": "tools/call",
             "params": {"name": tool_name, "arguments": {}},

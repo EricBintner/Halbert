@@ -273,22 +273,27 @@ def get_agent():
             skill_matcher = None
             try:
                 from ...skills.loader import daemon_skill_dirs
-                from ...skills.matcher import SkillMatcher
-                from ...skills.registry import SkillRegistry
+                from ...skills.reload import get_skill_plane
 
-                registry = SkillRegistry.from_disk(dirs=daemon_skill_dirs())
-                skill_matcher = SkillMatcher(registry)
+                # A13-G2: through the plane, not straight from disk. This
+                # function is a process singleton, so a registry built here
+                # was the registry the daemon kept until a restart -- while
+                # read_file, following the <location> the catalog printed,
+                # served the edited body. The plane restats the roots at
+                # turn start (see send_message) and reparses only when a
+                # signature moved.
+                #
                 # SK-2: the same registry the matcher runs over is the one
                 # the catalog renders from and the read seam resolves
-                # against — hold it where the executor's read_file can find
-                # it, so every catalog consultation becomes a telemetry
-                # receipt without threading the registry through the tool
-                # registry.
-                from ...skills.telemetry import set_active_registry
-                set_active_registry(registry)
+                # against — the plane sets the active registry on every
+                # rebuild, so every catalog consultation becomes a
+                # telemetry receipt without threading the registry through
+                # the tool registry.
+                plane = get_skill_plane()
+                skill_matcher = plane.matcher
                 logger.info(
                     "Skill matcher wired: %d skill(s) from %s",
-                    len(registry.all()),
+                    len(plane.registry.all()),
                     ", ".join(str(d) for d in daemon_skill_dirs()),
                 )
             except Exception as e:
@@ -372,6 +377,22 @@ def get_agent():
                 start_mcp_health_monitor(client, tool_executor=tool_executor)
         except Exception as e:
             logger.warning(f"Could not register MCP tools (non-fatal): {e}")
+
+        # A13-G13: every tool registered above -- HA's two, Frigate's six,
+        # AppleScript's, and whatever an MCP server publishes -- was
+        # invisible to the reserved-name check, which read a static list
+        # cached for the process. A skill may not claim a name the user
+        # will type meaning the tool that turns the lights off. Registered
+        # LAST, after every register_* call above, and read live on every
+        # check, so a tool the health monitor registers mid-process is
+        # reserved from the moment it exists.
+        try:
+            from ...skills.reserved import add_live_tool_source
+            add_live_tool_source(lambda: list(tool_executor.tools))
+        except Exception as e:
+            logger.warning(f"Live reserved-name source not wired "
+                           f"(non-fatal): {e}")
+
         _agent_instance = AgentStateMachine(
             llm_client=llm_client,
             tool_executor=tool_executor,
@@ -1649,6 +1670,17 @@ if FASTAPI_AVAILABLE:
         except Exception as e:
             raise HTTPException(500, f"Agent initialization failed: {e}")
 
+        # A13-G2: the skill roots are restatted here, once per turn. An
+        # edited SKILL.md used to reach nothing until a restart, and the
+        # catalog went on advertising a description whose own file already
+        # said something else. Never raises -- a plane that cannot rebuild
+        # costs the turn its expertise, not its answer.
+        try:
+            from ...skills.reload import get_skill_plane
+            get_skill_plane().refresh()
+        except Exception as e:  # pragma: no cover - the plane swallows its own
+            logger.warning(f"Skill refresh skipped (non-fatal): {e}")
+
         # A turn needs a stable id to be reported and cancelled under, and the
         # agent generates its own when the client sends none -- which the route
         # would never learn, so an error raised out here would carry an id no
@@ -1664,79 +1696,52 @@ if FASTAPI_AVAILABLE:
         # modality that resolves to no registered channel is refused in
         # the admission module's shape (fail closed, never silently
         # treated as typed).
+        # A05-G15: the message is normalised before anything stores or
+        # prompts with it. Chat input reached the store and messages[0]
+        # as the bytes the client sent, so a null byte or a C0 control
+        # travelled the whole way. NFC so two spellings of a word are one
+        # string in the store and in a search; a NUL is refused outright,
+        # because it terminates a C string and several things downstream
+        # of here are C.
+        from ...security.display_transport import sanitize_chat_input
+        try:
+            request.message = sanitize_chat_input(request.message or "")
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+        # R-01 Phase E (A12-G6): the door produces an IngressDecision like
+        # the guest routes do -- "dropped at gate X, reason Y", walked
+        # through the one gate list and rendered by the one deny payload,
+        # rather than an ad-hoc raise whose body was hand-copied in
+        # agents/channels.py.
         from ...agents.channels import ChannelRefused, resolve_channel
+        from ...persona.admission import ADMISSION_DISPATCH, admit, allow, deny_payload
         try:
             channel = resolve_channel(request.modality)
+            ingress_gates = [allow("channel_registry", "ingress", "channel_resolved")]
         except ChannelRefused as refusal:
             logger.info(
                 "channel ingress refused: modality=%r (%s)",
                 request.modality, refusal.reason_code,
             )
-            raise HTTPException(status_code=400, detail=refusal.payload())
-
-        # Packet 07 B1/B2: the interrupt algebra. An arrival that reaches the
-        # machine while a turn is in flight no longer queues as a whole
-        # second turn: "/stop" claims the running turn's activity generation
-        # (a stop that loses the race to a finishing turn declines), and
-        # plain text steers into the next batch boundary through the
-        # machine's single replace-not-grow pending slot. The arrival's own
-        # stream carries its verdict (steer_accepted / the stop outcome), so
-        # nothing is silently dropped. Arrivals carrying images keep the
-        # queue-a-turn path below: images ride the per-turn context, and no
-        # mid-turn seam for them exists yet.
-        #
-        # C3 (busy-mode unification): the arrival's resolved channel rides
-        # the call — the verbs this arrival may use are the channel's own
-        # busy_verbs, so a spoken or terminal "/stop" degrades to a steer
-        # (neither channel declares stop) while the dashboard's "/stop"
-        # still claims the generation.
-        if not request.images:
-            _decision, arrival_events = agent.handle_midturn_arrival(
-                session_id, request.message, channel=channel
-            )
-            if arrival_events is not None:
-                async def arrival_stream():
-                    for event in arrival_events:
-                        yield event.to_sse()
-
-                return StreamingResponse(
-                    arrival_stream(),
-                    media_type="text/event-stream",
-                    headers={
-                        "Cache-Control": "no-cache",
-                        "Connection": "keep-alive",
-                        "X-Accel-Buffering": "no",
-                        "Access-Control-Allow-Origin": "*",
-                    },
-                )
-
-        # In-chat model picker for this turn. "auto" means "no pin" -- it is the
-        # absence of an override, not a third mode.
-        tier_override = request.tier if request.tier in ("guide", "specialist", "vision") else None
-        model_override = request.model or None
-        if model_override or tier_override:
-            logger.info(
-                f"Turn override from picker: model={model_override!r} "
-                f"tier={tier_override!r} endpoint_id={request.endpoint_id!r}"
+            ingress_gates = [refusal.gate()]
+        decision = admit(ingress_gates)
+        if decision.admission != ADMISSION_DISPATCH:
+            raise HTTPException(
+                status_code=400,
+                detail=deny_payload(decision.decisive_gate, decision.reason_code),
             )
 
-        # The budget belongs to the model that will actually answer, resolved
-        # through the same path the answering turn takes (D4). Reading it from
-        # the picker's pin meant a constant for every unpinned turn, which is
-        # every turn by default.
-        history_budget = _history_budget(_answering_model(
-            request.message,
-            model_override=model_override,
-            tier_override=tier_override,
-            endpoint_id=request.endpoint_id,
-            images=request.images,
-        ))
-
-        # Plan A: the state machine persists the turn and resolves the hidden
-        # thread itself (begin_turn under its lock); the route only hands over
-        # the manager. None means "no store": the turn still runs.
-        thread_manager = _thread_manager()
-
+        # R-01 Phase A: STAMP BEFORE THE VERB. This block used to sit
+        # ~100 lines below the mid-turn branch, so an arrival that
+        # steered a running turn was routed on the wire's word alone:
+        # its relay receipt was never redeemed, its claim never
+        # derived, its role never stamped. That ordering was the OSS
+        # solidity pass's #1 finding (A09-G1 = A07-G1 = A07 bug 3 =
+        # A09 bug 2) -- an unidentified speaker in the room could
+        # steer the owner's running admin turn, and the single-use
+        # receipt that should have identified them stayed spendable.
+        # Nothing in the block changed; only where it runs.
         # C1: the server-stamped claim fields. What the wire declared is
         # not what the turn carries:
         #
@@ -1826,6 +1831,93 @@ if FASTAPI_AVAILABLE:
             # channels that predate it; the terminal channel's identity
             # is stamped here instead.
             stamped_claim = CHANNEL_CLAIM_STAMP["terminal"]
+
+        # The stamped identity, in the form the algebra compares
+        # against the running turn's floor. Derived here from the
+        # SAME stamped source process() will derive the turn's own
+        # claim from, so the door and the machine cannot disagree
+        # about who arrived.
+        arrival_claim = None
+        if stamped_claim:
+            try:
+                from ...persona.claims import claim_from_source
+                arrival_claim = claim_from_source(
+                    stamped_claim, value=stamped_speaker_name
+                )
+            except Exception as e:
+                # Fail closed, like the state machine's own ladder: a
+                # claim that cannot be derived is UNVERIFIED, never
+                # absent (an absent claim would lift the cap).
+                logger.warning(f"arrival claim not derived: {e}")
+                from ...persona.claims import ClaimStrength, IdentifierClaim
+                arrival_claim = IdentifierClaim(
+                    kind="speaker", strength=ClaimStrength.UNVERIFIED
+                )
+
+        # Packet 07 B1/B2: the interrupt algebra. An arrival that reaches the
+        # machine while a turn is in flight no longer queues as a whole
+        # second turn: "/stop" claims the running turn's activity generation
+        # (a stop that loses the race to a finishing turn declines), and
+        # plain text steers into the next batch boundary through the
+        # machine's single replace-not-grow pending slot. The arrival's own
+        # stream carries its verdict (steer_accepted / the stop outcome), so
+        # nothing is silently dropped. Arrivals carrying images keep the
+        # queue-a-turn path below: images ride the per-turn context, and no
+        # mid-turn seam for them exists yet.
+        #
+        # C3 (busy-mode unification): the arrival's resolved channel rides
+        # the call — the verbs this arrival may use are the channel's own
+        # busy_verbs, so a spoken or terminal "/stop" degrades to a steer
+        # (neither channel declares stop) while the dashboard's "/stop"
+        # still claims the generation.
+        if not request.images:
+            _decision, arrival_events = agent.handle_midturn_arrival(
+                session_id, request.message, channel=channel,
+                speaker_role=stamped_speaker_role,
+                identifier_claim=arrival_claim,
+            )
+            if arrival_events is not None:
+                async def arrival_stream():
+                    for event in arrival_events:
+                        yield event.to_sse()
+
+                return StreamingResponse(
+                    arrival_stream(),
+                    media_type="text/event-stream",
+                    headers={
+                        "Cache-Control": "no-cache",
+                        "Connection": "keep-alive",
+                        "X-Accel-Buffering": "no",
+                        "Access-Control-Allow-Origin": "*",
+                    },
+                )
+
+        # In-chat model picker for this turn. "auto" means "no pin" -- it is the
+        # absence of an override, not a third mode.
+        tier_override = request.tier if request.tier in ("guide", "specialist", "vision") else None
+        model_override = request.model or None
+        if model_override or tier_override:
+            logger.info(
+                f"Turn override from picker: model={model_override!r} "
+                f"tier={tier_override!r} endpoint_id={request.endpoint_id!r}"
+            )
+
+        # The budget belongs to the model that will actually answer, resolved
+        # through the same path the answering turn takes (D4). Reading it from
+        # the picker's pin meant a constant for every unpinned turn, which is
+        # every turn by default.
+        history_budget = _history_budget(_answering_model(
+            request.message,
+            model_override=model_override,
+            tier_override=tier_override,
+            endpoint_id=request.endpoint_id,
+            images=request.images,
+        ))
+
+        # Plan A: the state machine persists the turn and resolves the hidden
+        # thread itself (begin_turn under its lock); the route only hands over
+        # the manager. None means "no store": the turn still runs.
+        thread_manager = _thread_manager()
 
         async def event_stream():
             """Generate SSE events from agent processing."""
@@ -2266,6 +2358,51 @@ if FASTAPI_AVAILABLE:
 
     _EMPTY_TIMELINE: Dict[str, Any] = {"turns": [], "has_more": False, "current_thread": None}
 
+    def _project_timeline_blocks(turns) -> None:
+        """Project stored tool blocks the way live events are (A05-G4).
+
+        A live ``tool_complete`` crosses the wire through
+        ``display_transport.verbose_text``: registry- and pattern-redacted,
+        capped, with the cut named. A HISTORY read of the same turn came
+        straight out of SQLite -- so a value that was redacted when it
+        happened was delivered raw the moment the page was reloaded, and a
+        50 KB result that was capped live arrived whole.
+
+        The store keeps full fidelity, as it should: this is the projection
+        at the wire, not a rewrite of the record. Mutates the page in place;
+        never raises, because a timeline that cannot be projected must still
+        render as an empty page rather than a 500 (the route's own rule).
+        """
+        try:
+            from ...security.display_transport import verbose_block
+        except Exception:  # pragma: no cover - import-time only
+            return
+        for turn in turns or []:
+            for message in (turn.get("messages") or []):
+                blocks = message.get("blocks")
+                if not isinstance(blocks, list):
+                    continue
+                for block in blocks:
+                    if not isinstance(block, dict):
+                        continue
+                    for field in ("result", "error"):
+                        value = block.get(field)
+                        if not isinstance(value, str) or not value:
+                            continue
+                        try:
+                            projected = verbose_block(value)
+                        except Exception:
+                            # Fail closed at the wire: an unprojectable
+                            # block shows nothing rather than everything.
+                            block[field] = "[withheld: this output could not be checked]"
+                            continue
+                        block[field] = projected["text"]
+                        if projected.get("truncated"):
+                            block.setdefault("truncated", {})[field] = {
+                                k: v for k, v in projected.items() if k != "text"
+                            }
+
+
     def _hydrate_terminal_blocks(tm, turns: List[Dict[str, Any]]) -> None:
         """Fill each run_command block in with what its terminal block holds.
 
@@ -2353,6 +2490,7 @@ if FASTAPI_AVAILABLE:
                 if has_more:
                     turns = turns[-page:]
             _hydrate_terminal_blocks(tm, turns)
+            _project_timeline_blocks(turns)
             return {"turns": turns, "has_more": has_more, "current_thread": _thread_summary(tm.current())}
         except Exception as e:
             logger.warning(f"Timeline unavailable (non-fatal): {e}")

@@ -45,6 +45,7 @@ import json
 import logging
 import os
 import threading
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional
@@ -63,6 +64,7 @@ from ..persona.permission.consent import (
     consent_state,
     is_valid_grant_record,
     latest_for,
+    SurfaceReceipt,
     may_record_grant,
 )
 from ..persona.permission.ceiling import NEVER_CEILING_IDS, VOCABULARY, takes_consent_records
@@ -156,6 +158,33 @@ _RECORD_FIELDS = (
 )
 
 
+def _principal_from_payload(data: Mapping[str, Any]) -> Principal:
+    """Rebuild the principal, receipt and all (A11-G12)."""
+    if not isinstance(data, Mapping):
+        # A11 bug 7's case: a shard edited to a string principal. Typed,
+        # so the reader's own except clause turns it into the halt this
+        # ledger is written for.
+        raise TypeError("principal is not an object")
+    raw_receipt = data.get("surface_receipt")
+    receipt = None
+    if isinstance(raw_receipt, dict):
+        receipt = SurfaceReceipt(
+            surface=str(raw_receipt.get("surface", "")),
+            principal_id=str(raw_receipt.get("principal_id", "")),
+            at_machine=bool(raw_receipt.get("at_machine", False)),
+            os_reauth=bool(raw_receipt.get("os_reauth", False)),
+            method=str(raw_receipt.get("method", "")),
+        )
+    return Principal(
+        kind=data["kind"],
+        id=data.get("id", ""),
+        name=data.get("name", ""),
+        authn=data.get("authn", ""),
+        at_machine=bool(data.get("at_machine", False)),
+        surface_receipt=receipt,
+    )
+
+
 def record_to_payload(record: ConsentRecord) -> Dict[str, Any]:
     """Flatten one record into the payload its ledger event carries."""
     payload: Dict[str, Any] = {
@@ -168,6 +197,19 @@ def record_to_payload(record: ConsentRecord) -> Dict[str, Any]:
             "name": record.principal.name,
             "authn": record.principal.authn,
             "at_machine": record.principal.at_machine,
+            # A11-G12: the server's own record of what it validated, so
+            # the ledger row says HOW the decision was authorised rather
+            # than only who claimed to make it.
+            "surface_receipt": (
+                {
+                    "surface": record.principal.surface_receipt.surface,
+                    "principal_id": record.principal.surface_receipt.principal_id,
+                    "at_machine": record.principal.surface_receipt.at_machine,
+                    "os_reauth": record.principal.surface_receipt.os_reauth,
+                    "method": record.principal.surface_receipt.method,
+                }
+                if record.principal.surface_receipt is not None else None
+            ),
         },
         "surface": record.surface,
         "text_shown_sha256": record.text_shown_sha256,
@@ -185,6 +227,10 @@ def record_to_payload(record: ConsentRecord) -> Dict[str, Any]:
         "expires_at": record.expires_at,
         "cause": record.cause,
         "prior": record.prior.value if record.prior is not None else "",
+        # A11-G1: the ask disposition is part of the decision, so it
+        # rides the hash-chained event rather than being re-derived from
+        # a profile table that may have changed since.
+        "ask": record.ask,
     }
     return payload
 
@@ -196,13 +242,7 @@ def record_from_payload(payload: Mapping[str, Any]) -> ConsentRecord:
             capability=payload["capability"],
             decision=ConsentDecision(payload["decision"]),
             ts=payload["ts"],
-            principal=Principal(
-                kind=payload["principal"]["kind"],
-                id=payload["principal"].get("id", ""),
-                name=payload["principal"].get("name", ""),
-                authn=payload["principal"].get("authn", ""),
-                at_machine=bool(payload["principal"].get("at_machine", False)),
-            ),
+            principal=_principal_from_payload(payload["principal"]),
             surface=payload.get("surface", ""),
             text_shown_sha256=payload.get("text_shown_sha256", ""),
             via=payload.get("via", ""),
@@ -218,12 +258,22 @@ def record_from_payload(payload: Mapping[str, Any]) -> ConsentRecord:
             policy_version=payload.get("policy_version", "consent-schema/1"),
             expires_at=payload.get("expires_at"),
             cause=payload.get("cause", ""),
+            # A11-G1: absent means the pre-ask ledger's rows, which were
+            # written before the disposition existed -- read as "off",
+            # the shape they actually had.
+            ask=payload.get("ask", "off"),
             prior=(
                 ConsentDecision(payload["prior"])
                 if payload.get("prior") else None
             ),
         )
-    except (KeyError, ValueError) as exc:
+    except (KeyError, ValueError, TypeError) as exc:
+        # A11 bug 7: TypeError was missing, so a shard edited to a
+        # string principal (or any field of the wrong TYPE rather than
+        # the wrong value) raised out of the ledger reader and crashed
+        # boot, instead of taking the halt path this ledger is written
+        # for. A record the reader cannot parse is a record it cannot
+        # verify, whichever way it is malformed.
         raise ConsentUnavailable(
             f"a consent record in the ledger is not shaped like one ({exc})",
             halt_reason=HaltReason.CONSENT_UNREADABLE,
@@ -253,17 +303,26 @@ def _flock_file(directory: Path, name: str):
     return handle
 
 
-def _append_locked(log, payload: Dict[str, Any]):
-    """Append one event under the cross-process lock, mirroring
-    ``obs/audit.py::_append_lock``: ``EventLog.append`` reads the head,
-    writes the record, then writes the head back, and two interleaving
-    appends take the same ``seq`` and ``prev_hash`` — a log that then
-    *reports* tampering nobody caused.
+@contextmanager
+def _ledger_lock(log):
+    """The ledger's cross-process lock, mirroring ``obs/audit.py``.
+
+    ``EventLog.append`` reads the head, writes the record, then writes
+    the head back, and two interleaving appends take the same ``seq``
+    and ``prev_hash`` — a log that then *reports* tampering nobody
+    caused.
+
+    A11 bug 5 widened what this covers. The projection is DERIVED from
+    the log, so the append and the projection write have to be one
+    critical section and a reader comparing the two has to take the same
+    lock: appending under one lock and projecting under another left a
+    window where the log had moved and the projection had not, and a
+    projection that disagrees with the chain is a Stop.
     """
     with _local_lock:
         handle = _flock_file(log.directory, _LOCK_FILENAME)
         try:
-            return log.append(CONSENT_EVENT_KIND, payload)
+            yield
         finally:
             if handle is not None:
                 fcntl.flock(handle, fcntl.LOCK_UN)
@@ -366,6 +425,7 @@ class ConsentStore:
         expires_at: Optional[str] = None,
         cause: str = "",
         ts: Optional[str] = None,
+        ask: str = "off",
     ) -> ConsentRecord:
         """Append one decision event — the only writer (§1.5).
 
@@ -447,6 +507,7 @@ class ConsentStore:
             expires_at=expires_at,
             cause=cause,
             prior=prior_decision.decision if prior_decision else None,
+            ask=ask,
         )
         if decision is ConsentDecision.GRANTED and not is_valid_grant_record(record):
             # Belt and braces: may_record_grant and the text check above
@@ -454,13 +515,36 @@ class ConsentStore:
             # never reach the chain even if a future caller reorders them.
             raise GrantRefused(GrantRefused.NO_TEXT_SHOWN)
 
-        event = _append_locked(events, record_to_payload(record))
-        _enforce_perms(self.ledger_dir)
-        self._write_projection(events)
+        with _ledger_lock(events):
+            event = events.append(CONSENT_EVENT_KIND, record_to_payload(record))
+            _enforce_perms(self.ledger_dir)
+            # Inside the same section: the projection is derived from the
+            # log, so a reader must never see one moved and the other not.
+            self._write_projection(events)
         log.info(
             "consent decision recorded: %s %s (seq %d)",
             capability, decision.value, event.seq,
         )
+        # A11-G3: a narrowing reaches the OPEN LEASES, not just the
+        # ledger. A camera lease opened under a grant the owner then
+        # revoked used to keep running -- the record said DENIED and the
+        # capture continued, because nothing told the lease. Only a
+        # non-grant narrows; a fresh grant does not disturb work already
+        # authorised. Best-effort: a hook failure must never make the
+        # decision itself unrecordable, and the record is already
+        # committed by this point.
+        if decision is not ConsentDecision.GRANTED:
+            try:
+                from ..persona.permission.lease import notify_consent_narrowed
+                notify_consent_narrowed(
+                    capability,
+                    by=principal.id or principal.kind,
+                    surface=surface,
+                )
+            except Exception as e:  # pragma: no cover - defensive
+                log.warning(
+                    "consent narrowing recorded for %s but open leases "
+                    "could not be revoked: %s", capability, e)
         return record
 
     @staticmethod
@@ -483,11 +567,22 @@ class ConsentStore:
                 GrantRefused.NOT_AT_MACHINE,
                 "the decision arrived over a wire",
             )
-        if not principal.authn.startswith("os_reauth"):
+        # A11-G12: the SERVER's receipt, not the caller's authn string.
+        # ``authn`` is a field anything constructing a Principal can
+        # write, so reading it here meant typing "os_reauth:touchid"
+        # minted the strongest grant on the machine.
+        receipt = principal.surface_receipt
+        if receipt is None or not receipt.os_reauth or receipt.surface != surface:
             raise GrantRefused(
                 GrantRefused.NO_LIVE_OS_REAUTH,
-                f"authn '{principal.authn or 'none'}' is not a live OS "
-                f"re-auth; a session credential is not a widening path",
+                "no server-minted receipt records a live OS re-auth on "
+                "this surface; a session credential is not a widening "
+                "path, and the caller's own word about one is not either",
+            )
+        if not receipt.at_machine:
+            raise GrantRefused(
+                GrantRefused.NOT_AT_MACHINE,
+                "the receipt does not record a decision made at the machine",
             )
 
     # -- reads -----------------------------------------------------------
@@ -624,13 +719,22 @@ class ConsentStore:
         that disagrees with the chain is tampering or corruption — §1.5
         makes it a Stop, and the boot check halts on it.
         """
+        # A11 bug 5: both readings under ONE lock -- the same flock the
+        # writer takes. This used to derive the expected projection from
+        # the log and then read the projection file, unsynchronised, so a
+        # concurrent record_decision between the two reads compared an
+        # old log against a new projection. The answer to a projection
+        # that disagrees with the chain is a Stop (§1.5), so the race
+        # halted a healthy machine and named it tampering.
         events = self._log() if self.ledger_dir.is_dir() else None
-        expected = (
-            self._projection_content(events) if events is not None
-            else {"version": _PROJECTION_VERSION, "head_seq": -1, "head_hash": "",
-                  "records": 0, "state": {}}
-        )
-        actual = self.read_projection()
+        if events is None:
+            expected = {"version": _PROJECTION_VERSION, "head_seq": -1,
+                        "head_hash": "", "records": 0, "state": {}}
+            actual = self.read_projection()
+        else:
+            with _ledger_lock(events):
+                expected = self._projection_content(events)
+                actual = self.read_projection()
         if actual is None:
             return "absent"
         if actual == expected:

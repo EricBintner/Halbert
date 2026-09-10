@@ -315,6 +315,27 @@ class StateContext:
     # model_override/tier_override above.
     defanged_query: Optional[str] = None
 
+    # R-01 Phase D (A07-G10): the turn's own liveness clock. Monotonic,
+    # touched at handler entry, at each tool start and completion and on
+    # each stream chunk; the turn-liveness watchdog reads it and nothing
+    # else. It is the one progress clock for a turn -- a second derived
+    # clock is how "stalled" and "working" start disagreeing.
+    #
+    # The note says WHAT last moved it, which is what a diagnostic line
+    # needs: "planning" and "tool:run_command" are different kinds of
+    # quiet.
+    last_activity: float = field(default_factory=time.monotonic)
+    last_activity_note: str = "turn started"
+
+    def touch(self, note: str) -> None:
+        """Record that the turn made progress."""
+        self.last_activity = time.monotonic()
+        self.last_activity_note = note
+
+    def idle_seconds(self) -> float:
+        """How long since this turn last made progress."""
+        return time.monotonic() - self.last_activity
+
     def add_observation(self, observation: str):
         """Add an observation from tool execution."""
         self.observations.append(observation)

@@ -102,6 +102,7 @@ a corrupt config means "no servers", not a dead agent.
 """
 from __future__ import annotations
 
+import fnmatch
 import logging
 import os
 import tempfile
@@ -122,6 +123,107 @@ logger = logging.getLogger("halbert.mcp.config")
 DEFAULT_TIMEOUT_SECONDS = 30.0
 
 _SUPPORTED_TRANSPORTS = ("stdio", "http")
+
+
+def make_tool_filter(tools_entry: Any):
+    """Build the "may this tool register" predicate for one server.
+
+    A17-G18. Without it there was no way to say which of a server's
+    tools to take: the first 64 in whatever order the server returned
+    them, and the 65th dropped with a log line. Include is a whitelist
+    where an EMPTY list means nothing (that is how an operator turns a
+    server off without deleting its entry); exclude is a blacklist;
+    include wins where both name a tool. Names match exactly, by the
+    same sanitized-component rule the risk overrides use, or as an
+    fnmatch glob.
+    """
+    if not isinstance(tools_entry, dict):
+        return lambda _name: True
+    raw_include = tools_entry.get("include")
+    include = None
+    if isinstance(raw_include, list):
+        include = tuple(str(x) for x in raw_include)
+    exclude = tuple(
+        str(x) for x in (tools_entry.get("exclude") or [])
+        if isinstance(tools_entry.get("exclude"), list)
+    )
+    return _tool_filter(include, exclude)
+
+
+def _tool_filter(include: Optional[Tuple[str, ...]], exclude: Tuple[str, ...]):
+    def _matches(patterns, name: str) -> bool:
+        for pattern in patterns:
+            if pattern == name or fnmatch.fnmatchcase(name, pattern):
+                return True
+            if components_match(pattern, name):
+                return True
+        return False
+
+    def keep(name: str) -> bool:
+        if include is not None:
+            return _matches(include, name)
+        if exclude and _matches(exclude, name):
+            return False
+        return True
+
+    return keep
+
+
+def _register_secret(value: Optional[str]) -> None:
+    """Teach the redaction registry one credential (A03-G7).
+
+    The registry is a LEARNED layer: it protects values Halbert has
+    watched cross a boundary it controls. MCP bearer tokens were never
+    registered, so the one class of secret this process resolves on
+    every single request was invisible to the exact-value pass -- if a
+    token reached an error string, a log line, a tool result or a
+    confirmation preview, only the pattern heuristics stood between it
+    and the model.
+
+    Resolve time is the right seam: it is where the value exists, it
+    runs on every request so a rotated token is registered too, and it
+    costs one bounded insert against a cached alternation.
+    """
+    if not value:
+        return
+    try:
+        from ..ingestion.redaction_registry import get_global_registry
+        get_global_registry().register(value)
+    except Exception as e:  # pragma: no cover - defensive
+        logger.debug("MCP credential not registered for redaction: %s", e)
+
+
+def register_server_secrets(env: Optional[Mapping[str, str]]) -> int:
+    """Register the credential-shaped values in a server's env block.
+
+    Deliberately NOT wholesale. A server's ``env`` carries paths,
+    feature flags and hostnames as often as credentials, and registering
+    a path would replace every mention of that directory with
+    ``<secret>`` in every tool result and log line on the machine --
+    which is worse than the leak it prevents, because a redactor that
+    fires constantly is one people learn to look past.
+
+    The classification rule is name-shaped, and it is the one the
+    codebase already has: ``ingestion.redaction._is_secret_key`` decides
+    what reads as a credential name (``*_TOKEN``, ``*_KEY``,
+    ``*_SECRET``, ``*_PASSWORD`` and their kin). A value whose NAME does
+    not read that way is left to the pattern pass.
+
+    Returns how many values were registered, for the caller's log line.
+    """
+    if not env:
+        return 0
+    try:
+        from ..ingestion.redaction import _is_secret_key
+    except Exception:  # pragma: no cover - import-time only
+        return 0
+    registered = 0
+    for name, value in env.items():
+        if not value or not _is_secret_key(str(name)):
+            continue
+        _register_secret(str(value))
+        registered += 1
+    return registered
 
 
 def config_path() -> Path:
@@ -192,9 +294,11 @@ class MCPAuthConfig:
         must not flood the log).
         """
         if self.token:
+            _register_secret(self.token)
             return self.token
         if self.token_env:
             value = os.environ.get(self.token_env)
+            _register_secret(value)
             if not value:
                 if self.token_env in _WARNED_MISSING_TOKEN_ENVS:
                     logger.debug(
@@ -238,6 +342,16 @@ class MCPServerConfig:
     risk_override: Optional[RiskLevel] = None       # B3: per-server level
     tool_risk: Mapping[str, RiskLevel] = field(
         default_factory=lambda: MappingProxyType({}))  # B3: per-tool
+    #: A17-G18: which of the server's advertised tools to register.
+    #: ``tool_include`` is a whitelist -- present and empty means NONE,
+    #: which is how an operator turns a server off without removing it;
+    #: absent means "no whitelist". ``tool_exclude`` is a blacklist, and
+    #: include wins where both name a tool. Both accept exact names or
+    #: fnmatch globs. Excluded from ``signature()`` for the same reason
+    #: the risk fields are: a filter change is a registration change,
+    #: not a connection change.
+    tool_include: Optional[Tuple[str, ...]] = None
+    tool_exclude: Tuple[str, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
         """Normalize the collection fields into read-only shapes. The
@@ -450,6 +564,15 @@ def _parse_server(entry: Any, index: int, default_timeout: float) -> Optional[MC
         logger.warning("MCP config: server '%s' env is not a mapping, ignoring env", name)
         raw_env = {}
     env = {str(k): str(v) for k, v in raw_env.items()}
+    # A03-G7: the credential-shaped values in this server's env become
+    # known secrets the moment the config is read, so a later mention of
+    # one in an error, a log line or a tool result is caught by the
+    # exact-value pass rather than left to the pattern heuristics.
+    registered = register_server_secrets(env)
+    if registered:
+        logger.debug(
+            "MCP config: registered %d credential(s) from server '%s' for "
+            "redaction", registered, name)
 
     try:
         auth = _parse_auth(entry)
@@ -481,6 +604,43 @@ def _parse_server(entry: Any, index: int, default_timeout: float) -> Optional[MC
             "skipping the server — overrides fail tight, not loose", name, e)
         return None
 
+    # A17-G3, the loader rule: an entry whose SHAPE is a payload does not
+    # spawn. The write classifier catches the agent's own write to this
+    # file; a hand edit, a restored backup or a file planted by anything
+    # else never passes through it, so the second gate is here, where the
+    # entry is used. Skipping fails tight the same way an invalid risk
+    # override does: the server is absent, not degraded. The finding
+    # names the shape and never the entry's own strings.
+    try:
+        from .entry_guard import validate_server_entry
+        findings = validate_server_entry(name, entry)
+    except Exception as e:  # pragma: no cover - import-time only
+        logger.warning(
+            "MCP config: entry screen unavailable (%s) — refusing to "
+            "launch server '%s' unscreened", e, name)
+        return None
+    if findings:
+        logger.error(
+            "MCP config: refusing to launch server '%s' — %s",
+            name, "; ".join(findings))
+        return None
+
+    # A17-G18: the operator's tool filter for this server.
+    tools_entry = entry.get("tools")
+    tool_include = None
+    tool_exclude: tuple = ()
+    if isinstance(tools_entry, dict):
+        raw_include = tools_entry.get("include")
+        if isinstance(raw_include, list):
+            tool_include = tuple(str(x) for x in raw_include)
+        raw_exclude = tools_entry.get("exclude")
+        if isinstance(raw_exclude, list):
+            tool_exclude = tuple(str(x) for x in raw_exclude)
+    elif tools_entry is not None:
+        logger.warning(
+            "MCP config: server '%s' tools is not a mapping, ignoring it",
+            name)
+
     return MCPServerConfig(
         name=name,
         transport=transport,
@@ -492,6 +652,8 @@ def _parse_server(entry: Any, index: int, default_timeout: float) -> Optional[MC
         timeout_seconds=timeout,
         risk_override=risk_override,
         tool_risk=tool_risk,
+        tool_include=tool_include,
+        tool_exclude=tool_exclude,
     )
 
 

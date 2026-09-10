@@ -7,7 +7,7 @@
  * so React ran it on the true -> false transition — that is, on every normal
  * completion — with the captured `isStreaming === true`. Each finished turn
  * therefore aborted its own (already closed) stream and POSTed
- * /api/agent/cancel, which the backend can persist as a cancelled reply. The
+ * /api/agent/stop, which the backend can persist as a cancelled reply. The
  * abort belongs to unmount, and only to unmount.
  */
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest'
@@ -51,7 +51,9 @@ function trackedFetch(events: Array<Record<string, unknown>>) {
   return calls
 }
 
-const cancels = (calls: string[]) => calls.filter((u) => u.includes('/api/agent/cancel'))
+// A07-G13: one stop verb across surfaces -- the client posts /stop, the
+// generation-claimed stop, on both the button and the unmount path.
+const cancels = (calls: string[]) => calls.filter((u) => u.includes('/api/agent/stop'))
 
 describe('useAgentStream — cancel is not sent for a turn that finished', () => {
   beforeEach(() => {

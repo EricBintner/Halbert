@@ -47,6 +47,7 @@ from .consent import (
     is_affirmative_consent,
     is_valid_grant_record,
     latest_for,
+    SurfaceReceipt,
     may_record_grant,
 )
 from .effective import (
@@ -149,6 +150,7 @@ __all__ = [
     "is_os_grant_affirmative",
     "is_valid_grant_record",
     "latest_for",
+    "SurfaceReceipt",
     "may_record_grant",
     "NEVER_CEILING_IDS",
     "OsGrantState",

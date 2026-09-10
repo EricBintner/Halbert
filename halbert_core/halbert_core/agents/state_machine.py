@@ -20,7 +20,14 @@ from typing import AsyncIterator, Dict, List, Optional, Callable, Any, TYPE_CHEC
 from .blocks import content_to_text
 from .states import AgentState, StateContext, CRAGAction, ToolCall, PlanStep, ConversationStatus
 from .events import StreamEvent
-from .steering import Decision, Verdict, apply_steer_to_results, decide_midturn
+from .steering import (
+    STEER_MARKER,
+    STEER_MARKER_CLOSE,
+    Decision,
+    Verdict,
+    apply_steer_to_results,
+    decide_midturn,
+)
 from .turn_activity import TurnActivity
 from ..streaming.terminal_bridge import get_terminal_event_bus
 from ..tools.safety import THREAD_META_TOOLS
@@ -135,6 +142,29 @@ def _defang_system_row(text: str) -> str:
     return fenced[: RECEIPT_ROW_MAX - 1].rstrip() + "\u2026"
 
 
+class TurnStopped(Exception):
+    """A step abandoned itself because the turn was stopped (A07-G5).
+
+    Raised from inside a long step -- an in-flight model request -- when
+    ``self.cancelled`` goes up. ``_drive`` catches it as the stop it is
+    (a ``cancelled`` event and a return), rather than the handler error
+    the generic ``except Exception`` would have made of it.
+    """
+
+
+def _unverified_claim():
+    """The claim a turn carries when the ladder could not derive one.
+
+    R-01 Phase A (A12 bug 1). ``None`` is not "a weak claim" -- it is no
+    claim at all, and no claim means the executor's voice ceiling never
+    runs, so a derivation *failure* left the stated role standing
+    uncapped. UNVERIFIED is the ladder's own fail-closed reading of an
+    unknown source; a failure to reach the ladder gets the same answer.
+    """
+    from ..persona.claims import ClaimStrength, IdentifierClaim
+    return IdentifierClaim(kind="speaker", strength=ClaimStrength.UNVERIFIED)
+
+
 def _default_conversation_tokens() -> int:
     """The conversation bucket a turn gets when the route did not name one.
 
@@ -231,6 +261,28 @@ class AgentStateMachine:
     # model calls and a long command); overridable per instance in tests.
     TURN_LOCK_TIMEOUT_S: float = 600.0
 
+    # How often a long step -- a running tool, an in-flight model request --
+    # looks up to see whether the turn was stopped (R-01 Phase B, A07-G2 /
+    # A07-G5). _drive polls between steps and between events; this is the
+    # poll *inside* one step, and it is what makes "/stop kills a running
+    # command" true rather than "the stop is honoured once the command
+    # finishes". Short enough to feel immediate, long enough that a turn
+    # spends no measurable time waking up.
+    STOP_POLL_SECONDS: float = 0.05
+
+    # A07-G10: how long a turn may make no progress at all before the
+    # liveness watchdog ends it. TURN_LOCK_TIMEOUT_S bounds a *waiter*;
+    # this bounds the *holder*, which nothing did -- a turn wedged on an
+    # un-returning await held the lock for the life of the process and
+    # every later message queued behind a badge that never changed.
+    # Generous on purpose: a long command that prints nothing still
+    # stamps at start and completion, so this is the "nothing at all
+    # happened" threshold, not a step budget. A turn parked on a
+    # confirmation is exempt -- waiting on a person is not wedging.
+    TURN_STALL_SECONDS: float = 900.0
+    #: How often the watchdog samples the turn's liveness clock.
+    STALL_POLL_SECONDS: float = 5.0
+
     # How many times an inline thread meta-tool may re-enter PLANNING in one
     # turn. Meta-tools are handled inline and deliberately do not raise
     # loop_count, so max_loops never ends a PLANNING→PLANNING chain, and
@@ -307,20 +359,28 @@ class AgentStateMachine:
         
         # Cancellation tracking for session interruption
         self.cancelled: Dict[str, bool] = {}
+        #: Sessions waiting on the turn lock (A07-G9). A queued turn is
+        #: not in ``active_sessions`` -- it has no context yet -- so this
+        #: is what lets ``request_stop`` answer for one instead of
+        #: declining and letting it run when the lock frees.
+        self._queued_sessions: set = set()
 
         # Packet 07: the interrupt algebra. ``turn_activity`` carries the
         # running turn's activity generation (B1): a stop claims it, so an
         # abort that loses the race to a finishing turn declines instead of
         # double-firing. ``_turn_generation`` is the generation the running
         # turn stamped at its start — the generation a stop observes.
-        # ``_pending_steer`` is the single replace-not-grow steer slot per
-        # session (B2): a mid-turn arrival steers into the next batch
-        # boundary instead of queueing a whole second turn. Both are plain
-        # cross-request surfaces in ``cancel_session``'s discipline: they
-        # never take the turn lock, which a mid-turn arrival can never own.
+        # ``_pending_steer`` holds the steers waiting for a session's next
+        # batch boundary (B2): a mid-turn arrival steers into that boundary
+        # instead of queueing a whole second turn. It is a LIST per session
+        # (A07-G6): the slot used to be replace-not-grow, so a second
+        # arrival erased the first after both had been told "accepted".
+        # Both are plain cross-request surfaces in ``cancel_session``'s
+        # discipline: they never take the turn lock, which a mid-turn
+        # arrival can never own.
         self.turn_activity = TurnActivity()
         self._turn_generation: Optional[int] = None
-        self._pending_steer: Dict[str, str] = {}
+        self._pending_steer: Dict[str, List[str]] = {}
 
         # Voice mode (O3): the PiperTTS instance behind the Haloysius voice
         # backend, cached once resolved so every egress turn shares one model
@@ -489,6 +549,7 @@ class AgentStateMachine:
         # waiting"); the status is the plain string the badge expects.
         queued = self.turn_lock.locked()
         if queued:
+            self._queued_sessions.add(session_id)
             logger.info(f"Session {session_id} waiting for the current turn to finish")
             yield StreamEvent.conversation_status(
                 session_id, "waiting", waiting_for="previous turn"
@@ -515,9 +576,23 @@ class AgentStateMachine:
         # drives the last step. The wait is bounded (TURN_LOCK_TIMEOUT_S) so
         # a wedged turn surfaces as an error the user can retry instead of
         # queueing every later message behind a badge that never changes.
-        if not await self._acquire_turn_lock(session_id):
+        try:
+            got_lock = await self._acquire_turn_lock(session_id)
+        finally:
+            self._queued_sessions.discard(session_id)
+        if not got_lock:
             for event in self._turn_lock_timeout_events(session_id):
                 yield event
+            return
+
+        # A07-G9: a stop issued while this turn was queued is read here,
+        # the first thing under the lock. The turn never starts: it says
+        # what it was asked to say (cancelled) and releases immediately,
+        # rather than answering a question the user withdrew.
+        if self.cancelled.pop(session_id, False):
+            logger.info(f"Session {session_id} stopped while queued")
+            self.turn_lock.release()
+            yield StreamEvent.cancelled(session_id)
             return
 
         # Packet 07 B1: the turn's activity generation, stamped at the
@@ -543,11 +618,33 @@ class AgentStateMachine:
         # machine). The modality is normalized to the three enumerated
         # ingress values so a client cannot invent a fourth; the inline
         # defaults below are only the registry's non-fatal fallback.
+        #
+        # A09 bug 1 (R-01 Phase A): "normalized to the three enumerated
+        # values" used to mean "anything unrecognised becomes text" --
+        # and text is the dashboard channel, whose default_role is
+        # admin. An in-process caller passing modality='mcp' therefore
+        # got an admin turn, contradicting the route's fail-closed
+        # registry. Resolve through the one registry instead: an
+        # unadmitted modality is refused here exactly as it is at the
+        # door, in the admission module's payload shape.
         normalized_modality = str(modality or "").strip().lower()
-        if normalized_modality in ("voice", "terminal"):
-            turn_modality = normalized_modality
-        else:
-            turn_modality = "text"
+        try:
+            from .channels import ChannelRefused, resolve_channel
+            turn_modality = resolve_channel(normalized_modality).id
+            if turn_modality == "dashboard":
+                # The registry's id for the typed door; process() has
+                # always called that modality "text" on the context.
+                turn_modality = "text"
+        except ChannelRefused as refusal:
+            logger.warning(
+                "turn refused: no channel for modality %r", modality
+            )
+            yield StreamEvent(
+                type="error",
+                session_id=session_id,
+                data=refusal.payload(),
+            )
+            return
         if speaker_role:
             turn_speaker_role = speaker_role
         else:
@@ -597,7 +694,12 @@ class AgentStateMachine:
                 from ..persona.claims import claim_from_source
                 turn_identifier_claim = claim_from_source(claim_source, value=speaker_name)
             except Exception as e:
-                logger.debug(f"identifier claim not derived (non-fatal): {e}")
+                # A12 bug 1 (R-01 Phase A): this used to be non-fatal and
+                # leave the claim None -- and a None claim is not a weak
+                # claim, it is NO cap: the executor's voice ceiling never
+                # runs and the stated role stands. Fail closed instead.
+                logger.warning(f"identifier claim not derived; failing closed: {e}")
+                turn_identifier_claim = _unverified_claim()
         elif turn_modality == "terminal":
             # C5 (founder ruling 2026-09-07): the terminal channel's
             # identity IS the dashboard token the door validated —
@@ -616,7 +718,8 @@ class AgentStateMachine:
                 claim_source = CHANNEL_CLAIM_STAMP["terminal"]
                 turn_identifier_claim = claim_from_source(claim_source)
             except Exception as e:
-                logger.debug(f"identifier claim not derived (non-fatal): {e}")
+                logger.warning(f"identifier claim not derived; failing closed: {e}")
+                turn_identifier_claim = _unverified_claim()
         claim_strength_label = (
             turn_identifier_claim.strength.name.lower()
             if turn_identifier_claim is not None else "none"
@@ -768,8 +871,19 @@ class AgentStateMachine:
                 # machine is stranded mid-state and the next turn cannot
                 # start.
                 yield await self._transition(AgentState.PLANNING)
-                async for event in self._drive():
-                    yield event
+                # A07-G10: the liveness watchdog for THIS turn, bound to
+                # the generation it stamped at start. Started here rather
+                # than at the top of process() so it never watches a turn
+                # that is still assembling its context, and torn down in
+                # the finally below so it cannot outlive the turn.
+                watchdog = asyncio.ensure_future(
+                    self._turn_watchdog(session_id, self._turn_generation)
+                )
+                try:
+                    async for event in self._drive():
+                        yield event
+                finally:
+                    watchdog.cancel()
             finally:
                 # end_turn before the state reset: the status is derived
                 # from where the machine stopped (spec §4.7, §12).
@@ -1016,9 +1130,10 @@ class AgentStateMachine:
         leftover_steer = self._pending_steer.pop(session_id, None)
         if leftover_steer:
             logger.info(
-                "Session %s ended with an unapplied steer (%d chars); the "
-                "turn finished before a batch boundary could apply it",
+                "Session %s ended with %d unapplied steer(s) (%d chars); the "
+                "turn finished before a batch boundary could apply them",
                 session_id, len(leftover_steer),
+                sum(len(t) for t in leftover_steer),
             )
 
     async def _begin_turn(self) -> AsyncIterator[StreamEvent]:
@@ -1386,6 +1501,8 @@ class AgentStateMachine:
             # Execute handler for current state
             handler = self._get_handler()
             if handler:
+                # A07-G10: handler entry is progress.
+                self._touch_activity(self.current_state.value.lower())
                 try:
                     async for event in handler():
                         yield event
@@ -1398,6 +1515,17 @@ class AgentStateMachine:
                             )
                             yield StreamEvent.cancelled(session_id)
                             return
+                except TurnStopped:
+                    # A07-G5: a long step abandoned itself because the
+                    # user stopped the turn. Same ending as the poll
+                    # above, reached from inside a step instead of
+                    # between two.
+                    logger.info(
+                        f"Session {session_id} cancelled inside "
+                        f"{self.current_state.value}"
+                    )
+                    yield StreamEvent.cancelled(session_id)
+                    return
                 except Exception as e:
                     logger.error(f"Handler error in {self.current_state}: {e}")
                     self.ctx.error = str(e)
@@ -1608,23 +1736,42 @@ class AgentStateMachine:
         ``turn_lock`` property because this is a plain sync call: the property
         wants a running loop and would build a lock just to report it free.
         """
-        if session_id not in self.active_sessions:
-            return False
-        ctx = self.active_sessions[session_id]
+        # A07-G13 + A07 bug 2 (R-01 Phase B): one stop semantics. This
+        # used to raise the flag with no generation claim while a typed
+        # ``/stop`` claimed it -- two verbs for one act, and a paused turn
+        # that tore down under this one and not under the other. The
+        # button and the command are now the same call; everything the
+        # docstring above describes still happens, in ``_stop_teardown``.
+        return self.request_stop(session_id) == "stopped"
+
+    def _stop_teardown(self, session_id: str) -> None:
+        """Settle a session no turn will ever run a finally for.
+
+        The half of the stop rule that is not "raise the flag": a paused
+        turn, or one whose ``process()`` has already returned, has nobody
+        left to end it, so the machine ends it here -- as a superseded
+        pause is ended (cancelled, keeping what it already said and
+        recording any staged action as never run, spec §5) -- evicts the
+        session and returns to IDLE.
+        """
+        ctx = self.active_sessions.get(session_id)
+        if ctx is None:
+            return
+        self._record_superseded_turn(ctx)
+        del self.active_sessions[session_id]
+        self.current_state = AgentState.IDLE
+
+    def _flag_cancelled(self, session_id: str) -> None:
+        """Raise the stop flag and name the conversation cancelled."""
         self.cancelled[session_id] = True
+        ctx = self.active_sessions.get(session_id)
         # User-facing status: cancelled (A2c). Guard against an already-
         # terminal conversation (e.g. already SUCCESS/ERROR).
-        if not ctx.conversation_status.is_terminal():
+        if ctx is not None and not ctx.conversation_status.is_terminal():
             try:
                 ctx.conversation_status.transition(ConversationStatus.CANCELLED)
             except ValueError:
                 pass
-        paused = self.current_state == AgentState.AWAITING_CONFIRMATION
-        if paused or not self._turn_in_flight():
-            self._record_superseded_turn(ctx)
-            del self.active_sessions[session_id]
-            self.current_state = AgentState.IDLE
-        return True
 
     def _turn_in_flight(self) -> bool:
         """Whether a turn is running right now, lock in hand.
@@ -1662,11 +1809,28 @@ class AgentStateMachine:
         turn's own writes, which the turn's finally owns.
         """
         if session_id not in self.active_sessions:
+            # A07-G9: a turn queued on the turn lock has not entered
+            # active_sessions yet, so it used to be unstoppable -- the
+            # user's stop declined and the queued turn ran anyway the
+            # moment the lock freed. A queued session is stoppable: the
+            # flag is raised now and process() reads it the instant it
+            # takes the lock.
+            if session_id in self._queued_sessions:
+                self._flag_cancelled(session_id)
+                return "stopped"
             return "turn completed, stop declined"
-        if not self._turn_in_flight():
+        # A07 bug 2: the paused rule was asymmetric -- cancel_session
+        # tore a paused turn down whether or not the lock was held, and
+        # this path only looked at the lock. A pause can be reached with
+        # the generator suspended on its last event, still holding the
+        # lock, so both facts have to be read here for the two verbs to
+        # agree.
+        paused = self.current_state == AgentState.AWAITING_CONFIRMATION
+        if paused or not self._turn_in_flight():
             # Paused on a confirmation, or a turn whose finally has not
-            # run yet: the teardown cancel_session owns is the whole stop.
-            self.cancel_session(session_id)
+            # run yet: nothing is racing and no claim is needed.
+            self._flag_cancelled(session_id)
+            self._stop_teardown(session_id)
             return "stopped"
         generation = self._turn_generation
         if generation is None:
@@ -1680,13 +1844,7 @@ class AgentStateMachine:
             # events; the turn's own finally does the teardown and names
             # the turn cancelled. The claim's single-shot lock is what
             # keeps two stops from both firing on one turn.
-            self.cancelled[session_id] = True
-            ctx = self.active_sessions.get(session_id)
-            if ctx is not None and not ctx.conversation_status.is_terminal():
-                try:
-                    ctx.conversation_status.transition(ConversationStatus.CANCELLED)
-                except ValueError:
-                    pass
+            self._flag_cancelled(session_id)
             return True
 
         if self.turn_activity.claim(generation, _abort) is None:
@@ -1712,13 +1870,14 @@ class AgentStateMachine:
         if not self._turn_in_flight() or self.ctx is None:
             return {"accepted": False, "reason": "no turn in flight"}
         session_id = self.ctx.session_id
-        replaced = session_id in self._pending_steer
-        # Exactly one slot per session (the packet's replace-not-grow
-        # rule): a second arrival before the boundary replaces the first
-        # rather than growing a queue. No arrival is silently dropped
-        # either way — each one's confirmation line (steer_accepted) is
-        # the observable verdict.
-        self._pending_steer[session_id] = text
+        pending = self._pending_steer.setdefault(session_id, [])
+        replaced = bool(pending)
+        # A07-G6: steers CONCATENATE. The slot used to be replace-not-grow,
+        # so a second arrival before the boundary erased the first -- and
+        # both had been answered "accepted". Every accepted steer is
+        # delivered; ``replaced`` keeps its name and now means "there was
+        # already one pending", which is what the surface renders.
+        pending.append(text)
         return {
             "accepted": True,
             "replaced": replaced,
@@ -1738,25 +1897,106 @@ class AgentStateMachine:
         ctx = self.ctx
         if ctx is None:
             return
-        text = self._pending_steer.get(ctx.session_id)
-        if not text:
+        pending = self._pending_steer.get(ctx.session_id) or []
+        if not pending:
             return
         view: List[Dict[str, Any]] = []
         if ctx.observations:
             name = ctx.tool_calls[-1].name if ctx.tool_calls else "tool"
             view = [{"name": name, "output": ctx.observations[-1]}]
-        applied = apply_steer_to_results(view, text)
-        if applied is not None:
-            # The apply fn mutated the view's copy of the last
-            # observation; write the appended text back to the line the
-            # context assembler actually reads.
-            ctx.observations[-1] = applied
-        else:
-            ctx.add_observation(f"[steered] {text}")
+        for text in pending:
+            applied = apply_steer_to_results(view, text)
+            if applied is not None:
+                # The apply fn mutated the view's copy of the last
+                # observation; write the appended text back to the line
+                # the context assembler actually reads.
+                ctx.observations[-1] = applied
+            else:
+                ctx.add_observation(
+                    f"{STEER_MARKER.strip()}\n{text}\n{STEER_MARKER_CLOSE.strip()}"
+                )
         self._pending_steer.pop(ctx.session_id, None)
 
+    def _arrival_below_turn_floor(
+        self, speaker_role, identifier_claim, channel
+    ) -> bool:
+        """Does this arrival stand below the running turn's role floor?
+
+        R-01 Phase A. Every mid-turn verb acts ON the running turn, so
+        the speaker who arrives must stand at least where the speaker
+        who started it stands. Both sides are read through
+        ``role_gate.turn_role_order`` -- the existing role table capped
+        by the existing claim ladder -- so this adds no role vocabulary
+        of its own (the packet's STOP condition).
+
+        Fail-closed defaulting: an arrival whose caller stamped no role
+        reads as its channel's own ``default_role`` (voice: unknown),
+        and only a caller with no channel at all -- the back-compat seam
+        for embedders predating the channel layer -- reads as the
+        dashboard's admin.
+        """
+        running = self.ctx
+        if running is None:
+            return False
+        try:
+            from ..tools.role_gate import turn_role_order
+        except Exception as e:  # pragma: no cover - import-time only
+            logger.warning("role floor unavailable; refusing arrival: %s", e)
+            return True
+        if speaker_role:
+            arrival_role = speaker_role
+        elif channel is not None:
+            arrival_role = channel.default_role
+        else:
+            arrival_role = "admin"
+        arrival = turn_role_order(
+            arrival_role,
+            identifier_claim.strength if identifier_claim is not None else None,
+        )
+        running_claim = getattr(running, "identifier_claim", None)
+        floor = turn_role_order(
+            getattr(running, "speaker_role", None) or "admin",
+            running_claim.strength if running_claim is not None else None,
+        )
+        return arrival < floor
+
+    def _arrival_refusal(self, text: str) -> str:
+        """Why this arrival cannot act on the running turn, or "".
+
+        A07-G3 and A07 bug 1. Each of these used to be answered
+        ``steer_accepted`` and then quietly dropped -- the pending slot
+        was drained at a batch boundary the turn would never reach again,
+        or the text was a blank line nobody wanted. The refusal is what
+        lets the surface do the right thing instead: send it as the next
+        turn.
+        """
+        from .steering import (
+            REASON_ANSWER_ALREADY_COMMITTED,
+            REASON_EMPTY_ARRIVAL,
+            REASON_TURN_ALREADY_STOPPED,
+        )
+        if not (text or "").strip():
+            return REASON_EMPTY_ARRIVAL
+        running = self.ctx
+        if running is not None and self.cancelled.get(running.session_id):
+            return REASON_TURN_ALREADY_STOPPED
+        # The RESPONDING finalize stamp is the answer-commit edge: after
+        # it the running generation has moved past the one the turn
+        # started under, and nothing will re-read the observations.
+        if (
+            self._turn_generation is not None
+            and self.turn_activity.generation != self._turn_generation
+        ):
+            return REASON_ANSWER_ALREADY_COMMITTED
+        return ""
+
     def handle_midturn_arrival(
-        self, session_id: str, text: str, channel=None
+        self,
+        session_id: str,
+        text: str,
+        channel=None,
+        speaker_role=None,
+        identifier_claim=None,
     ) -> tuple:
         """Route one arrival that reached the machine while a turn runs.
 
@@ -1776,9 +2016,17 @@ class AgentStateMachine:
         NORMAL_TURN and the caller runs an ordinary turn; otherwise the
         events are the arrival's own observable verdict — a steer rides
         the single pending slot, a stop claims the running turn's
-        activity generation — so no mid-turn arrival is ever silently
-        dropped. The running turn is ``self.ctx``'s (the lock serialises
-        everything), not the arrival's own session id.
+        activity generation, a refusal says which floor it stood below —
+        so no mid-turn arrival is ever silently dropped. The running
+        turn is ``self.ctx``'s (the lock serialises everything), not the
+        arrival's own session id.
+
+        ``speaker_role`` and ``identifier_claim`` are the arrival's
+        STAMPED identity — what the door derived from the credential it
+        validated, never what the wire said (R-01 Phase A). The talk
+        door stamps them before it calls here; that ordering is the fix
+        for the OSS pass's #1 finding, and this signature is what makes
+        the old order impossible to restore by accident.
         """
         if not self._turn_in_flight() or self.ctx is None:
             return (
@@ -1818,7 +2066,36 @@ class AgentStateMachine:
             # so the predicate is never reported and redirect stays
             # dormant, degrading to steer by decide_midturn's rules.
             in_model_request=False,
+            below_role_floor=self._arrival_below_turn_floor(
+                speaker_role, identifier_claim, channel
+            ),
+            refusal=self._arrival_refusal(text),
         )
+        if decision.verb == Verdict.REFUSED:
+            # The refusal is the arrival's verdict, and the room hears
+            # that one was refused — never the words that were refused.
+            self._tee_publish(
+                "steer_refused", session_id,
+                reason_code=decision.reason_code,
+                running_turn=self.ctx.session_id,
+            )
+            logger.warning(
+                "midturn arrival refused: reason=%s arrival_session=%s "
+                "running_session=%s modality=%s",
+                decision.reason_code, session_id, self.ctx.session_id,
+                getattr(channel, "id", None),
+            )
+            events = [
+                StreamEvent(
+                    type="steer_refused",
+                    session_id=session_id,
+                    data={
+                        "reason_code": decision.reason_code,
+                        "reason": decision.reason,
+                    },
+                )
+            ]
+            return decision, events
         if decision.verb == Verdict.STOP:
             outcome = self.request_stop(self.ctx.session_id)
             # C4: the verdict rides the tee with the arrival's session id
@@ -1869,6 +2146,116 @@ class AgentStateMachine:
             ]
             return decision, events
         return decision, None
+
+    def _touch_activity(self, note: str) -> None:
+        """Stamp the running turn's liveness clock (A07-G10).
+
+        One clock, on the turn's own context: handler entry, tool start
+        and completion, and every stream chunk. The watchdog reads this
+        and nothing else -- a second derived clock is how "stalled" and
+        "working" start disagreeing.
+        """
+        ctx = self.ctx
+        if ctx is not None:
+            ctx.touch(note)
+
+    async def _turn_watchdog(self, session_id: str, generation: int) -> None:
+        """End a turn that has stopped making progress (A07-G10).
+
+        Bound to the generation it observed: the abort goes through the
+        same single-shot ``TurnActivity`` claim a stop uses, so a sampler
+        that wakes late can only ever end the turn it was watching, never
+        a later one under the same session id.
+
+        A turn paused on a confirmation is not stalled -- a person may
+        take a quarter of an hour to answer, and waiting is not wedging.
+        """
+        while True:
+            await asyncio.sleep(self.STALL_POLL_SECONDS)
+            ctx = self.ctx
+            if ctx is None or ctx.session_id != session_id:
+                return
+            if self.current_state == AgentState.AWAITING_CONFIRMATION:
+                # Not stalled, and not this watchdog's turn to end: the
+                # pause has its own teardown path.
+                return
+            if ctx.idle_seconds() < self.TURN_STALL_SECONDS:
+                continue
+            note = ctx.last_activity_note
+            idle = ctx.idle_seconds()
+
+            def _abort() -> bool:
+                logger.error(
+                    "turn liveness watchdog: session=%s idle=%.0fs "
+                    "last_activity=%r -- ending the turn",
+                    session_id, idle, note,
+                )
+                self._flag_cancelled(session_id)
+                return True
+
+            self.turn_activity.claim(generation, _abort)
+            return
+
+    async def _model_call(self, coro):
+        """Await a model request, abandoning it if the turn is stopped.
+
+        A07-G5. ``await self.llm.chat(...)`` is the longest uninterruptible
+        stretch of a turn: ``_drive`` polls the stop flag between steps and
+        between events, and a model call is neither -- so a stop issued
+        while the model was thinking was honoured only once the model had
+        finished thinking, and the user watched the answer they had just
+        stopped arrive in full.
+
+        The request runs as a task; this waits on it in
+        ``STOP_POLL_SECONDS`` slices and cancels it the moment the flag is
+        up. Cancelling the task is what actually reaches the provider
+        client's own request (an ``aiohttp``/``httpx`` await raises
+        ``CancelledError`` and closes the connection); nothing here needs
+        the client to expose an abort handle of its own.
+        """
+        session_id = self.ctx.session_id if self.ctx is not None else None
+        task = asyncio.ensure_future(coro)
+        while True:
+            done, _pending = await asyncio.wait(
+                {task}, timeout=self.STOP_POLL_SECONDS
+            )
+            if task in done:
+                return task.result()
+            if session_id is not None and self.cancelled.get(session_id):
+                task.cancel()
+                try:
+                    await task
+                except (asyncio.CancelledError, Exception):
+                    pass
+                logger.info(
+                    "model request abandoned by stop: session=%s", session_id
+                )
+                raise TurnStopped("model request stopped by the user")
+
+    async def _model_stream(self, agen):
+        """Stream a model response, abandoning it if the turn is stopped.
+
+        The streaming twin of ``_model_call`` (A07-G5). ``_drive`` polls
+        the stop flag between the events a handler yields, which covers
+        every chunk after the first -- but not the wait *for* the first
+        chunk, which is the whole of a wedged request. Each ``__anext__``
+        goes through the same poll, and the generator is closed on the
+        way out so the provider connection does not outlive the turn.
+        """
+        try:
+            while True:
+                try:
+                    chunk = await self._model_call(agen.__anext__())
+                except StopAsyncIteration:
+                    return
+                yield chunk
+        finally:
+            aclose = getattr(agen, "aclose", None)
+            if aclose is not None:
+                try:
+                    await aclose()
+                except Exception:
+                    pass
 
     def _detect_oscillation(self) -> bool:
         """Detect A→B→A→B pattern indicating infinite loop."""
@@ -2615,7 +3002,7 @@ class AgentStateMachine:
         # ``images`` is threaded here as well as in RESPONDING: without it the
         # two halves of one turn resolve different models, so the planner
         # decides what to do about a picture it cannot see.
-        response = await self.llm.chat(
+        response = await self._model_call(self.llm.chat(
             messages=self._build_messages(prompt, tail=self._continuity_tail()),
             tools=tool_schemas,
             intake_result=self.ctx.intake if self.ctx else None,
@@ -2627,8 +3014,8 @@ class AgentStateMachine:
             # question with the continuity hint glued to its front (D1), and
             # routing on that picked the specialist for "hi".
             routing_prompt=self.ctx.user_query if self.ctx else "",
-        )
-        
+        ))
+
         # Parse plan if present
         if hasattr(response, 'plan') and response.plan:
             self.ctx.plan = [
@@ -3370,6 +3757,7 @@ class AgentStateMachine:
         """
         bus = get_terminal_event_bus()
         queue = bus.subscribe(self.ctx.session_id)
+        self._touch_activity(f"tool started: {tool_name}")
         task = asyncio.ensure_future(self.tools.execute(
             tool_name,
             tool_args,
@@ -3381,10 +3769,40 @@ class AgentStateMachine:
             while True:
                 getter = asyncio.ensure_future(queue.get())
                 done, _pending = await asyncio.wait(
-                    {task, getter}, return_when=asyncio.FIRST_COMPLETED
+                    {task, getter},
+                    return_when=asyncio.FIRST_COMPLETED,
+                    # A07-G2: bounded, so the loop is a place a stop can
+                    # be *observed*. Without it the wait blocked until the
+                    # tool finished -- so a stop raised the flag and then
+                    # waited for the very command it was meant to stop,
+                    # and _drive's between-steps poll only saw it after
+                    # the tool had run to completion.
+                    timeout=self.STOP_POLL_SECONDS,
                 )
+                if self.cancelled.get(self.ctx.session_id):
+                    getter.cancel()
+                    logger.info(
+                        "tool cancelled by stop: session=%s tool=%s",
+                        self.ctx.session_id, tool_name,
+                    )
+                    # task.cancel() raises CancelledError inside
+                    # ToolExecutor.execute; run_command's own
+                    # `except BaseException` kills the child and reaps it
+                    # (executor.py's subprocess path), so the stop
+                    # reaches the process, not just the coroutine.
+                    task.cancel()
+                    raise asyncio.CancelledError(
+                        f"tool {tool_name} stopped by the user"
+                    )
+                if not done:
+                    # Neither settled inside the poll window: keep waiting.
+                    getter.cancel()
+                    continue
                 if getter in done:
                     payload = getter.result()
+                    # Output from a running command is progress: a long
+                    # build is not a wedged turn.
+                    self._touch_activity(f"tool output: {tool_name}")
                     self._note_terminal_payload(payload, execution_id)
                     event = self._terminal_event(
                         self.ctx.session_id, payload, execution_id
@@ -3407,6 +3825,7 @@ class AgentStateMachine:
                     yield event
 
             sink.append(await task)
+            self._touch_activity(f"tool completed: {tool_name}")
         finally:
             bus.unsubscribe(self.ctx.session_id, queue)
             if not task.done():
@@ -3764,46 +4183,29 @@ class AgentStateMachine:
     def _echo_guard_egress(
         text: str, *, session_id: str, request_id: Optional[str] = None
     ) -> str:
-        """Echo guard at the outbound seam — warn-and-redact (Packet 05 B2).
+        """Echo guard at the outbound reply seam (A05-G4, R-05 Phase E).
 
-        The guard's window set holds the material Halbert deliberately
-        egressed through the acknowledged config path (noted at that site).
-        A reply that reproduces a long verbatim chunk of it means the model
-        echoed context it should have paraphrased: log a structured warning
-        carrying only a HASH of the matched material (never the material),
-        then redact the reply through the variant registry. The reply is
-        never dropped — single-user assistant; the warning is the review
-        signal and may be upgraded to suppression later.
+        The body of this moved to ``security/scrub.py``: it existed twice
+        -- here and in ``turn_event_tee`` -- and two copies of a security
+        seam drift. Two things changed with the move, both of them the
+        point of the change:
 
-        Non-fatal by construction: a guard failure must never cost the user
-        their answer.
+        * a PARTIAL echo is now actually redacted. This matched on a
+          normalised window and then called ``registry.redact_text``,
+          which replaces whole registered forms, so a reply carrying the
+          first 85 characters of a 98-character acked value matched,
+          changed nothing, and was delivered -- while the warning said
+          ``redacted: true`` (A05-G1 + bug 1);
+        * the seam fails CLOSED. It was "non-fatal by construction": any
+          failure returned the text raw, on the reasoning that a guard
+          failure must not cost the user their answer. A scrub that
+          cannot run is not evidence that there was nothing to scrub.
         """
-        try:
-            from ..security.echo_guard import get_global_echo_guard
-            from ..ingestion.redaction_registry import get_global_registry
-
-            matched = get_global_echo_guard().find_match(text)
-            if matched is None:
-                return text
-            logger.warning(
-                json.dumps(
-                    {
-                        "event": "echo_guard_flagged",
-                        "session_id": session_id,
-                        "request_id": request_id,
-                        "match_sha256": hashlib.sha256(
-                            matched.encode("utf-8")
-                        ).hexdigest(),
-                        "matched_chars": len(matched),
-                        "reply_chars": len(text),
-                        "redacted": True,
-                    }
-                )
-            )
-            return get_global_registry().redact_text(text)
-        except Exception as e:
-            logger.debug(f"echo guard scan skipped (non-fatal): {e}")
-            return text
+        from ..security.scrub import scrub_for_egress
+        return scrub_for_egress(
+            text, surface="reply",
+            session_id=session_id, request_id=request_id or "",
+        )
 
     def _tee_publish(self, event: str, session_id: str, **fields: Any) -> None:
         """Publish one reduced event to the turn-event tee (C4).
@@ -3901,6 +4303,22 @@ class AgentStateMachine:
         # them from ``context``, and _receipt_block still feeds the
         # no-builder path below.
         if self.prompts:
+            # A10-G7 + A10-G6: the model is told the spoken budget it is
+            # actually working to, and whether the listener cut off the
+            # last reply. Both were computed by nothing: the engine's
+            # budget block was unreachable, and a barge-in stopped the
+            # audio and told the model nothing at all.
+            spoken_cap = None
+            barge_note = ""
+            try:
+                from ..integrations.modality_wiring import (
+                    spoken_max_words, take_barge_in_note,
+                )
+                if response_modality == "voice":
+                    spoken_cap = spoken_max_words(modality_ctx)
+                    barge_note = take_barge_in_note(self.ctx.session_id) or ""
+            except Exception as e:
+                logger.debug(f"spoken budget/barge-in hint skipped: {e}")
             prompt = self.prompts.build_response_prompt(
                 query=self.ctx.user_query,
                 context=self.ctx.retrieved_context,
@@ -3908,6 +4326,8 @@ class AgentStateMachine:
                 world_observations=self._world_observations(),
                 tools_supported=getattr(self.llm, "tools_supported", None),
                 response_modality=response_modality,
+                spoken_max_words=spoken_cap,
+                barge_in_note=barge_note,
             )
             logger.info("Using AgentPromptBuilder for response prompt")
         else:
@@ -3932,7 +4352,7 @@ class AgentStateMachine:
         if hasattr(self.llm, 'stream'):
             logger.info(f"Starting LLM stream for session {self.ctx.session_id}")
             chunk_count = 0
-            async for chunk in self.llm.stream(
+            async for chunk in self._model_stream(self.llm.stream(
                 messages=self._build_messages(
                     prompt, tail=tail, response_modality=response_modality,
                 ),
@@ -3944,20 +4364,21 @@ class AgentStateMachine:
                 on_model_selected=selected.append,
                 # The question, not the hint that rides in front of it (D1).
                 routing_prompt=self.ctx.user_query if self.ctx else "",
-            ):
+            )):
                 if selected and not announced:
                     announced = True
                     yield StreamEvent.model_selected(
                         self.ctx.session_id, **selected[-1]
                     )
                 chunk_count += 1
+                self._touch_activity("responding: stream chunk")
                 logger.debug(f"Chunk {chunk_count}: {repr(chunk[:50])}...")
                 self.ctx.response_chunks.append(chunk)
                 yield StreamEvent.response_chunk(self.ctx.session_id, chunk)
             logger.info(f"LLM stream complete: {chunk_count} chunks")
         else:
             # Non-streaming fallback
-            response = await self.llm.chat(
+            response = await self._model_call(self.llm.chat(
                 messages=self._build_messages(
                     prompt, tail=tail, response_modality=response_modality,
                 ),
@@ -3969,7 +4390,7 @@ class AgentStateMachine:
                 on_model_selected=selected.append,
                 # The question, not the hint that rides in front of it (D1).
                 routing_prompt=self.ctx.user_query if self.ctx else "",
-            )
+            ))
             if selected:
                 announced = True
                 yield StreamEvent.model_selected(
@@ -4157,7 +4578,14 @@ class AgentStateMachine:
                         # spoken copy (screen-side record); only what is
                         # synthesized is summarized.
                         spoken_segments: List[tuple] = []
-                        summarizer = make_speech_summarizer(self.ctx.session_id)
+                        # A14-G4 (summarizer half): a secure turn's spoken
+                        # copy is the same material the turn was restricted
+                        # to local models for. Handing it to a cloud utility
+                        # slot to be shortened would undo that in one line.
+                        summarizer = make_speech_summarizer(
+                            self.ctx.session_id,
+                            secure=bool(getattr(self.ctx, "secure_context", False)),
+                        )
                         for line in spoken_segment_lines(
                             clean_response, payload, summarizer=summarizer
                         ):
@@ -4220,6 +4648,10 @@ class AgentStateMachine:
                                     mode="rollup",
                                     request_id=self.ctx.request_id,
                                     ok=True,
+                                    # A05 bug 7: the SAME scrubbed string
+                                    # the tail speaks. ``tail`` already
+                                    # came through the egress seam; the
+                                    # rollup used to be built separately.
                                     summary=tail,
                                     reason="voice turn mutation digest",
                                 )
@@ -4365,10 +4797,26 @@ class AgentStateMachine:
         any_began = False
         sent_cancelled = False
         try:
+            spoken_words = 0
+            total_words = sum(len((t or "").split()) for t, _ in segments)
             for text, rate in segments:
                 # Barge-in between segments: stop before spending a full
                 # sherpa-onnx generation pass on a segment nobody will hear.
                 if token is not None and token.is_set():
+                    # A10-G6: record what the listener actually heard, so
+                    # the NEXT turn knows it was interrupted. Barge-in
+                    # stopped the audio and told the model nothing, and
+                    # the commonest reason a person interrupts is that
+                    # the answer had already gone wrong.
+                    try:
+                        from ..integrations.modality_wiring import record_barge_in
+                        record_barge_in(
+                            session_id,
+                            spoken_words=spoken_words,
+                            total_words=total_words,
+                        )
+                    except Exception as e:
+                        logger.debug(f"barge-in note not recorded: {e}")
                     break
                 if not text.strip():
                     continue
@@ -4389,6 +4837,7 @@ class AgentStateMachine:
                                 "format": "s16le",
                             })
                         await hub.publish(session_id, chunk)
+                    spoken_words += len((text or "").split())
                 finally:
                     tts._speed = original_speed
                 if began:

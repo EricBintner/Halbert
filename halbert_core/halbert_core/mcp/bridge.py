@@ -94,10 +94,12 @@ import json
 import logging
 from typing import Any, Dict, List, Optional, Set
 
-from .client import join_text_content
+from .client import MCPDisconnectedError, join_text_content
+from .metadata import MAX_METADATA_CHARS, sanitize_metadata_text
 from .registry import (
     MCP_TOOL_PREFIX,
     MCPToolRegistry,
+    get_tool_registry,
     iter_server_tool_names,
     parse_qualified_tool_name,
     sanitize_component,
@@ -150,6 +152,15 @@ def convert_schema(
     description = tool_schema.get("description")
     if not isinstance(description, str) or not description.strip():
         description = f"MCP tool '{tool_name}' from MCP server '{server_name}'"
+    else:
+        # A17-G5: a description is third-party text rendered straight
+        # into messages[0]. Bound it, strip the characters that render as
+        # nothing, defang the phrases that address the model as its
+        # operator. The attribution rides in the text so the model reads
+        # the tool as somebody else's, not the machine's own.
+        description = sanitize_metadata_text(
+            description, limit=MAX_METADATA_CHARS)
+        description = f"[from MCP server '{server_name}'] {description}"
 
     return {
         "name": qualified_name,
@@ -158,25 +169,106 @@ def convert_schema(
     }
 
 
-def format_tool_result(result: Any) -> str:
+#: How much of one result reaches the model. The executor's own
+#: observation cap sits downstream of this; a server that returns a
+#: megabyte should not get that far in the first place.
+MAX_RESULT_CHARS = 8000
+
+#: An embedded resource small enough to inline is inlined; anything
+#: larger becomes a named size fact.
+MAX_EMBEDDED_RESOURCE_CHARS = 4000
+
+#: The data fence around an MCP result (A17-G7). An MCP result used to
+#: be indistinguishable from Halbert's own tool output -- a third party's
+#: answer read like a finding the machine had made itself. The open
+#: marker names the server, so the model can weigh "the weather server
+#: said" differently from "I read the file and it said".
+MCP_RESULT_OPEN = "[mcp_result server={server}]"
+MCP_RESULT_CLOSE = "[/mcp_result]"
+
+
+def _fence(server_name: str, body: str) -> str:
+    """Wrap a server's answer so it reads as data, from a named source.
+
+    A server that echoes the closing marker cannot end the fence early:
+    the marker is neutralised in the body before the wrapper goes on.
+    """
+    body = body.replace(MCP_RESULT_CLOSE, "[/mcp_result-escaped]")
+    return (
+        f"{MCP_RESULT_OPEN.format(server=server_name)}\n"
+        f"{body}\n{MCP_RESULT_CLOSE}"
+    )
+
+
+def _project_content(content: Any) -> str:
+    """Project one result's content blocks into what the model sees.
+
+    A17-G6. Text joins as before. A non-text block -- an image, an
+    embedded resource -- used to be JSON-dumped whole, so a base64 PNG
+    became tens of thousands of tokens of noise that displaced the
+    conversation. Each becomes a fact about itself instead: its kind,
+    its media type or URI, and its size. Nothing is silently discarded;
+    what is dropped is said.
+    """
+    if not isinstance(content, list):
+        return ""
+    parts = []
+    for item in content:
+        if not isinstance(item, dict):
+            continue
+        kind = item.get("type")
+        if kind == "text" and isinstance(item.get("text"), str):
+            parts.append(sanitize_metadata_text(
+                item["text"], limit=MAX_RESULT_CHARS))
+        elif kind in ("image", "audio"):
+            data = item.get("data")
+            size = len(data) if isinstance(data, str) else 0
+            mime = sanitize_metadata_text(item.get("mimeType") or "unknown", limit=80)
+            parts.append(f"[{kind}: {mime}, {size} encoded bytes]")
+        elif kind == "resource":
+            resource = item.get("resource") or {}
+            uri = sanitize_metadata_text(resource.get("uri") or "unknown", limit=300)
+            body = resource.get("text")
+            if isinstance(body, str) and len(body) <= MAX_EMBEDDED_RESOURCE_CHARS:
+                parts.append(f"[resource: {uri}]\n" + sanitize_metadata_text(
+                    body, limit=MAX_EMBEDDED_RESOURCE_CHARS))
+            else:
+                size = len(body) if isinstance(body, str) else 0
+                parts.append(f"[resource: {uri}, {size} characters, not inlined]")
+        else:
+            parts.append(f"[{sanitize_metadata_text(kind or 'unknown', limit=40)} block]")
+    return "\n".join(p for p in parts if p)
+
+
+def format_tool_result(result: Any, server_name: str = "") -> str:
     """Convert a raw ``tools/call`` result into what the model sees.
 
     Text content items are joined (the same join rule the client uses
-    for ``MCPToolError.text``). A result with non-text content (images,
-    embedded resources) or no content at all is JSON-dumped so nothing
-    the server produced is silently discarded.
+    for ``MCPToolError.text``); non-text blocks are projected as facts
+    about themselves (A17-G6); the whole thing is fenced and attributed
+    to its server (A17-G7). A result with no content at all is
+    JSON-dumped, bounded, so nothing the server produced disappears
+    without a word.
     """
     if isinstance(result, str):
-        return result
-    if isinstance(result, dict):
+        body = sanitize_metadata_text(result, limit=MAX_RESULT_CHARS)
+    elif isinstance(result, dict):
+        body = ""
         if "content" in result:
-            text = join_text_content(result.get("content"))
-            if text:
-                return text
-        return _json_dump(result)
-    if result is None:
-        return "(no output)"
-    return _json_dump(result)
+            body = _project_content(result.get("content"))
+        if not body:
+            body = sanitize_metadata_text(
+                _json_dump(result), limit=MAX_RESULT_CHARS)
+    elif result is None:
+        body = "(no output)"
+    else:
+        body = sanitize_metadata_text(_json_dump(result), limit=MAX_RESULT_CHARS)
+    if not server_name:
+        # Back-compat for callers that predate the fence; nothing in
+        # production takes this branch (the handler always names its
+        # server) and the bound still applies.
+        return body
+    return _fence(server_name, body)
 
 
 def _json_dump(value: Any) -> str:
@@ -189,6 +281,58 @@ def _json_dump(value: Any) -> str:
 # ---------------------------------------------------------------------------
 # Handler construction
 # ---------------------------------------------------------------------------
+
+def _refuse_if_server_is_down(server_name: str, tool_name: str) -> None:
+    """Fail fast when the health record already says the server is down.
+
+    A17-G13. Nothing consulted a breaker in the CALL path: a dead server
+    cost a full per-call timeout, every call, and the error the model
+    got back was a diagnostic ("no response to tools/call") rather than
+    an instruction. A loop that cannot tell "the server is gone" from
+    "that took a while" retries until its iteration budget is spent.
+
+    The breaker is the health monitor's own record -- the same fact the
+    dashboard shows -- not a second failure counter that could disagree
+    with it. No monitor running means no opinion, and the call proceeds.
+    """
+    try:
+        from .health import DOWN, get_active_monitor
+        monitor = get_active_monitor()
+        if monitor is None:
+            return
+        record = monitor.health_record(server_name)
+    except Exception:  # pragma: no cover - import/lookup only
+        return
+    if record is None or getattr(record, "health", None) != DOWN:
+        return
+    retry_at = getattr(record, "next_retry_at", 0.0) or 0.0
+    try:
+        remaining = max(0, int(retry_at - monitor._now()))
+    except Exception:
+        remaining = 0
+    when = (
+        f"Auto-retry available in about {remaining}s."
+        if remaining else "A reconnect is due on the next health tick."
+    )
+    raise MCPDisconnectedError(
+        f"MCP server '{server_name}' is down, so the call to "
+        f"'{tool_name}' never reached it. This is not a timeout. "
+        f"Do NOT retry this tool now. {when} "
+        f"If it stays down, the server's command or its log is what to "
+        f"check — nothing here will fix it."
+    )
+
+
+def _note_served_call(server_name: str) -> None:
+    """Tell the health monitor this server answered a real call (A17-G14)."""
+    try:
+        from .health import get_active_monitor
+        monitor = get_active_monitor()
+        if monitor is not None:
+            monitor.note_served_call(server_name)
+    except Exception:  # pragma: no cover - bookkeeping only
+        pass
+
 
 def make_tool_handler(mcp_client, server_name: str, tool_name: str):
     """Build the async handler the executor registers for one MCP tool.
@@ -206,8 +350,12 @@ def make_tool_handler(mcp_client, server_name: str, tool_name: str):
     """
 
     async def handler(args: Dict[str, Any]) -> Any:
+        _refuse_if_server_is_down(server_name, tool_name)
         raw = await mcp_client.call_tool(server_name, tool_name, args or {})
-        return format_tool_result(raw)
+        # A17-G14: a served call proves the session -- more than a
+        # handshake can -- so the reconnect budget may clear.
+        _note_served_call(server_name)
+        return format_tool_result(raw, server_name=server_name)
 
     return handler
 
@@ -234,6 +382,42 @@ async def _collect_server_tools(
     if not isinstance(schemas, list):
         return []
     return [s for s in schemas if isinstance(s, dict)]
+
+
+def _apply_tool_filter(
+    server_name: str, tool_schemas: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Keep only the tools this server's config asked for (A17-G18).
+
+    A config that cannot be read keeps every tool: the filter is an
+    operator preference, not a security boundary (that is
+    ``tools/mcp_safety.py``'s fail-closed classification), so an
+    unreadable config must not silently NARROW what a working server
+    offers either.
+    """
+    try:
+        from .config import _tool_filter, load_config
+        server = load_config().server(server_name)
+    except Exception as e:
+        logger.debug(
+            "MCP tool filter skipped for server '%s': %s", server_name, e)
+        return tool_schemas
+    if server is None:
+        return tool_schemas
+    if server.tool_include is None and not server.tool_exclude:
+        return tool_schemas
+    keep = _tool_filter(server.tool_include, server.tool_exclude)
+    kept = [
+        schema for schema in tool_schemas
+        if keep(str(schema.get("name") or ""))
+    ]
+    dropped = len(tool_schemas) - len(kept)
+    if dropped:
+        logger.info(
+            "MCP server '%s': %d of %d advertised tools filtered out by "
+            "the configured include/exclude", server_name, dropped,
+            len(tool_schemas))
+    return kept
 
 
 def _warn_unmatched_tool_risk_keys(
@@ -293,6 +477,11 @@ def _register_server_tools(
     """Namespace, convert and register one server's tools. Returns how
     many landed on the executor."""
     _warn_unmatched_tool_risk_keys(server_name, tool_schemas)
+    # A17-G18: the operator's include/exclude filter runs BEFORE the cap,
+    # so a filtered tool never becomes a wire schema and the cap is
+    # measured against what was actually asked for -- not against the
+    # server's whole catalogue in whatever order it returned it.
+    tool_schemas = _apply_tool_filter(server_name, tool_schemas)
     count = len(tool_schemas)
     if count > MAX_TOOLS_PER_SERVER:
         logger.warning(
@@ -485,7 +674,13 @@ async def _discover_and_register(tool_executor, mcp_client) -> int:
     if configured_names is not None:
         _drop_unconfigured_server_tools(tool_executor, configured_names)
 
-    registry = MCPToolRegistry()
+    # A17-G8: the process registry, not a per-discovery local. The risk
+    # classifier runs on the CALL path and reads the tool's advertised
+    # annotations from here; a registry thrown away at the end of
+    # discovery could not answer that.
+    registry = get_tool_registry()
+    if configured_names is not None:
+        registry.retain_only(configured_names)
     registered = 0
     for server_name in servers:
         try:

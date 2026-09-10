@@ -1381,12 +1381,17 @@ class TestRegistry:
         assert registry.get("mcp__fs__read_file").tool == "read-file"
         assert registry.get("mcp__fs__read_file_2").server == "fs-"
         assert registry.get("mcp__fs__read_file_2").tool == "read_file"
-        # Collision within one batch: same rule, deterministic.
+        # A17-G12: a collision within ONE server is excluded, not
+        # suffixed. Two tools from one server that sanitize to the same
+        # component cannot be told apart by a per-tool risk override in
+        # mcp_config.yml -- the override matches the sanitized name, so
+        # it would name both and fence neither. The first keeps the
+        # name; the second is skipped with a warning naming both.
         batch = registry.register("fs2", [
             {"name": "read-file", "schema": {}},
             {"name": "read_file", "schema": {}},
         ])
-        assert batch == ["mcp__fs2__read_file", "mcp__fs2__read_file_2"]
+        assert batch == ["mcp__fs2__read_file"]
         # Same registration order in a fresh registry → same names.
         again = MCPToolRegistry()
         assert again.register("fs", [

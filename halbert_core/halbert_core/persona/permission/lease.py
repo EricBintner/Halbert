@@ -42,17 +42,29 @@ Fail-closed rules built in:
 """
 from __future__ import annotations
 
+import logging
 import os
+import re
 import threading
-from dataclasses import dataclass
+import time
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from types import MappingProxyType
 from typing import Any, Dict, Mapping, Optional, Sequence, Tuple
 
 from ...consent.denials import CLOSED_REASONS, Denied
 from .affordance import AffordanceTable, EMPTY_AFFORDANCE, affords
 from .ceiling import CapabilityCeiling, EMPTY_CEILING, takes_consent_records
-from .consent import ConsentDecision, ConsentRecord, consent_state, latest_for
+from .consent import (
+    ASK_EVERY_USE,
+    ConsentDecision,
+    ConsentRecord,
+    consent_state,
+    latest_for,
+    mandatory_ttl_days,
+)
 from .effective import (
+    _HALT_REQUIRED,
     AXIS_CEILING,
     AXIS_CONSENT,
     AXIS_HALT,
@@ -64,11 +76,15 @@ from .effective import (
     REASON_NOT_GRANTED,
     REASON_OS_DENIED,
     REASON_OS_UNKNOWN,
+    REASON_NEEDS_APPROVAL,
     REASON_OUT_OF_SCOPE,
+    REASON_SCOPE_UNREADABLE,
     effective_capability,
 )
 from .halt import HaltReason, HaltState
 from .os_grant import DEFAULT_OS_GRANTS, OsGrantTable
+
+logger = logging.getLogger("halbert.permission.lease")
 
 __all__ = [
     "DEFAULT_REGISTRY",
@@ -127,19 +143,58 @@ class Scope:
     displays: Tuple[str, ...] = ()
     cameras: Tuple[str, ...] = ()
     redaction: str = ""
+    #: The descriptive half of the vocabulary (A11-G2). Recorded on the
+    #: scope so the grant's own words survive to the ledger and the
+    #: review screen, and read by name where a rule consumes one --
+    #: never folded into ``admits``, which is what "not interpreted as
+    #: a grant" means.
+    provenance: Mapping[str, Any] = field(default_factory=dict)
 
-    _KNOWN_KEYS = ("reach_roots", "displays", "cameras", "redaction")
+    #: BINDING facts: the ones ``admits`` actually checks. A grant's
+    #: coverage is exactly these.
+    _BINDING_KEYS = ("reach_roots", "displays", "cameras", "redaction")
+
+    #: PROVENANCE facts: what the grant SAYS about itself. These are the
+    #: keys the shipped profile rows carry (§2.1's table) plus the ones
+    #: the design names. They are recorded, shown, and read by name where
+    #: a specific rule consumes one (``re_auth`` at profiles.py:429,
+    #: ``max_session_lease`` at the lease's expiry) -- but none of them
+    #: widens what ``admits`` covers, so recording one can never grant
+    #: anything.
+    #:
+    #: A11-G2 + bug 1: before this split, ``from_mapping`` raised on any
+    #: key outside the binding four, and 24 of the 47 shipped rows carry
+    #: one. The first ``require()`` after first-run acceptance therefore
+    #: raised a bare ValueError out of the permission system and crashed
+    #: the turn. The parser lesson still holds for anything in NEITHER
+    #: list: a scope the code cannot read is not a grant.
+    _PROVENANCE_KEYS = (
+        "roots",              # the policy label a profile row names
+        "verbs",              # per-verb dispositions (reach.service/package)
+        "re_auth",            # "every_time" -- read by the profile compiler
+        "diff", "reason", "backup",          # reach.config.write's contract
+        "sandboxed", "classified", "logged",  # reach.terminal's contract
+        "jobs",               # auto.scheduler's named jobs
+        "named_target", "named_cameras",      # what may be pointed at
+        "receipt",            # what the use leaves behind
+        "bound_to",           # this row rides another capability
+        "max_session_lease",  # the ceiling on one open lease
+        "x11_caveat",         # a platform truth recorded on the row
+        "tiers",              # reach.home's tier list
+        "reversal",           # a shipped default written as DENIED
+    )
 
     @classmethod
     def from_mapping(cls, mapping: Optional[Mapping[str, Any]]) -> "Scope":
         """Build from a consent record's scope mapping (strict).
 
-        A key the code does not understand raises rather than being
-        ignored: a scope that silently drops a field would widen what
-        the check believes it covered (the parser.py:206 lesson).
+        A key in neither vocabulary raises rather than being ignored: a
+        scope that silently drops a field would widen what the check
+        believes it covered (the parser.py:206 lesson).
         """
         data = dict(mapping or {})
-        unknown = sorted(set(data) - set(cls._KNOWN_KEYS))
+        known = set(cls._BINDING_KEYS) | set(cls._PROVENANCE_KEYS)
+        unknown = sorted(set(data) - known)
         if unknown:
             raise ValueError(
                 f"unknown scope key(s) {unknown}: a scope the code cannot "
@@ -156,6 +211,9 @@ class Scope:
             displays=tuple(data.get("displays", ())),
             cameras=tuple(data.get("cameras", ())),
             redaction=redaction,
+            provenance=MappingProxyType({
+                k: v for k, v in data.items() if k in cls._PROVENANCE_KEYS
+            }),
         )
 
     @property
@@ -239,6 +297,26 @@ class LeaseRegistry:
             count += 1
         return count
 
+    def revoke_capability(
+        self, capability: str, reason_code: str, *,
+        by: str = "", surface: str = "",
+    ) -> int:
+        """Revoke every open lease for one capability (A11-G3).
+
+        Narrowing consent reached the ledger and nothing else: a camera
+        lease opened under a grant the owner then revoked kept running,
+        because no open lease was ever told. "Failing the next call is
+        not enough; the loop must end" was already this module's rule --
+        it simply had no trigger. This is the trigger.
+        """
+        count = 0
+        for lease in self.open_leases():
+            if lease.capability != capability:
+                continue
+            lease.revoke(reason_code, by=by, surface=surface)
+            count += 1
+        return count
+
     def __contains__(self, lease: object) -> bool:
         with self._lock:
             return lease in self._open
@@ -275,6 +353,12 @@ class Lease:
         "_reason", "_registry", "_requested_scope", "_revoked",
         "_revoked_by", "_revoked_reason", "_stop_event", "_actor",
         "_capability", "_turn_id",
+        # A11-G8: the session ceiling this lease was opened under, and
+        # the monotonic clock it is measured on (a seam for the test;
+        # wall time would let a clock change extend a lease).
+        "_max_session_seconds", "_opened_monotonic", "_monotonic",
+        # A11-G11: what has to be undone when the lease ends.
+        "_cleanups",
     )
 
     def __init__(self, *, _mint: object = None, **fields) -> None:
@@ -299,6 +383,10 @@ class Lease:
         self._revoked = False
         self._revoked_reason = ""
         self._revoked_by = ""
+        self._monotonic = time.monotonic
+        self._opened_monotonic = time.monotonic()
+        self._max_session_seconds = fields.get("max_session_seconds")
+        self._cleanups: list = []
 
     # -- identity ------------------------------------------------------
 
@@ -353,6 +441,19 @@ class Lease:
                 f"the {self._capability} lease is closed; a closed lease has "
                 f"no loop to check"
             )
+        # A11-G8: the session ceiling the grant declared. Checked here
+        # because check() is what every loop calls -- an expiry nobody
+        # reads is the same as no expiry, which is what
+        # ``max_session_lease`` was: written on the Present profile's
+        # continuous-screen row and read by nothing.
+        if (
+            self._max_session_seconds is not None
+            and not self._revoked
+            and self._monotonic() - self._opened_monotonic
+            > self._max_session_seconds
+        ):
+            self.revoke(
+                REASON_NOT_GRANTED, by="lease", surface="max_session_lease")
         if self._revoked:
             raise Denied(
                 self._capability,
@@ -438,17 +539,55 @@ class Lease:
 
     # -- lifecycle --------------------------------------------------------
 
+    def retain(self, cleanup) -> None:
+        """Register something to undo when this lease ends (A11-G11).
+
+        A capture that must be deleted when the lease closes, a temp
+        file, a device handle: the lease is the thing that knows when
+        the work is over, so it is the thing that should be told. Runs
+        on close whether the lease ended normally or was revoked.
+        """
+        if self._closed:
+            raise RuntimeError(
+                f"the {self._capability} lease is closed; there is nothing "
+                f"left to retain against"
+            )
+        self._cleanups.append(cleanup)
+
+    def _run_cleanups(self) -> None:
+        """Run every retained cleanup, in registration order.
+
+        One failing cleanup must not strand the others -- the whole point
+        is that the retained things go away.
+        """
+        cleanups, self._cleanups = list(self._cleanups), []
+        for cleanup in cleanups:
+            try:
+                cleanup()
+            except Exception as e:
+                logger.warning(
+                    "lease cleanup for %s failed: %s", self._capability, e)
+
     def close(self) -> None:
         """Deregister the lease — the indicator row goes when the work
         ends. Idempotent."""
         if self._closed:
             return
         self._closed = True
+        self._run_cleanups()
         if self._registry is not None:
             self._registry.deregister(self)
 
     def __enter__(self) -> "Lease":
-        self.check()
+        try:
+            self.check()
+        except BaseException:
+            # A11 bug 4: check() raises for a lease revoked between the
+            # mint and the `with`, and the lease is ALREADY registered --
+            # so the indicator kept showing an open lease that nothing
+            # would ever close. A failed enter closes what it opened.
+            self.close()
+            raise
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:
@@ -456,8 +595,76 @@ class Lease:
 
 
 # ---------------------------------------------------------------------------
+# The narrowing hook (A11-G3)
+# ---------------------------------------------------------------------------
+
+#: Which registry a narrowing decision reaches. The consent store cannot
+#: import the lease module's DEFAULT_REGISTRY without a cycle, and more
+#: importantly the wiring should be able to say WHICH registry is live
+#: (tests hold their own). Unset means the default.
+_REVOCATION_REGISTRY: Optional[LeaseRegistry] = None
+
+
+def set_revocation_registry(registry: Optional[LeaseRegistry]) -> None:
+    """Point the narrowing hook at a registry (None restores the default)."""
+    global _REVOCATION_REGISTRY
+    _REVOCATION_REGISTRY = registry
+
+
+def notify_consent_narrowed(
+    capability: str, *, reason_code: str = REASON_NOT_GRANTED,
+    by: str = "", surface: str = "",
+) -> int:
+    """Tell the open leases that a capability's consent narrowed (A11-G3).
+
+    Called by the consent store's writer on any decision that is not a
+    grant. Returns how many leases were revoked, so the caller's audit
+    line can say what the narrowing actually stopped.
+    """
+    registry = _REVOCATION_REGISTRY or DEFAULT_REGISTRY
+    count = registry.revoke_capability(
+        capability, reason_code, by=by, surface=surface)
+    if count:
+        logger.warning(
+            "consent narrowed for %s: revoked %d open lease(s)",
+            capability, count,
+        )
+    return count
+
+
+# ---------------------------------------------------------------------------
 # require() — the only mint.
 # ---------------------------------------------------------------------------
+
+
+def _max_session_seconds(scope: Optional[Scope]):
+    """The grant's ``max_session_lease``, in seconds, or None (A11-G8).
+
+    Accepts the ISO-8601 duration the profile rows are written in
+    (``PT30M``) and a plain number of seconds. An unparseable value is
+    treated as ABSENT rather than as a bound the code invented -- and
+    said in the log, because a ceiling nobody can read is a ceiling that
+    is not being applied.
+    """
+    if scope is None:
+        return None
+    raw = scope.provenance.get("max_session_lease")
+    if raw in (None, ""):
+        return None
+    if isinstance(raw, (int, float)):
+        return float(raw)
+    text = str(raw).strip().upper()
+    match = re.fullmatch(r"PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?", text)
+    if match and any(match.groups()):
+        hours, minutes, seconds = (int(g or 0) for g in match.groups())
+        return float(hours * 3600 + minutes * 60 + seconds)
+    try:
+        return float(text)
+    except ValueError:
+        logger.warning(
+            "max_session_lease %r is not a duration this code can read; "
+            "the lease is unbounded", raw)
+        return None
 
 
 def require(
@@ -474,10 +681,13 @@ def require(
     affordance: AffordanceTable = EMPTY_AFFORDANCE,
     os_grants: OsGrantTable = DEFAULT_OS_GRANTS,
     consent_records: Sequence[ConsentRecord] = (),
-    halt: Optional[HaltState] = None,
+    halt: Any = _HALT_REQUIRED,
     capabilities_registry: Optional[object] = None,
     redaction_backend_available: bool = False,
     now: Optional[str] = None,
+    approval_token: Optional[str] = None,
+    approval_receipts: Optional[object] = None,
+    artefact_sha256: str = "",
 ) -> Lease:
     """Evaluate the five axes and mint the lease that does the work.
 
@@ -496,6 +706,15 @@ def require(
             rationale is not a reason and must never be passed here.
         stop_event: the loop's event. Revocation and halt trip it so the
             thread exits rather than merely failing its next call.
+        approval_token / approval_receipts / artefact_sha256: the
+            answered confirmation this use redeems (A11-G1/G9, FD-6). A
+            grant recorded ``ask: every_use`` is a standing permission,
+            not a standing authorisation: the use itself needs a receipt
+            minted by the confirmation flow and bound to the artefact
+            that was shown. Omitting them on such a grant denies with
+            ``NEEDS_APPROVAL`` -- which is not NOT_GRANTED, because the
+            remedy is different: answer the confirmation, do not grant
+            again.
         redaction_backend_available: whether a working redaction backend
             exists on this host. Defaults to **False** — a grant whose
             scope declares ``redaction: "required"`` refuses to open
@@ -525,7 +744,20 @@ def require(
         granted_record is not None
         and consent_state(records, capability, now=now) is ConsentDecision.GRANTED
     ):
-        granted_scope = Scope.from_mapping(granted_record.scope)
+        # A11-G2 + bug 1: a scope the code cannot read is a DENIAL, not
+        # an exception escaping the permission system. It used to raise a
+        # bare ValueError out of require() and crash the turn -- and 24
+        # of the 47 shipped profile rows took that path on the first
+        # require() after first-run acceptance.
+        try:
+            granted_scope = Scope.from_mapping(granted_record.scope)
+        except ValueError as e:
+            raise Denied(
+                capability,
+                REASON_SCOPE_UNREADABLE,
+                decisive_axis=AXIS_SCOPE,
+                detail=str(e),
+            ) from None
 
     # Scope admission feeds the evaluator's scope axis (§1.7 order);
     # no requested scope is vacuously affirmative.
@@ -542,16 +774,57 @@ def require(
         halt=halt,
         scope_ok=scope_ok,
         registry=capabilities_registry,
+        # A11 bug 3: the same clock the scope resolution above used.
+        now=now,
     )
     if not decision.allowed:
         raise Denied.from_decision(decision)
+
+    # A11-G10: a capability with a mandatory TTL may not be held under a
+    # grant that has none. A biometric template is a body measurement,
+    # not a preference: the expiry is part of what makes the grant
+    # legible, so a grant missing one is refused at use rather than
+    # quietly living forever.
+    ttl_days = mandatory_ttl_days(capability)
+    if ttl_days is not None and granted_record is not None:
+        if not granted_record.expires_at:
+            raise Denied(
+                capability,
+                REASON_NOT_GRANTED,
+                decisive_axis=AXIS_CONSENT,
+                detail=(
+                    f"{capability} may only be held under a grant that "
+                    f"expires (the design's {ttl_days}-day ceiling); this "
+                    f"grant records no expiry"
+                ),
+            )
+
+    # A11-G1 + G9 (FD-6): an ask-every-use grant needs THIS use approved.
+    # The grant says the owner is willing to be asked; the receipt says
+    # they were asked and said yes, about this artefact, once.
+    if decision.ask == ASK_EVERY_USE:
+        receipts = approval_receipts
+        if receipts is None:
+            from .approval import get_approval_receipts
+            receipts = get_approval_receipts()
+        redeemed = receipts.redeem(
+            approval_token, capability, artefact_sha256=artefact_sha256)
+        if redeemed is None:
+            raise Denied(
+                capability,
+                REASON_NEEDS_APPROVAL,
+                decisive_axis=AXIS_CONSENT,
+                detail="this grant asks before every use, and this use "
+                       "carries no answered confirmation for what it is "
+                       "about to do",
+            )
 
     # Redaction fails closed on the capability, not the frame — checked
     # only on an otherwise-allowed lease (a refused capability has
     # nothing to mislabel).
     if granted_scope is not None and granted_scope.redaction_required:
         if not redaction_backend_available:
-            if halt is not None:
+            if isinstance(halt, HaltState):
                 halt.halt(
                     HaltReason.REDACTION_UNAVAILABLE,
                     by="require",
@@ -568,6 +841,7 @@ def require(
 
     target_registry = registry if registry is not None else DEFAULT_REGISTRY
     lease = Lease(
+        max_session_seconds=_max_session_seconds(granted_scope),
         _mint=_MINT,
         capability=capability,
         decision=decision,

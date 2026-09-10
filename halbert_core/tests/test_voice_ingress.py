@@ -58,7 +58,10 @@ class _FakeAgent:
 
         return gen()
 
-    def handle_midturn_arrival(self, session_id, text, channel=None):
+    def handle_midturn_arrival(
+        self, session_id, text, channel=None,
+        speaker_role=None, identifier_claim=None,
+    ):
         # Merge seam (wave 2, 07-B over 04-A2): the route now routes every
         # arrival through the interrupt algebra before process(). This fake
         # has no turn in flight, so it mirrors the real state machine's

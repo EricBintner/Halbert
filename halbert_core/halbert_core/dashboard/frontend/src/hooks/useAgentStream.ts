@@ -493,8 +493,8 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
   // This used to depend on [isStreaming], which meant React ran the cleanup
   // on the true -> false transition as well — that is, on every normal
   // completion — with the captured isStreaming still true. So each finished
-  // turn aborted its own stream and POSTed /api/agent/cancel, and the
-  // backend could persist a fully streamed reply as cancelled (R11-01). An
+  // turn aborted its own stream and POSTed the stop, and the backend
+  // could persist a fully streamed reply as cancelled (R11-01). An
   // explicit cancel() sent two.
   //
   // With [] the effect runs once, so eventSourceRef has to be read at
@@ -505,7 +505,13 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
     return () => {
       eventSourceRef.current?.close();
       if (sessionIdRef.current && isStreamingRef.current) {
-        fetch(apiUrl(`/api/agent/cancel/${sessionIdRef.current}`), { method: 'POST' })
+        // A07-G13: /stop, not /cancel. One stop verb across surfaces --
+        // the button, the unmount and a typed "/stop" all claim the
+        // running turn's generation, so a stop that loses the race to a
+        // finishing turn declines instead of marking a delivered answer
+        // cancelled. /cancel now delegates to the same call server-side;
+        // pointing the client here is what makes the two indistinguishable.
+        fetch(apiUrl(`/api/agent/stop/${sessionIdRef.current}`), { method: 'POST' })
           .catch(() => {}); // Ignore errors on cleanup
       }
     };
@@ -1403,8 +1409,9 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
     flushNow();
 
     if (sessionIdRef.current) {
-      fetch(apiUrl(`/api/agent/cancel/${sessionIdRef.current}`), { method: 'POST' })
-        .catch(err => console.error('Cancel error:', err));
+      // A07-G13: the stop button's verb is the generation-claimed stop.
+      fetch(apiUrl(`/api/agent/stop/${sessionIdRef.current}`), { method: 'POST' })
+        .catch(err => console.error('Stop error:', err));
     }
   }, [flushNow]);
 

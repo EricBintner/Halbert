@@ -31,6 +31,32 @@ from halbert_core.proactive.events import get_event_bus, is_user_facing
 
 
 @pytest.fixture(autouse=True)
+def _local_client(monkeypatch):
+    """R-02 (A12 bug 4): the loopback predicate reads ADDRESSES now.
+
+    It used to accept the hostname strings "localhost" and "testclient",
+    which is why the comment below says "a TestClient always looks
+    local" -- it looked local because it SAID so, in a header any client
+    can send, and this predicate fronts eleven of the fifteen guest
+    routes including the camera. Production reads addresses; the two
+    tests that want a non-local caller patch over this.
+    """
+    import halbert_core.federation.peer_middleware as pm
+
+    def _looks_local(request):
+        client = getattr(request, "client", None)
+        host = getattr(client, "host", None) if client else None
+        # The default TestClient host is the literal "testclient"; a test
+        # that wants a remote caller builds one with a real address, and
+        # that still reads as remote here.
+        return host == "testclient" or pm._is_loopback_host(host)
+
+    monkeypatch.setattr(pm, "_is_local_client", _looks_local)
+    yield
+
+
+
+@pytest.fixture(autouse=True)
 def _fresh_state():
     guest.reset_for_tests()
     private_sources.reset_for_tests()
@@ -283,9 +309,10 @@ class TestPrivateSources:
     def test_a_caller_that_is_not_at_this_machine_cannot_hand_over_a_camera(self):
         """require_local_admin, not require_peer_auth: the app that lent the
         persona must not be able to award itself the user's camera. The
-        boundary is the client's address, so that is what this drives — a
-        TestClient always looks local, which is exactly why asserting on a
-        bearer token here would have proved nothing."""
+        boundary is the client's address, so that is what this drives —
+        the module fixture makes the TestClient look local (it no longer
+        does so by itself; see A12 bug 4), which is exactly why asserting
+        on a bearer token here would have proved nothing."""
         client = self._fronting()
         with patch(
             "halbert_core.federation.peer_middleware._is_local_client",

@@ -40,11 +40,31 @@ def test_steer_appends_to_last_tool_result():
     assert "and the camera too" in results[-1]["output"]  # steers concatenate
 
 
-def test_interrupt_demotes_when_unsafe():
+def test_guidance_demotes_when_unsafe():
+    """Never kill a tool to deliver *guidance*: plain text steers.
+
+    R-01 Phase B (A07-G2): this test used to pass ``is_command=True`` and
+    assert that a ``/stop`` demoted to a steer. The demotion rule belongs
+    to guidance, not to the stop verb -- transcribing it onto Rule 1 left
+    the algebra unable to stop a running command, which is the one thing
+    a stop is for. The rule itself is unchanged and pinned here on the
+    text it was always about.
+    """
+    v = decide_midturn(
+        turn_active=True,
+        is_command=False,
+        text="actually, check the logs instead",
+        tool_batch_in_flight=True,
+    )
+    assert v.verb == Verdict.STEER
+
+
+def test_stop_is_unconditional_even_during_a_tool_batch():
+    """Rule 1 acts; it does not append (A07-G2)."""
     v = decide_midturn(
         turn_active=True,
         is_command=True,
         text="/stop",
         tool_batch_in_flight=True,
     )
-    assert v.verb == Verdict.STEER  # never kill a tool to deliver guidance; queue/steer instead
+    assert v.verb == Verdict.STOP

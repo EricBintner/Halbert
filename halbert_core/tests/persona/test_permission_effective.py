@@ -20,6 +20,7 @@ from halbert_core.persona.permission.consent import ConsentDecision, ConsentReco
 from halbert_core.persona.permission.effective import (
     AXIS_AFFORDANCE,
     AXIS_CEILING,
+    AXIS_CLAIM,
     AXIS_CONSENT,
     AXIS_HALT,
     AXIS_OS_GRANT,
@@ -93,7 +94,12 @@ def test_all_five_affirmative_allows():
     assert decision.capability == CAP
     # the full axis evidence is retained for the audit line
     axes = {obs.axis for obs in decision.observations}
-    assert axes == {AXIS_HALT, AXIS_CEILING, AXIS_AFFORDANCE, AXIS_CONSENT, AXIS_OS_GRANT, AXIS_SCOPE}
+    # AXIS_CLAIM joined in R-08 Phase E (A12-G2): the identity claim is
+    # its own axis now rather than a threshold buried in a caller.
+    assert axes == {
+        AXIS_HALT, AXIS_CEILING, AXIS_AFFORDANCE, AXIS_CONSENT,
+        AXIS_OS_GRANT, AXIS_SCOPE, AXIS_CLAIM,
+    }
     assert all(obs.affirmative for obs in decision.observations)
 
 
@@ -207,7 +213,23 @@ def test_registry_backed_affordance_flows_through_the_conjunction():
 
 
 def test_every_default_is_fail_closed():
+    """R-08 Phase A (A11 bug 6): halt is now the first unwired axis.
+
+    ``halt=None`` used to read as "not halted" -- so with NOTHING wired
+    the evaluator vouched for the machine not being stopped and denied on
+    the ceiling instead. An omitted halt is no halt evidence, and the
+    axis the design checks first is the one that answers.
+    """
     decision = effective_capability(capability=CAP)  # nothing wired at all
+    assert decision.allowed is False
+    assert decision.reason_code == REASON_HALTED
+
+
+def test_the_ceiling_answers_once_halt_evidence_exists():
+    """The old pin, with the halt axis wired: unwired ceiling denies."""
+    from halbert_core.persona.permission.halt import HaltState
+
+    decision = effective_capability(capability=CAP, halt=HaltState())
     assert decision.allowed is False
     assert decision.reason_code == REASON_NO_CEILING
 

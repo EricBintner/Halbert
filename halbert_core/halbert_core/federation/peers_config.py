@@ -92,6 +92,31 @@ KNOWN_PEER_CAPABILITIES = frozenset({
 # Data model
 # ---------------------------------------------------------------------------
 
+#: A12 bug 6 (fix-first row 28): the OWNER-namespace prefix. Guest
+#: sessions offered by a sibling home are keyed ``home:<netloc>``, and
+#: nothing stopped an operator-chosen peer ``node_id`` from taking that
+#: shape -- so a paired peer could free or withdraw another HOME's
+#: session by naming itself after it. Reserved, and refused at parse
+#: time rather than at each use.
+RESERVED_NODE_ID_PREFIXES = ("home:",)
+
+
+def validate_node_id(node_id: str) -> str:
+    """Refuse a peer node id in a reserved namespace. Returns it."""
+    text = str(node_id or "").strip()
+    if not text:
+        raise ValueError("a peer needs a node_id")
+    lowered = text.lower()
+    for prefix in RESERVED_NODE_ID_PREFIXES:
+        if lowered.startswith(prefix):
+            raise ValueError(
+                f"node_id {text!r} is in the reserved {prefix!r} namespace, "
+                f"which belongs to sibling homes; a peer that could take it "
+                f"could act on another home's sessions"
+            )
+    return text
+
+
 @dataclass
 class PeerCredential:
     """A single paired peer node's credential record.
@@ -147,7 +172,7 @@ class PeerCredential:
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "PeerCredential":
         return cls(
-            node_id=d["node_id"],
+            node_id=validate_node_id(d["node_id"]),
             node_name=d.get("node_name", d["node_id"]),
             role=d.get("role", "satellite"),
             token_hash=d["token_hash"],

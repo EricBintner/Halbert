@@ -56,9 +56,23 @@ def store(tmp_path):
 
 
 def _owner(**kw):
+    """An owner whose OS re-auth the SERVER recorded (A11-G12, R-08 E).
+
+    ``may_record_grant`` used to read ``Principal.authn`` -- a string the
+    caller writes. It reads the server's own SurfaceReceipt now; nothing
+    mints one with ``os_reauth=True`` yet (no OS re-authentication exists
+    in the tree to mint it from), so tests build it directly.
+    """
+    from halbert_core.persona.permission.consent import SurfaceReceipt
+
+    surface = kw.pop("receipt_surface", "desktop-app/first-run")
     base = dict(
         kind="owner", id="local:501", name="Eric",
         authn="os_reauth:touchid", at_machine=True,
+        surface_receipt=SurfaceReceipt(
+            surface=surface, principal_id="local:501",
+            at_machine=True, os_reauth=True, method="test-only",
+        ),
     )
     base.update(kw)
     return profiles_mod.Principal(**base)

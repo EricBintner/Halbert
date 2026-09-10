@@ -221,6 +221,24 @@ async def optional_peer_auth(
 # ---------------------------------------------------------------------------
 
 
+def _is_loopback_host(host: object) -> bool:
+    """Whether this peer ADDRESS is loopback (A12 bug 4).
+
+    Its own function so the predicate is testable without a request, and
+    so the one place it is decided is obvious. Addresses only: a name
+    resolves to whatever DNS says, and ``"testclient"`` is a fixture's
+    Host header that any client can send.
+    """
+    if not host:
+        return False
+    try:
+        import ipaddress
+
+        return ipaddress.ip_address(str(host)).is_loopback
+    except ValueError:
+        return False
+
+
 def _is_local_client(request: "Request") -> bool:
     """Did this request come from this machine?"""
     client = getattr(request, "client", None)
@@ -233,12 +251,12 @@ def _is_local_client(request: "Request") -> bool:
         # default is one deployment change (a UNIX socket, a proxy that strips
         # the peer) away from mattering, so it fails closed now (SEC-1).
         return False
-    try:
-        import ipaddress
-
-        return ipaddress.ip_address(host).is_loopback
-    except ValueError:
-        return host in ("localhost", "testclient")
+    # A12 bug 4 (fix-first row 27): the hostname STRINGS "localhost" and
+    # "testclient" used to pass here, and this predicate fronts eleven of
+    # the fifteen guest routes -- camera included. A name is not an
+    # address. Tests monkeypatch this predicate; production reads
+    # addresses.
+    return _is_loopback_host(host)
 
 
 async def require_local_admin(request: "Request") -> None:

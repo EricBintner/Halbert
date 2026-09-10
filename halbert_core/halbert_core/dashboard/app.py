@@ -1468,7 +1468,17 @@ def create_app(enable_cors: bool = True) -> FastAPI:
                     if not text.strip():
                         return
                     from .voice_relay import get_voice_relay_receipts
-                    relay_token = get_voice_relay_receipts().record(observation)
+                    receipts = get_voice_relay_receipts()
+                    # A09 bug 6: one utterance is one turn. A relay that
+                    # re-sends, or a satellite that hears the same phrase
+                    # twice, used to produce two turns -- two answers,
+                    # and for a command two executions.
+                    if receipts.is_duplicate(text):
+                        logger.info(
+                            "voice relay: dropping a repeat of the last "
+                            "utterance within the dedupe window")
+                        return
+                    relay_token = receipts.record(observation)
                     ingress = _coordinator.get_ingress("dashboard")
                     if ingress is None or not hasattr(ingress, "broadcast"):
                         return

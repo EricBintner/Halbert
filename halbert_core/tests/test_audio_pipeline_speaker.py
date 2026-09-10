@@ -165,11 +165,18 @@ class TestUnknownSpeakerIsTruthful:
         indirect=True,
     )
     async def test_match_without_profile_stays_truthful(self, coordinator):
-        """No enrolled profile: empty name, role 'unknown', real confidence."""
+        """No enrolled profile: empty name, role 'unknown', NO confidence.
+
+        R-02 (A09 bug 5, fix-first row 29): the confidence used to survive
+        here, and so did the speaker_id -- and the speaker_id is what
+        stamps a ``voice_speaker_verification`` claim downstream. So a
+        deleted or unreadable profile produced a VERIFIED claim with no
+        subject. A match the store cannot stand behind is not a match:
+        the id and its confidence are cleared with the name."""
         await _run_speech_turn(coordinator)
 
         speaker = coordinator.get_status()["speaker"]
-        assert speaker == {"name": "", "role": "unknown", "confidence": 0.81}
+        assert speaker == {"name": "", "role": "unknown", "confidence": 0.0}
 
     @pytest.mark.parametrize(
         "coordinator",

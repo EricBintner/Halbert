@@ -52,6 +52,32 @@ current_turn_claim: ContextVar[Optional["IdentifierClaim"]] = ContextVar(
 )
 
 
+def _record_digest_status_impl(tool_name, args, status) -> None:
+    """Record a non-success outcome in the turn digest (A05-G9)."""
+    try:
+        from ..persona.guest_tools import WRITE_PLANE_TOOLS
+        from ..security.turn_digest import record_effect
+        if tool_name in WRITE_PLANE_TOOLS:
+            record_effect(tool_name, args, status=status)
+    except Exception as e:
+        logger.debug(f"turn digest record skipped (non-fatal): {e}")
+
+
+def _provenance_of(tool_name: str) -> str:
+    """Whose answer this is (A17-G7).
+
+    An MCP tool's result is a third party's text; Halbert's own tools
+    are the machine's own finding. The distinction is the tool
+    namespace, which is the same fact ``tools/mcp_safety.py`` classifies
+    on -- read from one place so the two cannot disagree.
+    """
+    try:
+        from ..mcp.registry import MCP_TOOL_PREFIX
+    except Exception:  # pragma: no cover - import-time only
+        return "halbert"
+    return "mcp" if str(tool_name or "").startswith(MCP_TOOL_PREFIX) else "halbert"
+
+
 @dataclass
 class ExecutionResult:
     """Result of a tool execution."""
@@ -62,6 +88,12 @@ class ExecutionResult:
     risk_level: RiskLevel = RiskLevel.SAFE
     requires_confirmation: bool = False
     confirmation_message: Optional[str] = None
+    #: Where this result came from (A17-G7). ``"halbert"`` is the
+    #: machine's own tool; ``"mcp"`` is a third-party server's answer,
+    #: which the model must be able to tell apart from a finding the
+    #: machine made itself. Recorded here so the observation writer and
+    #: the audit line can both read it from one place.
+    provenance: str = "halbert"
 
 
 # The web_search tool's schema, kept apart from _register_builtins because
@@ -555,18 +587,27 @@ class ToolExecutor:
         # inherits the cap too — never looser, which a re-defaulted role
         # would be.
         effective_role = speaker_role
+        # A12-G7: the capping fact is recorded, not just the result. The
+        # cap is the moment a claim changes what a turn may DO, and it
+        # used to leave a WARNING on one branch and nothing at all on the
+        # other -- so "why was that refused?" had to be answered from a
+        # log line that might not exist. `capped=False` is a fact too: it
+        # says the claim was looked at.
+        claim_observation = None
         if self.role_gate is not None:
             turn_claim = current_turn_claim.get()
-            if turn_claim is not None:
-                from .role_gate import effective_voice_role
-                effective_role = effective_voice_role(
-                    speaker_role, turn_claim.strength
-                )
+            from .role_gate import observe_role
+            claim_observation = observe_role(
+                speaker_role,
+                turn_claim.strength if turn_claim is not None else None,
+            )
+            effective_role = claim_observation.effective_role
             safety_result = self.role_gate.classify(
                 tool_name, args, speaker_role=effective_role
             )
         else:
             safety_result = self.safety.classify(tool_name, args)
+        self._claim_observation = claim_observation
         
         # Block CRITICAL
         if safety_result.risk_level == RiskLevel.CRITICAL:
@@ -642,9 +683,17 @@ class ToolExecutor:
             # digest is bound (executor used outside an agent turn).
             try:
                 from ..persona.guest_tools import WRITE_PLANE_TOOLS
-                from ..security.turn_digest import record_effect
+                from ..security.turn_digest import record_effect, status_for_result
                 if tool_name in WRITE_PLANE_TOOLS:
-                    record_effect(tool_name, args)
+                    # A05-G9 + bug 6: what BECAME of it. ``success`` here
+                    # means "the tool ran without raising", which for
+                    # run_command is true of a command that returned 1 --
+                    # so "I restarted sshd" was spoken for a restart that
+                    # failed. The exit code is read off the result string
+                    # the executor itself formats ("Exit code N"), not by
+                    # parsing tool-specific output.
+                    record_effect(
+                        tool_name, args, status=status_for_result(True, result))
             except Exception as e:
                 logger.debug(f"turn digest record skipped (non-fatal): {e}")
 
@@ -652,12 +701,21 @@ class ToolExecutor:
                 success=True,
                 result=result,
                 execution_time_ms=elapsed,
-                risk_level=safety_result.risk_level
+                risk_level=safety_result.risk_level,
+                provenance=_provenance_of(tool_name),
             )
             
+        except asyncio.CancelledError:
+            # A05-G9: a stopped tool is a fact about the turn. The user
+            # asked for it and it did not finish; saying nothing is the
+            # same shape of dishonesty as saying it succeeded.
+            _record_digest_status_impl(tool_name, args, "cancelled")
+            raise
+
         except asyncio.TimeoutError:
             elapsed = (time.time() - start) * 1000
             logger.error(f"Tool timeout: {tool_name}")
+            _record_digest_status_impl(tool_name, args, "failed")
             self._audit(tool_name, args, session_id, success=False, error="Timeout")
             return ExecutionResult(
                 success=False,
@@ -669,12 +727,14 @@ class ToolExecutor:
         except Exception as e:
             elapsed = (time.time() - start) * 1000
             logger.error(f"Tool execution error: {tool_name}: {e}")
+            _record_digest_status_impl(tool_name, args, "failed")
             self._audit(tool_name, args, session_id, success=False, error=str(e))
             return ExecutionResult(
                 success=False,
                 error=str(e),
                 execution_time_ms=elapsed,
-                risk_level=safety_result.risk_level
+                risk_level=safety_result.risk_level,
+                provenance=_provenance_of(tool_name),
             )
 
         finally:
@@ -748,16 +808,36 @@ class ToolExecutor:
         success: bool = True,
         error: str = None
     ):
-        """Log tool execution for audit."""
+        """Log tool execution for audit.
+
+        A12-G7: the claim observation rides along when one was taken, so
+        the record can answer "a weaker claim narrowed the role" rather
+        than leaving that on a WARNING line somewhere else. Passed as
+        keywords with defaults, so an audit_fn written before this keeps
+        working -- and a TypeError from one that does not accept them
+        costs the record, never the call.
+        """
         if self.audit_fn:
+            fields = dict(
+                tool=tool_name,
+                args=args,
+                session_id=session_id,
+                success=success,
+                error=error,
+            )
+            observation = getattr(self, "_claim_observation", None)
+            if observation is not None:
+                fields.update(observation.as_audit_fields())
             try:
-                self.audit_fn(
-                    tool=tool_name,
-                    args=args,
-                    session_id=session_id,
-                    success=success,
-                    error=error
-                )
+                self.audit_fn(**fields)
+            except TypeError:
+                try:
+                    self.audit_fn(
+                        tool=tool_name, args=args, session_id=session_id,
+                        success=success, error=error,
+                    )
+                except Exception as e:
+                    logger.error(f"Audit logging failed: {e}")
             except Exception as e:
                 logger.error(f"Audit logging failed: {e}")
     
@@ -977,19 +1057,6 @@ class ToolExecutor:
         path = os.path.expanduser(path)
         path = os.path.abspath(path)
 
-        # SK-2 seam 1 (design §6): resolve the path against the registry's
-        # known skill paths before dispatch. A hit is a catalog
-        # consultation — every Track-B consultation passes through this one
-        # choke point, whatever surface asked — and appends a `read`
-        # receipt to the skill_events table. Reportability, never a gate:
-        # a receipt that cannot be written costs a log line, not the read.
-        try:
-            from ..skills.telemetry import record_skill_read
-            record_skill_read(path)
-        except Exception:
-            logger.debug("skill read telemetry failed; continuing",
-                         exc_info=True)
-
         if not os.path.exists(path):
             raise FileNotFoundError(f"File not found: {path}")
         
@@ -1002,7 +1069,29 @@ class ToolExecutor:
             raise ValueError(f"File too large: {size} bytes (max 1MB)")
         
         with open(path, 'r', encoding=encoding) as f:
-            return f.read()
+            text = f.read()
+
+        # SK-2 seam 1 (design §6): resolve the path against the registry's
+        # known skill paths. A hit is a catalog consultation -- every
+        # Track-B consultation passes through this one choke point,
+        # whatever surface asked -- and appends a `read` receipt to the
+        # skill_events table. Reportability, never a gate: a receipt that
+        # cannot be written costs a log line, not the read.
+        #
+        # A13 bug 4: it used to be written ABOVE the existence, type and
+        # size checks, so a read that RAISED recorded a consultation that
+        # never happened -- and the curator's whole question is which
+        # skills the model actually consulted. A typo'd <location>, a
+        # deleted skill directory and an over-cap reference file each
+        # minted a receipt for a skill nobody read. It is written once the
+        # text is in hand.
+        try:
+            from ..skills.telemetry import record_skill_read
+            record_skill_read(path)
+        except Exception:
+            logger.debug("skill read telemetry failed; continuing",
+                         exc_info=True)
+        return text
     
     @staticmethod
     def _read_text_and_readability(path: str) -> "tuple[Optional[str], bool]":

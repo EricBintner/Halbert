@@ -145,6 +145,15 @@ def _save(homes: List[GuestHomeRecord]) -> None:
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             yaml.dump(data, f, default_flow_style=False, sort_keys=False)
+            # A12-G8: the atomic rename was already here; the durability
+            # half was not. Without the fsync the rename can land while
+            # the data behind it is still in the page cache, so a power
+            # loss leaves a truncated file -- and `list_homes` swallows a
+            # malformed file and returns [], which reads as "no homes are
+            # paired" and makes the operator re-enter a bearer token.
+            # One line, on the one file here that stores a credential.
+            f.flush()
+            os.fsync(f.fileno())
         os.chmod(tmp, 0o600)
         os.replace(tmp, str(path))
     except Exception:

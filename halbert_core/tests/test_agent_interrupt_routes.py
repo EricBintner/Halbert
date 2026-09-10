@@ -106,7 +106,7 @@ class TestMidturnArrivals:
         assert _sse_types(r.text) == ["steer_accepted"]
         # The text rode the single replace-not-grow slot for the RUNNING
         # turn's session, not the arrival's own id.
-        assert agent._pending_steer == {"run": "also check the logs"}
+        assert agent._pending_steer == {"run": ["also check the logs"]}
 
     def test_a_second_arrival_replaces_the_slot(self, monkeypatch):
         agent = _busy_agent()
@@ -120,7 +120,8 @@ class TestMidturnArrivals:
         ]
         assert events[0]["type"] == "steer_accepted"
         assert events[0]["replaced"] is True
-        assert agent._pending_steer == {"run": "second"}
+        # A07-G6: steers concatenate -- the second no longer erases the first.
+        assert agent._pending_steer == {"run": ["first", "second"]}
 
     def test_stop_while_busy_cancels_with_existing_event_vocabulary(self, monkeypatch):
         agent = _busy_agent()
@@ -129,18 +130,37 @@ class TestMidturnArrivals:
         assert _sse_types(r.text) == ["cancelled", "session_ended"]
         assert agent.cancelled["run"] is True
 
-    def test_stop_while_a_tool_batch_is_in_flight_demotes_to_steer(self, monkeypatch):
+    def test_stop_while_a_tool_batch_is_in_flight_still_stops(self, monkeypatch):
+        """R-01 Phase B (A07-G2): Rule 1 is unconditional.
+
+        This used to assert the opposite -- that ``/stop`` during a tool
+        batch demoted to a steer. The demotion rule ("never kill a tool
+        to deliver guidance") belongs to plain text, which steers anyway;
+        applied to the stop verb it meant the user could not stop a
+        running command with the verb named stop.
+        """
         agent = _busy_agent(state=AgentState.READING)
         api = _client(monkeypatch, agent)
         r = api.post("/api/agent/message", json={"message": "/stop"})
+        types = _sse_types(r.text)
+        assert "cancelled" in types
+        assert agent._pending_steer == {}
+        assert agent.cancelled.get("run") is True
+
+    def test_guidance_while_a_tool_batch_is_in_flight_steers(self, monkeypatch):
+        """The rule the demotion was always about, kept."""
+        agent = _busy_agent(state=AgentState.READING)
+        api = _client(monkeypatch, agent)
+        r = api.post(
+            "/api/agent/message", json={"message": "actually check the logs"}
+        )
         events = [
             json.loads(line[6:])
             for line in r.text.splitlines()
             if line.startswith("data: ")
         ]
         assert events[0]["type"] == "steer_accepted"
-        assert events[0]["demoted"] is True
-        assert agent._pending_steer == {"run": "/stop"}
+        assert agent._pending_steer == {"run": ["actually check the logs"]}
         assert agent.cancelled == {}      # the tool was never killed
 
     def test_an_arrival_with_images_keeps_the_queue_a_turn_path(self, monkeypatch):

@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from typing import Any, Optional
+from typing import Any, Dict, Optional
 
 logger = logging.getLogger("halbert.integrations.modality_wiring")
 
@@ -598,3 +598,95 @@ def shutdown() -> None:
     _quiet_hours_policy = None
     _temporal_orchestrator = None
     _pronunciation_lexicon = None
+
+
+# ---------------------------------------------------------------------------
+# A10-G7: the model is told the spoken budget
+# ---------------------------------------------------------------------------
+
+def spoken_budget_hint(max_words: Optional[int]) -> str:
+    """One deterministic line telling the model its spoken budget.
+
+    A10-G7. The engine's own prompt block reads
+    ``voice_risk_policy.max_spoken_words`` and was never reached --
+    ``get_modality_prompt_builder`` appears exactly once in the tree, at
+    its own ``def``. So every voice reply was written at essay length and
+    then hard-truncated mid-sentence at 12-35 words, with no audible
+    signal. The measured result was "Your disk is filling up. Your disk
+    is filling up. Your disk".
+
+    The cap itself is the engine's and stays exactly where it is (FD-4:
+    keep the cap, wire the hint). This does not raise it, bypass it or
+    re-implement it -- it tells the model what it is, so the reply fits
+    instead of being cut.
+    """
+    if not max_words or max_words <= 0:
+        return ""
+    return (
+        f"You are speaking aloud. Answer in at most {max_words} words: "
+        f"say the one thing that matters and stop. Anything longer is cut "
+        f"off mid-sentence, which the listener hears as a fault."
+    )
+
+
+def spoken_max_words(ctx: Any) -> Optional[int]:
+    """The engine's spoken word cap for this turn, or None.
+
+    Read from the resolved modality context's own policy, never
+    computed here: the cap is the engine's deterministic decision and
+    this module's job is to report it, not to have an opinion about it.
+    """
+    policy = getattr(ctx, "voice_risk_policy", None)
+    value = getattr(policy, "max_spoken_words", None)
+    try:
+        return int(value) if value else None
+    except (TypeError, ValueError):
+        return None
+
+
+# ---------------------------------------------------------------------------
+# A10-G6: a barge-in is a fact the next turn should know
+# ---------------------------------------------------------------------------
+
+#: Sessions whose last spoken reply was interrupted, and by how much.
+#: Bounded: a handful of live sessions, cleared as each note is taken.
+_BARGE_IN: Dict[str, tuple] = {}
+_BARGE_IN_MAX = 32
+
+
+def barge_in_note(spoken_words: int, total_words: int) -> str:
+    """The deterministic note describing an interrupted reply.
+
+    A10-G6. Barge-in stopped the audio and told the model nothing, so
+    the next turn answered as if the whole reply had been heard -- and
+    the commonest reason a person interrupts is that the answer had
+    already gone wrong. Deterministic text, not a generated
+    apology: the same situation reads the same way every time.
+    """
+    return (
+        f"The listener interrupted your last spoken reply after about "
+        f"{spoken_words} of {total_words} words. Assume they did not hear "
+        f"the rest, and do not repeat it unless they ask."
+    )
+
+
+def record_barge_in(session_id: str, *, spoken_words: int, total_words: int) -> None:
+    """Record that this session's spoken reply was cut short."""
+    if not session_id:
+        return
+    _BARGE_IN[session_id] = (int(spoken_words or 0), int(total_words or 0))
+    while len(_BARGE_IN) > _BARGE_IN_MAX:
+        _BARGE_IN.pop(next(iter(_BARGE_IN)), None)
+
+
+def take_barge_in_note(session_id: str) -> Optional[str]:
+    """The note for this session's NEXT turn, consumed once.
+
+    Once, because it describes one interruption: carrying it forward
+    would have every later turn apologising for something that happened
+    minutes ago.
+    """
+    facts = _BARGE_IN.pop(session_id or "", None)
+    if not facts:
+        return None
+    return barge_in_note(*facts)

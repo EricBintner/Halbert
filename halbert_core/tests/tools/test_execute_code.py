@@ -304,11 +304,18 @@ class TestScriptAndToolErrors:
         assert result.success, result.error
         assert "ledger is on fire" in result.result["stdout"]
 
-    async def test_unhandled_script_exception_is_structured_never_raw_stdout(self):
+    async def test_unhandled_script_exception_keeps_its_partial_stdout(self):
+        """R-07 (A04-G6, FD-17): this used to assert ``"stdout" not in
+        out`` -- "never raw stdout on failure". A script that printed for
+        two minutes and then raised returned nothing at all, which is the
+        least useful moment to discard the output. The error stays its
+        own structured field, so nothing has to guess which half is
+        which, and the stdout goes through the shared redaction core on
+        the way out (A04-G4)."""
         executor = _executor()
         result = await _run(
             executor,
-            "print('partial output nobody asked for')\n"
+            "print('partial output someone will want')\n"
             "raise RuntimeError('the script went wrong')\n",
         )
         out = result.result
@@ -316,7 +323,7 @@ class TestScriptAndToolErrors:
         assert "the script went wrong" in out["error"]
         assert "Traceback" in out["traceback_tail"]
         assert "RuntimeError" in out["traceback_tail"]
-        assert "stdout" not in out  # never raw stdout on failure
+        assert "partial output someone will want" in out["stdout"]
         assert out["tool_calls_made"] == 0
 
 
@@ -476,10 +483,19 @@ class TestRunHygiene:
         assert sys.path == path_before, "a leaked sys.path entry is a failure, not a warning"
         assert "halbert_tools" not in sys.modules
 
-    async def test_script_runs_as_dunder_halbert_script(self):
+    async def test_script_runs_as_main(self):
+        """R-07 (A04-G5, FD-18): ``__name__`` was "__halbert_script__", so
+        every ``if __name__ == "__main__":`` block a person pasted in
+        silently did nothing -- which is the commonest shape of Python
+        script there is. The marker stays available under its own name."""
         executor = _executor()
         result = await _run(executor, "print(__name__)\n")
-        assert result.result["stdout"].strip() == "__halbert_script__"
+        assert result.result["stdout"].strip() == "__main__"
+
+    async def test_the_script_marker_is_still_available(self):
+        executor = _executor()
+        result = await _run(executor, "print(__halbert_script__)\n")
+        assert result.result["stdout"].strip() == "True"
 
     async def test_stdout_of_the_run_is_restored_afterwards(self):
         executor = _executor()

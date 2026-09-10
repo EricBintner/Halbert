@@ -68,6 +68,8 @@ import asyncio
 import json
 import logging
 import os
+import signal
+import time
 from typing import Any, Dict, List, Optional, Tuple
 
 import requests
@@ -91,6 +93,84 @@ SUPPORTED_PROTOCOL_VERSIONS = ("2025-03-26", "2024-11-05")
 PROTOCOL_VERSION = SUPPORTED_PROTOCOL_VERSIONS[0]
 
 _CLIENT_INFO = {"name": "halbert-mcp-client", "version": "0.1.0"}
+
+#: The largest single JSON-RPC line this client will read from a stdio
+#: server (A17-G2). ``create_subprocess_exec`` used to take asyncio's
+#: 64 KiB stream default, so a 200,000-character text result raised
+#: inside ``readline()`` and killed the transport, failing every pending
+#: request with "stream closed". Generous enough that no honest result
+#: hits it; bounded so a server cannot make the client allocate without
+#: limit.
+MAX_STDIO_FRAME_BYTES = 16 * 1024 * 1024
+
+#: A list walk is bounded three ways, not one (A17-G16). A page COUNT
+#: alone let a hundred pages of a megabyte each through, and let a
+#: slow server hold the walk for a hundred timeouts.
+MAX_LIST_BYTES = 4 * 1024 * 1024
+MAX_LIST_SECONDS = 60.0
+
+#: The one server notification this client acts on (A17-G11).
+TOOLS_CHANGED_NOTIFICATION = "notifications/tools/list_changed"
+
+#: Indirection so a test can observe the group signal without a real
+#: process group. Production binds ``os.killpg``.
+_killpg = os.killpg
+
+#: How long a group gets between SIGTERM and SIGKILL.
+_GROUP_TERM_GRACE_SECONDS = 3.0
+
+#: How much of an oversized frame to discard per read while draining it.
+_FRAME_DRAIN_CHUNK = 64 * 1024
+
+#: Environment variables a child MCP server may see (A17-G1). Halbert's
+#: whole environment used to be handed to every configured stdio server:
+#: an npx package could read HALBERT_MCP_TOKEN and HALBERT_PEER_TOKEN,
+#: every other server's token and API key, and call back into Halbert's
+#: own authenticated MCP server as Halbert. This is the allowlist: what a
+#: program needs to run and find its own files, and nothing that
+#: identifies or authorises Halbert.
+CHILD_ENV_ALLOWLIST = frozenset({
+    "PATH", "HOME", "USER", "LOGNAME", "LANG", "LC_ALL", "LC_CTYPE",
+    "TERM", "SHELL", "TMPDIR", "TZ", "PWD",
+})
+
+#: Prefixes kept in full (the XDG base-directory set).
+_CHILD_ENV_PREFIXES = ("XDG_",)
+
+#: Never passed, from any source -- not the parent environment and not a
+#: server's own config block. A loader-preload variable turns "launch
+#: this command" into "run this code inside that command", which is a
+#: different thing from what the config said.
+_CHILD_ENV_DENY_PREFIXES = ("DYLD_", "LD_")
+
+
+def child_env(config_env: Optional[Dict[str, str]]) -> Dict[str, str]:
+    """The environment one stdio MCP server is launched with (A17-G1).
+
+    The allowlist above, taken from the parent, plus the server's own
+    configured ``env`` -- which is how a server receives its credential,
+    and the reason the allowlist can be as short as it is. The deny
+    prefixes apply to both sources: a config block is the operator's
+    word about one server, not a way past the loader rule.
+    """
+    def _denied(name: str) -> bool:
+        return any(name.startswith(p) for p in _CHILD_ENV_DENY_PREFIXES)
+
+    env: Dict[str, str] = {}
+    for name, value in os.environ.items():
+        if _denied(name):
+            continue
+        if name in CHILD_ENV_ALLOWLIST or name.startswith(_CHILD_ENV_PREFIXES):
+            env[name] = value
+    for name, value in (config_env or {}).items():
+        if _denied(name):
+            logger.warning(
+                "MCP server config sets %s -- refusing to pass a loader "
+                "variable to a child server", name,
+            )
+            continue
+        env[name] = value
+    return env
 
 
 # ---------------------------------------------------------------------------
@@ -180,6 +260,39 @@ def join_text_content(content: Any) -> str:
     return "\n".join(parts)
 
 
+def _tool_error_message(server_name: str, tool_name: str, text: str) -> str:
+    """The message an ``MCPToolError`` carries (A17 bug 6, A03 bug 5).
+
+    The server wrote ``text``, and this string is interpolated into a
+    failed ``ExecutionResult`` -- the one path the executor's 2000-char
+    observation cap does not cover, and one that reaches both the model
+    and the UI. It goes through the shared error-text treatment (pattern
+    redaction, the acknowledged-value registry, a cap) and the metadata
+    sanitizer, so a hostile server cannot address the model through its
+    own failure message either.
+    """
+    from ..mcp.metadata import sanitize_metadata_text
+    from ..security.result_redaction import redact_error_text
+    detail = sanitize_metadata_text(redact_error_text(text or "")) or "(no detail)"
+    return (
+        f"MCP server '{server_name}' tool '{tool_name}' reported "
+        f"an error: {detail}"
+    )
+
+
+def _approx_size(batch: Any) -> int:
+    """Roughly how many bytes a page of list items came to.
+
+    Serializing is the honest measure and cheap enough once per page; a
+    page that cannot be serialized is charged its repr instead, so a
+    hostile shape cannot be free.
+    """
+    try:
+        return len(json.dumps(batch, default=str))
+    except Exception:
+        return len(repr(batch))
+
+
 def _redact(text: str) -> str:
     """Last-ditch redaction of any message leaving this module (see
     server.py's dispatch catch-all for the same pattern)."""
@@ -201,11 +314,42 @@ def _scrub(text: str, secrets: List[str]) -> str:
 
 
 def _initialize_params() -> Dict[str, Any]:
+    """The handshake this client honestly offers (A17 bug 4).
+
+    ``capabilities`` in ``initialize`` is what the CLIENT implements, not
+    what it wants from the server -- ``tools`` and ``resources`` are
+    server capabilities, and advertising them was a category error that
+    invited a server to ask for something that would come back
+    method-not-found. This client implements no roots, no sampling and
+    no elicitation, so it says so by offering nothing. Listing a
+    server's tools does not require announcing a client capability.
+    """
     return {
         "protocolVersion": PROTOCOL_VERSION,
-        "capabilities": {"tools": {}, "resources": {}},
+        "capabilities": {},
         "clientInfo": _CLIENT_INFO,
     }
+
+
+def validate_http_url(name: str, url: str) -> str:
+    """Refuse an HTTP-transport URL that is not http(s) (A17-G15).
+
+    ``mcp_config.yml`` is operator input, and ``requests`` will happily
+    be handed a scheme that means something entirely different from
+    "talk to a server over HTTP". Checked where the transport is built,
+    so nothing downstream has to wonder.
+    """
+    from urllib.parse import urlparse
+    try:
+        parsed = urlparse(url or "")
+    except Exception:
+        parsed = None
+    if parsed is None or parsed.scheme not in ("http", "https") or not parsed.netloc:
+        raise MCPConnectionError(
+            f"MCP server '{name}': the http transport needs an http:// or "
+            f"https:// url with a host"
+        )
+    return url
 
 
 # ---------------------------------------------------------------------------
@@ -234,11 +378,21 @@ class StdioTransport:
         self.name = name
         self.command = command
         self.args = list(args or [])
-        # Extra env merged OVER os.environ so config vars can override,
-        # with every parent var (PATH above all) still present.
-        self.env = {**os.environ, **(env or {})}
+        # A17-G1: an allowlist, not the parent environment. See
+        # ``child_env``.
+        self.env = child_env(env)
         self.timeout = float(timeout)
         self._proc: Optional[asyncio.subprocess.Process] = None
+        #: The child's process group (A17-G10), recorded at connect so
+        #: close() can reach the grandchildren an npx-shaped server
+        #: leaves behind.
+        self._pgid: Optional[int] = None
+        #: Set by the read loop when the server sends
+        #: ``notifications/tools/list_changed`` (A17-G11). Read by the
+        #: health monitor, which re-runs discovery for THIS server off
+        #: the read loop -- refreshing inline would wedge the stream
+        #: while a request is in flight.
+        self.tools_changed = False
         self._reader: Optional[asyncio.Task] = None
         self._pending: Dict[Any, "asyncio.Future"] = {}
         self._next_id = 0
@@ -267,6 +421,16 @@ class StdioTransport:
                     self.command, *self.args,
                     stdin=asyncio.subprocess.PIPE,
                     stdout=asyncio.subprocess.PIPE,
+                    # A17-G2: bound the frame. Without this the stream
+                    # took asyncio's 64 KiB default and a large
+                    # tools/list or text result killed the transport.
+                    limit=MAX_STDIO_FRAME_BYTES,
+                    # A17-G10: the child gets its own session, so
+                    # close() can signal the whole GROUP. npx spawns
+                    # npm spawns node -- killing the direct child left
+                    # the grandchildren running, and nothing at all
+                    # survived a SIGKILL of Halbert itself.
+                    start_new_session=True,
                     # stderr is the server's log channel, not ours to
                     # relay; DEVNULL so a chatty server can't fill a pipe
                     # nobody drains.
@@ -282,6 +446,11 @@ class StdioTransport:
             raise MCPConnectionError(
                 f"MCP server '{self.name}': failed to launch "
                 f"'{self.command}': {e}") from None
+
+        try:
+            self._pgid = os.getpgid(self._proc.pid)
+        except Exception:  # pragma: no cover - platform/timing
+            self._pgid = None
 
         self._pending = {}
         self._reader = asyncio.get_running_loop().create_task(self._read_loop())
@@ -318,6 +487,7 @@ class StdioTransport:
             except Exception:
                 pass
         proc, self._proc = self._proc, None
+        pgid, self._pgid = self._pgid, None
         if proc is not None:
             try:
                 if proc.returncode is None:
@@ -328,13 +498,61 @@ class StdioTransport:
                     try:
                         await asyncio.wait_for(proc.wait(), timeout=5.0)
                     except asyncio.TimeoutError:
-                        proc.kill()
-                        await proc.wait()
+                        pass
+                # A17-G10: the direct child exiting is not the server
+                # exiting. npx spawns npm spawns node; the launcher
+                # returns and the actual server keeps running with its
+                # pipes closed. Sweep the whole GROUP either way --
+                # SIGTERM, a grace, then SIGKILL. An empty group raises
+                # ProcessLookupError, which is the answer "nothing was
+                # left", not an error.
+                await self._terminate_group(proc, pgid)
             except Exception:
                 logger.debug("MCP server '%s': error during close", self.name,
                              exc_info=True)
         self._fail_pending(MCPDisconnectedError(
             f"MCP server '{self.name}': connection closed"))
+
+    async def _terminate_group(self, proc, pgid) -> None:
+        """SIGTERM the child's process group, wait, then SIGKILL (A17-G10).
+
+        Reaps grandchildren the launcher left behind. The residual risk
+        the origin documents and accepts applies here too: a pgid can in
+        principle be reused between the spawn and this call. Halbert is
+        a single-host steward with a handful of servers, and the
+        alternative -- leaving a node process running with closed pipes
+        -- is the worse of the two.
+        """
+        if pgid is None:
+            if proc.returncode is None:
+                proc.kill()
+                await proc.wait()
+            return
+        try:
+            _killpg(pgid, signal.SIGTERM)
+        except ProcessLookupError:
+            # Nothing left in the group: the clean exit took everything.
+            if proc.returncode is None:
+                await proc.wait()
+            return
+        except (PermissionError, OSError) as e:
+            logger.debug(
+                "MCP server '%s': could not signal group %s: %s",
+                self.name, pgid, e)
+            return
+        try:
+            if proc.returncode is None:
+                await asyncio.wait_for(proc.wait(), timeout=3.0)
+            else:
+                await asyncio.sleep(_GROUP_TERM_GRACE_SECONDS)
+        except asyncio.TimeoutError:
+            pass
+        try:
+            _killpg(pgid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError, OSError):
+            pass
+        if proc.returncode is None:
+            await proc.wait()
 
     # -- protocol ----------------------------------------------------------
 
@@ -354,7 +572,28 @@ class StdioTransport:
         assert self._proc is not None and self._proc.stdout is not None
         try:
             while True:
-                line = await self._proc.stdout.readline()
+                try:
+                    line = await self._proc.stdout.readline()
+                except (ValueError, asyncio.LimitOverrunError) as e:
+                    # A17-G2 + bug 1: one frame over the limit is one
+                    # bad response, not a dead server. asyncio raises
+                    # out of readline() with the oversized data still in
+                    # the buffer, so drain it in bounded chunks (the
+                    # same shape server.py:1341 uses) and keep reading.
+                    # The pending request it belonged to cannot be
+                    # identified -- the frame was never parsed -- so the
+                    # oldest outstanding one is failed with a protocol
+                    # error rather than every one of them.
+                    logger.warning(
+                        "MCP server '%s': oversized frame (> %d bytes); "
+                        "discarding it and keeping the transport: %s",
+                        self.name, MAX_STDIO_FRAME_BYTES, e,
+                    )
+                    await self._drain_oversized_frame()
+                    self._fail_oldest_pending(MCPProtocolError(
+                        f"MCP server '{self.name}': response exceeded "
+                        f"{MAX_STDIO_FRAME_BYTES} bytes and was discarded"))
+                    continue
                 if not line:
                     break  # EOF: the server exited
                 try:
@@ -370,7 +609,28 @@ class StdioTransport:
                     # Server-initiated request (method + id) or
                     # notification (method, no id). NEVER a response.
                     if "id" in message:
-                        await self._reject_server_request(message["id"])
+                        if message.get("method") == "ping":
+                            # A17 bug 3: ping is the spec's keepalive and
+                            # every peer must answer it. Refusing it with
+                            # method-not-found made a spec-compliant
+                            # server's liveness check read as a broken
+                            # client. An empty result IS the answer.
+                            await self._answer_ping(message["id"])
+                        else:
+                            await self._reject_server_request(message["id"])
+                    elif message.get("method") == TOOLS_CHANGED_NOTIFICATION:
+                        # A17-G11: the one notification this client
+                        # acts on. A FLAG, not a refresh: re-running
+                        # discovery from inside the read loop wedges
+                        # the stdio stream while a request is in
+                        # flight, so the health monitor picks this up
+                        # on its own tick and diffs the registrations.
+                        # prompts/ and resources/list_changed stay
+                        # dropped -- nothing consumes them.
+                        logger.info(
+                            "MCP server '%s' reports its tool list changed",
+                            self.name)
+                        self.tools_changed = True
                     continue
                 if "result" not in message and "error" not in message:
                     continue  # neither request nor response: drop
@@ -381,6 +641,14 @@ class StdioTransport:
         finally:
             self._fail_pending(MCPDisconnectedError(
                 f"MCP server '{self.name}': stream closed"))
+
+    async def _answer_ping(self, req_id: Any) -> None:
+        """Answer the spec's keepalive (A17 bug 3)."""
+        try:
+            await self._write({"jsonrpc": "2.0", "id": req_id, "result": {}})
+        except MCPClientError as e:
+            logger.debug(
+                "MCP server '%s': could not answer ping: %s", self.name, e)
 
     async def _reject_server_request(self, req_id: Any) -> None:
         """Answer a server-initiated request with method-not-found, so
@@ -399,6 +667,44 @@ class StdioTransport:
             logger.debug(
                 "MCP server '%s': could not reject server request: %s",
                 self.name, e)
+
+    async def _drain_oversized_frame(self) -> None:
+        """Read past an oversized line, in bounded chunks.
+
+        The reader raised with the frame still buffered; leaving it there
+        means the next ``readline()`` raises on the same bytes forever.
+        Read until a newline is consumed or the stream ends.
+        """
+        stdout = self._proc.stdout if self._proc is not None else None
+        if stdout is None:
+            return
+        discarded = 0
+        while True:
+            try:
+                chunk = await stdout.read(_FRAME_DRAIN_CHUNK)
+            except (ValueError, asyncio.LimitOverrunError):
+                # read() is not separator-bound, so this should not
+                # happen; stop rather than spin.
+                return
+            if not chunk:
+                return
+            discarded += len(chunk)
+            if b"\n" in chunk:
+                logger.debug(
+                    "MCP server '%s': discarded %d bytes of an oversized "
+                    "frame", self.name, discarded,
+                )
+                return
+
+    def _fail_oldest_pending(self, exc: MCPClientError) -> None:
+        """Fail the longest-outstanding request. An unparseable frame
+        names no id, and failing every pending request for one bad
+        response is what A17-G2 was about."""
+        for req_id, fut in list(self._pending.items()):
+            if not fut.done():
+                self._pending.pop(req_id, None)
+                fut.set_exception(exc)
+                return
 
     def _fail_pending(self, exc: MCPClientError) -> None:
         pending = list(self._pending.values())
@@ -579,7 +885,12 @@ class HTTPTransport:
         try:
             response = requests.post(
                 self.url, json=message,
-                headers=headers, timeout=timeout)
+                headers=headers, timeout=timeout,
+                # A17-G15: a redirect carries the session id AND the
+                # bearer token to wherever it points. Following one
+                # hands both to another origin. A server that wants to
+                # move should say so in its config entry.
+                allow_redirects=False)
         except requests.RequestException as e:
             # The exception (and the URL inside it) can carry credentials
             # — a user:pass@ URL, or anything a proxy echoes back. Scrub
@@ -725,7 +1036,30 @@ class HTTPTransport:
         logger.info("MCP server '%s' connected (http)", self.name)
 
     async def close(self) -> None:
-        self._connected = False
+        """Release the server's session, then mark the transport closed.
+
+        A17-G15: without the DELETE the session outlived Halbert's use
+        of it -- a server holding per-session state kept it until its own
+        expiry. Best-effort by design: a close must not fail because the
+        server is already gone.
+        """
+        session_id, self._session_id = self._session_id, None
+        was_connected, self._connected = self._connected, False
+        if session_id and was_connected:
+            try:
+                await asyncio.to_thread(self._delete_session_sync, session_id)
+            except Exception as e:
+                logger.debug(
+                    "MCP server '%s': session DELETE failed: %s",
+                    self.name, e)
+
+    def _delete_session_sync(self, session_id: str) -> None:
+        token = self.token_provider() if self.token_provider else None
+        headers = self._headers(token)
+        headers["Mcp-Session-Id"] = session_id
+        requests.delete(
+            self.url, headers=headers, timeout=min(self.timeout, 5.0),
+            allow_redirects=False)
 
     async def request(
         self,
@@ -832,9 +1166,12 @@ def build_transport(config: MCPServerConfig):
             timeout=config.timeout_seconds,
         )
     if config.transport == "http":
+        # A17-G15: mcp_config.yml is operator input, and "url" is handed
+        # straight to requests. A scheme that is not http(s) means
+        # something else entirely; refuse it where the transport is built.
         return HTTPTransport(
             name=config.name,
-            url=config.url,
+            url=validate_http_url(config.name, config.url),
             token_provider=(config.auth.resolve_token
                             if config.auth is not None else None),
             timeout=config.timeout_seconds,
@@ -1050,6 +1387,14 @@ class MCPClient:
         connection = await self._ensure(server_name)
         items: List[Dict[str, Any]] = []
         cursor: Optional[str] = None
+        # A17-G16: a page count is not a bound. Three more, all cheap:
+        # the set of cursors already seen (a repeated cursor is a loop,
+        # not a long list), the bytes accumulated, and a wall deadline
+        # (a hundred pages at the per-request timeout is a very long
+        # time to hold discovery).
+        seen_cursors = set()
+        total_bytes = 0
+        deadline = time.monotonic() + MAX_LIST_SECONDS
         for _page in range(self.MAX_LIST_PAGES):
             params = {"cursor": cursor} if cursor else None
             result = await connection.transport.request(method, params)
@@ -1057,9 +1402,26 @@ class MCPClient:
             batch = result.get(key)
             if isinstance(batch, list):
                 items.extend(batch)
+                total_bytes += _approx_size(batch)
+            if total_bytes > MAX_LIST_BYTES:
+                raise MCPProtocolError(
+                    f"MCP server '{server_name}': {method} returned more "
+                    f"than {MAX_LIST_BYTES} bytes across its pages — "
+                    f"refusing to keep reading")
             cursor = result.get("nextCursor")
             if not cursor:
                 return items
+            if cursor in seen_cursors:
+                raise MCPProtocolError(
+                    f"MCP server '{server_name}': {method} repeated a "
+                    f"pagination cursor — the walk is a loop, not a long "
+                    f"list")
+            seen_cursors.add(cursor)
+            if time.monotonic() > deadline:
+                raise MCPProtocolError(
+                    f"MCP server '{server_name}': {method} pagination "
+                    f"exceeded {MAX_LIST_SECONDS:.0f}s — refusing to keep "
+                    f"reading")
         raise MCPProtocolError(
             f"MCP server '{server_name}': {method} pagination exceeded "
             f"{self.MAX_LIST_PAGES} pages — the server keeps returning a "
@@ -1096,8 +1458,7 @@ class MCPClient:
         if isinstance(result, dict) and result.get("isError"):
             text = join_text_content(result.get("content"))
             raise MCPToolError(
-                f"MCP server '{server_name}' tool '{tool_name}' reported "
-                f"an error: {text or '(no detail)'}",
+                _tool_error_message(server_name, tool_name, text),
                 result=result, text=text)
         return result
 

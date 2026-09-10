@@ -21,7 +21,10 @@ the composer decides what several active skills add up to.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
+import math
 import os
 import re
 import threading
@@ -118,6 +121,38 @@ _id_lock = threading.Lock()
 _id_last: list = [0, -1]  # [ms, randomness seen] — monotonic within a stamp
 
 
+#: Crockford base32, the ULID alphabet (no I, L, O or U).
+_CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+
+
+def derived_skill_id(source_path: Any) -> str:
+    """A stable id for a skill that carries none, derived from its file.
+
+    A13-G8. Bundled and operator skills ship no ``halbert.id`` -- ids are
+    stamped at creation and none of these were created through the
+    authoring tool -- so the registry minted a fresh random one at every
+    load. The telemetry table keys on the id, which made every skill on the
+    machine a NEW skill after each restart, and "which skills does the
+    model actually consult?" a question the table could not answer.
+
+    Derived, not written: the alternative fix stamps a ULID into the
+    sidecar on first sight, and the load path would then write into the
+    operator's skill directory -- and into the installed package, for the
+    bundled set. Reading a file is not a licence to modify it.
+
+    Same shape as a minted id (``sk_`` + 26 Crockford characters) so every
+    consumer downstream is unchanged, and a skill that carries a durable id
+    still keeps it -- this only ever fills a hole.
+    """
+    digest = hashlib.sha256(str(source_path).encode("utf-8")).digest()
+    value = int.from_bytes(digest[:16], "big") >> 3   # 125 bits -> 25 chars
+    out = []
+    for _ in range(26):
+        out.append(_CROCKFORD[value & 0x1F])
+        value >>= 5
+    return "sk_" + "".join(reversed(out))
+
+
 def new_skill_id() -> str:
     """Stamp a fresh stable skill id (`sk_` + ULID).
 
@@ -146,6 +181,41 @@ def new_skill_id() -> str:
         chars.append(_CROCKFORD[raw & 31])
         raw >>= 5
     return "sk_" + "".join(reversed(chars))
+
+
+#: The hard ceiling on a description AT PARSE TIME (A13 bug 1, fix-first
+#: row 25). Distinct from the 60-char routing budget below, which is a
+#: discipline about usefulness: this one is about not materialising a
+#: five-million-character string. A downloaded pack with nine chained
+#: YAML alias lists allocates gigabytes the moment ``str()`` touches the
+#: aliased node, and ``SkillRegistry.from_disk`` is where that lands --
+#: at daemon start, on a file the operator merely dropped in a folder.
+MAX_PARSED_DESCRIPTION_CHARS = 4096
+
+
+def _parsed_description(value: Any) -> str:
+    """The description, bounded and refused before it is stringified.
+
+    Order is load-bearing. The type check comes FIRST: ``str()`` on an
+    aliased YAML node is the allocation, so checking the length of the
+    result would be checking it after the damage. A list or a mapping is
+    not a description whatever it expands to.
+    """
+    if value is None:
+        return ""
+    if not isinstance(value, (str, int, float, bool)):
+        raise SkillParseError(
+            f"description must be a single line of text, not "
+            f"{type(value).__name__} (an aliased YAML node expands before "
+            f"it can be measured)"
+        )
+    text = str(value).strip()
+    if len(text) > MAX_PARSED_DESCRIPTION_CHARS:
+        raise SkillParseError(
+            f"description is {len(text)} characters; the parse ceiling is "
+            f"{MAX_PARSED_DESCRIPTION_CHARS}"
+        )
+    return text
 
 
 def validate_description(description: str) -> Optional[str]:
@@ -229,10 +299,16 @@ class SkillSafety:
     protected_paths: Tuple[str, ...] = ()
     protected_services: Tuple[str, ...] = ()
     blocked_commands: Tuple[str, ...] = ()
+    #: A13 bug 6 (fix-first row 26): the composed tool allowlist. It was
+    #: merged, warned about ("all tools denied") and enforced NOWHERE --
+    #: an empty intersection logged that line and then ran with every
+    #: tool available. ``None`` means no skill restricted tools.
+    allowed_tools: Optional[Tuple[str, ...]] = None
 
     def is_empty(self) -> bool:
         return not (
-            self.destructive_requires_approval
+            self.allowed_tools is not None
+            or self.destructive_requires_approval
             or self.protected_paths
             or self.protected_services
             or self.blocked_commands
@@ -341,10 +417,23 @@ class Skill:
     subagent: bool = False
     max_turns: int = 10
 
+    # A13-G9: the two CC invocation flags. A pack uses them to say "this
+    # is a slash command, not something to volunteer" and "this is
+    # machinery, do not offer it to a person"; both were tolerated as
+    # unknown top-level keys and every skill was offered to both.
+    model_invocable: bool = True
+    user_invocable: bool = True
+
     prompt: str = ""
     source_path: Optional[Path] = None
     extends: Optional[str] = None
     kind: str = "ops"  # ops | lens (KINDS)
+
+    #: The logical keys this file actually DECLARED, namespaced or flat.
+    #: A13 bug 9: without it, `extends` cannot tell "left at the default"
+    #: from "deliberately set to the default", so a child could not escape
+    #: a parent's `priority: critical` by writing `normal`.
+    declared: Tuple[str, ...] = ()
 
     @property
     def priority_rank(self) -> int:
@@ -376,6 +465,10 @@ class _Compat:
         self._meta = meta
         self.flat_used: list = []
         self.shadowed: list = []
+        #: Logical keys present in either place (A13 bug 9). Recorded as
+        #: they are read, so it reflects the file rather than a second
+        #: hand-maintained list of field names.
+        self.declared: set = set()
 
     def get(self, key: str, default: Any = None, *,
             flat: Optional[str] = None) -> Any:
@@ -384,10 +477,12 @@ class _Compat:
         h_value = self._halbert.get(key)
         f_value = self._meta.get(flat_key)
         if h_value is not None:
+            self.declared.add(key)
             if f_value is not None and flat_key in _FLAT_TO_HALBERT:
                 self.shadowed.append(flat_key)
             return h_value
         if f_value is not None and flat_key in _FLAT_TO_HALBERT:
+            self.declared.add(key)
             self.flat_used.append(flat_key)
             return f_value
         return default
@@ -407,6 +502,66 @@ class _Compat:
                 "the namespaced value wins",
                 sorted(set(self.shadowed)),
             )
+
+
+#: The one field a parse error is recovered for (A13-G11). The origin
+#: calls these FREEFORM_TEXT_FIELDS and description is the only one Halbert
+#: has: it is prose a person wrote, and the commonest way prose breaks YAML
+#: is a colon in the middle of a sentence -- "Frigate NVR: camera streams".
+#: Losing an entire skill over a punctuation mark is not a schema being
+#: strict, it is a schema being useless.
+_RECOVERABLE_FIELD = "description"
+_DESCRIPTION_LINE_RE = re.compile(r"^(\s*)description\s*:\s*(\S.*)$")
+
+
+def _recover_description_line(raw: str, error: Any) -> Optional[Dict[str, Any]]:
+    """Re-quote a colon-rich ``description`` and reparse; None if that is
+    not what went wrong.
+
+    Deliberately narrow, in the origin's shape (``frontmatter.ts:83-126``):
+    the line must be TOP LEVEL (no indentation -- a nested ``description``
+    belongs to some other mapping whose shape we are not guessing at), it
+    must carry an inline value (a block scalar is already valid YAML and
+    reparsing it as a string would change what the file says), and exactly
+    one such line is rewritten. Everything else about a broken frontmatter
+    stays an error: a broken ``triggers`` block is a broken routing rule,
+    and guessing at one is how a skill activates on the wrong turn.
+    """
+    mark = getattr(error, "problem_mark", None)
+    lines = raw.splitlines()
+    candidates = [
+        i for i, line in enumerate(lines)
+        if _DESCRIPTION_LINE_RE.match(line)
+        and _DESCRIPTION_LINE_RE.match(line).group(1) == ""
+    ]
+    if not candidates:
+        return None
+    if mark is not None and getattr(mark, "line", None) is not None:
+        # Prefer the line the parser actually tripped on, when it is one of
+        # ours; YAML reports the error at or just after the offending line.
+        near = [i for i in candidates if abs(i - mark.line) <= 1]
+        candidates = near or candidates
+    index = candidates[0]
+    value = _DESCRIPTION_LINE_RE.match(lines[index]).group(2).strip()
+    if value in ("|", ">", "|-", ">-", "|+", ">+"):
+        return None
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+        # Already quoted: whatever broke, it was not this.
+        return None
+    patched = list(lines)
+    patched[index] = f"{_RECOVERABLE_FIELD}: {json.dumps(value)}"
+    try:
+        meta = yaml.safe_load("\n".join(patched)) or {}
+    except yaml.YAMLError:
+        return None
+    if not isinstance(meta, dict):
+        return None
+    logger.warning(
+        "recovered an unquoted `description` on line %d of a frontmatter "
+        "block; quote it in the file to stop relying on this",
+        index + 1,
+    )
+    return meta
 
 
 def split_frontmatter(text: str) -> Tuple[Dict[str, Any], str]:
@@ -434,7 +589,11 @@ def split_frontmatter(text: str) -> Tuple[Dict[str, Any], str]:
             try:
                 meta = yaml.safe_load(raw) or {}
             except yaml.YAMLError as e:
-                raise SkillParseError(f"invalid YAML frontmatter: {e}") from e
+                recovered = _recover_description_line(raw, e)
+                if recovered is None:
+                    raise SkillParseError(
+                        f"invalid YAML frontmatter: {e}") from e
+                meta = recovered
             if not isinstance(meta, dict):
                 raise SkillParseError("frontmatter must be a mapping")
             return meta, body
@@ -523,6 +682,16 @@ def parse_skill(text: str, *, name: Optional[str] = None,
         multiplier = float(reader.get("budget_multiplier", 1.0))
     except (TypeError, ValueError) as e:
         raise SkillParseError(f"budget_multiplier must be a number: {e}") from e
+    # A13 bug 2: ``float()`` accepts "nan" and "inf". A
+    # ``budget_multiplier: .nan`` parsed cleanly and then raised out of
+    # ContextAssembler.assemble on every matching turn -- a failure
+    # landing nowhere near the file that caused it. A budget is a finite
+    # positive number or it is not a budget.
+    if not math.isfinite(multiplier) or multiplier <= 0:
+        raise SkillParseError(
+            f"budget_multiplier must be a finite positive number, "
+            f"not {reader.get('budget_multiplier')!r}"
+        )
 
     # CC writes `allowed-tools` with a hyphen (§1.2: "accepted as CC writes
     # it"); the Halbert spelling maps onto the same tuple. CC writes the
@@ -534,6 +703,22 @@ def parse_skill(text: str, *, name: Optional[str] = None,
     if isinstance(allowed, str):
         allowed = [entry for entry in allowed.split(",")]
     allowed_tools = _as_tuple(allowed) if allowed is not None else None
+
+    # A13-G9: CC's two invocation flags, both spellings. Refused rather
+    # than coerced when they are not booleans -- `user-invocable: maybe`
+    # silently becoming True is the failure this flag exists to prevent.
+    def _flag(key: str, default: bool) -> bool:
+        for spelling in (key, key.replace("-", "_")):
+            if spelling in meta:
+                value = meta[spelling]
+                if not isinstance(value, bool):
+                    raise SkillParseError(
+                        f"{spelling} must be true or false, not {value!r}")
+                return value
+        return default
+
+    model_invocable = not _flag("disable-model-invocation", False)
+    user_invocable = _flag("user-invocable", True)
 
     kind = str(reader.get("kind") or "ops").strip().lower()
     if kind not in KINDS:
@@ -578,7 +763,7 @@ def parse_skill(text: str, *, name: Optional[str] = None,
 
     return Skill(
         name=skill_name,
-        description=str(meta.get("description") or "").strip(),
+        description=_parsed_description(meta.get("description")),
         aliases=_as_tuple(reader.get("aliases")),
         id=skill_id,
         state=state,
@@ -595,11 +780,14 @@ def parse_skill(text: str, *, name: Optional[str] = None,
         allowed_tools=allowed_tools,
         subagent=bool(reader.get("subagent", False)),
         max_turns=int(reader.get("max_turns", 10)),
+        model_invocable=model_invocable,
+        user_invocable=user_invocable,
         prompt=body,
         source_path=source_path,
         extends=(str(reader.get("extends")).strip()
                   if reader.get("extends") else None),
         kind=kind,
+        declared=tuple(sorted(reader.declared)),
     )
 
 

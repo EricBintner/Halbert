@@ -41,6 +41,15 @@ def _tools_call(srv, name, arguments):
     })
 
 
+def _declare(monkeypatch, name):
+    """A17-G9: the door refuses a tool nobody classified, so a test that
+    injects one declares it. These are read-only fakes."""
+    monkeypatch.setattr(
+        server_module, "_MCP_READ_ONLY_TOOLS",
+        server_module._MCP_READ_ONLY_TOOLS | {name},
+    )
+
+
 class TestDispatchChokePoint:
     """A handler that forgets mcp_response is still redacted at dispatch."""
 
@@ -58,6 +67,7 @@ class TestDispatchChokePoint:
             }
 
         monkeypatch.setitem(TOOL_HANDLERS, "leaky", leaky)
+        _declare(monkeypatch, "leaky")
         resp = _tools_call(srv, "leaky", {})
         body = resp["result"]["content"][0]["text"]
         assert raw_secret not in body
@@ -118,6 +128,7 @@ class TestDispatchChokePoint:
             raise ValueError(f"cannot parse credential: {raw_secret}")
 
         monkeypatch.setitem(TOOL_HANDLERS, "crashing", crashing)
+        _declare(monkeypatch, "crashing")
         resp = _tools_call(srv, "crashing", {})
         body = json.dumps(resp)
         assert raw_secret not in body

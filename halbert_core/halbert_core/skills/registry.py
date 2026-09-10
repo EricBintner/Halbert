@@ -23,7 +23,8 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Optional
 
 from .loader import load_skills
-from .parser import Skill, SkillSafety, SkillTriggers, new_skill_id
+from .parser import (Skill, SkillRequirements, SkillSafety,
+                     SkillTriggers, derived_skill_id, new_skill_id)
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +44,21 @@ def _merge_tuples(parent: tuple, child: tuple) -> tuple:
             seen.add(item)
             out.append(item)
     return tuple(out)
+
+
+def _merge_requires(parent, child):
+    """Union two ``requires`` clauses; either side may be None."""
+    if parent is None:
+        return child
+    if child is None:
+        return parent
+    return SkillRequirements(
+        bins=_merge_tuples(parent.bins, child.bins),
+        any_bins=_merge_tuples(parent.any_bins, child.any_bins),
+        env=_merge_tuples(parent.env, child.env),
+        os=_merge_tuples(parent.os, child.os),
+        config=_merge_tuples(parent.config, child.config),
+    )
 
 
 def resolve_extends(skill: Skill, by_name: Dict[str, Skill],
@@ -75,10 +91,20 @@ def resolve_extends(skill: Skill, by_name: Dict[str, Skill],
     parent = resolve_extends(parent, by_name, seen | {skill.name})
     defaults = Skill(name="_")
 
+    declared = set(skill.declared or ())
+
     def pick(attr: str):
-        """Child wins unless it left the field at its default."""
+        """Child wins when it DECLARED the field, or set it off the default.
+
+        A13 bug 9: the declared half was missing, so "left at the default"
+        and "deliberately set to the default" were the same thing to the
+        merge -- and a child could not escape a parent's
+        ``priority: critical`` by writing ``priority: normal``. The parser
+        records which keys the file actually carried; this reads that
+        rather than trying to infer intent from a value.
+        """
         child_value = getattr(skill, attr)
-        if child_value != getattr(defaults, attr):
+        if attr in declared or child_value != getattr(defaults, attr):
             return child_value
         return getattr(parent, attr)
 
@@ -123,7 +149,13 @@ def resolve_extends(skill: Skill, by_name: Dict[str, Skill],
         subagent=pick("subagent"),
         max_turns=pick("max_turns"),
         kind=pick("kind"),
-        requires=pick("requires"),
+        # A13 bug 9, second half: this used to REPLACE. Every other
+        # restriction in this merge unions in the most-restrictive
+        # direction -- a parent's protected path cannot be dropped by a
+        # child -- and `requires` is a restriction: a child that declared
+        # its own `bins` shed the parent's, then inherited a body that
+        # assumes both.
+        requires=_merge_requires(parent.requires, skill.requires),
         # Identity and lifecycle are never inherited: an id is identity, not
         # a capability (design §5.4 — a rename or a move must not smuggle or
         # forfeit provenance), and lifecycle is per-skill (§5.5).
@@ -146,6 +178,16 @@ def _stamp(skill: Skill) -> Skill:
     """
     if skill.id is not None:
         return skill
+    if skill.source_path is not None:
+        # A13-G8: derived from the file, so the id means the same skill
+        # after a restart. A fresh random ULID per load made every skill a
+        # new row in the telemetry table every time the daemon came up,
+        # and the table's whole question is "which skills does the model
+        # actually consult?".
+        return dataclasses.replace(
+            skill, id=derived_skill_id(skill.source_path))
+    # Nothing durable to key on -- an in-memory skill is process-local by
+    # construction, and the id still has to be well-formed.
     return dataclasses.replace(skill, id=new_skill_id())
 
 
@@ -205,8 +247,20 @@ class SkillRegistry:
         directory (its `references/` and `scripts/` — design §6, seam 1).
         The executor's read_file consults this before dispatch so a catalog
         consultation becomes a telemetry receipt at the one choke point
-        every read passes through. Exact SKILL.md matches win over directory
-        containment; ties resolve by name so the answer is deterministic.
+        every read passes through. Exact matches win over containment.
+
+        A13 bug 3: containment applies only to a DIRECTORY-layout skill --
+        one whose source file is named ``SKILL.md``. A bare-layout skill
+        (``~/.config/halbert/skills/foo.md``) has the shared ROOT as its
+        parent, so asking whether that parent is in a path's parents
+        attributed every skill file in the root, and every file under every
+        sibling skill's directory, to whichever bare skill the dict
+        happened to yield first. It owns its own file and nothing else.
+
+        Among directory-layout skills the DEEPEST containing directory
+        wins, so a skill nested inside a pack's tree claims its own
+        references rather than losing them to the pack; name breaks a tie
+        at equal depth, so the answer is deterministic.
         """
         import os
 
@@ -216,9 +270,9 @@ class SkillRegistry:
             probe = Path(os.path.expanduser(str(path))).resolve()
         except (OSError, RuntimeError):
             return None
-        exact: Optional[Skill] = None
-        containing: Optional[Skill] = None
-        for skill in self._skills.values():
+        best: Optional[Skill] = None
+        best_depth = -1
+        for skill in sorted(self._skills.values(), key=lambda s: s.name):
             src = skill.source_path
             if src is None:
                 continue
@@ -227,11 +281,15 @@ class SkillRegistry:
             except (OSError, RuntimeError):
                 continue
             if probe == resolved:
-                exact = skill
-                break
-            if resolved.parent in probe.parents and containing is None:
-                containing = skill
-        return exact or containing
+                return skill
+            if resolved.name.lower() != "skill.md":
+                continue
+            parent = resolved.parent
+            if parent in probe.parents:
+                depth = len(parent.parts)
+                if depth > best_depth:
+                    best, best_depth = skill, depth
+        return best
 
     def get(self, name: str) -> Optional[Skill]:
         """Look up by name, then by alias."""
