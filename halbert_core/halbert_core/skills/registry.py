@@ -216,8 +216,20 @@ class SkillRegistry:
         directory (its `references/` and `scripts/` — design §6, seam 1).
         The executor's read_file consults this before dispatch so a catalog
         consultation becomes a telemetry receipt at the one choke point
-        every read passes through. Exact SKILL.md matches win over directory
-        containment; ties resolve by name so the answer is deterministic.
+        every read passes through. Exact matches win over containment.
+
+        A13 bug 3: containment applies only to a DIRECTORY-layout skill --
+        one whose source file is named ``SKILL.md``. A bare-layout skill
+        (``~/.config/halbert/skills/foo.md``) has the shared ROOT as its
+        parent, so asking whether that parent is in a path's parents
+        attributed every skill file in the root, and every file under every
+        sibling skill's directory, to whichever bare skill the dict
+        happened to yield first. It owns its own file and nothing else.
+
+        Among directory-layout skills the DEEPEST containing directory
+        wins, so a skill nested inside a pack's tree claims its own
+        references rather than losing them to the pack; name breaks a tie
+        at equal depth, so the answer is deterministic.
         """
         import os
 
@@ -227,9 +239,9 @@ class SkillRegistry:
             probe = Path(os.path.expanduser(str(path))).resolve()
         except (OSError, RuntimeError):
             return None
-        exact: Optional[Skill] = None
-        containing: Optional[Skill] = None
-        for skill in self._skills.values():
+        best: Optional[Skill] = None
+        best_depth = -1
+        for skill in sorted(self._skills.values(), key=lambda s: s.name):
             src = skill.source_path
             if src is None:
                 continue
@@ -238,11 +250,15 @@ class SkillRegistry:
             except (OSError, RuntimeError):
                 continue
             if probe == resolved:
-                exact = skill
-                break
-            if resolved.parent in probe.parents and containing is None:
-                containing = skill
-        return exact or containing
+                return skill
+            if resolved.name.lower() != "skill.md":
+                continue
+            parent = resolved.parent
+            if parent in probe.parents:
+                depth = len(parent.parts)
+                if depth > best_depth:
+                    best, best_depth = skill, depth
+        return best
 
     def get(self, name: str) -> Optional[Skill]:
         """Look up by name, then by alias."""

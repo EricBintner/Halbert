@@ -172,8 +172,16 @@ class SkillMatcher:
         domains = list(getattr(intake, "detected_domains", ()) or ())
         intent = str(getattr(intake, "intent", "") or "")
 
+        from .readiness import Readiness, evaluate_readiness
+
         matches = []
         for skill in self.registry.all():
+            # A13-G6: `requires` was parsed and never evaluated, so a skill
+            # declaring `bins: [zpool]` bound its body on a machine with no
+            # ZFS. The gate runs before scoring: an unusable skill is not a
+            # weaker match, it is not a match.
+            if evaluate_readiness(skill, platform=self._platform) is not Readiness.READY:
+                continue
             match = score_skill(
                 skill,
                 domains=domains,
@@ -200,12 +208,31 @@ class SkillMatcher:
         return selected
 
     def _explicit(self, names: Sequence[str]) -> List[SkillMatch]:
-        """Resolve user-invoked skill names, ignoring triggers entirely."""
+        """Resolve user-invoked skill names, ignoring TRIGGERS entirely.
+
+        Triggers, not gates. A13-G10: this used to ignore everything,
+        including the platform filter the scored path applies -- so a macOS
+        runbook typed as ``/mac-ops`` on a Linux host bound its body and
+        told the model to run commands that do not exist here. Hermes
+        refuses an unsupported skill even by name
+        (``tools/skills_tool.py:549-554``), and the reason it is a refusal
+        rather than a deprioritisation is that the user cannot fix it by
+        rephrasing.
+
+        What is still ignored is scoring: an explicit ``/storage-ops`` runs
+        storage-ops whether or not the message mentions a pool.
+        """
+        from .readiness import Readiness, evaluate_readiness
+
         out = []
         for name in names:
             skill = self.registry.get(name)
             if skill is None:
                 logger.warning("no such skill: %r", name)
+                continue
+            state = evaluate_readiness(skill, platform=self._platform)
+            if state is not Readiness.READY:
+                logger.info("skill %r not used: %s", name, state.value)
                 continue
             out.append(SkillMatch(skill=skill, score=0, explicit=True))
         return out[: self.max_active]

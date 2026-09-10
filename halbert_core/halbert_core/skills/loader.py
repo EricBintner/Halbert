@@ -146,11 +146,48 @@ def skill_manifest(dirs: Optional[Iterable[Path]] = None,
     return tuple(sorted(out))
 
 
+def _content_refusal(path: Path, directory: Path) -> bool:
+    """Whether the scanner refuses this file (A13-G5, design §4.1).
+
+    Bundled skills are scanned in CI, never refused here: a runtime refusal
+    on the shipped set would take Halbert's own expertise off the machine
+    over a false positive, and the CI test is what shipping them buys.
+    Everything else -- the operator root, a workspace, an ingested pack --
+    is refused with the finding logged, never scrubbed.
+
+    Review-severity findings are logged and load. The module docstring has
+    the line between the two and why it sits there.
+    """
+    from .scanner import scan_skill_tree
+
+    findings = scan_skill_tree(path)
+    if not findings:
+        return False
+    bundled = Path(directory) == BUILTIN_DIR
+    refusing = [f for f in findings if f.refuses]
+    for finding in findings:
+        if finding.refuses and not bundled:
+            continue
+        logger.warning("skill content review: %s", finding)
+    if not refusing or bundled:
+        return False
+    logger.error(
+        "refusing skill %s: its text trips %s. The file is NOT modified -- "
+        "silently rewriting an instruction file is how you get instruction "
+        "files nobody can audit. Findings: %s",
+        path, ", ".join(sorted({f.rule for f in refusing})),
+        "; ".join(str(f) for f in refusing[:5]),
+    )
+    return True
+
+
 def load_skills_from_dir(directory: Path) -> List[Skill]:
     """Parse every skill in one directory, skipping the ones that don't."""
     skills: List[Skill] = []
     for path in _skill_files(directory):
         try:
+            if _content_refusal(path, directory):
+                continue
             skills.append(parse_skill_file(path))
         except SkillParseError as e:
             logger.warning("skipping unparseable skill: %s", e)
