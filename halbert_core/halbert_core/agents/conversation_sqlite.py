@@ -31,59 +31,91 @@ from .conversation import Conversation, Message
 
 logger = logging.getLogger("halbert.agents.conversation_sqlite")
 
-#: SQLite builds whose WAL-reset handling can lose committed
-#: transactions after a crash (A08-G5, FD-11; https://sqlite.org/wal.html
-#: #walresetbug). The origin's predicate, which this first got wrong in
-#: two ways: the floor was 3.32.0 rather than 3.7.0, and the two BACKPORT
-#: windows were missing entirely -- so a build that upstream had already
-#: patched was reported vulnerable. A predicate that over-warns teaches
-#: people to ignore it, which costs exactly as much as one that
-#: under-warns.
+#: SQLite builds carrying the WAL-reset bug (A08-G5, FD-11;
+#: https://sqlite.org/wal.html#walresetbug, SQLite's own section 11).
+#:
+#: What it actually is, because two earlier descriptions of it here were
+#: wrong. It is NOT a crash bug and NOT a power-loss bug -- no crash,
+#: fsync failure or filesystem quirk is involved. It is an in-memory data
+#: race on a perfectly healthy running system: a checkpoint mis-sets
+#: ``nBackfill`` in the WAL-index header, a LATER checkpoint then skips
+#: frames that were never copied, and committed data silently never
+#: reaches the database file. Upstream, verbatim: "The bug only affects
+#: databases in WAL mode when there are two or more database connections
+#: open on the same file, in separate threads or processes, and when
+#: those two connections attempt to write or checkpoint at the same
+#: instant" -- and "It is unlikely to occur in common use."
+#:
+#: The patched versions are EXACT, not ranges. 3.44.6 and 3.50.7 are
+#: branch check-ins rather than published releases (their release-log
+#: pages 404), so a predicate written as ">= 3.44.6" would wave through
+#: 3.45.0-3.50.6 and 3.51.0-3.51.2, every one of which is still
+#: vulnerable. 3.52.0 was withdrawn and never existed.
 _WAL_RESET_VULNERABLE_MIN = (3, 7, 0)
-#: Exclusive: the fix ships in 3.51.3.
+#: Exclusive: the fix ships in 3.51.3 (2026-03-13).
 _WAL_RESET_FIXED_AT = (3, 51, 3)
-#: Ranges where the fix was backported to an older series. Each is
-#: [start, end-of-series): 3.44.6+ within 3.44.x, 3.50.7+ within 3.50.x.
-_WAL_RESET_BACKPORTS = (
-    ((3, 44, 6), (3, 45, 0)),
-    ((3, 50, 7), (3, 51, 0)),
-)
+#: The only two back-patched builds, as exact versions.
+_WAL_RESET_PATCHED = frozenset({(3, 44, 6), (3, 50, 7)})
 
-_WAL_WARNED = False
+_WAL_NOTED = False
+
+
+def sqlite_wal_reset_vulnerable() -> bool:
+    """Whether this build carries the WAL-reset bug. No side effects."""
+    try:
+        current = tuple(sqlite3.sqlite_version_info[:3])
+    except Exception:  # pragma: no cover - defensive
+        return False
+    if current in _WAL_RESET_PATCHED:
+        return False
+    return _WAL_RESET_VULNERABLE_MIN <= current < _WAL_RESET_FIXED_AT
 
 
 def warn_if_wal_vulnerable() -> bool:
-    """Log ONCE if this build's SQLite can lose a committed transaction.
+    """Record the SQLite build once at first open, as a DIAGNOSTIC.
 
-    FD-11's default: an ERROR at boot, and no silent journal-mode change.
-    Hermes falls back to DELETE mode on a vulnerable build; doing that
-    here would quietly change the durability characteristics of the
-    operator's existing database without anyone deciding to, which is
-    exactly the kind of change that should be a decision. So this says
-    so and leaves the mode alone.
+    This used to log at ERROR. That was miscalibrated, and researching
+    the bug properly is what showed it: SQLite's own telemetry puts the
+    occurrence rate "less than or equal to the expected occurrence rate
+    of SSD malfunctions and/or cosmic-ray hits", its developers could not
+    reproduce it organically without patching SQLite to force the
+    interleaving, and the two real-world sightings both involve
+    aggressive application-driven checkpointing on large mmap'd
+    databases. Halbert writes at human pace under the default passive
+    autocheckpoint, and its one explicit checkpoint
+    (``state_store._checkpoint_or_raise``) fires once after a
+    user-initiated redaction, not in a loop. An ERROR at every boot for a
+    cosmic-ray-probability event is how a log stops being read.
 
-    Returns whether the warning applies, so a caller can surface it.
+    The journal mode is still NOT changed, and now for a second reason
+    beyond FD-11's. The project that shipped the DELETE fallback this was
+    modelled on has since reverted it: DELETE is where a different
+    corruption reproduced for them, their original WAL-vs-DELETE
+    measurement was confounded by an unrelated 3.51.0 locking fix, and
+    the guard went on to cause more issues than the bug it guarded. The
+    upstream remediation advice is one sentence and it is not a pragma:
+    "application developers should upgrade to a version of SQLite that
+    fixes the problem."
+
+    So this is a line in the log for a future corruption report to be
+    classified against, and an answer for ``doctor``. Returns whether the
+    build is affected, so a caller can surface it.
     """
-    global _WAL_WARNED
-    try:
-        version = sqlite3.sqlite_version_info[:3]
-    except Exception:  # pragma: no cover - defensive
-        return False
-    current = tuple(version)
-    vulnerable = _WAL_RESET_VULNERABLE_MIN <= current < _WAL_RESET_FIXED_AT
-    if vulnerable and any(lo <= current < hi for lo, hi in _WAL_RESET_BACKPORTS):
-        vulnerable = False
-    if vulnerable and not _WAL_WARNED:
-        _WAL_WARNED = True
-        logger.error(
-            "SQLite %s is in the WAL-reset range (%s to below %s): a crash "
-            "can lose a "
-            "committed transaction. The journal mode is NOT being changed -- "
-            "that is a decision, not a default (FD-11). Plan the Python/SQLite "
-            "bump; ENV-01 is the same conversation.",
+    global _WAL_NOTED
+    vulnerable = sqlite_wal_reset_vulnerable()
+    if not _WAL_NOTED:
+        _WAL_NOTED = True
+        logger.info(
+            "SQLite %s (%s)%s",
             sqlite3.sqlite_version,
-            ".".join(str(n) for n in _WAL_RESET_VULNERABLE_MIN),
-            ".".join(str(n) for n in _WAL_RESET_FIXED_AT),
+            getattr(sqlite3, "sqlite_source_id", lambda: "source id unavailable")()
+            if callable(getattr(sqlite3, "sqlite_source_id", None))
+            else "source id unavailable",
+            "" if not vulnerable else
+            " -- carries the WAL-reset bug (fixed in 3.51.3). Not acted on: "
+            "the bug needs two connections racing a write against a "
+            "checkpoint at the instant of a WAL reset, and the fix is to "
+            "ship a newer SQLite, not to change the journal mode.",
         )
     return vulnerable
 

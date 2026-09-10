@@ -327,42 +327,80 @@ def test_forget_reports_zero_rather_than_raising(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# A08-G5 (FD-11): the WAL-reset range is said, not silently worked around
+# A08-G5 (FD-11): the SQLite build is recorded, not worked around
+#
+# These changed on 2026-09-10, after the bug was researched against
+# sqlite.org rather than inherited through the audit chain. Three things
+# the earlier tests encoded turned out to be wrong:
+#
+#   * the mechanism -- it is not a crash bug. It is an in-memory data race
+#     between a writer and a checkpointer on a healthy running system;
+#   * the severity -- SQLite's own telemetry puts the occurrence rate at or
+#     below SSD malfunction and cosmic-ray hits, and its developers could
+#     not reproduce it without patching SQLite to force the interleaving.
+#     So this is an INFO diagnostic, not a boot-time ERROR;
+#   * the patched versions -- 3.44.6 and 3.50.7 are branch check-ins, not
+#     releases, so they are exact values and not the floors of ranges.
 # ---------------------------------------------------------------------------
 
-def test_a_vulnerable_sqlite_is_reported_not_worked_around(caplog):
+def test_the_build_is_recorded_at_first_open(caplog):
     import halbert_core.agents.conversation_sqlite as store_mod
 
-    store_mod._WAL_WARNED = False
-    with caplog.at_level("ERROR"):
+    store_mod._WAL_NOTED = False
+    with caplog.at_level("INFO"):
+        store_mod.warn_if_wal_vulnerable()
+    assert "SQLite" in caplog.text
+
+
+def test_a_vulnerable_build_says_so_and_changes_nothing(caplog):
+    import halbert_core.agents.conversation_sqlite as store_mod
+
+    store_mod._WAL_NOTED = False
+    with caplog.at_level("INFO"):
         vulnerable = store_mod.warn_if_wal_vulnerable()
     if vulnerable:
-        assert "WAL-reset range" in caplog.text
-        # And NOT a silent journal-mode change: Hermes falls back to
-        # DELETE mode, which would quietly change the durability of the
-        # operator's existing database without anyone deciding to.
-        assert "NOT being changed" in caplog.text
-    else:
-        assert caplog.text == ""
+        assert "WAL-reset bug" in caplog.text
+        # Not a journal-mode change, and now for two reasons. FD-11's --
+        # it would quietly alter the durability of the operator's existing
+        # database. And the evidence: the project this was modelled on has
+        # reverted its own DELETE fallback, having found DELETE was where a
+        # different corruption reproduced for them.
+        assert "not to change the journal mode" in caplog.text
+        assert "3.51.3" in caplog.text
 
 
-def test_the_warning_is_said_once(caplog):
+def test_it_is_said_once(caplog):
     import halbert_core.agents.conversation_sqlite as store_mod
 
-    store_mod._WAL_WARNED = False
-    with caplog.at_level("ERROR"):
+    store_mod._WAL_NOTED = False
+    with caplog.at_level("INFO"):
         store_mod.warn_if_wal_vulnerable()
-        first = caplog.text.count("WAL-reset range")
+        first = caplog.text.count("SQLite")
         store_mod.warn_if_wal_vulnerable()
         store_mod.warn_if_wal_vulnerable()
-    assert caplog.text.count("WAL-reset range") == first
+    assert caplog.text.count("SQLite") == first
 
 
-def test_this_venvs_sqlite_is_in_the_range():
-    """Recorded rather than assumed: 3.39.4 is what FD-11 is about."""
-    import sqlite3
+def test_the_patched_builds_are_exact_versions_not_floors():
+    """The trap the audit's "3.44.6+ / 3.50.7+" phrasing sets.
 
+    Those two are branch check-ins whose release-log pages 404 -- there is
+    no 3.44.7 and no 3.50.8. A predicate written with ``>=`` would wave
+    through 3.45.0-3.50.6 and 3.51.0-3.51.2, roughly thirty releases that
+    are all still vulnerable.
+    """
     import halbert_core.agents.conversation_sqlite as store_mod
 
-    store_mod._WAL_WARNED = False
-    assert store_mod.warn_if_wal_vulnerable() is True, sqlite3.sqlite_version
+    patched = store_mod._WAL_RESET_PATCHED
+    assert patched == {(3, 44, 6), (3, 50, 7)}
+    for version in ((3, 45, 3), (3, 50, 6), (3, 51, 0), (3, 51, 2)):
+        assert version not in patched
+        assert store_mod._WAL_RESET_VULNERABLE_MIN <= version
+        assert version < store_mod._WAL_RESET_FIXED_AT
+
+
+def test_the_fix_version_is_the_one_upstream_shipped():
+    import halbert_core.agents.conversation_sqlite as store_mod
+
+    assert store_mod._WAL_RESET_FIXED_AT == (3, 51, 3)
+    assert store_mod._WAL_RESET_VULNERABLE_MIN == (3, 7, 0)
