@@ -1872,6 +1872,17 @@ class AgentStateMachine:
         session_id = self.ctx.session_id
         pending = self._pending_steer.setdefault(session_id, [])
         replaced = bool(pending)
+        # A07-G8. Queuing the text is not the whole job: if a foreground
+        # command is running, the batch boundary this rides to is however
+        # long that command takes -- five minutes for a backup, longer for a
+        # build -- and nothing on the surface says the words have not been
+        # read. Ask the running tool to let go of its command instead. Tools
+        # with no yield hook never look, so this is a no-op for them, and
+        # ``request`` answers False when no tool is running at all, which is
+        # the common case and needs no help: the boundary is milliseconds
+        # away already.
+        from ..tools import yield_signal
+        yield_requested = yield_signal.request(session_id)
         # A07-G6: steers CONCATENATE. The slot used to be replace-not-grow,
         # so a second arrival before the boundary erased the first -- and
         # both had been answered "accepted". Every accepted steer is
@@ -1881,6 +1892,7 @@ class AgentStateMachine:
         return {
             "accepted": True,
             "replaced": replaced,
+            "yield_requested": yield_requested,
             "reason": "steer queued for the next batch boundary",
         }
 
@@ -2132,6 +2144,7 @@ class AgentStateMachine:
                 running_turn=self.ctx.session_id,
                 replaced=bool(steer.get("replaced")),
                 demoted="interrupt_demoted_to_steer" in decision.notes,
+                yielded=bool(steer.get("yield_requested")),
             )
             events = [
                 StreamEvent(
@@ -2141,6 +2154,13 @@ class AgentStateMachine:
                         "reason": decision.reason,
                         "replaced": bool(steer.get("replaced")),
                         "demoted": "interrupt_demoted_to_steer" in decision.notes,
+                        # A07-G8: a running command was asked to let go so
+                        # these words could be read now. Backend-only until a
+                        # frontend consumer renders it, same as stop_declined
+                        # above -- but the fact belongs on the event, because
+                        # "your steer is waiting behind a five-minute backup"
+                        # was precisely what no surface could say.
+                        "yielded": bool(steer.get("yield_requested")),
                     },
                 )
             ]
@@ -3758,6 +3778,12 @@ class AgentStateMachine:
         bus = get_terminal_event_bus()
         queue = bus.subscribe(self.ctx.session_id)
         self._touch_activity(f"tool started: {tool_name}")
+        # A07-G8: the window in which a steer can ask this tool to let go of
+        # its command rather than wait behind it. It opens here and closes in
+        # the finally, so a request that arrives between two tool calls finds
+        # nothing running and is left to the boundary that is already coming.
+        from ..tools import yield_signal
+        yield_token = yield_signal.begin(self.ctx.session_id)
         task = asyncio.ensure_future(self.tools.execute(
             tool_name,
             tool_args,
@@ -3827,6 +3853,7 @@ class AgentStateMachine:
             sink.append(await task)
             self._touch_activity(f"tool completed: {tool_name}")
         finally:
+            yield_signal.end(self.ctx.session_id, yield_token)
             bus.unsubscribe(self.ctx.session_id, queue)
             if not task.done():
                 task.cancel()

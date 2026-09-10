@@ -17,7 +17,7 @@ import os
 import shlex
 import time
 import uuid
-from typing import Dict, Optional, Tuple
+from typing import Callable, Dict, Optional, Tuple
 
 from .pty import PTYSession
 from .bounded_output import BoundedOutput
@@ -34,6 +34,21 @@ logger = logging.getLogger("halbert.streaming.agent_pool")
 #: 2 s is the number plan-b-contracts §7/§13 uses for both halves of that
 #: decision, and the frontend's short-block branch reads the same value.
 PROMOTE_AFTER_SECONDS = 2.0
+
+#: How often a running block looks up to ask whether it has been asked to
+#: yield (A07-G8). The drain itself is event-driven; this only bounds how
+#: long a steer waits for the command to notice it, and it is the same
+#: number the state machine polls its stop flag on.
+YIELD_POLL_SECONDS = 0.05
+
+#: A yielded block is deliberately exempt from its caller's timeout — that
+#: is the whole point of yielding — but not from time itself. A pool session
+#: with an open block is never reaped and never re-acquired, so three
+#: `tail -f`s yielded into the background would take a cap-3 pool down for
+#: the life of the process (the R04-F3 shape, by another door). At this
+#: ceiling the block takes the same ETX-then-kill ladder a foreground
+#: timeout takes, and the slot comes back.
+YIELDED_MAX_SECONDS = 1800.0
 
 _POOL_SHELL = "bash --norc --noprofile"
 
@@ -129,12 +144,24 @@ class TerminalPool:
         *,
         cwd: Optional[str] = None,
         timeout: float = 30.0,
+        should_yield: Optional[Callable[[], bool]] = None,
+        on_close: Optional[Callable[[Dict], None]] = None,
+        yielded_max_seconds: Optional[float] = None,
     ) -> Optional[Dict]:
         """Run a single command as a block in a pool session.
 
         Returns a dict with block_id, session_id, exit_code, output_head,
-        output_tail, duration, started_at, ended_at. Returns None if no
-        session could be acquired.
+        output_tail, duration, started_at, ended_at, yielded. Returns None if
+        no session could be acquired.
+
+        ``should_yield`` is polled while the block runs (A07-G8). When it
+        answers True the block is handed to the background: nothing is
+        killed, the shell keeps the command, and this returns immediately
+        with ``yielded=True`` and ``exit_code=None`` carrying whatever
+        output has arrived. The block finishes on its own and ``on_close``
+        is called with the complete result — which is where the row is
+        stored and the slot comes back. Without ``should_yield`` the
+        behaviour is exactly what it was.
         """
         acquired = await self.acquire()
         if acquired is None:
@@ -248,6 +275,12 @@ class TerminalPool:
         # for the life of the process and immune to the reaper too. Three of
         # those and a cap-3 pool is permanently dead (R04-F3).
         released = False
+        # A yielded block owns its own exits: the background task below
+        # detaches the queue, cancels the promotion timer and releases the
+        # slot when the command actually ends. The finally at the bottom of
+        # this method must not do any of that on its way out, or the block
+        # it just handed off would be released while still running.
+        handed_off = False
 
         try:
             # Attach a fanout queue to read output
@@ -280,11 +313,14 @@ class TerminalPool:
                             block_closed = True
                             break
 
-            try:
-                # Wall-clock timeout for the D marker
-                await asyncio.wait_for(_drain_until_closed(), timeout=timeout)
-            except asyncio.TimeoutError:
-                # Command timed out — send ETX (Ctrl-C)
+            async def _etx_then_kill():
+                """The deadline ladder: interrupt, wait a little, then kill.
+
+                Runs only after the drain future it replaces has been
+                cancelled -- two coroutines pulling from one fanout queue
+                would interleave their reads and corrupt the parse.
+                """
+                nonlocal exit_code
                 try:
                     await session.write_stdin("\x03")
                 except Exception:
@@ -299,86 +335,209 @@ class TerminalPool:
                     self._manager.kill(sid)
                     self._evict(sid)
                     exit_code = -1
-            finally:
-                session.detach(q)
 
-            ended_at = time.time()
-            duration = time.monotonic() - started_monotonic
+            def _settle() -> Dict:
+                """Everything after the command is over.
 
-            # Build output head (first 20 lines) and tail (last 4 KiB)
-            output_bytes = block_output.bytes()
-            output_text = output_bytes.decode("utf-8", errors="replace")
-            lines = output_text.split("\n")
-            head = "\n".join(lines[:20])
-            tail = output_text[-4096:] if len(output_text) > 4096 else output_text
+                Shared by the foreground return and the background close, so
+                a yielded block is stored, rendered and released by exactly
+                the code that would have handled it had nobody steered.
+                """
+                nonlocal released
+                ended_at = time.time()
+                duration = time.monotonic() - started_monotonic
 
-            # How much fell between the two halves. The frontend receives head
-            # and tail and nothing else, so it cannot work this out: neither
-            # half knows the length of what sits between them. Without a
-            # number the card can only print a bare "…", which says something
-            # was cut without saying how much -- and a reader cannot tell
-            # "this is all of it" from "there is more".
-            total_lines = len(lines)
-            head_lines = min(20, total_lines)
-            tail_line_count = len(tail.split("\n")) if tail else 0
-            elided_lines = max(0, total_lines - head_lines - tail_line_count)
-            # Head and tail overlap for anything short enough to fit in both,
-            # which is the common case; the max() above already floors that to
-            # zero rather than reporting a negative elision.
+                # Build output head (first 20 lines) and tail (last 4 KiB)
+                output_bytes = block_output.bytes()
+                output_text = output_bytes.decode("utf-8", errors="replace")
+                lines = output_text.split("\n")
+                head = "\n".join(lines[:20])
+                tail = output_text[-4096:] if len(output_text) > 4096 else output_text
 
-            # Redact
-            head, head_redacted = redact(head)
-            tail, tail_redacted = redact(tail)
+                # How much fell between the two halves. The frontend receives
+                # head and tail and nothing else, so it cannot work this out:
+                # neither half knows the length of what sits between them.
+                # Without a number the card can only print a bare "…", which
+                # says something was cut without saying how much -- and a
+                # reader cannot tell "this is all of it" from "there is more".
+                total_lines = len(lines)
+                head_lines = min(20, total_lines)
+                tail_line_count = len(tail.split("\n")) if tail else 0
+                elided_lines = max(0, total_lines - head_lines - tail_line_count)
+                # Head and tail overlap for anything short enough to fit in
+                # both, which is the common case; the max() above already
+                # floors that to zero rather than reporting a negative elision.
 
-            # Publish terminal_complete event (Plan B: B6) -- after the output
-            # exists, so it can carry it. The conversation needs three things
-            # to render a finished command as a one-line result instead of a
-            # generic card: the exit code, how long it took, and the block's
-            # own output. The last of those cannot come from the session's
-            # scrollback: a pool session is reused, so its buffer holds every
-            # command it has ever run.
-            #
-            # Redacted head/tail are what ship, never the raw bytes.
-            publish_terminal_event({
-                "kind": "complete",
-                "terminal_session_id": sid,
-                "exit_code": exit_code if exit_code is not None else -1,
-                "block_id": block_id,
-                "duration": duration,
-                "output_head": head,
-                "output_tail": tail,
-                # Zero rather than absent: "nothing was cut" is a fact worth
-                # stating, and an absent field renders the same as an unknown.
-                "output_elided_lines": elided_lines,
-                "output_total_lines": total_lines,
-                # Whether this command only read the host. Absent means
-                # unknown, and unknown must never fold.
-                "read_only": read_only,
-            })
+                # Redact
+                head, head_redacted = redact(head)
+                tail, tail_redacted = redact(tail)
 
-            # Released here on the success path so the slot is free before the
-            # result is built; the finally below is the backstop for every
-            # other exit.
-            self._manager.set_block_open(sid, False)
-            released = True
+                # Publish terminal_complete event (Plan B: B6) -- after the
+                # output exists, so it can carry it. The conversation needs
+                # three things to render a finished command as a one-line
+                # result instead of a generic card: the exit code, how long it
+                # took, and the block's own output. The last of those cannot
+                # come from the session's scrollback: a pool session is
+                # reused, so its buffer holds every command it has ever run.
+                #
+                # Redacted head/tail are what ship, never the raw bytes.
+                publish_terminal_event({
+                    "kind": "complete",
+                    "terminal_session_id": sid,
+                    "exit_code": exit_code if exit_code is not None else -1,
+                    "block_id": block_id,
+                    "duration": duration,
+                    "output_head": head,
+                    "output_tail": tail,
+                    # Zero rather than absent: "nothing was cut" is a fact
+                    # worth stating, and an absent field renders the same as
+                    # an unknown.
+                    "output_elided_lines": elided_lines,
+                    "output_total_lines": total_lines,
+                    # Whether this command only read the host. Absent means
+                    # unknown, and unknown must never fold.
+                    "read_only": read_only,
+                })
 
-            return {
-                "block_id": block_id,
-                "session_id": sid,
-                "exit_code": exit_code if exit_code is not None else -1,
-                "output_head": head,
-                "output_tail": tail,
-                "output_elided_lines": elided_lines,
-                "duration": duration,
-                "started_at": started_at,
-                "ended_at": ended_at,
-                "redacted": head_redacted or tail_redacted,
-                "read_only": read_only,
-            }
-        finally:
-            promote_task.cancel()
-            if not released:
+                # Released here so the slot is free before the result is
+                # built; the finally below is the backstop for every other
+                # exit.
                 self._manager.set_block_open(sid, False)
+                released = True
+
+                return {
+                    "block_id": block_id,
+                    "session_id": sid,
+                    "exit_code": exit_code if exit_code is not None else -1,
+                    "output_head": head,
+                    "output_tail": tail,
+                    "output_elided_lines": elided_lines,
+                    "duration": duration,
+                    "started_at": started_at,
+                    "ended_at": ended_at,
+                    "redacted": head_redacted or tail_redacted,
+                    "read_only": read_only,
+                    "yielded": False,
+                }
+
+            def _partial() -> Dict:
+                """What the caller is handed when the block is yielded.
+
+                No exit code, because it has not exited -- and a -1 standing
+                in for "unknown" is the lie this whole pass exists to stop.
+                Head and tail are redacted on the same terms as a finished
+                block: the output is going to a model either way.
+                """
+                output_text = block_output.bytes().decode("utf-8", errors="replace")
+                lines = output_text.split("\n")
+                head, head_redacted = redact("\n".join(lines[:20]))
+                tail_raw = output_text[-4096:] if len(output_text) > 4096 else output_text
+                tail, tail_redacted = redact(tail_raw)
+                return {
+                    "block_id": block_id,
+                    "session_id": sid,
+                    "exit_code": None,
+                    "output_head": head,
+                    "output_tail": tail,
+                    "output_elided_lines": 0,
+                    "duration": time.monotonic() - started_monotonic,
+                    "started_at": started_at,
+                    "ended_at": None,
+                    "redacted": head_redacted or tail_redacted,
+                    "read_only": read_only,
+                    "yielded": True,
+                }
+
+            async def _finish_in_background(ceiling: float) -> None:
+                """Carry the yielded block to its end and close it properly."""
+                try:
+                    try:
+                        await asyncio.wait_for(drain, timeout=ceiling)
+                    except asyncio.TimeoutError:
+                        # wait_for already cancelled the drain.
+                        await _etx_then_kill()
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as e:
+                        logger.warning("yielded block %s drain failed: %s", block_id, e)
+                    final = _settle()
+                    if on_close is not None:
+                        try:
+                            on_close(final)
+                        except Exception as e:
+                            logger.warning(
+                                "on_close for yielded block %s raised: %s", block_id, e
+                            )
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:  # pragma: no cover - defensive
+                    logger.warning("yielded block %s failed to close: %s", block_id, e)
+                finally:
+                    promote_task.cancel()
+                    try:
+                        session.detach(q)
+                    except Exception:
+                        pass
+                    if not released:
+                        self._manager.set_block_open(sid, False)
+
+            drain = asyncio.ensure_future(_drain_until_closed())
+            yielded = False
+            # Distinct from ``block_closed``: the drain also ends on EOF from
+            # the fanout queue, with no D marker and no exit code. That is not
+            # a deadline, so it must not take the ETX-then-kill ladder -- the
+            # pre-yield code returned straight out of ``wait_for`` in that
+            # case, and killing the session on a queue EOF would be a new
+            # behaviour smuggled in by a refactor.
+            drained = False
+            try:
+                # Wall-clock deadline for the D marker, checked in slices so
+                # a yield request is something the block can *observe*. The
+                # drain is event-driven and would otherwise sit inside one
+                # await for the whole command -- which is exactly why a steer
+                # typed during a five-minute backup waited five minutes.
+                deadline = time.monotonic() + timeout
+                while True:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        break
+                    done, _pending = await asyncio.wait(
+                        {drain}, timeout=min(YIELD_POLL_SECONDS, remaining)
+                    )
+                    if drain in done:
+                        drain.result()  # re-raise whatever the drain hit
+                        drained = True
+                        break
+                    if should_yield is not None and should_yield():
+                        yielded = True
+                        break
+                if not yielded and not drained:
+                    # Command timed out — send ETX (Ctrl-C)
+                    drain.cancel()
+                    await _etx_then_kill()
+            finally:
+                if not yielded:
+                    session.detach(q)
+
+            if yielded:
+                handed_off = True
+                ceiling = (
+                    yielded_max_seconds
+                    if yielded_max_seconds is not None
+                    else YIELDED_MAX_SECONDS
+                )
+                asyncio.ensure_future(_finish_in_background(ceiling))
+                logger.info(
+                    "block %s yielded to the background on session %s", block_id, sid
+                )
+                return _partial()
+
+            return _settle()
+        finally:
+            if not handed_off:
+                promote_task.cancel()
+                if not released:
+                    self._manager.set_block_open(sid, False)
 
     def release(self, session_id: str) -> None:
         """Mark a session as no longer busy (block closed). Does not kill."""
