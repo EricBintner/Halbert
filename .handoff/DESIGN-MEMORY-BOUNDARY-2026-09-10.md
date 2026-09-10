@@ -96,6 +96,34 @@ was missing is an enforcement mechanism, and §4 is it.
 
 **In this order. Each step shrinks the problem the next one has to solve.**
 
+### 4.0 First: most "conflicts" are about facts neither store owns
+
+**The largest class of apparent overlap is claims about *current state*, and
+those are re-observable. Neither store is the authority — go look.**
+
+Halbert already says this, and it is the single highest-value line in the
+design. `continuity/freshness.py:13-15`:
+
+> holds what cannot be re-derived — intent, rationale, what was tried and
+> ruled out, preferences, commitments. The **machine** holds current state.
+> So a claim about current state is never answered from memory.
+
+And `continuity/state_store.py:18`:
+
+> Authority is not similarity. Retrieval may *propose* an old receipt; this
+> table *resolves* what is currently true.
+
+This **dissolves** conflicts rather than adjudicating them, and it is already
+written. Before any weighting, any partition, any predicate list: if the
+question is "what is true right now on this machine", the answer comes from
+the machine, not from either memory.
+
+The remaining classes are mostly not truth conflicts either. The published
+taxonomy splits personal-memory conflict into **context-partitioned** (both
+true in unstated contexts), **behaviour-oscillation**, and
+**source-contradiction** — and only the third is the case we have been
+worrying about. A preference that *changed* is not a store being wrong.
+
 ### 4.1 Make each fact single-writer
 
 Home Assistant has no contradiction problem because **each entity has exactly
@@ -134,29 +162,82 @@ the model is told which is no longer current rather than left to guess.
 
 ### 4.4 On "weight the computer more"
 
-The instinct is right; a trust score is the wrong expression of it. **Nobody
-in shipped agent memory resolves conflicts by provenance — everybody resolves
-by recency.** Provenance fields exist in four of five systems whose source was
-read and feed no ranker anywhere.
+**The instinct is right, better supported than expected, and wrong in three
+specific ways as stated.**
 
-Where provenance *does* ship, it is a **write-time authorization** boundary,
-not a read-time truth weight. Home Assistant: a null `context.user_id` means
-"no human caused this" and skips the permission check. Letta: `read_only` is
-derived from origin. **Claude Code — the product we are using — splits two
-stores by author and weights them by context budget**: the human-written file
-loads in full; the model-written store loads as a capped index. Plus
-write-time deference: *"Claude skips anything your CLAUDE.md files already
-say."*
+**Right, and principled rather than lazy.** You cannot *learn* the weights
+from two stores — that is unidentifiability, not difficulty. Two-view
+latent-class models have no unique decomposition; identifiability needs a
+third conditionally independent view (Allman, Matias & Rhodes, *Ann. Statist.*
+2009). With two stores the only statistic is the agreement rate, and it cannot
+distinguish "both usually right" from "both usually wrong". Every dataset in
+that literature has ≥9 sources. **Do not build a source-weight ↔
+claim-confidence loop.** And supplied trustworthiness empirically beats learned
+trustworthiness anyway (Li et al., PVLDB 6(2), 2013) — so a hand-set
+asymmetry is the recommended answer, not a shortcut.
 
-So express the weighting as **budget and write-time precedence**, not a score.
-Nothing to miscalibrate, and it is shipped prior art.
+**Wrong as a veto.** "The less reliable is totally overridden" has a formal
+name — Darwiche–Pearl (C2) — and Delgrande, Dubois & Lang (KR 2006,
+Proposition 6) prove that adding it collapses the entire operator space to
+**linear merging**: the crudest member, which discards the subordinate store
+*wholesale on any conflict, including its non-conflicting parts*. Worse, the
+outcome then depends on **storage granularity** — write two facts as one
+conjunction and you lose the innocent half. Express authority as a
+**discount** (`α_A > α_B > 0`), never a veto (`α_B = 0`), which is the
+degenerate corner that throws away all of B's evidence.
 
-If we ever do want a numeric weight, the only mature precedent is Informatica
-MDM's per-source trust with time decay (Maximum Trust, Minimum Trust, Decay
-Period, curve) — which would say *"a machine reading from three seconds ago
-beats a user claim from last March"* far better than a flat multiplier. **That
-source is unverified — it blocks automated fetch and needs a manual look
-before anyone builds on it.**
+**Wrong as a per-store scalar.** Reliability is topic-dependent (FaitCrowd,
+KDD 2015). Store A is near-authoritative on machine state and near-worthless
+on *why* someone did something; Store B is the reverse. A global weight
+forces a loss on one axis to win the other. The closest published analogue —
+a dual-stream clinical memory separating patient self-report from a validated
+clinical record (arXiv:2604.27045) — types confidence **per predicate**: a
+stale medication list is discounted, an allergy keeps authority regardless of
+age. It also names the two failure modes of a fixed precedence rule:
+**hallucinated compliance** (accepting an inaccurate self-report) and
+**protocol rigidity** (enforcing an outdated record).
+
+**And one hard constraint I had missed.** The two stores are **not
+independent sources** — Store B's contents derive largely from conversations
+Store A also logged. Dong, Berti-Équille & Srivastava (PVLDB 2009) show
+accuracy-weighting of *dependent* sources performs **worse than plain
+voting**, and that copy detection provably cannot see the dependency when the
+copied source is accurate (it works by spotting shared *false* values).
+**Their agreement must never be counted as corroboration.** That rules out any
+naive conjunctive combination.
+
+**The cheapest good version of all this already exists in the tree.**
+`persona/claims.py:22-26` has `ClaimStrength: MUTABLE < UNVERIFIED < ASSERTED
+< VERIFIED`, currently applied to identity claims. Generalising that ordinal
+ladder to memory facts — and typing provenance *within* Store B, since an
+LLM-inferred "seems to dislike verbose output" and a stated "never use emoji"
+are not the same evidence — is a smaller change than any fusion machinery and
+probably buys more. Ordinal also sidesteps a real trap: numeric confidence
+from heterogeneous sources is **not commensurable** (Konieczny & Pino Pérez,
+*JPL* 2011, §7.2) — a 0.8 from a log and a 0.8 from an extraction are
+different objects.
+
+### 4.5 Never let the model adjudicate this
+
+Directly on your question, and the finding is stark: when sensor readings and
+user claims conflict, models show **near-zero sensor trust** — Authority
+Alignment Index **−0.805** — and the effect is **unchanged from 4B to 35B
+parameters** (arXiv:2605.23938, preprint). *A model asked to weigh a machine
+log against a stated preference will systematically pick the prose.* Exactly
+backwards from your instinct, and not fixable by a bigger model.
+
+Supporting evidence: models weigh a source's *relevance*, largely ignoring the
+credibility markers humans use (Wan et al., ACL 2024); their verbalised
+confidence is systematically overconfident with no elicitation fix (Xiong et
+al., ICLR 2024); and sycophancy contaminates Store B **at the source**, since
+asserted facts arrive through a channel with a known bias toward agreeing with
+the user (Sharma et al., arXiv:2310.13548).
+
+Meanwhile determinism wins on the measurement: moving recency comparison out
+of the prompt into `max(serial)` took single-hop accuracy from 61% to **82%**
+at 262K context, and the LLM's long-context collapse simply does not occur
+(arXiv:2606.01435, preprint). **Gate deterministically; let the model only
+explain the verdict.**
 
 ## 5. The counter-case, at full strength
 
@@ -212,7 +293,25 @@ production caller, so this cannot be skipped silently.
 5. **Never reuse a retrieval threshold as a merge threshold.** Shipped values
    sit ~0.3 apart (0.6 cosine retrieval vs 0.9 Jaccard merge) and do opposite
    jobs — recall versus precision.
-6. **Build the consumer first, or you will build the column and never wire
+6. **Validity marks are worthless unless the read path honours them.** An
+   audit across five agent-memory systems found invalidated facts still
+   returned, still outranking their replacements, because retrieval never
+   enforced the mark. Closing a window is half the work.
+7. **Cosine similarity inverts on exactly the cases a conflict detector
+   exists to catch.** Negation pairs score 0.930–0.999 and antonym pairs
+   0.960–0.989, while genuinely *equivalent* sentences score 0.568–0.971 —
+   contradictions rank **above** equivalences, and bi-encoders (what every
+   vector store uses) are worst. Use it for candidate generation only; put a
+   claim key or an NLI cross-encoder on the verdict.
+8. **Never take a transitive closure over pairwise match decisions.** One
+   published case: 157 false links became **1,574**; precision 0.73 → 0.23.
+   Similarity is not transitive.
+9. **A binary same/different test silently accepts an error rate nobody
+   chose.** Fellegi & Sunter (1969) proved the optimal linkage rule has
+   *three* outcomes, and the undecided zone is what makes the two error rates
+   achievable at all. That is the formal justification for "ask, don't
+   guess".
+10. **Build the consumer first, or you will build the column and never wire
    it.** Letta's `BlockHistory.actor_type` has writers in `tests/` only and
    zero production readers; Cognee's provenance ledger is off by default with
    no readers. This is cross-cutting theme 1 of OSS pass 2 — *module ported,
@@ -239,6 +338,22 @@ against primary sources by the research pass: the Mem0 PR and issue numbers,
 the Graphiti issues, the arXiv abstracts, the Cognee source comment, Home
 Assistant's `core.py` and `helpers/service.py`, Claude Code's memory docs.
 
+Verified in this tree on 2026-09-10: `continuity/freshness.py:13-15`,
+`continuity/state_store.py:18`, `persona/claims.py:22-26` — §4.0 and §4.4's
+closing recommendation both rest on code that already exists.
+
+The refereed spine is solid: JASA 1969, JSL 1985, KR 2006, PVLDB 2009/2013,
+*Ann. Statist.* 2009, KDD 2015, ACL/ICLR 2024.
+
 **Unverified, flagged inline:** Informatica MDM's trust decay (§4.4), the
-BM25-beats-temporal benchmark (§5). Neither is load-bearing for the
-recommendation; both would strengthen or weaken specific claims.
+BM25-beats-temporal benchmark (§5), and the 2026 agent-memory items
+(authority inversion, deterministic freshness, the dual-stream clinical
+paper) — all unrefereed preprints, several single-author, with numbers no
+third party has reproduced. They are used for **framing and mechanism**, where
+they are strong; their figures are claims, not results.
+
+**Also worth knowing:** published memory benchmarks are contested. Three
+incompatible figures exist for one system depending on who ran it, a quarter
+of one benchmark's questions have no ground truth, and full-context beats
+every memory system on one vendor's own table. Build our own conflict
+measurement rather than trusting a leaderboard.
