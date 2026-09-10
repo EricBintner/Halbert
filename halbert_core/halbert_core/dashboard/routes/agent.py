@@ -273,22 +273,27 @@ def get_agent():
             skill_matcher = None
             try:
                 from ...skills.loader import daemon_skill_dirs
-                from ...skills.matcher import SkillMatcher
-                from ...skills.registry import SkillRegistry
+                from ...skills.reload import get_skill_plane
 
-                registry = SkillRegistry.from_disk(dirs=daemon_skill_dirs())
-                skill_matcher = SkillMatcher(registry)
+                # A13-G2: through the plane, not straight from disk. This
+                # function is a process singleton, so a registry built here
+                # was the registry the daemon kept until a restart -- while
+                # read_file, following the <location> the catalog printed,
+                # served the edited body. The plane restats the roots at
+                # turn start (see send_message) and reparses only when a
+                # signature moved.
+                #
                 # SK-2: the same registry the matcher runs over is the one
                 # the catalog renders from and the read seam resolves
-                # against — hold it where the executor's read_file can find
-                # it, so every catalog consultation becomes a telemetry
-                # receipt without threading the registry through the tool
-                # registry.
-                from ...skills.telemetry import set_active_registry
-                set_active_registry(registry)
+                # against — the plane sets the active registry on every
+                # rebuild, so every catalog consultation becomes a
+                # telemetry receipt without threading the registry through
+                # the tool registry.
+                plane = get_skill_plane()
+                skill_matcher = plane.matcher
                 logger.info(
                     "Skill matcher wired: %d skill(s) from %s",
-                    len(registry.all()),
+                    len(plane.registry.all()),
                     ", ".join(str(d) for d in daemon_skill_dirs()),
                 )
             except Exception as e:
@@ -372,6 +377,22 @@ def get_agent():
                 start_mcp_health_monitor(client, tool_executor=tool_executor)
         except Exception as e:
             logger.warning(f"Could not register MCP tools (non-fatal): {e}")
+
+        # A13-G13: every tool registered above -- HA's two, Frigate's six,
+        # AppleScript's, and whatever an MCP server publishes -- was
+        # invisible to the reserved-name check, which read a static list
+        # cached for the process. A skill may not claim a name the user
+        # will type meaning the tool that turns the lights off. Registered
+        # LAST, after every register_* call above, and read live on every
+        # check, so a tool the health monitor registers mid-process is
+        # reserved from the moment it exists.
+        try:
+            from ...skills.reserved import add_live_tool_source
+            add_live_tool_source(lambda: list(tool_executor.tools))
+        except Exception as e:
+            logger.warning(f"Live reserved-name source not wired "
+                           f"(non-fatal): {e}")
+
         _agent_instance = AgentStateMachine(
             llm_client=llm_client,
             tool_executor=tool_executor,
@@ -1648,6 +1669,17 @@ if FASTAPI_AVAILABLE:
             agent = get_agent()
         except Exception as e:
             raise HTTPException(500, f"Agent initialization failed: {e}")
+
+        # A13-G2: the skill roots are restatted here, once per turn. An
+        # edited SKILL.md used to reach nothing until a restart, and the
+        # catalog went on advertising a description whose own file already
+        # said something else. Never raises -- a plane that cannot rebuild
+        # costs the turn its expertise, not its answer.
+        try:
+            from ...skills.reload import get_skill_plane
+            get_skill_plane().refresh()
+        except Exception as e:  # pragma: no cover - the plane swallows its own
+            logger.warning(f"Skill refresh skipped (non-fatal): {e}")
 
         # A turn needs a stable id to be reported and cancelled under, and the
         # agent generates its own when the client sends none -- which the route

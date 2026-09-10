@@ -135,13 +135,25 @@ class TestTheRouteWiresIt:
     """The defect is a construction site, so assert on the construction site."""
 
     def test_the_agent_route_builds_a_matcher_from_the_daemon_dirs(self):
+        """A13-G2 moved the construction one level out.
+
+        The route no longer builds its own ``SkillMatcher``: a matcher
+        built here was frozen for the life of the process singleton, so an
+        edited SKILL.md never reached the running daemon. It takes the
+        one the skill plane owns and refreshes at turn start
+        (tests/test_skills_reload.py). What this test still guards is
+        unchanged -- a matcher reaches the pipeline, and it comes from the
+        trusted roots.
+        """
         import inspect
         from halbert_core.dashboard.routes import agent as route
+        from halbert_core.skills import reload as plane_module
 
         src = inspect.getsource(route)
-        assert "SkillMatcher" in src, "routes/agent.py must construct a matcher"
-        assert "daemon_skill_dirs" in src, (
-            "it must use the trusted list, never default_skill_dirs, which "
-            "reads Path.cwd()"
+        assert "get_skill_plane" in src, "routes/agent.py must take the plane"
+        assert "skill_matcher=" in src, "and pass its matcher to IntakePipeline"
+        assert "daemon_skill_dirs" in inspect.getsource(plane_module), (
+            "the plane must use the trusted list, never default_skill_dirs, "
+            "which reads Path.cwd()"
         )
-        assert "skill_matcher=" in src, "and pass it to IntakePipeline"
+        assert "SkillMatcher" in inspect.getsource(plane_module)

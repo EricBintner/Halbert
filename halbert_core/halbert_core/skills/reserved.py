@@ -14,9 +14,18 @@ check is theater.
 
 The tool names are collected lazily (never at import of this package: the
 skills loader must not pull the tools/persona packages into every embedder)
-from the schema registries the tool surface already exports, and cached for
-the process: tool registration is static per process, and the refusal is a
-load-time check anyway.
+from the schema registries the tool surface already exports.
+
+A13-G13: the static half is not the whole set, and "tool registration is
+static per process" -- which is what the process-wide cache used to rest on
+-- was simply false. Home Assistant registers two tools, Frigate six, and
+an MCP server publishes whatever it likes through the bridge, all of them
+after this module has been imported and some after skills have already been
+loaded once. So the static half stays cached (it really is static) and a
+LIVE half is asked on every call: the MCP tool registry by default, plus
+whatever sources the daemon registers -- its own executor, at the wiring
+site. A skill named after a runtime tool is the worst kind of name trap:
+the user types the name meaning the tool that turns the lights off.
 """
 
 from __future__ import annotations
@@ -24,7 +33,7 @@ from __future__ import annotations
 import functools
 import importlib
 import logging
-from typing import FrozenSet, Iterable, Optional
+from typing import Callable, FrozenSet, Iterable, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -107,16 +116,69 @@ def _collect_tool_names() -> FrozenSet[str]:
     return frozenset(names)
 
 
-@functools.lru_cache(maxsize=1)
-def reserved_skill_names() -> FrozenSet[str]:
-    """Every reserved name, normalized for comparison.
+#: Callables returning names registered at runtime. Registered by the
+#: daemon (its executor) and seeded with the MCP bridge, which needs no
+#: wiring because the registry is already a process global.
+_LIVE_SOURCES: List[Callable[[], Iterable[str]]] = []
 
-    Cached for the process: tool registration is static, and re-collecting
-    on every load would re-import the registries per skill.
+
+def _mcp_tool_names() -> Iterable[str]:
+    from ..mcp.registry import get_tool_registry
+
+    return get_tool_registry().names()
+
+
+def add_live_tool_source(source: Callable[[], Iterable[str]]) -> None:
+    """Register a callable that reports currently-registered tool names.
+
+    Idempotent on the callable object: the daemon's wiring runs once, but
+    a re-entry (a test, a rebuilt agent) must not stack duplicates.
     """
+    if source not in _LIVE_SOURCES:
+        _LIVE_SOURCES.append(source)
+
+
+def clear_live_tool_sources() -> None:
+    """Drop every registered source (tests, and a deliberate rewire)."""
+    _LIVE_SOURCES.clear()
+
+
+def live_tool_names() -> FrozenSet[str]:
+    """Names registered at runtime, right now.
+
+    Not cached, deliberately: the cache is what the gap was. A source that
+    raises costs its own names and nothing else -- refusing to load skills
+    because a tool surface is unhealthy would be a worse failure than the
+    name collision this guards against.
+    """
+    names = set()
+    for source in (_mcp_tool_names, *_LIVE_SOURCES):
+        try:
+            reported = source()
+        except Exception:
+            logger.debug("reserved skill-name scan: a live tool source "
+                         "failed; its names are not reserved this call",
+                         exc_info=True)
+            continue
+        for name in reported or ():
+            if isinstance(name, str) and name.strip():
+                names.add(name.strip())
+    return frozenset(names)
+
+
+@functools.lru_cache(maxsize=1)
+def _static_reserved_names() -> FrozenSet[str]:
+    """The half that really is static: hand-listed cores, slash builtins,
+    and the schema registries the tool surface exports at import."""
     tools = {normalize_skill_name(n) for n in _collect_tool_names()}
     slash = {normalize_skill_name(n) for n in RESERVED_SLASH_BUILTINS}
     return frozenset(tools | slash)
+
+
+def reserved_skill_names() -> FrozenSet[str]:
+    """Every reserved name, normalized for comparison."""
+    live = {normalize_skill_name(n) for n in live_tool_names()}
+    return frozenset(_static_reserved_names() | live)
 
 
 def is_reserved_skill_name(name: Optional[str]) -> bool:

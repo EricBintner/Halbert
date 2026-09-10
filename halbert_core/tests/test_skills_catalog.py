@@ -20,6 +20,8 @@ import pytest
 
 from halbert_core.skills.catalog import (
     CATALOG_BUDGET_CHARS,
+    SKILLS_GUIDANCE,
+    catalog_block_only,
     render_available_skills,
 )
 from halbert_core.skills.parser import SKILL_ID_RE, parse_skill
@@ -42,6 +44,14 @@ def _skill(name, description="", *, priority="normal", kind="ops",
 
 def _registry(skills):
     return SkillRegistry(skills)
+
+
+#: A13-G3 gave the render a fixed head: the consultation guidance, paid for
+#: out of the same budget the ladder measures against. The ladder tests
+#: below are about the LADDER, so they add the head back rather than
+#: re-deriving every hand-computed budget around it. See
+#: tests/test_skills_catalog_guidance.py for the head's own tests.
+_HEAD = len(SKILLS_GUIDANCE) + 1
 
 
 def _entries_with_paths(tmp_path, count, *, description="Runbook text",
@@ -127,7 +137,10 @@ class TestTheBlockShape:
                    "Roll back a ZFS dataset to a named snapshot safely",
                    source=src),
         ])
-        catalog = render_available_skills(reg)
+        # A13-G3: the guidance paragraph now rides ABOVE the block, where
+        # the origin puts it, so the ELEMENT is what carries the ingest
+        # contract -- and it is still byte-for-byte the pack shape.
+        catalog = catalog_block_only(render_available_skills(reg))
         assert catalog == (
             "<available_skills>\n"
             "<skill>\n"
@@ -147,7 +160,11 @@ class TestTheBlockShape:
         src = d / "SKILL.md"
         src.write_text("body")
         reg = _registry([_skill("home-skill", "A skill", source=src)])
-        location = render_available_skills(reg).split("<location>")[1]
+        # From the BLOCK, not the whole render: the guidance names
+        # `<location>` in its own sentence (A13-G3), which is the point of
+        # it.
+        location = catalog_block_only(
+            render_available_skills(reg)).split("<location>")[1]
         location = location.split("</location>")[0]
         assert os.path.expanduser(location) == str(src)
 
@@ -281,7 +298,7 @@ class TestTheLadderDegradesInOrder:
         reg = _registry(skills)
         # Room for two bare entries plus the truncation notice, no more.
         bare = sum(_bare_size(s.name, str(s.source_path)) for s in skills)
-        catalog = render_available_skills(reg, budget=bare // 3 * 2 + 150)
+        catalog = render_available_skills(reg, budget=bare // 3 * 2 + 150 + _HEAD)
         assert catalog.count("<skill>") == 2
         assert "mmm-high" in catalog, "the high-priority entry survives"
         assert "truncated from 3 to 2" in catalog
@@ -296,7 +313,7 @@ class TestTheLadderDegradesInOrder:
             skills.append(_skill(name, "d", priority=priority, source=src))
         reg = _registry(skills)
         bare = sum(_bare_size(s.name, str(s.source_path)) for s in skills)
-        catalog = render_available_skills(reg, budget=bare // 2 + 150,
+        catalog = render_available_skills(reg, budget=bare // 2 + 150 + _HEAD,
                                           protected=frozenset({"matched-one"}))
         assert "matched-one" in catalog
         assert "track-b" not in catalog
@@ -308,7 +325,7 @@ class TestTheLadderDegradesInOrder:
         skills = _entries_with_paths(tmp_path, 2, description="D" * 300)
         reg = _registry(skills)
         bare = sum(_bare_size(s.name, str(s.source_path)) for s in skills)
-        catalog = render_available_skills(reg, budget=bare + 200)
+        catalog = render_available_skills(reg, budget=bare + 200 + _HEAD)
         assert catalog.count("<skill>") == 2
         assert "D" * 10 in catalog, "some description came back"
         assert "…" in catalog, "the trim is visible"
@@ -322,9 +339,9 @@ class TestTheLadderDegradesInOrder:
         bare = sum(_bare_size(s.name, str(s.source_path)) for s in skills)
         extras = [extra for extra in range(0, 400)
                   if "<description></description>"
-                  in render_available_skills(reg, budget=bare + extra)]
+                  in render_available_skills(reg, budget=bare + extra + _HEAD)]
         assert extras, "some budget must render descriptions empty"
-        exact = bare + max(extras)
+        exact = bare + max(extras) + _HEAD
         catalog = render_available_skills(reg, budget=exact)
         assert catalog.count("<skill>") == 3, "bare entries fit exactly"
         assert "D" * 5 not in catalog, "no description came back"
@@ -348,9 +365,16 @@ class TestTheIdentityFloor:
                 assert "…" not in line
 
     def test_the_notice_names_where_to_audit(self, tmp_path):
+        """A13 bug 7: it used to name ``halbert skills list``, which does
+        not exist -- no CLI module, no dashboard route. The surface that
+        does exist is the daemon log, and the log carries every skill and
+        its location; the notice, measured against a prompt budget, says
+        where to look. See tests/test_skills_catalog_guidance.py for the
+        log's own test."""
         reg = _registry(_entries_with_paths(tmp_path, 5, description="D" * 100))
-        catalog = render_available_skills(reg, budget=300)
-        assert "halbert skills list" in catalog
+        catalog = render_available_skills(reg, budget=300 + _HEAD)
+        assert "halbert skills list" not in catalog
+        assert "full set logged" in catalog
 
 
 class TestTheRenderIsMemoizedOnItsVersionedInputs:
@@ -378,9 +402,13 @@ class TestTheRenderIsMemoizedOnItsVersionedInputs:
     def test_the_budget_is_part_of_the_key(self, tmp_path):
         reg = _registry(_entries_with_paths(tmp_path, 3, description="D" * 300))
         full = render_available_skills(reg, budget=10_000)
-        squeezed = render_available_skills(reg, budget=800)
-        assert "D" * 300 in full
-        assert "D" * 300 not in squeezed
+        squeezed = render_available_skills(reg, budget=800 + _HEAD)
+        # A13-G4 put a ceiling under rung 0, so "the full render" is now
+        # the full render OF A BOUNDED DESCRIPTION: 199 characters and the
+        # visible marker. The memo property under test is unchanged -- two
+        # budgets, two answers.
+        assert "D" * 199 + "…" in full
+        assert "D" * 199 not in squeezed
 
 
 def catalog0(reg, skills):

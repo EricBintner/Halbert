@@ -21,9 +21,10 @@ the composer decides what several active skills add up to.
 
 from __future__ import annotations
 
+import hashlib
 import logging
-import os
 import math
+import os
 import re
 import threading
 import time
@@ -117,6 +118,38 @@ class SkillParseError(ValueError):
 _CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 _id_lock = threading.Lock()
 _id_last: list = [0, -1]  # [ms, randomness seen] — monotonic within a stamp
+
+
+#: Crockford base32, the ULID alphabet (no I, L, O or U).
+_CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+
+
+def derived_skill_id(source_path: Any) -> str:
+    """A stable id for a skill that carries none, derived from its file.
+
+    A13-G8. Bundled and operator skills ship no ``halbert.id`` -- ids are
+    stamped at creation and none of these were created through the
+    authoring tool -- so the registry minted a fresh random one at every
+    load. The telemetry table keys on the id, which made every skill on the
+    machine a NEW skill after each restart, and "which skills does the
+    model actually consult?" a question the table could not answer.
+
+    Derived, not written: the alternative fix stamps a ULID into the
+    sidecar on first sight, and the load path would then write into the
+    operator's skill directory -- and into the installed package, for the
+    bundled set. Reading a file is not a licence to modify it.
+
+    Same shape as a minted id (``sk_`` + 26 Crockford characters) so every
+    consumer downstream is unchanged, and a skill that carries a durable id
+    still keeps it -- this only ever fills a hole.
+    """
+    digest = hashlib.sha256(str(source_path).encode("utf-8")).digest()
+    value = int.from_bytes(digest[:16], "big") >> 3   # 125 bits -> 25 chars
+    out = []
+    for _ in range(26):
+        out.append(_CROCKFORD[value & 0x1F])
+        value >>= 5
+    return "sk_" + "".join(reversed(out))
 
 
 def new_skill_id() -> str:

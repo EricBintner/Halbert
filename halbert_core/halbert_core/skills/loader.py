@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional
+from typing import Dict, Iterable, List, Optional, Tuple
 
 from .parser import Skill, SkillParseError, parse_skill_file
 from .reserved import is_reserved_skill_name
@@ -114,6 +114,36 @@ def _skill_files(directory: Path) -> List[Path]:
             continue
         found.append(candidate)
     return found
+
+
+def skill_manifest(dirs: Optional[Iterable[Path]] = None,
+                   cwd: Optional[Path] = None) -> Tuple[Tuple[str, int, int], ...]:
+    """A signature per skill file: ``(path, st_mtime_ns, st_size)``, sorted.
+
+    A13-G2. The registry is built once inside a process singleton, so an
+    edited SKILL.md never reached a running daemon -- while ``read_file``,
+    following the ``<location>`` the catalog printed, served the NEW body.
+    The disclosure layer and the content layer described different skills.
+
+    Hermes rebuilds exactly this manifest on every prompt build
+    (``agent/prompt_builder.py:1080-1119``) and reparses only when it
+    moved. Two fields, not one: mtime alone misses a rewrite inside the
+    same clock tick, and size alone misses an edit that keeps the length.
+
+    Stat failures are skipped rather than raised: a file that vanished
+    between the walk and the stat is a change like any other, and the next
+    call sees the tree without it.
+    """
+    search = list(dirs) if dirs is not None else default_skill_dirs(cwd)
+    out: List[Tuple[str, int, int]] = []
+    for directory in search:
+        for path in _skill_files(Path(directory)):
+            try:
+                st = path.stat()
+            except OSError:
+                continue
+            out.append((str(path), st.st_mtime_ns, st.st_size))
+    return tuple(sorted(out))
 
 
 def load_skills_from_dir(directory: Path) -> List[Skill]:

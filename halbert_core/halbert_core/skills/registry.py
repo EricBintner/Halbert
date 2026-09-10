@@ -23,7 +23,8 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Optional
 
 from .loader import load_skills
-from .parser import Skill, SkillSafety, SkillTriggers, new_skill_id
+from .parser import (Skill, SkillSafety, SkillTriggers,
+                     derived_skill_id, new_skill_id)
 
 logger = logging.getLogger(__name__)
 
@@ -146,6 +147,16 @@ def _stamp(skill: Skill) -> Skill:
     """
     if skill.id is not None:
         return skill
+    if skill.source_path is not None:
+        # A13-G8: derived from the file, so the id means the same skill
+        # after a restart. A fresh random ULID per load made every skill a
+        # new row in the telemetry table every time the daemon came up,
+        # and the table's whole question is "which skills does the model
+        # actually consult?".
+        return dataclasses.replace(
+            skill, id=derived_skill_id(skill.source_path))
+    # Nothing durable to key on -- an in-memory skill is process-local by
+    # construction, and the id still has to be well-formed.
     return dataclasses.replace(skill, id=new_skill_id())
 
 
