@@ -230,3 +230,28 @@ def _authenticated_test_clients():
             os.environ.pop("HALBERT_API_TOKEN", None)
         else:
             os.environ["HALBERT_API_TOKEN"] = previous
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _skills_user_root_is_not_the_developers(tmp_path_factory):
+    """A13 bug 10: the suite read the developer's real skill directory.
+
+    ``daemon_skill_dirs()`` is ``[BUILTIN_DIR, ~/.config/halbert/skills]``
+    and nine test call sites go through it. On a machine with skills in
+    that directory the suite ran against a different set from CI's, and
+    neither run knew: a bundled-set assertion could pass locally because
+    an operator skill happened to fill a gap, or fail because one shadowed
+    a name. The root points at an empty scratch directory for the session,
+    so "the bundled set" means the bundled set.
+
+    A test that wants an operator root builds one and passes ``dirs=``.
+    """
+    from halbert_core.skills import loader
+
+    scratch = tmp_path_factory.mktemp("user-skills")
+    original = loader.USER_SKILL_DIR
+    loader.USER_SKILL_DIR = scratch
+    try:
+        yield scratch
+    finally:
+        loader.USER_SKILL_DIR = original

@@ -39,13 +39,26 @@ logger = logging.getLogger(__name__)
 
 BUILTIN_DIR = Path(__file__).parent / "builtin"
 
+#: The operator's own skill root. A13 bug 10: this was computed inline
+#: inside ``daemon_skill_dirs``, so nine test call sites read the
+#: developer's REAL ``~/.config/halbert/skills`` -- a machine with skills
+#: in it ran different tests from CI, and neither knew. Named here so
+#: ``tests/conftest.py`` can point it at a scratch directory for the
+#: session, and so there is one place that says where it is.
+def default_user_skill_dir() -> Path:
+    """Where the operator's own skills live: ``~/.config/halbert/skills``."""
+    return Path.home() / ".config" / "halbert" / "skills"
+
+
+USER_SKILL_DIR = default_user_skill_dir()
+
 
 def default_skill_dirs(cwd: Optional[Path] = None) -> List[Path]:
     """The four search locations, in precedence order (last wins)."""
     root = Path(cwd) if cwd else Path.cwd()
     return [
         BUILTIN_DIR,
-        Path.home() / ".config" / "halbert" / "skills",
+        USER_SKILL_DIR,
         root / ".halbert" / "skills",
         root / ".claude" / "skills",
     ]
@@ -63,8 +76,11 @@ def daemon_skill_dirs() -> List[Path]:
 
     ``default_skill_dirs`` keeps the four-location chain for CLI and test
     callers that genuinely want a project-local skill. The daemon uses this.
+
+    Read from the module constant rather than recomputed, so the root has
+    one definition and the test session can move it (A13 bug 10).
     """
-    return [BUILTIN_DIR, Path.home() / ".config" / "halbert" / "skills"]
+    return [BUILTIN_DIR, USER_SKILL_DIR]
 
 
 def _builtin_names() -> set:

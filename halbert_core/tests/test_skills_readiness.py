@@ -286,3 +286,58 @@ class TestSkillForPath:
         elsewhere.write_text("x")
         registry = SkillRegistry([_skill("disk-ops", source=d / "SKILL.md")])
         assert registry.skill_for_path(elsewhere) is None
+
+
+# ---------------------------------------------------------------------------
+# A13 bug 4 — a receipt for a read that happened
+# ---------------------------------------------------------------------------
+
+class TestTheReadReceiptFollowsTheRead:
+    """``record_skill_read`` was called ABOVE the existence, type and size
+    checks, so a read that raised minted a receipt for a consultation that
+    never happened -- and the curator's whole question is which skills the
+    model actually consulted. A typo'd ``<location>``, a deleted skill
+    directory and an over-cap reference file each recorded one."""
+
+    def _read(self, path):
+        import asyncio
+
+        from halbert_core.tools import ToolExecutor, ToolSafetyFramework
+
+        executor = ToolExecutor(safety=ToolSafetyFramework())
+        return asyncio.run(executor._read_file({"path": str(path)}))
+
+    def test_a_missing_file_records_nothing(self, tmp_path, monkeypatch):
+        seen = []
+        monkeypatch.setattr(
+            "halbert_core.skills.telemetry.record_skill_read", seen.append)
+        with pytest.raises(FileNotFoundError):
+            self._read(tmp_path / "nope.md")
+        assert seen == []
+
+    def test_a_directory_records_nothing(self, tmp_path, monkeypatch):
+        seen = []
+        monkeypatch.setattr(
+            "halbert_core.skills.telemetry.record_skill_read", seen.append)
+        with pytest.raises(ValueError):
+            self._read(tmp_path)
+        assert seen == []
+
+    def test_an_over_cap_file_records_nothing(self, tmp_path, monkeypatch):
+        seen = []
+        monkeypatch.setattr(
+            "halbert_core.skills.telemetry.record_skill_read", seen.append)
+        big = tmp_path / "big.md"
+        big.write_text("x" * (1024 * 1024 + 1))
+        with pytest.raises(ValueError):
+            self._read(big)
+        assert seen == []
+
+    def test_a_read_that_succeeds_still_records(self, tmp_path, monkeypatch):
+        seen = []
+        monkeypatch.setattr(
+            "halbert_core.skills.telemetry.record_skill_read", seen.append)
+        good = tmp_path / "SKILL.md"
+        good.write_text("body")
+        assert self._read(good) == "body"
+        assert seen == [str(good)]

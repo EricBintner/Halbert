@@ -24,13 +24,29 @@ from halbert_core.skills.loader import (
 )
 from halbert_core.tools.safety import ToolSafetyFramework, RiskLevel
 
-USER_SKILL_DIR = pathlib.Path.home() / ".config" / "halbert" / "skills"
+#: A13 bug 10: the suite no longer reads the developer's real skill root
+#: -- conftest points ``loader.USER_SKILL_DIR`` at an empty scratch
+#: directory for the session. These tests are about the SHAPE of the
+#: daemon's search list (two roots, neither derived from cwd), so they read
+#: the module's constant rather than recomputing the home path, which would
+#: assert against a directory the daemon is no longer looking at.
+def _user_skill_dir() -> pathlib.Path:
+    from halbert_core.skills import loader
+
+    return loader.USER_SKILL_DIR
 
 
 class TestTheDaemonNeverReadsCwd:
 
     def test_daemon_dirs_are_builtin_and_the_user_config_dir_only(self):
-        assert daemon_skill_dirs() == [BUILTIN_DIR, USER_SKILL_DIR]
+        assert daemon_skill_dirs() == [BUILTIN_DIR, _user_skill_dir()]
+
+    def test_the_user_root_is_the_operators_config_directory(self):
+        """The path itself, asserted once and in one place."""
+        from halbert_core.skills import loader
+
+        assert loader.default_user_skill_dir() == (
+            pathlib.Path.home() / ".config" / "halbert" / "skills")
 
     def test_no_daemon_dir_depends_on_cwd(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
@@ -85,7 +101,7 @@ class TestWritingASkillNeedsApproval:
 
     def test_an_expanded_path_into_the_user_skill_dir_requires_confirmation(self):
         f = ToolSafetyFramework()
-        r = f.classify("write_file", {"path": str(USER_SKILL_DIR / "evil.md")})
+        r = f.classify("write_file", {"path": str(_user_skill_dir() / "evil.md")})
         assert r.risk_level == RiskLevel.HIGH
         assert r.requires_confirmation
 

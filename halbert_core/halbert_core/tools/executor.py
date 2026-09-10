@@ -1028,19 +1028,6 @@ class ToolExecutor:
         path = os.path.expanduser(path)
         path = os.path.abspath(path)
 
-        # SK-2 seam 1 (design §6): resolve the path against the registry's
-        # known skill paths before dispatch. A hit is a catalog
-        # consultation — every Track-B consultation passes through this one
-        # choke point, whatever surface asked — and appends a `read`
-        # receipt to the skill_events table. Reportability, never a gate:
-        # a receipt that cannot be written costs a log line, not the read.
-        try:
-            from ..skills.telemetry import record_skill_read
-            record_skill_read(path)
-        except Exception:
-            logger.debug("skill read telemetry failed; continuing",
-                         exc_info=True)
-
         if not os.path.exists(path):
             raise FileNotFoundError(f"File not found: {path}")
         
@@ -1053,7 +1040,29 @@ class ToolExecutor:
             raise ValueError(f"File too large: {size} bytes (max 1MB)")
         
         with open(path, 'r', encoding=encoding) as f:
-            return f.read()
+            text = f.read()
+
+        # SK-2 seam 1 (design §6): resolve the path against the registry's
+        # known skill paths. A hit is a catalog consultation -- every
+        # Track-B consultation passes through this one choke point,
+        # whatever surface asked -- and appends a `read` receipt to the
+        # skill_events table. Reportability, never a gate: a receipt that
+        # cannot be written costs a log line, not the read.
+        #
+        # A13 bug 4: it used to be written ABOVE the existence, type and
+        # size checks, so a read that RAISED recorded a consultation that
+        # never happened -- and the curator's whole question is which
+        # skills the model actually consulted. A typo'd <location>, a
+        # deleted skill directory and an over-cap reference file each
+        # minted a receipt for a skill nobody read. It is written once the
+        # text is in hand.
+        try:
+            from ..skills.telemetry import record_skill_read
+            record_skill_read(path)
+        except Exception:
+            logger.debug("skill read telemetry failed; continuing",
+                         exc_info=True)
+        return text
     
     @staticmethod
     def _read_text_and_readability(path: str) -> "tuple[Optional[str], bool]":
