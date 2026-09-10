@@ -41,7 +41,7 @@ vocabulary and computed nowhere here — it belongs to the profiles packet
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional, Sequence
+from typing import Any, Optional, Sequence
 
 from ..policy import AskPolicy, PolicyPair, SecurityLevel, merge_policies
 from .affordance import AffordanceTable, EMPTY_AFFORDANCE, affords
@@ -70,6 +70,10 @@ REASON_OS_UNKNOWN = "OS_UNKNOWN"
 REASON_OUT_OF_SCOPE = "OUT_OF_SCOPE"
 #: Autonomy-only (§1.7's QUIET). Reserved; computed by the profiles packet.
 REASON_QUIET = "QUIET"
+#: A11-G2: the grant's own scope could not be read. Not "out of scope"
+#: -- the check never ran -- and not an exception either: a refusal the
+#: permission system cannot explain is still a refusal it must TYPE.
+REASON_SCOPE_UNREADABLE = "SCOPE_UNREADABLE"
 
 
 @dataclass(frozen=True)
@@ -99,6 +103,17 @@ class EffectiveDecision:
     observations: tuple
 
 
+#: A11 bug 6: the sentinel that makes ``halt`` required without breaking
+#: every keyword call site. ``halt=None`` used to read as "not halted",
+#: so a wiring site that simply omitted the argument never observed Stop
+#: -- the axis the design puts FIRST, and the one that is supposed to
+#: win over everything. An omitted halt is now no halt EVIDENCE, which
+#: denies like every other unwired axis. Passing ``halt=None``
+#: explicitly means the same thing: the evaluator cannot tell the two
+#: apart, and neither can vouch for the machine not being stopped.
+_HALT_REQUIRED = object()
+
+
 def effective_capability(
     capability: str,
     *,
@@ -106,9 +121,10 @@ def effective_capability(
     affordance: AffordanceTable = EMPTY_AFFORDANCE,
     os_grants: OsGrantTable = DEFAULT_OS_GRANTS,
     consent_records: Sequence[ConsentRecord] = (),
-    halt: Optional[HaltState] = None,
+    halt: Any = _HALT_REQUIRED,
     scope_ok: Optional[bool] = None,
     registry: Optional[object] = None,
+    now: Optional[str] = None,
 ) -> EffectiveDecision:
     """Evaluate one capability against all five axes.
 
@@ -122,11 +138,32 @@ def effective_capability(
     the requested target is outside the grant's scope (OUT_OF_SCOPE);
     ``True`` means the scope check ran and passed.
     """
-    halted = halt.is_halted() if halt is not None else False
-    halt_detail = halt.reason_code if halt is not None else ""
+    if halt is _HALT_REQUIRED or halt is None:
+        # No halt evidence. Deny on the axis the design checks first,
+        # rather than assume the machine is running (A11 bug 6).
+        return EffectiveDecision(
+            capability=capability,
+            allowed=False,
+            decisive_axis=AXIS_HALT,
+            reason_code=REASON_HALTED,
+            observations=(
+                AxisObservation(
+                    AXIS_HALT, False,
+                    "no halt state was passed; the evaluator cannot vouch "
+                    "for the machine not being stopped",
+                ),
+            ),
+        )
+    halted = halt.is_halted()
+    halt_detail = halt.reason_code
     ceiling_ok = ceiling.permits(capability)
     affordance_ok = affords(capability, affordance, registry=registry)
-    consent = consent_state(consent_records, capability)
+    # A11 bug 3: ONE clock. This used to fold the consent state on wall
+    # time while require() resolved the granted scope through an injected
+    # ``now`` -- so an injected ``now`` past expires_at with wall time
+    # before it produced ALLOWED with granted_scope=None: no scope check,
+    # and no redaction check either.
+    consent = consent_state(consent_records, capability, now=now)
     consent_ok = consent is ConsentDecision.GRANTED
     os_state = os_grants.state_for(capability)
     os_ok = is_os_grant_affirmative(os_state)

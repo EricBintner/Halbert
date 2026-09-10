@@ -223,7 +223,13 @@ def record_from_payload(payload: Mapping[str, Any]) -> ConsentRecord:
                 if payload.get("prior") else None
             ),
         )
-    except (KeyError, ValueError) as exc:
+    except (KeyError, ValueError, TypeError) as exc:
+        # A11 bug 7: TypeError was missing, so a shard edited to a
+        # string principal (or any field of the wrong TYPE rather than
+        # the wrong value) raised out of the ledger reader and crashed
+        # boot, instead of taking the halt path this ledger is written
+        # for. A record the reader cannot parse is a record it cannot
+        # verify, whichever way it is malformed.
         raise ConsentUnavailable(
             f"a consent record in the ledger is not shaped like one ({exc})",
             halt_reason=HaltReason.CONSENT_UNREADABLE,

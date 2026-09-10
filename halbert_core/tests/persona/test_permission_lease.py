@@ -73,13 +73,21 @@ def _records(*records):
 
 
 def _affirmative(capability=CAP, records=None, halt=None):
-    """The axis evidence for a fully-wired, fully-granted capability."""
+    """The axis evidence for a fully-wired, fully-granted capability.
+
+    R-08 Phase A (A11 bug 6): ``halt=None`` used to read as "not halted",
+    so these tests could leave the axis unwired and still reach the axes
+    they were about. An omitted halt is now no halt EVIDENCE, which
+    denies like every other unwired axis -- so a caller that means "the
+    machine is running" has to say so with a live state, which is what
+    the wiring always did.
+    """
     return dict(
         ceiling=CapabilityCeiling(frozenset({capability})),
         affordance=AffordanceTable(present=frozenset({capability})),
         os_grants=OsGrantTable({capability: OsGrantState.GRANTED}),
         consent_records=records if records is not None else _records(_grant_record(capability)),
-        halt=halt,
+        halt=halt if halt is not None else HaltState(),
     )
 
 
@@ -150,15 +158,29 @@ def test_the_lease_is_a_context_manager():
 
 def test_a_denied_capability_raises_the_typed_denial():
     with pytest.raises(Denied) as caught:
-        require(CAP, ceiling=CapabilityCeiling(frozenset({CAP})))
+        require(
+            CAP,
+            ceiling=CapabilityCeiling(frozenset({CAP})),
+            halt=HaltState(),
+        )
 
     assert caught.value.reason_code == "NO_AFFORDANCE"
 
 
 def test_require_with_no_wiring_at_all_denies():
+    """R-08 Phase A (A11 bug 6): the FIRST unwired axis is halt.
+
+    This used to reach the ceiling, because ``halt=None`` read as "not
+    halted" -- the evaluator vouched for the machine not being stopped
+    on no evidence at all. With halt evidence supplied, the ceiling
+    answers as before; with nothing at all, the halt axis does.
+    """
     with pytest.raises(Denied) as caught:
         require(CAP)
+    assert caught.value.reason_code == "HALTED"
 
+    with pytest.raises(Denied) as caught:
+        require(CAP, halt=HaltState())
     assert caught.value.reason_code == "NO_CEILING"
 
 

@@ -44,6 +44,7 @@ from ..persona.permission.effective import (
     REASON_OS_UNKNOWN,
     REASON_OUT_OF_SCOPE,
     REASON_QUIET,
+    REASON_SCOPE_UNREADABLE,
 )
 from ..persona.permission.halt import HaltReason
 
@@ -58,6 +59,7 @@ CLOSED_REASONS = frozenset({
     REASON_OS_UNKNOWN,
     REASON_OUT_OF_SCOPE,
     REASON_QUIET,
+    REASON_SCOPE_UNREADABLE,
 })
 
 #: Deterministic copy for each typed outcome — the words the UI and the
@@ -73,6 +75,10 @@ DENIAL_COPY = {
     REASON_OS_UNKNOWN: "I can't tell what the operating system says — this build isn't signed.",
     REASON_OUT_OF_SCOPE: "That's outside the scope that was granted.",
     REASON_QUIET: "I'm in quiet mode — I only speak when spoken to.",
+    REASON_SCOPE_UNREADABLE: (
+        "I can't read the scope this permission was granted with, so I "
+        "won't act on it. Re-grant it and I'll have a scope I understand."
+    ),
 }
 
 

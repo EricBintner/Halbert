@@ -366,7 +366,13 @@ def test_a_grant_for_the_declared_absent_capability_is_refused(store):
 def test_an_empty_ledger_refuses_every_consenting_capability(store):
     """The D3-P2 verification gate: boot with an empty ledger and every
     sensor/reach/egress/auto call refuses. Every axis but consent is
-    wired affirmative — consent is the only reason for the refusal."""
+    wired affirmative — consent is the only reason for the refusal.
+
+    R-08 Phase A (A11 bug 6): "every axis but consent wired affirmative"
+    now has to include halt. Omitting it used to read as "not halted";
+    it reads as no halt evidence and denies HALTED, which would make
+    every row here refuse for the wrong reason.
+    """
     consenting = sorted(
         cap for cap in VOCABULARY
         if takes_consent_records(cap) and cap not in NEVER_CEILING_IDS
@@ -384,6 +390,7 @@ def test_an_empty_ledger_refuses_every_consenting_capability(store):
             affordance=AffordanceTable(present=frozenset({capability})),
             os_grants=OsGrantTable({capability: OsGrantState.GRANTED}),
             consent_records=store.records(),
+            halt=HaltState(),
         )
         assert decision.allowed is False, capability
         assert decision.reason_code == "NOT_GRANTED", capability

@@ -44,8 +44,9 @@ from __future__ import annotations
 
 import os
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from types import MappingProxyType
 from typing import Any, Dict, Mapping, Optional, Sequence, Tuple
 
 from ...consent.denials import CLOSED_REASONS, Denied
@@ -53,6 +54,7 @@ from .affordance import AffordanceTable, EMPTY_AFFORDANCE, affords
 from .ceiling import CapabilityCeiling, EMPTY_CEILING, takes_consent_records
 from .consent import ConsentDecision, ConsentRecord, consent_state, latest_for
 from .effective import (
+    _HALT_REQUIRED,
     AXIS_CEILING,
     AXIS_CONSENT,
     AXIS_HALT,
@@ -65,6 +67,7 @@ from .effective import (
     REASON_OS_DENIED,
     REASON_OS_UNKNOWN,
     REASON_OUT_OF_SCOPE,
+    REASON_SCOPE_UNREADABLE,
     effective_capability,
 )
 from .halt import HaltReason, HaltState
@@ -127,19 +130,58 @@ class Scope:
     displays: Tuple[str, ...] = ()
     cameras: Tuple[str, ...] = ()
     redaction: str = ""
+    #: The descriptive half of the vocabulary (A11-G2). Recorded on the
+    #: scope so the grant's own words survive to the ledger and the
+    #: review screen, and read by name where a rule consumes one --
+    #: never folded into ``admits``, which is what "not interpreted as
+    #: a grant" means.
+    provenance: Mapping[str, Any] = field(default_factory=dict)
 
-    _KNOWN_KEYS = ("reach_roots", "displays", "cameras", "redaction")
+    #: BINDING facts: the ones ``admits`` actually checks. A grant's
+    #: coverage is exactly these.
+    _BINDING_KEYS = ("reach_roots", "displays", "cameras", "redaction")
+
+    #: PROVENANCE facts: what the grant SAYS about itself. These are the
+    #: keys the shipped profile rows carry (§2.1's table) plus the ones
+    #: the design names. They are recorded, shown, and read by name where
+    #: a specific rule consumes one (``re_auth`` at profiles.py:429,
+    #: ``max_session_lease`` at the lease's expiry) -- but none of them
+    #: widens what ``admits`` covers, so recording one can never grant
+    #: anything.
+    #:
+    #: A11-G2 + bug 1: before this split, ``from_mapping`` raised on any
+    #: key outside the binding four, and 24 of the 47 shipped rows carry
+    #: one. The first ``require()`` after first-run acceptance therefore
+    #: raised a bare ValueError out of the permission system and crashed
+    #: the turn. The parser lesson still holds for anything in NEITHER
+    #: list: a scope the code cannot read is not a grant.
+    _PROVENANCE_KEYS = (
+        "roots",              # the policy label a profile row names
+        "verbs",              # per-verb dispositions (reach.service/package)
+        "re_auth",            # "every_time" -- read by the profile compiler
+        "diff", "reason", "backup",          # reach.config.write's contract
+        "sandboxed", "classified", "logged",  # reach.terminal's contract
+        "jobs",               # auto.scheduler's named jobs
+        "named_target", "named_cameras",      # what may be pointed at
+        "receipt",            # what the use leaves behind
+        "bound_to",           # this row rides another capability
+        "max_session_lease",  # the ceiling on one open lease
+        "x11_caveat",         # a platform truth recorded on the row
+        "tiers",              # reach.home's tier list
+        "reversal",           # a shipped default written as DENIED
+    )
 
     @classmethod
     def from_mapping(cls, mapping: Optional[Mapping[str, Any]]) -> "Scope":
         """Build from a consent record's scope mapping (strict).
 
-        A key the code does not understand raises rather than being
-        ignored: a scope that silently drops a field would widen what
-        the check believes it covered (the parser.py:206 lesson).
+        A key in neither vocabulary raises rather than being ignored: a
+        scope that silently drops a field would widen what the check
+        believes it covered (the parser.py:206 lesson).
         """
         data = dict(mapping or {})
-        unknown = sorted(set(data) - set(cls._KNOWN_KEYS))
+        known = set(cls._BINDING_KEYS) | set(cls._PROVENANCE_KEYS)
+        unknown = sorted(set(data) - known)
         if unknown:
             raise ValueError(
                 f"unknown scope key(s) {unknown}: a scope the code cannot "
@@ -156,6 +198,9 @@ class Scope:
             displays=tuple(data.get("displays", ())),
             cameras=tuple(data.get("cameras", ())),
             redaction=redaction,
+            provenance=MappingProxyType({
+                k: v for k, v in data.items() if k in cls._PROVENANCE_KEYS
+            }),
         )
 
     @property
@@ -474,7 +519,7 @@ def require(
     affordance: AffordanceTable = EMPTY_AFFORDANCE,
     os_grants: OsGrantTable = DEFAULT_OS_GRANTS,
     consent_records: Sequence[ConsentRecord] = (),
-    halt: Optional[HaltState] = None,
+    halt: Any = _HALT_REQUIRED,
     capabilities_registry: Optional[object] = None,
     redaction_backend_available: bool = False,
     now: Optional[str] = None,
@@ -525,7 +570,20 @@ def require(
         granted_record is not None
         and consent_state(records, capability, now=now) is ConsentDecision.GRANTED
     ):
-        granted_scope = Scope.from_mapping(granted_record.scope)
+        # A11-G2 + bug 1: a scope the code cannot read is a DENIAL, not
+        # an exception escaping the permission system. It used to raise a
+        # bare ValueError out of require() and crash the turn -- and 24
+        # of the 47 shipped profile rows took that path on the first
+        # require() after first-run acceptance.
+        try:
+            granted_scope = Scope.from_mapping(granted_record.scope)
+        except ValueError as e:
+            raise Denied(
+                capability,
+                REASON_SCOPE_UNREADABLE,
+                decisive_axis=AXIS_SCOPE,
+                detail=str(e),
+            ) from None
 
     # Scope admission feeds the evaluator's scope axis (§1.7 order);
     # no requested scope is vacuously affirmative.
@@ -542,6 +600,8 @@ def require(
         halt=halt,
         scope_ok=scope_ok,
         registry=capabilities_registry,
+        # A11 bug 3: the same clock the scope resolution above used.
+        now=now,
     )
     if not decision.allowed:
         raise Denied.from_decision(decision)
@@ -551,7 +611,7 @@ def require(
     # nothing to mislabel).
     if granted_scope is not None and granted_scope.redaction_required:
         if not redaction_backend_available:
-            if halt is not None:
+            if isinstance(halt, HaltState):
                 halt.halt(
                     HaltReason.REDACTION_UNAVAILABLE,
                     by="require",
