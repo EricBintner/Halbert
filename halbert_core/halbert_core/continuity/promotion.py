@@ -55,7 +55,23 @@ class PromotionSignals:
     query_diversity: int = 0
     recall_days: int = 0
     avg_score: float = 0.0
+    #: A01-G2 + bug 2 (fix-first row 21): this is a SNAPSHOT, written at
+    #: record time and reloaded verbatim, and both callers passed 0.0. So
+    #: "decay multiplies ranking" was a no-op: a key recalled once, sixty
+    #: days ago, ranked as if it had been recalled today. It is kept for
+    #: the persisted shape; the ranker reads ``last_recalled_at`` and
+    #: derives the age itself.
     last_recalled_days_ago: float = 0.0
+    #: When this key was last recalled, in epoch seconds. The fact the
+    #: age is derived FROM, rather than a number frozen at write time.
+    last_recalled_at: float = 0.0
+
+    def days_since_recall(self, now: Optional[float] = None) -> float:
+        """How long ago this key was last recalled, derived at READ time."""
+        if not self.last_recalled_at:
+            return self.last_recalled_days_ago
+        current = now if now is not None else time.time()
+        return max(0.0, (current - self.last_recalled_at) / 86400.0)
 
 
 @dataclass(frozen=True)
@@ -64,21 +80,35 @@ class PromotionCandidate:
     signals: PromotionSignals
 
 
-def _signal_score(s: PromotionSignals) -> float:
+def _signal_score(s: PromotionSignals, now: Optional[float] = None) -> float:
     utility = math.log1p(s.recall_count)
     diversity = s.query_diversity / 5.0
     spread = s.recall_days / 5.0
-    recency = math.exp(-math.log(2) / HALF_LIFE_DAYS * s.last_recalled_days_ago)
+    # A01-G2: derived at RANK time. Reading the stored snapshot meant the
+    # half-life did nothing, because the snapshot was always the value
+    # the recorder wrote (0.0 from both callers).
+    recency = math.exp(
+        -math.log(2) / HALF_LIFE_DAYS * s.days_since_recall(now))
     return 0.5 * utility + 0.2 * diversity + 0.2 * spread + 0.1 * recency
 
 
-def rank_candidates(candidates: Sequence[PromotionCandidate], limit: int) -> list:
+def rank_candidates(
+    candidates: Sequence[PromotionCandidate],
+    limit: int,
+    now: Optional[float] = None,
+) -> list:
+    """The candidates worth promoting, best first.
+
+    ``now`` is the clock the recency decay is measured against, injected
+    so a test can age a key without waiting (A01-G2).
+    """
     eligible = [
         c for c in candidates
         if c.signals.recall_count >= MIN_RECALL_COUNT
         and c.signals.query_diversity >= MIN_QUERY_DIVERSITY
     ]
-    ranked = sorted(eligible, key=lambda c: _signal_score(c.signals), reverse=True)
+    ranked = sorted(
+        eligible, key=lambda c: _signal_score(c.signals, now), reverse=True)
     return ranked[:limit]
 
 
@@ -132,6 +162,11 @@ class PromotionStore:
         self._signals: Dict[PromotionKey, PromotionSignals] = {}
         self._queries: Dict[PromotionKey, set] = {}
         self._days: Dict[PromotionKey, set] = {}
+        #: A01-G5: key -> the request that recorded it, so a forget can
+        #: reach the evidence. In-process only: the tables themselves are
+        #: keyed by claim, and a persisted request link would be one more
+        #: durable fact about the person than the signal needs.
+        self._request_keys: Dict[PromotionKey, str] = {}
         self._lock = threading.Lock()
         self._owns_conn = conn is None
         self._conn: Optional[sqlite3.Connection] = None
@@ -163,12 +198,16 @@ class PromotionStore:
 
     def _load(self, conn: sqlite3.Connection) -> None:
         for r in conn.execute(
-                "SELECT subject, predicate, avg_score, last_recalled_days_ago "
-                "FROM promotion_signals"):
+                "SELECT subject, predicate, avg_score, "
+                "last_recalled_days_ago, updated_at FROM promotion_signals"):
             key = (r["subject"], r["predicate"])
             self._signals[key] = PromotionSignals(
                 avg_score=float(r["avg_score"]),
-                last_recalled_days_ago=float(r["last_recalled_days_ago"]))
+                last_recalled_days_ago=float(r["last_recalled_days_ago"]),
+                # A01-G2: the timestamp the age is derived from. Written
+                # as ``updated_at`` since the column existed; it was
+                # never read back, which is what made the decay inert.
+                last_recalled_at=float(r["updated_at"] or 0.0))
         for r in conn.execute(
                 "SELECT subject, predicate, query_hash FROM promotion_queries"):
             self._queries.setdefault(
@@ -228,7 +267,8 @@ class PromotionStore:
 
     # -- recording -----------------------------------------------------
 
-    def record_recall(self, key: PromotionKey, query: str, *, days_ago: float = 0.0,
+    def record_recall(self, key: PromotionKey, query: str, *,
+                      request_id: str = "", days_ago: float = 0.0,
                       score: float = 0.0, provenance: str = "agent_query") -> None:
         if provenance == "recalled_content":
             return  # recall-loop hygiene: never re-enter
@@ -249,11 +289,58 @@ class PromotionStore:
             prev_n = sig.recall_count - 1
             sig.avg_score = ((sig.avg_score * prev_n) + score) / sig.recall_count
             sig.last_recalled_days_ago = days_ago
+            # A01-G2: the TIMESTAMP is what the ranker reads, so
+            # ``days_ago`` means what it says -- "this recall happened N
+            # days ago" -- rather than writing a snapshot nobody read
+            # back. Both production callers pass 0.0, which is now
+            # simply "just then"; a caller that back-dates gets a
+            # back-dated key.
+            sig.last_recalled_at = time.time() - (float(days_ago) * 86400.0)
+            # A01-G5: which request this evidence came from, so a forget
+            # can find it. The signal itself stores no words -- only the
+            # link back to the run that produced it.
+            if request_id:
+                self._request_keys[key] = request_id
             if self._conn is not None:
                 self._persist(key, sig, query_hash, day)
 
     def signals(self, key: PromotionKey) -> Optional[PromotionSignals]:
         return self._signals.get(key)
+
+    def forget_request(self, request_id: str) -> int:
+        """Erase every signal recorded under one request id (A01-G5).
+
+        The three tables move together: a signal row whose companion
+        query hashes and recall days survived would keep contributing
+        diversity and spread to a key that is supposed to be gone.
+        """
+        if not request_id:
+            return 0
+        removed = 0
+        with self._lock:
+            keys = [k for k, rid in self._request_keys.items() if rid == request_id]
+            for key in keys:
+                self._signals.pop(key, None)
+                self._queries.pop(key, None)
+                self._days.pop(key, None)
+                self._request_keys.pop(key, None)
+                removed += 1
+            if self._conn is not None and keys:
+                try:
+                    with self._conn:
+                        for subject, predicate in keys:
+                            for table in ("promotion_signals",
+                                          "promotion_queries",
+                                          "promotion_recall_days"):
+                                self._conn.execute(
+                                    f"DELETE FROM {table} WHERE subject = ? "
+                                    f"AND predicate = ?",
+                                    (subject, predicate))
+                except Exception as e:
+                    logger.warning(
+                        "promotion signals for %s could not be erased: %s",
+                        request_id, e)
+        return removed
 
 
 _store: Optional[PromotionStore] = None
@@ -281,3 +368,18 @@ def get_promotion_store() -> PromotionStore:
                     path = None
                 _store = PromotionStore(db_path=path) if path else PromotionStore()
     return _store
+
+
+def forget_request_signals(request_id: str) -> int:
+    """Erase the promotion evidence recorded under one request (A01-G5).
+
+    "Forget that session" reached the change ledger, the audit records
+    and the conversation messages, and left the promotion tables holding
+    a durable record that those words mattered -- keyed to a claim, and
+    therefore about the person who said them.
+
+    Returns how many signal rows were removed, so the caller's report can
+    say what it actually erased rather than what it hoped to.
+    """
+    store = get_promotion_store()
+    return store.forget_request(request_id)

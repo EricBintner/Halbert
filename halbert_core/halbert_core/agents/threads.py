@@ -1157,6 +1157,20 @@ class ThreadManager:
         thread["recalled_json"] = recalled
         self.store.update_thread(thread["thread_id"], recalled_json=recalled)
 
+    @staticmethod
+    def _current_request_id() -> str:
+        """The turn this evidence belongs to (A01-G5).
+
+        Read from the provenance ContextVar the write plane already
+        carries, so a forget can find the signals a run produced without
+        threading an id through the recall path.
+        """
+        try:
+            from ..continuity.provenance import current_turn
+            return str(current_turn.get() or "")
+        except Exception:
+            return ""
+
     def _record_promotion_signal(
         self, query: str, strong: Any, entry: Dict[str, Any]
     ) -> None:
@@ -1166,12 +1180,25 @@ class ThreadManager:
         ``(thread:<id>, recalled)`` — the receipt carries no claim of its
         own, and ``thread:<id>`` is a subject shape the recall surface
         already documents. Fail-soft: memory failures never eat a turn.
+
+        A01 bug 6 (fix-first row 35): skipped when the conversation is
+        not Halbert's. A guest's recall, or a private-mode turn's, used
+        to persist a durable record that these words mattered to
+        somebody, keyed to a claim -- evidence about a person who never
+        agreed to be measured, in a table their "forget me" could not
+        reach. Two sibling call sites in this file already ask this
+        question; this one did not.
         """
+        if not _conversation_is_halberts():
+            logger.debug(
+                "promotion signal skipped: this conversation is not Halbert's")
+            return
         try:
             from ..continuity.promotion import get_promotion_store
             get_promotion_store().record_recall(
                 (f"thread:{entry['thread_id']}", "recalled"),
                 query=query,
+                request_id=self._current_request_id(),
                 score=float(getattr(strong, "score", 0.0) or 0.0),
             )
         except Exception as e:
