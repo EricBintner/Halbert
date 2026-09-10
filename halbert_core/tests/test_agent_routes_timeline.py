@@ -327,7 +327,12 @@ def test_the_real_thread_manager_resolves_and_feeds_the_timeline(tmp_path, monke
     """
     import halbert_core.agents.threads as threads_mod
 
-    monkeypatch.setattr(threads_mod._cs, "_DEFAULT_DB", str(tmp_path / "conv.db"))
+    # R-04 (A08-G12): the default path is resolved per call through
+    # utils.paths now, not a module constant computed at import --
+    # which ignored HALBERT_DATA_DIR and could not see an environment
+    # a test set afterwards.
+    monkeypatch.setattr(
+        threads_mod._cs, "_default_db_path", lambda: str(tmp_path / "conv.db"))
     monkeypatch.setattr(threads_mod, "_manager", None)
     monkeypatch.setattr(agent_routes, "_agent_instance", None)
     manager = agent_routes._thread_manager()

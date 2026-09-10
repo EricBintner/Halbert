@@ -1253,7 +1253,7 @@ def _create_conversation_store():
                     "canonical_thread_url is set but no peer_token configured "
                     "— falling back to local SqliteConversationStore"
                 )
-                return SqliteConversationStore(_cs._DEFAULT_DB)
+                return SqliteConversationStore(_cs._default_db_path())
             logger.info("ThreadManager: using PeerConversationStore at %s", thread_url)
             return PeerConversationStore(
                 peer_url=thread_url,
@@ -1262,7 +1262,7 @@ def _create_conversation_store():
     except Exception as e:
         logger.warning(f"Failed to create PeerConversationStore (falling back to local): {e}")
 
-    return SqliteConversationStore(_cs._DEFAULT_DB)
+    return SqliteConversationStore(_cs._default_db_path())
 
 
 # Type alias for isinstance check (avoids importing if not available)

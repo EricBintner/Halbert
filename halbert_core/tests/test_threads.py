@@ -935,7 +935,13 @@ class TestRecall:
 
 class TestSingleton:
     def test_get_thread_manager_uses_default_db(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(threads_mod._cs, "_DEFAULT_DB", str(tmp_path / "conv.db"))
+        # R-04 (A08-G12): the default path is resolved per call through
+        # utils.paths now, not a module constant computed at import --
+        # which ignored HALBERT_DATA_DIR and could not see an
+        # environment a test set afterwards.
+        monkeypatch.setattr(
+            threads_mod._cs, "_default_db_path",
+            lambda: str(tmp_path / "conv.db"))
         monkeypatch.setattr(threads_mod, "_manager", None)
         m = get_thread_manager()
         assert get_thread_manager() is m and isinstance(m, ThreadManager)
@@ -948,7 +954,13 @@ class TestSingleton:
         # shape. Unguarded, four callers built four managers: four RLocks (so
         # `_locked` no longer serialises anything) and three leaked sqlite
         # connections that nothing ever closes.
-        monkeypatch.setattr(threads_mod._cs, "_DEFAULT_DB", str(tmp_path / "conv.db"))
+        # R-04 (A08-G12): the default path is resolved per call through
+        # utils.paths now, not a module constant computed at import --
+        # which ignored HALBERT_DATA_DIR and could not see an
+        # environment a test set afterwards.
+        monkeypatch.setattr(
+            threads_mod._cs, "_default_db_path",
+            lambda: str(tmp_path / "conv.db"))
         monkeypatch.setattr(threads_mod, "_manager", None)
         gate = threading.Barrier(8)
         made = []
