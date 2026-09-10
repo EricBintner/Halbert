@@ -2219,10 +2219,12 @@ class SqliteConversationStore:
         try:
             with self._lock, self._conn:
                 old = self._conn.execute(
-                    "SELECT status FROM conversations WHERE id = ?", (old_thread_id,)
+                    "SELECT status, title FROM conversations WHERE id = ?",
+                    (old_thread_id,),
                 ).fetchone()
                 new = self._conn.execute(
-                    "SELECT status, parent_thread_id FROM conversations WHERE id = ?",
+                    "SELECT status, parent_thread_id, title FROM conversations "
+                    "WHERE id = ?",
                     (new_thread_id,),
                 ).fetchone()
                 if old is None or new is None:
@@ -2264,12 +2266,121 @@ class SqliteConversationStore:
                            WHERE id = ?""",
                         (ts, new_thread_id),
                     )
+                # Design §2.3, and the reason the docstring above named T2:
+                # the divider rows ride the SAME transaction as the status
+                # swap. A leaf that moved with no divider, and a divider
+                # with no move, are both records that lie.
+                self._mint_branch_summaries(
+                    old_thread_id, new_thread_id,
+                    old["title"], new["title"], ts,
+                )
             return True
         except Exception as e:
             logger.warning(
                 f"move_leaf {old_thread_id} -> {new_thread_id} failed: {e}"
             )
             return False
+
+    def _mint_branch_summaries(
+        self,
+        from_thread: str,
+        to_thread: str,
+        from_title: Any,
+        to_title: Any,
+        ts: float,
+    ) -> None:
+        """The two rows one edge crossing leaves behind (A16-G7, design §2.3).
+
+        Called from inside ``move_leaf``'s transaction and lock, so it uses
+        ``self._conn`` directly and never opens one of its own — a failure
+        here rolls the leaf move back with it, which is the point.
+
+        The crossing is identified by the last *turn* in the thread being
+        left. Cross away and back with nothing said in between and the
+        identity has not changed, so the rows are already there and nothing
+        is written: the design's "a thread that has turns since its last
+        branch-summary entry" expressed as a key rather than as a counter
+        someone has to remember to reset. The same key is what lets a
+        retried crossing complete a half-written one.
+
+        Two silences are deliberate:
+
+        - a thread nobody has spoken in is not told it was left (there is no
+          subject there to have been interrupted), and
+        - a thread with no history at all is not told it was returned to.
+          Opening a new subject is not a return, and a divider above the
+          first line of a conversation reconciles nothing.
+        """
+        # Imported here, not at module level: ``agents.threads`` (which owns
+        # the system-row fencing this template reuses) imports THIS module at
+        # its own module level, so a top-level import would be a cycle. Same
+        # shape as ``append_message``'s reach into ``continuity.ownership``.
+        from ..continuity.branch_summary import (
+            BRANCH_ORIGIN,
+            BRANCH_SUMMARY_KIND,
+            SIDE_DEPARTED,
+            SIDE_RETURNED,
+            build_departure_summary,
+            build_return_summary,
+            crossing_key,
+        )
+
+        boundary = self._conn.execute(
+            "SELECT MAX(id) FROM messages "
+            "WHERE conversation_id = ? AND origin != ?",
+            (from_thread, BRANCH_ORIGIN),
+        ).fetchone()[0]
+        if boundary is None:
+            # Nothing was ever said in the thread being left.
+            return
+        key = crossing_key(from_thread, to_thread, boundary)
+
+        def _mint(thread_id: str, side: str, content: str) -> None:
+            already = self._conn.execute(
+                "SELECT 1 FROM messages WHERE conversation_id = ? "
+                "AND origin = ? AND json_extract(metadata, '$.crossing') = ? "
+                "LIMIT 1",
+                (thread_id, BRANCH_ORIGIN, key),
+            ).fetchone()
+            if already is not None:
+                return
+            self._conn.execute(
+                "INSERT INTO messages "
+                "(conversation_id, role, content, timestamp, metadata, "
+                " origin, visible_in_timeline, context_included) "
+                "VALUES (?, 'system', ?, ?, ?, ?, 1, ?)",
+                (
+                    thread_id, content, ts,
+                    json.dumps({
+                        "kind": BRANCH_SUMMARY_KIND,
+                        "crossing": key,
+                        "side": side,
+                        "from_thread": from_thread,
+                        "to_thread": to_thread,
+                        "boundary_message_id": int(boundary),
+                    }),
+                    BRANCH_ORIGIN,
+                    # The departed thread's own replay does not need to be
+                    # told it was departed; the returned-to thread's replay
+                    # is the entire point of the feature.
+                    1 if side == SIDE_RETURNED else 0,
+                ),
+            )
+            # Deliberately NOT indexed into ``messages_fts``: the row carries
+            # no words of its own, only two titles that are already indexed
+            # on their own threads and in ``receipts_fts``. Indexing dividers
+            # would put them in every ``search_snippets`` result that matched
+            # a thread title.
+
+        _mint(from_thread, SIDE_DEPARTED, build_departure_summary(to_title=to_title))
+        target_has_history = self._conn.execute(
+            "SELECT 1 FROM messages WHERE conversation_id = ? LIMIT 1", (to_thread,)
+        ).fetchone()
+        if target_has_history is not None:
+            _mint(
+                to_thread, SIDE_RETURNED,
+                build_return_summary(from_title=from_title, to_title=to_title),
+            )
 
     # ------------------------------------------------------------------
     # Message readers
@@ -2344,6 +2455,33 @@ class SqliteConversationStore:
             logger.warning(f"blank_thread_words failed for {thread_id}: {e}")
             return False
 
+    def _index_message_fts(self, message_id: int, thread_id: str, text: str) -> None:
+        """Give one raw-SQL message row its ``messages_fts`` copy.
+
+        ``append_message`` has always done this inline; the writers that
+        insert with raw SQL (the rotation summary) need the same three
+        rules, which is why they are in one place rather than copied:
+        recover the index first so a stale degraded flag cannot skip a row
+        forever, ``OR REPLACE`` because recovery's backfill may have just
+        written this very rowid, and fail-open on corruption because a
+        derived index must never roll back a canonical write.
+
+        Call from inside the caller's transaction and lock.
+        """
+        if not self._fts_recover():
+            return
+        try:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO messages_fts(rowid, conversation_id, content) "
+                "VALUES (?, ?, ?)",
+                (int(message_id), thread_id, text),
+            )
+        except sqlite3.DatabaseError as e:
+            if self._is_fts_write_corruption_error(e):
+                self._enter_fts_fail_open(e)
+            else:
+                raise
+
     def write_compact_boundary(self, plan: Any) -> Optional[int]:
         """Persist one rotation (A16-G1, A16-G10). Returns the row id.
 
@@ -2369,6 +2507,15 @@ class SqliteConversationStore:
                     "VALUES (?, 'system', ?, ?, 1, 'compaction')",
                     (plan.thread_id, plan.summary, time.time()),
                 ).lastrowid
+                # The summary is the only searchable copy of the turns this
+                # transaction is about to hide: ``search_snippets`` joins
+                # ``messages_fts`` and skips rows the timeline hides, so
+                # without this the exact command and error strings the
+                # rotation went to the trouble of KEEPING became unfindable
+                # the moment it ran. Raw-SQL inserts do not get an index row
+                # for free -- there are no triggers on this table; every
+                # writer does its own (``append_message``).
+                self._index_message_fts(summary_id, plan.thread_id, plan.summary)
                 if plan.covered_message_ids:
                     marks = ",".join("?" * len(plan.covered_message_ids))
                     self._conn.execute(

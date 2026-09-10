@@ -255,3 +255,43 @@ def test_context_included_has_a_writer_and_a_reader(tmp_path):
     assert store.context_included(mid) is False
     store.set_context_included(mid, True)
     assert store.context_included(mid) is True
+
+
+def test_a_rotated_thread_is_still_searchable(tmp_path):
+    """The half of A16-G1 the first pass left out.
+
+    ``search_snippets`` joins ``messages_fts`` and excludes rows the
+    timeline hides. Rotation hides every covered turn, so the moment a
+    thread was compacted the part that had scrolled away stopped answering
+    search -- and the summary row, written with raw SQL rather than through
+    ``append_message``, had no index row of its own to answer in its place.
+    A rotation that makes its own material unfindable is not compaction,
+    it is deletion with extra steps.
+
+    The probe is a command that appears ONLY in the rotated-away turns: a
+    search that hits a preserved turn proves nothing about the summary.
+    """
+    store = _store(tmp_path)
+    early = _messages(30)
+    early[0]["content"] = (
+        "$ zpool resilver tank\n"
+        "error: permission denied on /dev/da3\n"
+    )
+    for message in early:
+        store.append_message(
+            thread_id="t1", role="assistant", content=message["content"])
+    assert store.search_snippets("t1", "resilver")
+
+    live = [dict(m) for m in store.list_messages("t1")]
+    plan = plan_rotation("t1", [
+        {"id": m["message_id"], "content": m["content"]} for m in live
+    ], keep_recent=10)
+    assert "zpool resilver tank" in plan.summary  # the fact did survive
+    assert store.write_compact_boundary(plan)
+
+    # ... and the row that carries it answers for the twenty turns it
+    # replaced, which are now hidden.
+    assert not [m for m in store.list_messages("t1")
+                if m["visible_in_timeline"] and "resilver" in str(m["content"])
+                and m["message_id"] in plan.covered_message_ids]
+    assert store.search_snippets("t1", "resilver")
