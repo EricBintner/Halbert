@@ -335,6 +335,12 @@ subjects and an open question about which wins, the ones we would ask are:
    *never*?
 4. Where does your rung 4 live, if you have one at all?
 
+**Home, decided 2026-09-10 (`ENGINE-1`): Haloysius.** Apache-2.0, already the
+engine, already a Halbert dependency. Forced by licensing rather than
+preference — Halbert is GPL-3.0-or-later, so a mechanism originating there
+could not be taken up by a closed sibling. Two further instances (H2, H3) are
+a possible expansion path once it proves out in the first two.
+
 **Reuse posture, agreed with DebateHaus: share the contract and the
 conformance vectors, not the module — for now.** The languages differ, the
 deployment shapes differ, and rung 0 is a genuinely different function in each
