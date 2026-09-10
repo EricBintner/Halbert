@@ -43,6 +43,7 @@ from ..persona.permission.effective import (
     REASON_OS_DENIED,
     REASON_OS_UNKNOWN,
     REASON_OUT_OF_SCOPE,
+    REASON_NEEDS_APPROVAL,
     REASON_QUIET,
     REASON_SCOPE_UNREADABLE,
 )
@@ -58,6 +59,7 @@ CLOSED_REASONS = frozenset({
     REASON_OS_DENIED,
     REASON_OS_UNKNOWN,
     REASON_OUT_OF_SCOPE,
+    REASON_NEEDS_APPROVAL,
     REASON_QUIET,
     REASON_SCOPE_UNREADABLE,
 })
@@ -75,6 +77,10 @@ DENIAL_COPY = {
     REASON_OS_UNKNOWN: "I can't tell what the operating system says — this build isn't signed.",
     REASON_OUT_OF_SCOPE: "That's outside the scope that was granted.",
     REASON_QUIET: "I'm in quiet mode — I only speak when spoken to.",
+    REASON_NEEDS_APPROVAL: (
+        "You asked me to check with you before I do this. Approve the "
+        "exact change and I'll go ahead."
+    ),
     REASON_SCOPE_UNREADABLE: (
         "I can't read the scope this permission was granted with, so I "
         "won't act on it. Re-grant it and I'll have a scope I understand."

@@ -46,7 +46,14 @@ from typing import Any, Optional, Sequence
 from ..policy import AskPolicy, PolicyPair, SecurityLevel, merge_policies
 from .affordance import AffordanceTable, EMPTY_AFFORDANCE, affords
 from .ceiling import CapabilityCeiling, EMPTY_CEILING
-from .consent import ConsentDecision, ConsentRecord, consent_state
+from .consent import (
+    ASK_EVERY_USE,
+    ASK_OFF,
+    ConsentDecision,
+    ConsentRecord,
+    consent_state,
+    latest_for,
+)
 from .halt import HaltState
 from .os_grant import DEFAULT_OS_GRANTS, OsGrantState, OsGrantTable, is_os_grant_affirmative
 
@@ -74,6 +81,11 @@ REASON_QUIET = "QUIET"
 #: -- the check never ran -- and not an exception either: a refusal the
 #: permission system cannot explain is still a refusal it must TYPE.
 REASON_SCOPE_UNREADABLE = "SCOPE_UNREADABLE"
+#: A11-G1: the grant stands, and this use has not been approved yet.
+#: Distinct from NOT_GRANTED (nothing was ever granted) because the
+#: remedy is different: one is "grant it", the other is "answer the
+#: confirmation you were shown".
+REASON_NEEDS_APPROVAL = "NEEDS_APPROVAL"
 
 
 @dataclass(frozen=True)
@@ -101,6 +113,12 @@ class EffectiveDecision:
     decisive_axis: str
     reason_code: str
     observations: tuple
+    #: A11-G1: the ask disposition of the grant this decision folded.
+    #: Carried on the decision because ``axis_floor`` is the only place
+    #: the ask reaches the lattice, and it has nothing else to read --
+    #: it used to be a constant OFF, which is what "recorded, never
+    #: enforced" meant in practice.
+    ask: str = "off"
 
 
 #: A11 bug 6: the sentinel that makes ``halt`` required without breaking
@@ -196,7 +214,14 @@ def effective_capability(
         return EffectiveDecision(capability, False, AXIS_OS_GRANT, REASON_OS_UNKNOWN, observations)
     if not scope_ok_flag:
         return EffectiveDecision(capability, False, AXIS_SCOPE, REASON_OUT_OF_SCOPE, observations)
-    return EffectiveDecision(capability, True, "", REASON_ALLOWED, observations)
+    # A11-G1: the ask disposition of the grant that just affirmed, so
+    # ``axis_floor`` has something to read. It never changes the boolean
+    # -- an ask-every-use grant IS granted; whether this particular use
+    # may proceed is ``require()``'s question, one layer up.
+    granted = latest_for(consent_records, capability)
+    ask = getattr(granted, "ask", ASK_OFF) if granted is not None else ASK_OFF
+    return EffectiveDecision(
+        capability, True, "", REASON_ALLOWED, observations, ask=ask)
 
 
 def axis_floor(decision: EffectiveDecision) -> PolicyPair:
@@ -210,7 +235,17 @@ def axis_floor(decision: EffectiveDecision) -> PolicyPair:
     own layers own the ``ask`` axis entirely.
     """
     if decision.allowed:
-        return PolicyPair(security=SecurityLevel.FULL, ask=AskPolicy.OFF)
+        # A11-G1: an ask-every-use grant contributes ALWAYS. This was a
+        # constant OFF, so the ask axis could never reach a caller even
+        # once the ledger carried it -- "Recorded, never enforced", in
+        # role_gate.py's own words.
+        return PolicyPair(
+            security=SecurityLevel.FULL,
+            ask=(
+                AskPolicy.ALWAYS if decision.ask == ASK_EVERY_USE
+                else AskPolicy.OFF
+            ),
+        )
     return PolicyPair(security=SecurityLevel.DENY, ask=AskPolicy.OFF)
 
 

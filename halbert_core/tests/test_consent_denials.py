@@ -50,7 +50,12 @@ ALL_SECTION_17_OUTCOMES = {
 # permission system cannot explain is still a refusal it has to TYPE.
 # Before it existed, 24 of the 47 shipped profile rows raised a bare
 # ValueError out of require() on the first call after acceptance.
-ADDED_OUTCOMES = {"SCOPE_UNREADABLE"}
+#
+# NEEDS_APPROVAL (R-08, A11-G1/G9 under FD-6) is the second: a grant
+# recorded ``ask: every_use`` is a standing permission, not a standing
+# authorisation. It is not NOT_GRANTED, because the remedy is different
+# -- answer the confirmation you were shown, do not grant again.
+ADDED_OUTCOMES = {"SCOPE_UNREADABLE", "NEEDS_APPROVAL"}
 
 
 # ---------------------------------------------------------------------------

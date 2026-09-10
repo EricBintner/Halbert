@@ -71,6 +71,13 @@ FIRST_PARTY_SURFACES = frozenset({
 _LIVE_OS_REAUTH_PREFIX = "os_reauth"
 
 
+#: The ask dispositions a grant may carry (A11-G1). A closed set: an
+#: unknown disposition would be a control nobody can enforce.
+ASK_OFF = "off"
+ASK_EVERY_USE = "every_use"
+ASK_DISPOSITIONS = frozenset({ASK_OFF, ASK_EVERY_USE})
+
+
 @dataclass(frozen=True)
 class Principal:
     """Who decided — never just a name, always an authentication story."""
@@ -112,6 +119,22 @@ class ConsentRecord:
     expires_at: Optional[str] = None        # ISO-8601 TTL bound (voiceprint: 400 days)
     cause: str = ""                         # e.g. "os_declined", "os_revoked"
     prior: Optional[ConsentDecision] = None # the immediately previous decision
+    #: A11-G1 + bug 2: the ASK disposition of this grant. ``"off"`` is an
+    #: unconditional grant; ``"every_use"`` means the review screen
+    #: promised a confirmation before each use, and the ledger has to say
+    #: so -- ``accept_profile`` used to drop ``ask_every_use`` on the
+    #: floor, so an ask row landed here indistinguishable from an
+    #: unconditional one and the promised confirmation existed only as a
+    #: Python constant.
+    ask: str = ASK_OFF
+
+    def __post_init__(self) -> None:
+        if self.ask not in ASK_DISPOSITIONS:
+            raise ValueError(
+                f"ask must be one of {sorted(ASK_DISPOSITIONS)}, not "
+                f"{self.ask!r}: an unknown disposition is a control that "
+                f"could lie about when it asks"
+            )
 
 
 def is_affirmative_consent(decision: Optional[ConsentDecision]) -> bool:

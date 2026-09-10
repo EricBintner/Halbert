@@ -615,6 +615,11 @@ def accept_profile(
                 build_version=build_version,
                 build_commit=build_commit,
                 signing_subject=signing_subject,
+                # A11-G1 + bug 2: the review screen's promise, carried
+                # into the ledger. Dropping it here is what made an
+                # ask-every-use row indistinguishable from an
+                # unconditional grant.
+                ask="every_use" if proposal.ask_every_use else "off",
             )
         )
     return written

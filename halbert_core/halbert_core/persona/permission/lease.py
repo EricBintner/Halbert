@@ -52,7 +52,13 @@ from typing import Any, Dict, Mapping, Optional, Sequence, Tuple
 from ...consent.denials import CLOSED_REASONS, Denied
 from .affordance import AffordanceTable, EMPTY_AFFORDANCE, affords
 from .ceiling import CapabilityCeiling, EMPTY_CEILING, takes_consent_records
-from .consent import ConsentDecision, ConsentRecord, consent_state, latest_for
+from .consent import (
+    ASK_EVERY_USE,
+    ConsentDecision,
+    ConsentRecord,
+    consent_state,
+    latest_for,
+)
 from .effective import (
     _HALT_REQUIRED,
     AXIS_CEILING,
@@ -66,6 +72,7 @@ from .effective import (
     REASON_NOT_GRANTED,
     REASON_OS_DENIED,
     REASON_OS_UNKNOWN,
+    REASON_NEEDS_APPROVAL,
     REASON_OUT_OF_SCOPE,
     REASON_SCOPE_UNREADABLE,
     effective_capability,
@@ -523,6 +530,9 @@ def require(
     capabilities_registry: Optional[object] = None,
     redaction_backend_available: bool = False,
     now: Optional[str] = None,
+    approval_token: Optional[str] = None,
+    approval_receipts: Optional[object] = None,
+    artefact_sha256: str = "",
 ) -> Lease:
     """Evaluate the five axes and mint the lease that does the work.
 
@@ -541,6 +551,15 @@ def require(
             rationale is not a reason and must never be passed here.
         stop_event: the loop's event. Revocation and halt trip it so the
             thread exits rather than merely failing its next call.
+        approval_token / approval_receipts / artefact_sha256: the
+            answered confirmation this use redeems (A11-G1/G9, FD-6). A
+            grant recorded ``ask: every_use`` is a standing permission,
+            not a standing authorisation: the use itself needs a receipt
+            minted by the confirmation flow and bound to the artefact
+            that was shown. Omitting them on such a grant denies with
+            ``NEEDS_APPROVAL`` -- which is not NOT_GRANTED, because the
+            remedy is different: answer the confirmation, do not grant
+            again.
         redaction_backend_available: whether a working redaction backend
             exists on this host. Defaults to **False** — a grant whose
             scope declares ``redaction: "required"`` refuses to open
@@ -605,6 +624,26 @@ def require(
     )
     if not decision.allowed:
         raise Denied.from_decision(decision)
+
+    # A11-G1 + G9 (FD-6): an ask-every-use grant needs THIS use approved.
+    # The grant says the owner is willing to be asked; the receipt says
+    # they were asked and said yes, about this artefact, once.
+    if decision.ask == ASK_EVERY_USE:
+        receipts = approval_receipts
+        if receipts is None:
+            from .approval import get_approval_receipts
+            receipts = get_approval_receipts()
+        redeemed = receipts.redeem(
+            approval_token, capability, artefact_sha256=artefact_sha256)
+        if redeemed is None:
+            raise Denied(
+                capability,
+                REASON_NEEDS_APPROVAL,
+                decisive_axis=AXIS_CONSENT,
+                detail="this grant asks before every use, and this use "
+                       "carries no answered confirmation for what it is "
+                       "about to do",
+            )
 
     # Redaction fails closed on the capability, not the frame — checked
     # only on an otherwise-allowed lease (a refused capability has

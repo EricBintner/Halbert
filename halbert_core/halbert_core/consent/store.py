@@ -185,6 +185,10 @@ def record_to_payload(record: ConsentRecord) -> Dict[str, Any]:
         "expires_at": record.expires_at,
         "cause": record.cause,
         "prior": record.prior.value if record.prior is not None else "",
+        # A11-G1: the ask disposition is part of the decision, so it
+        # rides the hash-chained event rather than being re-derived from
+        # a profile table that may have changed since.
+        "ask": record.ask,
     }
     return payload
 
@@ -218,6 +222,10 @@ def record_from_payload(payload: Mapping[str, Any]) -> ConsentRecord:
             policy_version=payload.get("policy_version", "consent-schema/1"),
             expires_at=payload.get("expires_at"),
             cause=payload.get("cause", ""),
+            # A11-G1: absent means the pre-ask ledger's rows, which were
+            # written before the disposition existed -- read as "off",
+            # the shape they actually had.
+            ask=payload.get("ask", "off"),
             prior=(
                 ConsentDecision(payload["prior"])
                 if payload.get("prior") else None
@@ -372,6 +380,7 @@ class ConsentStore:
         expires_at: Optional[str] = None,
         cause: str = "",
         ts: Optional[str] = None,
+        ask: str = "off",
     ) -> ConsentRecord:
         """Append one decision event — the only writer (§1.5).
 
@@ -453,6 +462,7 @@ class ConsentStore:
             expires_at=expires_at,
             cause=cause,
             prior=prior_decision.decision if prior_decision else None,
+            ask=ask,
         )
         if decision is ConsentDecision.GRANTED and not is_valid_grant_record(record):
             # Belt and braces: may_record_grant and the text check above
