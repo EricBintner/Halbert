@@ -62,5 +62,16 @@ def meets_floor(actual: ClaimStrength, required: ClaimStrength) -> bool:
 
 
 def weakest_claim(claims) -> IdentifierClaim:
-    """Combined identity is only as strong as its weakest claim."""
+    """Combined identity is only as strong as its weakest claim.
+
+    A09 bug 4: total. ``min([])`` raised ``ValueError`` out of the claim
+    ladder, and a combined identity with NOTHING in it is the weakest
+    identity there is -- MUTABLE, the floor -- not an error for a caller
+    to handle. Raising there meant an empty claim set became an
+    exception on an authorization path, which fails in whichever
+    direction the caller's except clause happens to point.
+    """
+    claims = list(claims or ())
+    if not claims:
+        return IdentifierClaim(kind="speaker", strength=ClaimStrength.MUTABLE)
     return min(claims, key=lambda c: c.strength)

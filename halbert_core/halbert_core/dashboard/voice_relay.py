@@ -72,11 +72,25 @@ class RelayReceipt:
 
 
 def _verified_from_observation(observation: Any) -> bool:
-    """The pipeline's actual verification result: it verified the speaker
-    when the identification matched an enrolled profile (a non-empty
-    speaker_id — the store lookup only ever sets name/role alongside a
-    match). A zero-confidence or absent match is not a verification."""
-    return bool(getattr(observation, "speaker_id", "") or "")
+    """The pipeline's actual verification result.
+
+    Verified when the identification matched an enrolled profile AND
+    that profile resolved: a speaker id with no profile behind it names
+    nobody (A09 bug 5). The pipeline clears the id in that case, and
+    this is the belt on those braces -- the NAME is what a profile
+    lookup produces, so an id without one is a match the store could not
+    stand behind.
+    """
+    if not (getattr(observation, "speaker_id", "") or ""):
+        return False
+    return bool(getattr(observation, "speaker_name", "") or "")
+
+
+#: How long two identical utterances are one utterance (A09 bug 6). The
+#: origin's window: a relay that re-sends, a satellite that hears the
+#: same phrase twice, or a double-submit used to become two TURNS -- two
+#: answers, and for a command, two executions.
+UTTERANCE_DEDUPE_SECONDS = 12.0
 
 
 class VoiceRelayReceipts:
@@ -99,13 +113,36 @@ class VoiceRelayReceipts:
     def __init__(self) -> None:
         self._pending: "OrderedDict[str, RelayReceipt]" = OrderedDict()
         self._now = time.time  # seam for the expiry test
+        #: A09 bug 6: the last utterance and when, for the dedupe window.
+        self._last_utterance = None
 
     def reset(self) -> None:
         """Test seam: drop every pending receipt."""
         self._pending.clear()
+        self._last_utterance = None
 
     def size(self) -> int:
         return len(self._pending)
+
+    def is_duplicate(self, text: str, *, window: float = UTTERANCE_DEDUPE_SECONDS) -> bool:
+        """Whether this utterance is the one just recorded (A09 bug 6).
+
+        One utterance is one turn. A relay that re-sends, a satellite
+        that hears the same phrase twice, or a double-submit produced two
+        turns -- two answers, and for a command two executions. Compared
+        on NORMALISED text, because the same words re-transcribed differ
+        in whitespace and case alone.
+        """
+        normalised = " ".join(str(text or "").lower().split())
+        if not normalised:
+            return False
+        now = self._now()
+        last = getattr(self, "_last_utterance", None)
+        self._last_utterance = (normalised, now)
+        if last is None:
+            return False
+        previous, at = last
+        return previous == normalised and (now - at) <= window
 
     def record(self, observation: Any) -> str:
         """Record one relayed observation; return its receipt token.

@@ -19,7 +19,31 @@ from halbert_core.federation.peers_config import PeersConfig
 
 
 @pytest.fixture
-def client(monkeypatch, tmp_path):
+def _local_client(monkeypatch):
+    """R-02 (A12 bug 4): the loopback predicate reads ADDRESSES now.
+
+    It used to accept the hostname strings "localhost" and "testclient",
+    and this suite's Host header is "testclient" -- so these routes were
+    passing the local-admin gate on a string any client can send, in
+    production as well as here. The audit's own remedy: tests monkeypatch
+    the predicate, production reads addresses.
+    """
+    import halbert_core.federation.peer_middleware as pm
+
+    def _looks_local(request):
+        client = getattr(request, "client", None)
+        host = getattr(client, "host", None) if client else None
+        # The default TestClient host is the literal "testclient"; a test
+        # that wants a remote caller builds one with a real address, and
+        # that still reads as remote here.
+        return host == "testclient" or pm._is_loopback_host(host)
+
+    monkeypatch.setattr(pm, "_is_local_client", _looks_local)
+    yield
+
+
+@pytest.fixture
+def client(monkeypatch, tmp_path, _local_client):
     """App with only the devices router, isolated being.yml + peers.json."""
     monkeypatch.setattr(
         "halbert_core.config.being_config.get_config_dir", lambda: tmp_path)

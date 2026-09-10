@@ -22,6 +22,8 @@ here; a home is an address and a persona id.
 """
 from __future__ import annotations
 
+import re
+
 import logging
 from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 
@@ -123,7 +125,13 @@ class SiblingClient:
         return headers
 
     def _call(self, method: str, path: str, body: Optional[Dict[str, Any]] = None) -> Any:
-        url = self.home.base_url + path.format(pid=self.home.persona_id)
+        # A12 bug 5 (fix-first row 28): the persona id was interpolated
+        # into the URL PATH raw. A remote home's own listing supplies it,
+        # so an id carrying "/", "?" or "#" sent this bearer-authorised
+        # request somewhere else entirely -- to a different path on the
+        # same host, with the token attached.
+        url = self.home.base_url + path.format(
+            pid=quote_persona_id(self.home.persona_id))
         try:
             status, data = self._transport(method, url, body, self._headers())
         except Exception as e:
@@ -324,3 +332,40 @@ def install_from_home(
         keepalive=client.ping,
     )
     return session, dropped
+
+
+# ---------------------------------------------------------------------------
+# A12 bug 5: a persona id is an identifier, not a path fragment
+# ---------------------------------------------------------------------------
+
+#: What a persona id may contain. Deliberately narrow: an id is a name
+#: another machine chose, and it is about to be spliced into a URL.
+_PERSONA_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+
+
+def validate_persona_id(persona_id: str) -> str:
+    """Refuse a persona id that could steer a request. Returns it.
+
+    Checked at INTAKE, where the id arrives from a remote home's
+    listing, so a bad id is refused once rather than escaped at every
+    later use -- and quoting alone would still let an id containing a
+    path traversal read as a legitimate name in a log line.
+    """
+    text = str(persona_id or "")
+    if not _PERSONA_ID_RE.match(text):
+        raise ValueError(
+            f"persona id {text!r} is not a plain identifier; a remote home "
+            f"cannot name a path fragment"
+        )
+    return text
+
+
+def quote_persona_id(persona_id: str) -> str:
+    """The id as one URL path segment, whatever it contains.
+
+    Belt on the intake check's braces: nothing reaches a URL unquoted,
+    including an id that predates the validator.
+    """
+    from urllib.parse import quote
+
+    return quote(str(persona_id or ""), safe="")

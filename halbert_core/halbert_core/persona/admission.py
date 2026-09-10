@@ -53,19 +53,44 @@ class IngressDecision:
     gate_graph: tuple[Gate, ...]
 
 
+#: Which admission each effect produces when it is the decisive gate
+#: (A12-G4). SKIP and OBSERVE were defined in the effect vocabulary and
+#: dispatched NOWHERE -- a gate could declare either and the walk would
+#: treat it as an ordinary allow, so a quiet-hours skip and a
+#: shadow-mode observation both arrived as full dispatches.
+_EFFECT_ADMISSION = {
+    GateEffect.BLOCK: ADMISSION_DROP,
+    GateEffect.SKIP: ADMISSION_SKIP,
+    GateEffect.OBSERVE: ADMISSION_OBSERVE,
+}
+
+#: The order a decisive gate is chosen in. A refusal is louder than a
+#: pass-over whatever the gate order: a BLOCK anywhere in the walk beats
+#: a SKIP that came before it.
+_EFFECT_PRECEDENCE = (GateEffect.BLOCK, GateEffect.SKIP, GateEffect.OBSERVE)
+
+
 def decide_ingress(gates) -> IngressDecision:
-    """First blocking gate wins; the decision records which gate and why."""
+    """The first decisive gate wins; the decision records which and why.
+
+    A12-G1: the walk STOPS at the first BLOCK. It used to keep going, so
+    a later gate could overwrite the decisive one and a denial named the
+    wrong reason -- which is the whole value of this record, since a
+    denial is supposed to be answerable with "dropped at gate X, reason
+    Y" rather than "no".
+    """
     if not gates:
         return IngressDecision(ADMISSION_DROP, "", "no_gates_evaluated", ())
-    decisive = None
-    for gate in gates:
-        if gate.effect == GateEffect.BLOCK:
-            decisive = gate
-            break
-    if decisive is None:
-        decisive = gates[-1]
-        return IngressDecision(ADMISSION_DISPATCH, decisive.id, decisive.reason_code, tuple(gates))
-    return IngressDecision(ADMISSION_DROP, decisive.id, decisive.reason_code, tuple(gates))
+    for effect in _EFFECT_PRECEDENCE:
+        for gate in gates:
+            if gate.effect == effect:
+                return IngressDecision(
+                    _EFFECT_ADMISSION[effect], gate.id, gate.reason_code,
+                    tuple(gates),
+                )
+    decisive = gates[-1]
+    return IngressDecision(
+        ADMISSION_DISPATCH, decisive.id, decisive.reason_code, tuple(gates))
 
 
 #: Human words for the machine-readable codes; the payload carries both.
