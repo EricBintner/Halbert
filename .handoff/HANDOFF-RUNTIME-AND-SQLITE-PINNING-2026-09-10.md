@@ -26,6 +26,14 @@ Two separate problems fall out, and they have one fix:
 
 ## 2. Measured: the interpreter landscape on this machine
 
+**This section is a diagnosis of what is wrong today. It is not a menu — no
+row in the tables below is a recommendation.** The answer is §4. A reader who
+skims §2 and picks the row with the best SQLite has picked an x86_64-only
+interpreter and reproduced the exact mistake this section exists to document.
+That misread has now happened twice: once by a previous session, and once by a
+reader of *this* doc on 2026-09-10, who came away believing the packet
+recommended the Intel Homebrew. It does not, and never did.
+
 Apple **M1 Ultra, arm64**. Both Homebrews are installed and **the Intel one
 wins on PATH**:
 
@@ -58,13 +66,48 @@ input on this machine** — a previous session recommended
 Note also that the *newer* Homebrew 3.11.15 has an *older* SQLite than the
 Intel 3.11.14. Python minor version predicts nothing.
 
-**Five live interpreter sources:** two Homebrews, python.org frameworks, a
-`~/.local/bin` shim, and miniconda. Resolved in an order nobody chose.
+**Six live interpreter sources** (measured 2026-09-10 — corrected up from the
+five this doc first claimed): two Homebrews, python.org frameworks, a
+`~/.local/bin` shim, miniconda, and a **pyenv shim** at
+`~/.pyenv/shims/python3` (`~/.pyenv/versions` holds `anaconda3-2022.05`).
+Resolved in an order nobody chose.
 
-**`uv` is present but stale and comes from miniconda** — `0.8.17` (Sep 2025).
-*Claim to verify:* that vintage resolves python-build-standalone with SQLite
+**Two `uv` installs, both stale** (measured 2026-09-10):
+
+| Path | Version | Source | PATH |
+|---|---|---|---|
+| `~/miniconda3/bin/uv` | `0.8.17` (Sep 2025) | miniconda | **wins** |
+| `/usr/local/bin/uv` | `0.6.6` (Mar 2025) | Intel brew | shadowed |
+
+*Claim to verify:* those vintages resolve python-build-standalone with SQLite
 **3.50.4** (still vulnerable) where current uv resolves **3.53.1**. If true,
-"just use uv" without pinning uv itself lands back inside the range.
+"just use uv" without pinning uv itself lands back inside the range. Note the
+sharper form of the problem: there is no single "the uv on this machine", so
+"whichever uv ran the build" is itself an unpinned input. §5 trap 5 is not
+hypothetical here.
+
+### Out of scope for this packet: removing the Intel Homebrew
+
+**Founder ruling, 2026-09-10: removing the Intel Homebrew from this machine is
+machine hygiene, not this project's work. Do not fold it into this packet.**
+Recorded here only so a future session does not rediscover the question and
+wander into it.
+
+Measured 2026-09-10: 172 Intel formulae, 34 top-level installs, 23 with no arm
+counterpart — and **13 of those currently win on PATH**, all x86_64 under
+Rosetta: `git`, `go`, `just`, `yq`, `yarn`, `redis-server`, `xcodegen`,
+`meson`, `iperf3`, `git-lfs`, `cargo-deny`, `ios-deploy`, `ruby`. (`git` would
+fall back to Apple's `/usr/bin/git` 2.50.1; `node` is already nvm arm64
+v22.19.0, so Intel's node is dead weight.) It is a real migration, not a
+delete — which is why it is someone's afternoon, not a line item here.
+
+**The load-bearing fact for *this* packet:** nothing in the macOS build path
+depends on `/usr/local`. Every `/usr/local` reference in the repo is a Linux
+polkit installer, a CUDA path, a Linux scanner, or RAG-scraper doc text
+(measured). So §4 is neither blocked by the Intel brew nor waiting on its
+removal — and once the app ships its own interpreter, the product stops caring
+which Homebrews exist at all. That independence is the point: **the fix must
+not be "the host had the right brew."**
 
 ---
 
