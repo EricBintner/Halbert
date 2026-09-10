@@ -45,6 +45,7 @@ import json
 import logging
 import os
 import threading
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional
@@ -267,17 +268,26 @@ def _flock_file(directory: Path, name: str):
     return handle
 
 
-def _append_locked(log, payload: Dict[str, Any]):
-    """Append one event under the cross-process lock, mirroring
-    ``obs/audit.py::_append_lock``: ``EventLog.append`` reads the head,
-    writes the record, then writes the head back, and two interleaving
-    appends take the same ``seq`` and ``prev_hash`` — a log that then
-    *reports* tampering nobody caused.
+@contextmanager
+def _ledger_lock(log):
+    """The ledger's cross-process lock, mirroring ``obs/audit.py``.
+
+    ``EventLog.append`` reads the head, writes the record, then writes
+    the head back, and two interleaving appends take the same ``seq``
+    and ``prev_hash`` — a log that then *reports* tampering nobody
+    caused.
+
+    A11 bug 5 widened what this covers. The projection is DERIVED from
+    the log, so the append and the projection write have to be one
+    critical section and a reader comparing the two has to take the same
+    lock: appending under one lock and projecting under another left a
+    window where the log had moved and the projection had not, and a
+    projection that disagrees with the chain is a Stop.
     """
     with _local_lock:
         handle = _flock_file(log.directory, _LOCK_FILENAME)
         try:
-            return log.append(CONSENT_EVENT_KIND, payload)
+            yield
         finally:
             if handle is not None:
                 fcntl.flock(handle, fcntl.LOCK_UN)
@@ -470,9 +480,12 @@ class ConsentStore:
             # never reach the chain even if a future caller reorders them.
             raise GrantRefused(GrantRefused.NO_TEXT_SHOWN)
 
-        event = _append_locked(events, record_to_payload(record))
-        _enforce_perms(self.ledger_dir)
-        self._write_projection(events)
+        with _ledger_lock(events):
+            event = events.append(CONSENT_EVENT_KIND, record_to_payload(record))
+            _enforce_perms(self.ledger_dir)
+            # Inside the same section: the projection is derived from the
+            # log, so a reader must never see one moved and the other not.
+            self._write_projection(events)
         log.info(
             "consent decision recorded: %s %s (seq %d)",
             capability, decision.value, event.seq,
@@ -660,13 +673,22 @@ class ConsentStore:
         that disagrees with the chain is tampering or corruption — §1.5
         makes it a Stop, and the boot check halts on it.
         """
+        # A11 bug 5: both readings under ONE lock -- the same flock the
+        # writer takes. This used to derive the expected projection from
+        # the log and then read the projection file, unsynchronised, so a
+        # concurrent record_decision between the two reads compared an
+        # old log against a new projection. The answer to a projection
+        # that disagrees with the chain is a Stop (§1.5), so the race
+        # halted a healthy machine and named it tampering.
         events = self._log() if self.ledger_dir.is_dir() else None
-        expected = (
-            self._projection_content(events) if events is not None
-            else {"version": _PROJECTION_VERSION, "head_seq": -1, "head_hash": "",
-                  "records": 0, "state": {}}
-        )
-        actual = self.read_projection()
+        if events is None:
+            expected = {"version": _PROJECTION_VERSION, "head_seq": -1,
+                        "head_hash": "", "records": 0, "state": {}}
+            actual = self.read_projection()
+        else:
+            with _ledger_lock(events):
+                expected = self._projection_content(events)
+                actual = self.read_projection()
         if actual is None:
             return "absent"
         if actual == expected:

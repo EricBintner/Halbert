@@ -594,13 +594,19 @@ def test_the_writer_refuses_to_run_without_integrity(store, monkeypatch):
 
 def test_a_failed_ledger_write_leaves_no_grant(store, monkeypatch, dirs):
     """Fail-closed write: an action that cannot be recorded is not
-    performed — the record either lands whole or does not land."""
-    real_append = store_mod._append_locked
+    performed — the record either lands whole or does not land.
 
-    def broken_append(log, payload):
+    R-08 Phase D (A11 bug 5): the append and the projection write became
+    ONE critical section, so ``_append_locked`` -- which patched only the
+    append -- is gone. The seam is the log's own append, which is what
+    actually fails when the disk does.
+    """
+    def broken_append(self, kind, payload):
         raise OSError("disk full")
 
-    monkeypatch.setattr(store_mod, "_append_locked", broken_append)
+    log = store._log()
+    monkeypatch.setattr(type(log), "append", broken_append)
+    monkeypatch.setattr(store, "_log", lambda: log)
 
     with pytest.raises(OSError):
         _grant(store)

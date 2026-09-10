@@ -68,7 +68,10 @@ def test_a_second_halt_records_the_newer_reason():
 def test_resume_clears_and_records_provenance():
     h = HaltState()
     h.halt(HaltReason.OWNER_STOP, by="owner", surface="tray")
-    h.resume(by="owner", surface="settings")
+    # R-08 Phase D (A11-G6, FD-5): a resume needs a token minted for
+    # THIS halt. Clearing the stop is the authorised path's to do,
+    # not any caller's -- that asymmetry is the point of the halt.
+    h.resume(by="owner", surface="settings", token=h.mint_resume_token())
     assert h.is_halted() is False
     assert h.reason_code == ""
     assert h.resumed_by == "owner"
@@ -78,12 +81,25 @@ def test_resume_clears_and_records_provenance():
 
 def test_resume_on_a_running_state_is_a_no_op():
     h = HaltState()
-    h.resume(by="owner", surface="settings")
+    # R-08 Phase D (A11-G6, FD-5): a resume needs a token minted for
+    # THIS halt. Clearing the stop is the authorised path's to do,
+    # not any caller's -- that asymmetry is the point of the halt.
+    h.resume(by="owner", surface="settings", token=h.mint_resume_token())
     assert h.is_halted() is False
     assert h.resumed_at is None  # nothing was resumed
 
 
 def test_concurrent_halt_and_read_is_safe():
+    """Halts and reads race freely; the state stays consistent.
+
+    R-08 Phase D (A11-G6, FD-5): resume is no longer part of the hammer.
+    A halt invalidates any outstanding resume token -- a token minted for
+    one stop must not lift a different one -- so racing resumes against
+    halts refuses by design, which is the mechanism working rather than a
+    failure to pin. The resume path has its own tests; what this one is
+    about is that concurrent halting and reading neither crashes nor
+    leaves a half-written state.
+    """
     h = HaltState()
     errors: list[str] = []
 
@@ -91,8 +107,9 @@ def test_concurrent_halt_and_read_is_safe():
         try:
             for reason in (HaltReason.OWNER_STOP, HaltReason.GUARDRAIL_TRIPS):
                 h.halt(reason, by="t", surface="test")
-                _ = h.is_halted(), h.reason_code
-                h.resume(by="t", surface="test")
+                assert h.is_halted() is True
+                assert h.reason_code in (
+                    HaltReason.OWNER_STOP, HaltReason.GUARDRAIL_TRIPS)
         except Exception as exc:  # pragma: no cover - failure path
             errors.append(repr(exc))
 
@@ -102,4 +119,7 @@ def test_concurrent_halt_and_read_is_safe():
     for t in threads:
         t.join()
     assert errors == []
-    assert h.is_halted() is False  # every hammer resumed what it halted
+    assert h.is_halted() is True
+    # And it clears cleanly once nothing is racing it.
+    h.resume(by="owner", surface="settings", token=h.mint_resume_token())
+    assert h.is_halted() is False
