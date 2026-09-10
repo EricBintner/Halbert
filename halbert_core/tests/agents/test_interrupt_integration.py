@@ -247,12 +247,15 @@ class TestSteer:
         await _collect(agent.process("read the hosts file", session_id="steer"))
 
         # The steer applied to the LAST tool result at the batch boundary,
-        # with the Phase A concatenation and marker.
-        assert any("\n[steered] also check the logs" in o for o in agent.ctx.observations)
+        # inside the A07-G4 labelled wrapper.
+        assert any(
+            "[steered]\nalso check the logs\n[/steered]" in o
+            for o in agent.ctx.observations
+        )
         # And the next model call actually saw it (the planning prompt rides
         # the leading instructions, so the whole messages array is checked).
         assert any(
-            "[steered] also check the logs" in str(m)
+            "also check the logs" in str(m)
             for m in llm.seen[1:]
         )
         assert agent._pending_steer == {}
@@ -267,11 +270,20 @@ class TestSteer:
         await asyncio.wait_for(task, timeout=5)
         # No tool result existed to append to, so the steer entered the
         # observations as its own line and the model still saw it.
-        assert agent.ctx.observations[0].startswith("[steered] and the camera too")
+        assert agent.ctx.observations[0] == (
+            "[steered]\nand the camera too\n[/steered]"
+        )
         assert any("and the camera too" in str(m) for m in llm.seen)
 
     @pytest.mark.asyncio
-    async def test_the_pending_slot_is_single_replace_not_grow(self):
+    async def test_the_pending_steers_concatenate(self):
+        """A07-G6: this used to assert the first steer was thrown away.
+
+        The slot was replace-not-grow, so a second arrival before the
+        batch boundary erased the first -- after both had been answered
+        ``steer_accepted``. Every accepted steer is delivered now;
+        ``replaced`` keeps its name and means "one was already pending".
+        """
         agent = _agent(_SlowLLM(delay=0.15))
         task = asyncio.ensure_future(_collect(agent.process("hello", session_id="slot")))
         await asyncio.sleep(0.03)
@@ -279,11 +291,11 @@ class TestSteer:
         second = agent.request_steer("second steer")
         assert first["replaced"] is False
         assert second["replaced"] is True
-        assert agent._pending_steer["slot"] == "second steer"   # one slot
+        assert agent._pending_steer["slot"] == ["first steer", "second steer"]
         await asyncio.wait_for(task, timeout=5)
         joined = "\n".join(agent.ctx.observations)
         assert "second steer" in joined
-        assert "first steer" not in joined
+        assert "first steer" in joined
 
     @pytest.mark.asyncio
     async def test_an_unapplied_steer_leaves_no_slot_behind(self):
@@ -313,10 +325,13 @@ class TestMidturnArrivals:
         assert decision.verb is Verdict.STEER
         assert [e.type for e in events] == ["steer_accepted"]
         assert events[0].data["replaced"] is False
-        assert agent._pending_steer["busy"] == "also check the logs"
+        assert agent._pending_steer["busy"] == ["also check the logs"]
 
         await asyncio.wait_for(task, timeout=5)
-        assert any("[steered] also check the logs" in o for o in agent.ctx.observations)
+        assert any(
+            "[steered]\nalso check the logs\n[/steered]" in o
+            for o in agent.ctx.observations
+        )
 
     @pytest.mark.asyncio
     async def test_stop_while_busy_stops_with_existing_event_vocabulary(self):
@@ -365,7 +380,7 @@ class TestMidturnArrivals:
         # The text rode the steer into the last tool result, and the tool
         # was never killed: the turn ran to its answer.
         assert any(
-            "[steered] actually, check the logs instead" in o
+            "[steered]\nactually, check the logs instead\n[/steered]" in o
             for o in agent.ctx.observations
         )
         assert agent.current_state == AgentState.IDLE

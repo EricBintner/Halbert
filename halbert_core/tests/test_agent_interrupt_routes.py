@@ -106,7 +106,7 @@ class TestMidturnArrivals:
         assert _sse_types(r.text) == ["steer_accepted"]
         # The text rode the single replace-not-grow slot for the RUNNING
         # turn's session, not the arrival's own id.
-        assert agent._pending_steer == {"run": "also check the logs"}
+        assert agent._pending_steer == {"run": ["also check the logs"]}
 
     def test_a_second_arrival_replaces_the_slot(self, monkeypatch):
         agent = _busy_agent()
@@ -120,7 +120,8 @@ class TestMidturnArrivals:
         ]
         assert events[0]["type"] == "steer_accepted"
         assert events[0]["replaced"] is True
-        assert agent._pending_steer == {"run": "second"}
+        # A07-G6: steers concatenate -- the second no longer erases the first.
+        assert agent._pending_steer == {"run": ["first", "second"]}
 
     def test_stop_while_busy_cancels_with_existing_event_vocabulary(self, monkeypatch):
         agent = _busy_agent()
@@ -159,7 +160,7 @@ class TestMidturnArrivals:
             if line.startswith("data: ")
         ]
         assert events[0]["type"] == "steer_accepted"
-        assert agent._pending_steer == {"run": "actually check the logs"}
+        assert agent._pending_steer == {"run": ["actually check the logs"]}
         assert agent.cancelled == {}      # the tool was never killed
 
     def test_an_arrival_with_images_keeps_the_queue_a_turn_path(self, monkeypatch):

@@ -121,7 +121,7 @@ class TestBusyVerbsAreEnforced:
         )
         assert decision.verb is Verdict.STEER
         assert [e.type for e in events] == ["steer_accepted"]
-        assert agent._pending_steer["busy"] == "also check the logs"
+        assert agent._pending_steer["busy"] == ["also check the logs"]
         await asyncio.wait_for(task, timeout=5)
 
     @pytest.mark.asyncio
@@ -144,7 +144,7 @@ class TestBusyVerbsAreEnforced:
         assert [e.type for e in events] == ["steer_accepted"]
         # The generation was NOT claimed: no stop outcome at all.
         assert agent.cancelled == {}
-        assert agent._pending_steer["busy"] == "/stop"
+        assert agent._pending_steer["busy"] == ["/stop"]
         await asyncio.wait_for(task, timeout=5)
 
     @pytest.mark.asyncio

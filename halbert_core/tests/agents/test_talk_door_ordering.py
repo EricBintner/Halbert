@@ -178,7 +178,7 @@ def test_verified_owner_voice_steer_into_admin_turn_is_accepted(monkeypatch):
 
     types = [e["type"] for e in _sse(response.text)]
     assert "steer_accepted" in types, types
-    assert agent._pending_steer.get("run") == "check the disk too"
+    assert agent._pending_steer.get("run") == ["check the disk too"]
 
 
 def test_typed_dashboard_steer_is_unaffected(monkeypatch):
@@ -191,7 +191,7 @@ def test_typed_dashboard_steer_is_unaffected(monkeypatch):
     )
     types = [e["type"] for e in _sse(response.text)]
     assert "steer_accepted" in types, types
-    assert agent._pending_steer.get("run") == "also check the logs"
+    assert agent._pending_steer.get("run") == ["also check the logs"]
 
 
 def test_handle_midturn_arrival_takes_the_stamped_identity():

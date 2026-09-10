@@ -20,7 +20,14 @@ from typing import AsyncIterator, Dict, List, Optional, Callable, Any, TYPE_CHEC
 from .blocks import content_to_text
 from .states import AgentState, StateContext, CRAGAction, ToolCall, PlanStep, ConversationStatus
 from .events import StreamEvent
-from .steering import Decision, Verdict, apply_steer_to_results, decide_midturn
+from .steering import (
+    STEER_MARKER,
+    STEER_MARKER_CLOSE,
+    Decision,
+    Verdict,
+    apply_steer_to_results,
+    decide_midturn,
+)
 from .turn_activity import TurnActivity
 from ..streaming.terminal_bridge import get_terminal_event_bus
 from ..tools.safety import THREAD_META_TOOLS
@@ -350,14 +357,17 @@ class AgentStateMachine:
         # abort that loses the race to a finishing turn declines instead of
         # double-firing. ``_turn_generation`` is the generation the running
         # turn stamped at its start — the generation a stop observes.
-        # ``_pending_steer`` is the single replace-not-grow steer slot per
-        # session (B2): a mid-turn arrival steers into the next batch
-        # boundary instead of queueing a whole second turn. Both are plain
-        # cross-request surfaces in ``cancel_session``'s discipline: they
-        # never take the turn lock, which a mid-turn arrival can never own.
+        # ``_pending_steer`` holds the steers waiting for a session's next
+        # batch boundary (B2): a mid-turn arrival steers into that boundary
+        # instead of queueing a whole second turn. It is a LIST per session
+        # (A07-G6): the slot used to be replace-not-grow, so a second
+        # arrival erased the first after both had been told "accepted".
+        # Both are plain cross-request surfaces in ``cancel_session``'s
+        # discipline: they never take the turn lock, which a mid-turn
+        # arrival can never own.
         self.turn_activity = TurnActivity()
         self._turn_generation: Optional[int] = None
-        self._pending_steer: Dict[str, str] = {}
+        self._pending_steer: Dict[str, List[str]] = {}
 
         # Voice mode (O3): the PiperTTS instance behind the Haloysius voice
         # backend, cached once resolved so every egress turn shares one model
@@ -1096,9 +1106,10 @@ class AgentStateMachine:
         leftover_steer = self._pending_steer.pop(session_id, None)
         if leftover_steer:
             logger.info(
-                "Session %s ended with an unapplied steer (%d chars); the "
-                "turn finished before a batch boundary could apply it",
+                "Session %s ended with %d unapplied steer(s) (%d chars); the "
+                "turn finished before a batch boundary could apply them",
                 session_id, len(leftover_steer),
+                sum(len(t) for t in leftover_steer),
             )
 
     async def _begin_turn(self) -> AsyncIterator[StreamEvent]:
@@ -1833,13 +1844,14 @@ class AgentStateMachine:
         if not self._turn_in_flight() or self.ctx is None:
             return {"accepted": False, "reason": "no turn in flight"}
         session_id = self.ctx.session_id
-        replaced = session_id in self._pending_steer
-        # Exactly one slot per session (the packet's replace-not-grow
-        # rule): a second arrival before the boundary replaces the first
-        # rather than growing a queue. No arrival is silently dropped
-        # either way — each one's confirmation line (steer_accepted) is
-        # the observable verdict.
-        self._pending_steer[session_id] = text
+        pending = self._pending_steer.setdefault(session_id, [])
+        replaced = bool(pending)
+        # A07-G6: steers CONCATENATE. The slot used to be replace-not-grow,
+        # so a second arrival before the boundary erased the first -- and
+        # both had been answered "accepted". Every accepted steer is
+        # delivered; ``replaced`` keeps its name and now means "there was
+        # already one pending", which is what the surface renders.
+        pending.append(text)
         return {
             "accepted": True,
             "replaced": replaced,
@@ -1859,21 +1871,24 @@ class AgentStateMachine:
         ctx = self.ctx
         if ctx is None:
             return
-        text = self._pending_steer.get(ctx.session_id)
-        if not text:
+        pending = self._pending_steer.get(ctx.session_id) or []
+        if not pending:
             return
         view: List[Dict[str, Any]] = []
         if ctx.observations:
             name = ctx.tool_calls[-1].name if ctx.tool_calls else "tool"
             view = [{"name": name, "output": ctx.observations[-1]}]
-        applied = apply_steer_to_results(view, text)
-        if applied is not None:
-            # The apply fn mutated the view's copy of the last
-            # observation; write the appended text back to the line the
-            # context assembler actually reads.
-            ctx.observations[-1] = applied
-        else:
-            ctx.add_observation(f"[steered] {text}")
+        for text in pending:
+            applied = apply_steer_to_results(view, text)
+            if applied is not None:
+                # The apply fn mutated the view's copy of the last
+                # observation; write the appended text back to the line
+                # the context assembler actually reads.
+                ctx.observations[-1] = applied
+            else:
+                ctx.add_observation(
+                    f"{STEER_MARKER.strip()}\n{text}\n{STEER_MARKER_CLOSE.strip()}"
+                )
         self._pending_steer.pop(ctx.session_id, None)
 
     def _arrival_below_turn_floor(
@@ -1918,6 +1933,36 @@ class AgentStateMachine:
             running_claim.strength if running_claim is not None else None,
         )
         return arrival < floor
+
+    def _arrival_refusal(self, text: str) -> str:
+        """Why this arrival cannot act on the running turn, or "".
+
+        A07-G3 and A07 bug 1. Each of these used to be answered
+        ``steer_accepted`` and then quietly dropped -- the pending slot
+        was drained at a batch boundary the turn would never reach again,
+        or the text was a blank line nobody wanted. The refusal is what
+        lets the surface do the right thing instead: send it as the next
+        turn.
+        """
+        from .steering import (
+            REASON_ANSWER_ALREADY_COMMITTED,
+            REASON_EMPTY_ARRIVAL,
+            REASON_TURN_ALREADY_STOPPED,
+        )
+        if not (text or "").strip():
+            return REASON_EMPTY_ARRIVAL
+        running = self.ctx
+        if running is not None and self.cancelled.get(running.session_id):
+            return REASON_TURN_ALREADY_STOPPED
+        # The RESPONDING finalize stamp is the answer-commit edge: after
+        # it the running generation has moved past the one the turn
+        # started under, and nothing will re-read the observations.
+        if (
+            self._turn_generation is not None
+            and self.turn_activity.generation != self._turn_generation
+        ):
+            return REASON_ANSWER_ALREADY_COMMITTED
+        return ""
 
     def handle_midturn_arrival(
         self,
@@ -1998,6 +2043,7 @@ class AgentStateMachine:
             below_role_floor=self._arrival_below_turn_floor(
                 speaker_role, identifier_claim, channel
             ),
+            refusal=self._arrival_refusal(text),
         )
         if decision.verb == Verdict.REFUSED:
             # The refusal is the arrival's verdict, and the room hears

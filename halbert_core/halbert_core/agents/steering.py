@@ -30,12 +30,35 @@ import enum
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
-STEER_MARKER = "\n[steered] "
+#: The steered block's open and close markers (A07-G4). A bare
+#: ``[steered] `` prefix left the model to infer where the user's words
+#: ended and the tool's output resumed -- and told it nothing about whose
+#: words they were. A labelled wrapper with a matching closer is the
+#: vocabulary the rest of the prompt already uses, and the prompt-side
+#: contract (``prompts.agent_prompts.STEER_CONTRACT``) says what it means.
+STEER_MARKER = "\n[steered]\n"
+STEER_MARKER_CLOSE = "\n[/steered]\n"
 
-#: The one refusal code the algebra emits today. A closed set, the way
-#: the admission module's ``reason_code`` is a closed set: the caller
-#: renders it, it never renders a free-text reason at a user.
+#: The refusal codes the algebra emits. A closed set, the way the
+#: admission module's ``reason_code`` is a closed set: the caller renders
+#: it, it never renders a free-text reason at a user.
 REASON_BELOW_TURN_ROLE_FLOOR = "below_turn_role_floor"
+REASON_EMPTY_ARRIVAL = "empty_arrival"
+REASON_TURN_ALREADY_STOPPED = "turn_already_stopped"
+REASON_ANSWER_ALREADY_COMMITTED = "answer_already_committed"
+
+
+#: The sentence each refusal code renders as. One message per code --
+#: the closed-set rule the admission module holds to.
+_REFUSAL_REASONS = {
+    "below_turn_role_floor":
+        "arrival stands below the running turn's role floor",
+    "empty_arrival": "an empty arrival is not a steer",
+    "turn_already_stopped":
+        "the turn was stopped; send this as the next turn",
+    "answer_already_committed":
+        "the answer is already committed; send this as the next turn",
+}
 
 
 class Verdict(enum.Enum):
@@ -73,6 +96,7 @@ def decide_midturn(
     tool_batch_in_flight: bool = False,
     in_model_request: bool = False,
     below_role_floor: bool = False,
+    refusal: str = "",
 ) -> Decision:
     """Route one mid-turn arrival to its verb.
 
@@ -99,6 +123,22 @@ def decide_midturn(
             tool_batch_in_flight=tool_batch_in_flight,
             in_model_request=in_model_request,
             reason_code=REASON_BELOW_TURN_ROLE_FLOOR,
+        )
+
+    # Rule 0.6 (A07-G3, A07 bug 1): the verdict must be the truth. A
+    # steer accepted after the turn was stopped, or after its answer was
+    # already committed, used to be confirmed and then dropped at a batch
+    # boundary that never came -- and an empty arrival joined the turn as
+    # a blank line. Refuse them here, so the surface can send the text as
+    # the next turn instead of believing it landed in this one.
+    if refusal:
+        return Decision(
+            Verdict.REFUSED,
+            _REFUSAL_REASONS.get(refusal, "arrival refused"),
+            text,
+            tool_batch_in_flight=tool_batch_in_flight,
+            in_model_request=in_model_request,
+            reason_code=refusal,
         )
 
     # Rule 1 (Hermes run_inbound.py busy branch, command bypass): explicit
@@ -144,16 +184,16 @@ def apply_steer_to_results(
 ) -> Optional[str]:
     """Append a steer to the **last** tool result; steers concatenate.
 
-    Appends ``\\n[steered] <text>`` to the last entry's ``output`` and
-    returns the new output. Returns ``None`` (no-op) when there is no tool
-    result to steer into — an arrival is never silently dropped in that
-    case: the caller's single replace-not-grow pending slot (Packet 07
-    Phase B) holds it for the next batch boundary instead.
+    Wraps ``text`` in the ``[steered]`` / ``[/steered]`` pair (A07-G4) and
+    appends it to the last entry's ``output``, returning the new output.
+    Returns ``None`` (no-op) when there is no tool result to steer into —
+    an arrival is never silently dropped in that case: the caller holds it
+    for the next batch boundary instead.
     """
     if not results:
         return None
     last = results[-1]
     current = last.get("output") or ""
-    appended = f"{current}{STEER_MARKER}{text}"
+    appended = f"{current}{STEER_MARKER}{text}{STEER_MARKER_CLOSE}"
     last["output"] = appended
     return appended

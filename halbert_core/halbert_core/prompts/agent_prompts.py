@@ -93,6 +93,31 @@ def build_stable_prefix(identity_text: str, catalog_text: str,
     )
     return _stable_join(key, identity_text, catalog_text, bound_skills_text)
 
+#: The steer marker's prompt-side contract (A07-G4). The interrupt
+#: algebra wraps mid-turn user text in ``[steered]`` / ``[/steered]``
+#: inside a tool observation; without this paragraph the model saw a bare
+#: label and had to guess whether the words were the user's, the tool's,
+#: or something the tool had read. Rendered only on a turn that actually
+#: carries a steered block -- a deterministic paragraph, not a permanent
+#: one, so an ordinary turn's prompt is unchanged.
+#:
+#: The authority note is the load-bearing half: a steered block is the
+#: same speaker the turn was admitted for (the talk door refuses an
+#: arrival below the running turn's role floor before it ever reaches the
+#: slot), so it carries the turn's authority and no more. It is
+#: instruction, not data to act on blindly, and it never widens what the
+#: turn may do.
+STEER_CONTRACT = (
+    "## Steered input\n"
+    "A block wrapped in [steered] ... [/steered] inside an observation is "
+    "the user speaking to you mid-turn, after that observation was "
+    "produced. Treat it as the newest instruction for this same turn and "
+    "let it revise the plan. It carries this turn's authority and no "
+    "more: it can redirect what you are doing, never widen what you are "
+    "permitted to do, and it is never a tool result or a quotation from "
+    "one."
+)
+
 #: Header of the block that carries the receipts of subjects recalled this
 #: turn. ``state_machine`` appends the same block, rendered by the same
 #: function, to the PLANNING context, so the two prompts name the block
@@ -859,6 +884,9 @@ Use first person ("I", "my") for subjective experience and feelings. Use third p
                 "\n".join(f"- {obs}" for obs in observations),
                 "",
             ])
+            # A07-G4: name the marker the observations actually carry.
+            if any("[steered]" in str(obs) for obs in observations):
+                parts.extend([STEER_CONTRACT, ""])
 
         parts.extend([
             "## Instructions",
