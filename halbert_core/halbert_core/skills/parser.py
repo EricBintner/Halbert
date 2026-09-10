@@ -22,6 +22,7 @@ the composer decides what several active skills add up to.
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import math
 import os
@@ -416,10 +417,23 @@ class Skill:
     subagent: bool = False
     max_turns: int = 10
 
+    # A13-G9: the two CC invocation flags. A pack uses them to say "this
+    # is a slash command, not something to volunteer" and "this is
+    # machinery, do not offer it to a person"; both were tolerated as
+    # unknown top-level keys and every skill was offered to both.
+    model_invocable: bool = True
+    user_invocable: bool = True
+
     prompt: str = ""
     source_path: Optional[Path] = None
     extends: Optional[str] = None
     kind: str = "ops"  # ops | lens (KINDS)
+
+    #: The logical keys this file actually DECLARED, namespaced or flat.
+    #: A13 bug 9: without it, `extends` cannot tell "left at the default"
+    #: from "deliberately set to the default", so a child could not escape
+    #: a parent's `priority: critical` by writing `normal`.
+    declared: Tuple[str, ...] = ()
 
     @property
     def priority_rank(self) -> int:
@@ -451,6 +465,10 @@ class _Compat:
         self._meta = meta
         self.flat_used: list = []
         self.shadowed: list = []
+        #: Logical keys present in either place (A13 bug 9). Recorded as
+        #: they are read, so it reflects the file rather than a second
+        #: hand-maintained list of field names.
+        self.declared: set = set()
 
     def get(self, key: str, default: Any = None, *,
             flat: Optional[str] = None) -> Any:
@@ -459,10 +477,12 @@ class _Compat:
         h_value = self._halbert.get(key)
         f_value = self._meta.get(flat_key)
         if h_value is not None:
+            self.declared.add(key)
             if f_value is not None and flat_key in _FLAT_TO_HALBERT:
                 self.shadowed.append(flat_key)
             return h_value
         if f_value is not None and flat_key in _FLAT_TO_HALBERT:
+            self.declared.add(key)
             self.flat_used.append(flat_key)
             return f_value
         return default
@@ -482,6 +502,66 @@ class _Compat:
                 "the namespaced value wins",
                 sorted(set(self.shadowed)),
             )
+
+
+#: The one field a parse error is recovered for (A13-G11). The origin
+#: calls these FREEFORM_TEXT_FIELDS and description is the only one Halbert
+#: has: it is prose a person wrote, and the commonest way prose breaks YAML
+#: is a colon in the middle of a sentence -- "Frigate NVR: camera streams".
+#: Losing an entire skill over a punctuation mark is not a schema being
+#: strict, it is a schema being useless.
+_RECOVERABLE_FIELD = "description"
+_DESCRIPTION_LINE_RE = re.compile(r"^(\s*)description\s*:\s*(\S.*)$")
+
+
+def _recover_description_line(raw: str, error: Any) -> Optional[Dict[str, Any]]:
+    """Re-quote a colon-rich ``description`` and reparse; None if that is
+    not what went wrong.
+
+    Deliberately narrow, in the origin's shape (``frontmatter.ts:83-126``):
+    the line must be TOP LEVEL (no indentation -- a nested ``description``
+    belongs to some other mapping whose shape we are not guessing at), it
+    must carry an inline value (a block scalar is already valid YAML and
+    reparsing it as a string would change what the file says), and exactly
+    one such line is rewritten. Everything else about a broken frontmatter
+    stays an error: a broken ``triggers`` block is a broken routing rule,
+    and guessing at one is how a skill activates on the wrong turn.
+    """
+    mark = getattr(error, "problem_mark", None)
+    lines = raw.splitlines()
+    candidates = [
+        i for i, line in enumerate(lines)
+        if _DESCRIPTION_LINE_RE.match(line)
+        and _DESCRIPTION_LINE_RE.match(line).group(1) == ""
+    ]
+    if not candidates:
+        return None
+    if mark is not None and getattr(mark, "line", None) is not None:
+        # Prefer the line the parser actually tripped on, when it is one of
+        # ours; YAML reports the error at or just after the offending line.
+        near = [i for i in candidates if abs(i - mark.line) <= 1]
+        candidates = near or candidates
+    index = candidates[0]
+    value = _DESCRIPTION_LINE_RE.match(lines[index]).group(2).strip()
+    if value in ("|", ">", "|-", ">-", "|+", ">+"):
+        return None
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+        # Already quoted: whatever broke, it was not this.
+        return None
+    patched = list(lines)
+    patched[index] = f"{_RECOVERABLE_FIELD}: {json.dumps(value)}"
+    try:
+        meta = yaml.safe_load("\n".join(patched)) or {}
+    except yaml.YAMLError:
+        return None
+    if not isinstance(meta, dict):
+        return None
+    logger.warning(
+        "recovered an unquoted `description` on line %d of a frontmatter "
+        "block; quote it in the file to stop relying on this",
+        index + 1,
+    )
+    return meta
 
 
 def split_frontmatter(text: str) -> Tuple[Dict[str, Any], str]:
@@ -509,7 +589,11 @@ def split_frontmatter(text: str) -> Tuple[Dict[str, Any], str]:
             try:
                 meta = yaml.safe_load(raw) or {}
             except yaml.YAMLError as e:
-                raise SkillParseError(f"invalid YAML frontmatter: {e}") from e
+                recovered = _recover_description_line(raw, e)
+                if recovered is None:
+                    raise SkillParseError(
+                        f"invalid YAML frontmatter: {e}") from e
+                meta = recovered
             if not isinstance(meta, dict):
                 raise SkillParseError("frontmatter must be a mapping")
             return meta, body
@@ -620,6 +704,22 @@ def parse_skill(text: str, *, name: Optional[str] = None,
         allowed = [entry for entry in allowed.split(",")]
     allowed_tools = _as_tuple(allowed) if allowed is not None else None
 
+    # A13-G9: CC's two invocation flags, both spellings. Refused rather
+    # than coerced when they are not booleans -- `user-invocable: maybe`
+    # silently becoming True is the failure this flag exists to prevent.
+    def _flag(key: str, default: bool) -> bool:
+        for spelling in (key, key.replace("-", "_")):
+            if spelling in meta:
+                value = meta[spelling]
+                if not isinstance(value, bool):
+                    raise SkillParseError(
+                        f"{spelling} must be true or false, not {value!r}")
+                return value
+        return default
+
+    model_invocable = not _flag("disable-model-invocation", False)
+    user_invocable = _flag("user-invocable", True)
+
     kind = str(reader.get("kind") or "ops").strip().lower()
     if kind not in KINDS:
         raise SkillParseError(f"kind {kind!r} is not one of {KINDS}")
@@ -680,11 +780,14 @@ def parse_skill(text: str, *, name: Optional[str] = None,
         allowed_tools=allowed_tools,
         subagent=bool(reader.get("subagent", False)),
         max_turns=int(reader.get("max_turns", 10)),
+        model_invocable=model_invocable,
+        user_invocable=user_invocable,
         prompt=body,
         source_path=source_path,
         extends=(str(reader.get("extends")).strip()
                   if reader.get("extends") else None),
         kind=kind,
+        declared=tuple(sorted(reader.declared)),
     )
 
 

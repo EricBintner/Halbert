@@ -173,6 +173,11 @@ def _entries(registry: SkillRegistry,
             continue
         if skill.state != "trusted":
             continue
+        if not getattr(skill, "model_invocable", True):
+            # A13-G9: `disable-model-invocation` means exactly this. The
+            # catalog is the model's list; a skill the model may not
+            # invoke has no business on it. `/name` still reaches it.
+            continue
         if skill.source_path is None:
             # A skill with no file cannot be consulted: it has no location,
             # and the catalog's whole contract is "read this file". Its

@@ -182,6 +182,10 @@ class SkillMatcher:
             # weaker match, it is not a match.
             if evaluate_readiness(skill, platform=self._platform) is not Readiness.READY:
                 continue
+            # A13-G9: the model's own path. `disable-model-invocation`
+            # says "a slash command, not something to volunteer".
+            if not getattr(skill, "model_invocable", True):
+                continue
             match = score_skill(
                 skill,
                 domains=domains,
@@ -233,6 +237,11 @@ class SkillMatcher:
             state = evaluate_readiness(skill, platform=self._platform)
             if state is not Readiness.READY:
                 logger.info("skill %r not used: %s", name, state.value)
+                continue
+            # A13-G9: `user-invocable: false` is a pack saying "machinery,
+            # do not offer this to a person". The model may still match it.
+            if not getattr(skill, "user_invocable", True):
+                logger.info("skill %r is not user-invocable", name)
                 continue
             out.append(SkillMatch(skill=skill, score=0, explicit=True))
         return out[: self.max_active]

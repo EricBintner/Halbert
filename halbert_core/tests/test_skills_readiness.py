@@ -178,9 +178,12 @@ class TestTheDisableList:
 
 class TestTheMatcherHonoursReadiness:
     def _matcher(self, skills):
+        """``min_score=1``: a keyword-only trigger scores 2 against a
+        production floor of 3, so a default matcher answers [] for these
+        fixtures whatever the gate does."""
         from halbert_core.skills.matcher import SkillMatcher
 
-        return SkillMatcher(SkillRegistry(skills))
+        return SkillMatcher(SkillRegistry(skills), min_score=1)
 
     def test_an_explicit_name_no_longer_bypasses_the_platform_gate(self):
         other = "linux" if sys.platform == "darwin" else "darwin"
@@ -200,14 +203,18 @@ class TestTheMatcherHonoursReadiness:
         assert [m.name for m in matcher.match("", explicit=["disk-ops"])] == ["disk-ops"]
 
     def test_a_missing_requirement_keeps_a_skill_out_of_the_scored_path(self):
-        from halbert_core.intake.signals import MessageSignals
+        def _zfs(bins):
+            return parse_skill(
+                "---\nname: zfs-ops\ndescription: d\nhalbert:\n  kind: ops\n"
+                f"  state: trusted\n  requires:\n    bins: {bins}\n"
+                "  triggers:\n    keywords: ['zpool']\n---\nBody.")
 
-        skill = parse_skill(
-            "---\nname: zfs-ops\ndescription: d\nhalbert:\n  kind: ops\n"
-            "  state: trusted\n  requires:\n    bins: ['definitely-not-real']\n"
-            "  triggers:\n    keywords: ['zpool']\n---\nBody.")
-        matcher = self._matcher([skill])
-        assert matcher.match("check zpool status") == []
+        # Present: it matches, so the fixture is known to be matchable...
+        assert [m.name for m in
+                self._matcher([_zfs(["sh"])]).match("check zpool status")] == ["zfs-ops"]
+        # ...and absent, the gate is what removes it.
+        assert self._matcher(
+            [_zfs(["definitely-not-real"])]).match("check zpool status") == []
 
 
 # ---------------------------------------------------------------------------

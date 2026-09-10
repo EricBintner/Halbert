@@ -23,8 +23,8 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Optional
 
 from .loader import load_skills
-from .parser import (Skill, SkillSafety, SkillTriggers,
-                     derived_skill_id, new_skill_id)
+from .parser import (Skill, SkillRequirements, SkillSafety,
+                     SkillTriggers, derived_skill_id, new_skill_id)
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +44,21 @@ def _merge_tuples(parent: tuple, child: tuple) -> tuple:
             seen.add(item)
             out.append(item)
     return tuple(out)
+
+
+def _merge_requires(parent, child):
+    """Union two ``requires`` clauses; either side may be None."""
+    if parent is None:
+        return child
+    if child is None:
+        return parent
+    return SkillRequirements(
+        bins=_merge_tuples(parent.bins, child.bins),
+        any_bins=_merge_tuples(parent.any_bins, child.any_bins),
+        env=_merge_tuples(parent.env, child.env),
+        os=_merge_tuples(parent.os, child.os),
+        config=_merge_tuples(parent.config, child.config),
+    )
 
 
 def resolve_extends(skill: Skill, by_name: Dict[str, Skill],
@@ -76,10 +91,20 @@ def resolve_extends(skill: Skill, by_name: Dict[str, Skill],
     parent = resolve_extends(parent, by_name, seen | {skill.name})
     defaults = Skill(name="_")
 
+    declared = set(skill.declared or ())
+
     def pick(attr: str):
-        """Child wins unless it left the field at its default."""
+        """Child wins when it DECLARED the field, or set it off the default.
+
+        A13 bug 9: the declared half was missing, so "left at the default"
+        and "deliberately set to the default" were the same thing to the
+        merge -- and a child could not escape a parent's
+        ``priority: critical`` by writing ``priority: normal``. The parser
+        records which keys the file actually carried; this reads that
+        rather than trying to infer intent from a value.
+        """
         child_value = getattr(skill, attr)
-        if child_value != getattr(defaults, attr):
+        if attr in declared or child_value != getattr(defaults, attr):
             return child_value
         return getattr(parent, attr)
 
@@ -124,7 +149,13 @@ def resolve_extends(skill: Skill, by_name: Dict[str, Skill],
         subagent=pick("subagent"),
         max_turns=pick("max_turns"),
         kind=pick("kind"),
-        requires=pick("requires"),
+        # A13 bug 9, second half: this used to REPLACE. Every other
+        # restriction in this merge unions in the most-restrictive
+        # direction -- a parent's protected path cannot be dropped by a
+        # child -- and `requires` is a restriction: a child that declared
+        # its own `bins` shed the parent's, then inherited a body that
+        # assumes both.
+        requires=_merge_requires(parent.requires, skill.requires),
         # Identity and lifecycle are never inherited: an id is identity, not
         # a capability (design §5.4 — a rename or a move must not smuggle or
         # forfeit provenance), and lifecycle is per-skill (§5.5).
