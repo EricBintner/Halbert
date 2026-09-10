@@ -51,14 +51,17 @@ catalog reports. Nothing here names, recommends, or prefers any model family.
 from __future__ import annotations
 
 import logging
+import re
 from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple
 
 import yaml
 
 from . import llm_config
-from .llm_config import ResolvedModel
+from .capabilities import _VISION_TOKEN_RE
+from .llm_config import ResolvedModel, is_cloud_tagged, is_local_model
 from .config_locator import find_models_config
+from ..utils.reasoning import is_reasoning_model
 
 logger = logging.getLogger("halbert.model.utility_slot")
 
@@ -73,6 +76,7 @@ class AuxSource(str, Enum):
     CATALOG = "catalog"    # live-catalog family match (prefer_fast only)
     LEGACY = "legacy"      # pre-migration small_model entry
     CHAT = "chat"          # the chat slot — the name-neutral curated floor
+    SECURE = "secure"      # require_local floor: secure_model, not chat_model
 
 
 # Probes are attempted only for providers whose catalogs are cheap GETs of a
@@ -94,22 +98,36 @@ def resolve_aux_model(
     session_id: Optional[str] = None,
     task: str = "utility",
     prefer_fast: bool = False,
+    require_local: bool = False,
 ) -> Optional[ResolvedModel]:
     """A model for an internal side task, or None when nothing can serve one.
 
     ``task`` is provenance only (it names the log line, never the model).
     ``prefer_fast`` is the per-task opt-in to the catalog rung — the only
     rung that may return something cheaper than what the operator runs;
-    without it the ladder costs no round-trip.
+    without it the ladder costs no round-trip. ``require_local`` is the
+    secure-turn gate: every rung's candidate must pass
+    :func:`llm_config.is_local_model`, and the floor becomes ``secure_model``
+    (already guaranteed local, SEC-21) instead of ``chat_model``, which
+    carries no such guarantee.
     """
-    resolved, _source = _resolve_aux(session_id=session_id, task=task, prefer_fast=prefer_fast)
+    resolved, source = _resolve_aux(
+        session_id=session_id, task=task, prefer_fast=prefer_fast,
+        require_local=require_local,
+    )
+    logger.debug("utility ladder: task=%s rung=%s", task, source.value)
     return resolved
+
+
+def _is_local(resolved: ResolvedModel) -> bool:
+    return is_local_model(resolved.model, resolved.url, resolved.provider)
 
 
 def _resolve_aux(
     session_id: Optional[str] = None,
     task: str = "utility",
     prefer_fast: bool = False,
+    require_local: bool = False,
 ) -> Tuple[Optional[ResolvedModel], AuxSource]:
     """The ladder proper: (model, rung). Private; tests drive this directly."""
     # Captured before any load: migrating the file on first read removes the
@@ -121,21 +139,34 @@ def _resolve_aux(
     except Exception as e:
         logger.debug("utility ladder: declared rung failed (%s)", e)
         declared = None
-    if declared is not None:
+    if declared is not None and (not require_local or _is_local(declared)):
         return declared, AuxSource.DECLARED
 
     anchor: Optional[ResolvedModel] = None
     if prefer_fast:
         anchor = _anchor(session_id)
         if anchor is not None:
-            picked = _catalog_pick(anchor)
+            picked = _catalog_pick(anchor, require_local=require_local)
             if picked is not None:
                 return picked, AuxSource.CATALOG
 
     if legacy:
         resolved = _resolve_legacy(legacy, anchor or _anchor(session_id))
-        if resolved is not None:
+        if resolved is not None and (not require_local or _is_local(resolved)):
             return resolved, AuxSource.LEGACY
+
+    if require_local:
+        # chat_model carries no locality guarantee; secure_model already
+        # does (SEC-21 enforces it at normalise), so it is the floor here
+        # instead — never fall back further to an unproven chat slot.
+        try:
+            secure = llm_config.resolve("secure_model", session_id)
+        except Exception as e:
+            logger.debug("utility ladder: secure floor failed (%s)", e)
+            secure = None
+        if secure is not None:
+            return secure, AuxSource.SECURE
+        return None, AuxSource.NONE
 
     try:
         chat = llm_config.resolve("chat_model", session_id)
@@ -167,12 +198,15 @@ def _anchor(session_id: Optional[str]) -> Optional[ResolvedModel]:
 # ── Rung 2: live-catalog family match ─────────────────────────────
 
 
-def _catalog_pick(anchor: ResolvedModel) -> Optional[ResolvedModel]:
+def _catalog_pick(anchor: ResolvedModel, require_local: bool = False) -> Optional[ResolvedModel]:
     """The smallest strictly-cheaper same-family model the provider lists.
 
     One probe, short timeout, best effort. Anything odd — no listing, no size
     signal, no family match, an endpoint that will not answer — is a miss and
-    the ladder falls through; it is never an error.
+    the ladder falls through; it is never an error. ``require_local`` drops a
+    ``:cloud``-tagged (or otherwise non-local) entry from consideration
+    entirely, so the next-smallest local sibling can still win — the same
+    endpoint's catalog can list both.
     """
     try:
         entries = _fetch_catalog(anchor.url, anchor.provider, anchor.api_key)
@@ -191,10 +225,12 @@ def _catalog_pick(anchor: ResolvedModel) -> Optional[ResolvedModel]:
         if not isinstance(entry, dict):
             continue
         name = str(entry.get("name") or entry.get("model") or "").strip()
-        if not name or "embed" in name.lower():
+        if not name or _is_excluded_sibling(name):
             continue
         candidate_token = _family_token(name)
         if not _same_family(candidate_token, token):
+            continue
+        if require_local and not is_local_model(name, anchor.url, anchor.provider):
             continue
         b = _params_b(entry)
         if b is None or b >= best_b:
@@ -244,25 +280,70 @@ def _fetch_catalog(url: str, provider: str, api_key: str = "") -> List[Dict[str,
     return []
 
 
+#: A size tag anywhere in a model id — ':7b', '-70b', '_14b', ':8b-instruct'.
+#: The same shape capabilities.py's own detector uses, so the family-token
+#: split and the fallback size parse below are not Ollama's colon-only
+#: convention: OpenAI-wire/LM-Studio catalogs are hyphen-styled instead
+#: ('family-a-3b-instruct').
+_SIZE_TAG_RE = re.compile(r"[:\-_](\d+(?:\.\d+)?)b\b", re.IGNORECASE)
+
+
+def _is_excluded_sibling(name: str) -> bool:
+    """Generic, name-neutral disqualifiers: a catalog entry that is not a
+    plain chat-capable sibling at all is never a utility-model candidate,
+    regardless of family or size — a reasoning/vision/embedding/audio
+    variant or a ':cloud' tag is a different task or a different locality,
+    not a cheaper copy of the same one."""
+    lower = name.lower()
+    if any(tag in lower for tag in ("embed", "tts", "transcribe", "audio")):
+        return True
+    if is_cloud_tagged(name):
+        return True
+    if is_reasoning_model(lower):
+        return True
+    if _VISION_TOKEN_RE.search(lower):
+        return True
+    return False
+
+
 def _family_token(model_name: str) -> Optional[str]:
     """The family part of a model name — generic parsing, no names of its own.
 
-    ``family-a:3b-instruct`` → ``family-a``; a colon-less id is its own family
-    token. None when nothing parseable remains.
+    Strips an optional org/namespace prefix (``org/family-a-3b`` →
+    ``family-a-3b``) and an optional size tag, from either convention:
+    ``family-a:3b-instruct`` and ``family-a-3b-instruct`` both → ``family-a``.
+    A colon-less, size-less id is its own family token. None when nothing
+    parseable remains.
     """
-    token = (model_name or "").strip().lower().split(":", 1)[0].strip()
+    name = (model_name or "").strip().lower()
+    if not name:
+        return None
+    if "/" in name:
+        name = name.rsplit("/", 1)[-1]
+    match = _SIZE_TAG_RE.search(name)
+    token = name[:match.start()] if match else name.split(":", 1)[0]
+    token = token.strip("-_: ")
     return token or None
 
 
 def _same_family(candidate: Optional[str], reference: str) -> bool:
     """True when two family tokens name the same base family.
 
-    Equal, or one a prefix of the other (``family`` ↔ ``family-coder``), with
-    a floor on length so a stray common prefix cannot fuse unrelated names.
+    Equal, or one a dash-delimited prefix of the other's segments
+    (``family-a`` ↔ ``family-a-coder``) — not a raw character prefix, which
+    would fuse any two names sharing a long-enough common substring
+    (``abc`` ↔ ``abcd``, ``abcx-coder``). A length floor on the shorter
+    token guards against a stray one- or two-character segment matching
+    everything.
     """
     if not candidate or len(candidate) < _MIN_FAMILY_TOKEN or len(reference) < _MIN_FAMILY_TOKEN:
         return False
-    return candidate == reference or candidate.startswith(reference) or reference.startswith(candidate)
+    if candidate == reference:
+        return True
+    c_parts = candidate.split("-")
+    r_parts = reference.split("-")
+    shorter, longer = (c_parts, r_parts) if len(c_parts) <= len(r_parts) else (r_parts, c_parts)
+    return longer[:len(shorter)] == shorter
 
 
 def _params_b(entry: Dict[str, Any]) -> Optional[float]:
@@ -271,14 +352,22 @@ def _params_b(entry: Dict[str, Any]) -> Optional[float]:
     hardware_detector's estimator — the same generic parsing the first-run
     picker uses — prefers runtime metadata, then a size tag in the name, then
     the weight file size. Imported lazily: hardware_detector pulls psutil,
-    which nothing on this import path otherwise needs.
+    which nothing on this import path otherwise needs. Its own name-tag
+    parser is colon-only (Ollama's tag shape); when it comes up empty, a
+    local fallback tries the same size tag both conventions can carry, so
+    an OpenAI-wire/LM-Studio catalog with no runtime metadata still ranks.
     """
     try:
         from .hardware_detector import estimate_model_params_b
-        return estimate_model_params_b(entry)
+        estimate = estimate_model_params_b(entry)
     except Exception as e:
         logger.debug("utility ladder: size estimate failed (%s)", e)
-        return None
+        estimate = None
+    if estimate is not None:
+        return estimate
+    name = str(entry.get("name") or entry.get("model") or "")
+    match = _SIZE_TAG_RE.search(name)
+    return float(match.group(1)) if match else None
 
 
 # ── Rung 3: legacy dict ───────────────────────────────────────────
