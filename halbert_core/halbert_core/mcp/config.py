@@ -481,6 +481,27 @@ def _parse_server(entry: Any, index: int, default_timeout: float) -> Optional[MC
             "skipping the server — overrides fail tight, not loose", name, e)
         return None
 
+    # A17-G3, the loader rule: an entry whose SHAPE is a payload does not
+    # spawn. The write classifier catches the agent's own write to this
+    # file; a hand edit, a restored backup or a file planted by anything
+    # else never passes through it, so the second gate is here, where the
+    # entry is used. Skipping fails tight the same way an invalid risk
+    # override does: the server is absent, not degraded. The finding
+    # names the shape and never the entry's own strings.
+    try:
+        from .entry_guard import validate_server_entry
+        findings = validate_server_entry(name, entry)
+    except Exception as e:  # pragma: no cover - import-time only
+        logger.warning(
+            "MCP config: entry screen unavailable (%s) — refusing to "
+            "launch server '%s' unscreened", e, name)
+        return None
+    if findings:
+        logger.error(
+            "MCP config: refusing to launch server '%s' — %s",
+            name, "; ".join(findings))
+        return None
+
     return MCPServerConfig(
         name=name,
         transport=transport,

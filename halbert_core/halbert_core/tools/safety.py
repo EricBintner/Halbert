@@ -92,6 +92,32 @@ def _command_segments(command: str) -> List[str]:
     return segments
 
 
+def _platform_sensitive_dirs() -> tuple:
+    """Halbert's own config and data directories, as path prefixes.
+
+    Resolved through ``utils.platform`` rather than assumed, because the
+    whole point of A17-G3 is that the assumed shape (``~/.config``) is
+    not where the files are on this host. Imported lazily and guarded:
+    the classifier must still load if the platform module cannot resolve
+    a home directory, and a missing entry here is a missing protection,
+    never a crash on import.
+    """
+    dirs = []
+    try:
+        from ..utils.platform import get_config_dir, get_data_dir
+        for resolve in (get_config_dir, get_data_dir):
+            try:
+                dirs.append(str(resolve()).rstrip("/") + "/")
+            except Exception:
+                continue
+    except Exception:  # pragma: no cover - import-time only
+        logger.warning(
+            "platform directories unavailable; Halbert's own config "
+            "directory is not in SENSITIVE_PATHS"
+        )
+    return tuple(dirs)
+
+
 class ToolSafetyFramework:
     """
     Classifies tool operations by risk level.
@@ -335,6 +361,18 @@ class ToolSafetyFramework:
         str(Path.home() / ".ssh") + "/",
         str(Path.home() / ".gnupg") + "/",
         str(Path.home() / ".config") + "/",
+        # A17-G3 + A17 bug 2: Halbert's own config directory, wherever the
+        # platform puts it. On macOS that is
+        # ``~/Library/Application Support/Halbert`` -- which was NOT under
+        # ``~/.config``, so the agent's own write_file to the real
+        # ``mcp_config.yml`` classified MEDIUM (no confirmation) while the
+        # same file written under a Linux-shaped path was HIGH. The MCP
+        # health monitor relaunches a server whose config identity
+        # changed within a tick, so an unconfirmed write there is an
+        # unconfirmed arbitrary-command path. The data directory rides
+        # along for the same reason: it holds the stores the agent's own
+        # answers are read back out of.
+        *_platform_sensitive_dirs(),
     }
     
     def __init__(self, user_overrides: Dict[str, RiskLevel] = None):

@@ -92,6 +92,68 @@ PROTOCOL_VERSION = SUPPORTED_PROTOCOL_VERSIONS[0]
 
 _CLIENT_INFO = {"name": "halbert-mcp-client", "version": "0.1.0"}
 
+#: The largest single JSON-RPC line this client will read from a stdio
+#: server (A17-G2). ``create_subprocess_exec`` used to take asyncio's
+#: 64 KiB stream default, so a 200,000-character text result raised
+#: inside ``readline()`` and killed the transport, failing every pending
+#: request with "stream closed". Generous enough that no honest result
+#: hits it; bounded so a server cannot make the client allocate without
+#: limit.
+MAX_STDIO_FRAME_BYTES = 16 * 1024 * 1024
+
+#: How much of an oversized frame to discard per read while draining it.
+_FRAME_DRAIN_CHUNK = 64 * 1024
+
+#: Environment variables a child MCP server may see (A17-G1). Halbert's
+#: whole environment used to be handed to every configured stdio server:
+#: an npx package could read HALBERT_MCP_TOKEN and HALBERT_PEER_TOKEN,
+#: every other server's token and API key, and call back into Halbert's
+#: own authenticated MCP server as Halbert. This is the allowlist: what a
+#: program needs to run and find its own files, and nothing that
+#: identifies or authorises Halbert.
+CHILD_ENV_ALLOWLIST = frozenset({
+    "PATH", "HOME", "USER", "LOGNAME", "LANG", "LC_ALL", "LC_CTYPE",
+    "TERM", "SHELL", "TMPDIR", "TZ", "PWD",
+})
+
+#: Prefixes kept in full (the XDG base-directory set).
+_CHILD_ENV_PREFIXES = ("XDG_",)
+
+#: Never passed, from any source -- not the parent environment and not a
+#: server's own config block. A loader-preload variable turns "launch
+#: this command" into "run this code inside that command", which is a
+#: different thing from what the config said.
+_CHILD_ENV_DENY_PREFIXES = ("DYLD_", "LD_")
+
+
+def child_env(config_env: Optional[Dict[str, str]]) -> Dict[str, str]:
+    """The environment one stdio MCP server is launched with (A17-G1).
+
+    The allowlist above, taken from the parent, plus the server's own
+    configured ``env`` -- which is how a server receives its credential,
+    and the reason the allowlist can be as short as it is. The deny
+    prefixes apply to both sources: a config block is the operator's
+    word about one server, not a way past the loader rule.
+    """
+    def _denied(name: str) -> bool:
+        return any(name.startswith(p) for p in _CHILD_ENV_DENY_PREFIXES)
+
+    env: Dict[str, str] = {}
+    for name, value in os.environ.items():
+        if _denied(name):
+            continue
+        if name in CHILD_ENV_ALLOWLIST or name.startswith(_CHILD_ENV_PREFIXES):
+            env[name] = value
+    for name, value in (config_env or {}).items():
+        if _denied(name):
+            logger.warning(
+                "MCP server config sets %s -- refusing to pass a loader "
+                "variable to a child server", name,
+            )
+            continue
+        env[name] = value
+    return env
+
 
 # ---------------------------------------------------------------------------
 # Errors
@@ -234,9 +296,9 @@ class StdioTransport:
         self.name = name
         self.command = command
         self.args = list(args or [])
-        # Extra env merged OVER os.environ so config vars can override,
-        # with every parent var (PATH above all) still present.
-        self.env = {**os.environ, **(env or {})}
+        # A17-G1: an allowlist, not the parent environment. See
+        # ``child_env``.
+        self.env = child_env(env)
         self.timeout = float(timeout)
         self._proc: Optional[asyncio.subprocess.Process] = None
         self._reader: Optional[asyncio.Task] = None
@@ -267,6 +329,10 @@ class StdioTransport:
                     self.command, *self.args,
                     stdin=asyncio.subprocess.PIPE,
                     stdout=asyncio.subprocess.PIPE,
+                    # A17-G2: bound the frame. Without this the stream
+                    # took asyncio's 64 KiB default and a large
+                    # tools/list or text result killed the transport.
+                    limit=MAX_STDIO_FRAME_BYTES,
                     # stderr is the server's log channel, not ours to
                     # relay; DEVNULL so a chatty server can't fill a pipe
                     # nobody drains.
@@ -354,7 +420,28 @@ class StdioTransport:
         assert self._proc is not None and self._proc.stdout is not None
         try:
             while True:
-                line = await self._proc.stdout.readline()
+                try:
+                    line = await self._proc.stdout.readline()
+                except (ValueError, asyncio.LimitOverrunError) as e:
+                    # A17-G2 + bug 1: one frame over the limit is one
+                    # bad response, not a dead server. asyncio raises
+                    # out of readline() with the oversized data still in
+                    # the buffer, so drain it in bounded chunks (the
+                    # same shape server.py:1341 uses) and keep reading.
+                    # The pending request it belonged to cannot be
+                    # identified -- the frame was never parsed -- so the
+                    # oldest outstanding one is failed with a protocol
+                    # error rather than every one of them.
+                    logger.warning(
+                        "MCP server '%s': oversized frame (> %d bytes); "
+                        "discarding it and keeping the transport: %s",
+                        self.name, MAX_STDIO_FRAME_BYTES, e,
+                    )
+                    await self._drain_oversized_frame()
+                    self._fail_oldest_pending(MCPProtocolError(
+                        f"MCP server '{self.name}': response exceeded "
+                        f"{MAX_STDIO_FRAME_BYTES} bytes and was discarded"))
+                    continue
                 if not line:
                     break  # EOF: the server exited
                 try:
@@ -399,6 +486,44 @@ class StdioTransport:
             logger.debug(
                 "MCP server '%s': could not reject server request: %s",
                 self.name, e)
+
+    async def _drain_oversized_frame(self) -> None:
+        """Read past an oversized line, in bounded chunks.
+
+        The reader raised with the frame still buffered; leaving it there
+        means the next ``readline()`` raises on the same bytes forever.
+        Read until a newline is consumed or the stream ends.
+        """
+        stdout = self._proc.stdout if self._proc is not None else None
+        if stdout is None:
+            return
+        discarded = 0
+        while True:
+            try:
+                chunk = await stdout.read(_FRAME_DRAIN_CHUNK)
+            except (ValueError, asyncio.LimitOverrunError):
+                # read() is not separator-bound, so this should not
+                # happen; stop rather than spin.
+                return
+            if not chunk:
+                return
+            discarded += len(chunk)
+            if b"\n" in chunk:
+                logger.debug(
+                    "MCP server '%s': discarded %d bytes of an oversized "
+                    "frame", self.name, discarded,
+                )
+                return
+
+    def _fail_oldest_pending(self, exc: MCPClientError) -> None:
+        """Fail the longest-outstanding request. An unparseable frame
+        names no id, and failing every pending request for one bad
+        response is what A17-G2 was about."""
+        for req_id, fut in list(self._pending.items()):
+            if not fut.done():
+                self._pending.pop(req_id, None)
+                fut.set_exception(exc)
+                return
 
     def _fail_pending(self, exc: MCPClientError) -> None:
         pending = list(self._pending.values())
