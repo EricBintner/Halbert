@@ -2344,6 +2344,121 @@ class SqliteConversationStore:
             logger.warning(f"blank_thread_words failed for {thread_id}: {e}")
             return False
 
+    def write_compact_boundary(self, plan: Any) -> Optional[int]:
+        """Persist one rotation (A16-G1, A16-G10). Returns the row id.
+
+        ``compact_boundaries`` shipped with a schema, an index and no
+        writer, so the typed columns were never populated and a long
+        thread grew until its history was truncated by whatever budget it
+        hit -- and the part that fell off was the part that had scrolled
+        away, which is exactly what a person expects to be remembered.
+
+        The whole rotation is ONE transaction: the summary row, the
+        boundary, and the hiding of the covered turns land together or
+        not at all. A boundary that named turns still visible, or turns
+        hidden with no boundary naming them, are both records that lie.
+        """
+        if self._conn is None or plan is None:
+            return None
+        try:
+            with self._lock, self._conn:
+                summary_id = self._conn.execute(
+                    "INSERT INTO messages "
+                    "(conversation_id, role, content, timestamp, "
+                    " visible_in_timeline, origin) "
+                    "VALUES (?, 'system', ?, ?, 1, 'compaction')",
+                    (plan.thread_id, plan.summary, time.time()),
+                ).lastrowid
+                if plan.covered_message_ids:
+                    marks = ",".join("?" * len(plan.covered_message_ids))
+                    self._conn.execute(
+                        f"UPDATE messages SET visible_in_timeline = 0 "
+                        f"WHERE id IN ({marks})",
+                        list(plan.covered_message_ids),
+                    )
+                boundary_id = self._conn.execute(
+                    "INSERT INTO compact_boundaries "
+                    "(thread_id, trigger, pre_tokens, post_tokens, "
+                    " preserved_message_ids, summary_message_id, created_at, "
+                    " coverage_end_id, generation, unresolved_request, "
+                    " trigger_detail) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?)",
+                    (
+                        plan.thread_id, plan.trigger,
+                        plan.pre_chars, plan.post_chars,
+                        json.dumps(list(plan.preserved_message_ids)),
+                        summary_id, time.time(), plan.coverage_end_id,
+                        plan.generation, plan.trigger_detail,
+                    ),
+                ).lastrowid
+            logger.info(
+                "compacted thread %s: generation %d, %d turns -> %d chars",
+                plan.thread_id, plan.generation,
+                len(plan.covered_message_ids), plan.post_chars,
+            )
+            return int(boundary_id)
+        except Exception as e:
+            logger.warning("write_compact_boundary failed: %s", e)
+            return None
+
+    def last_compact_boundary(self, thread_id: str) -> Optional[Dict[str, Any]]:
+        """The most recent rotation for a thread, or None.
+
+        The cooldown and the generation both come from here, so the
+        guards read the record rather than a counter someone has to
+        remember to keep.
+        """
+        if self._conn is None:
+            return None
+        try:
+            with self._lock:
+                row = self._conn.execute(
+                    "SELECT * FROM compact_boundaries WHERE thread_id = ? "
+                    "ORDER BY created_at DESC LIMIT 1",
+                    (thread_id,),
+                ).fetchone()
+            return dict(row) if row else None
+        except Exception as e:
+            logger.warning("last_compact_boundary failed: %s", e)
+            return None
+
+    def set_context_included(self, message_id: int, included: bool) -> bool:
+        """Record whether a message was in the context a turn actually saw.
+
+        A16-G3: the column had no writer and no reader, so nothing could
+        answer "did the model see this when it answered?" -- which is the
+        question every argument about a wrong answer turns into.
+        """
+        if self._conn is None:
+            return False
+        try:
+            with self._lock, self._conn:
+                self._conn.execute(
+                    "UPDATE messages SET context_included = ? WHERE id = ?",
+                    (1 if included else 0, int(message_id)),
+                )
+            return True
+        except Exception as e:
+            logger.warning("set_context_included failed: %s", e)
+            return False
+
+    def context_included(self, message_id: int) -> Optional[bool]:
+        """Whether this message was in the context a turn saw, or None."""
+        if self._conn is None:
+            return None
+        try:
+            with self._lock:
+                row = self._conn.execute(
+                    "SELECT context_included FROM messages WHERE id = ?",
+                    (int(message_id),),
+                ).fetchone()
+            if row is None or row["context_included"] is None:
+                return None
+            return bool(row["context_included"])
+        except Exception as e:
+            logger.warning("context_included failed: %s", e)
+            return None
+
     def forget_request(self, request_id: str) -> int:
         """Delete every message written under ``request_id`` — the
         transcript's half of "forget that session" (design §4.2, I7). The
