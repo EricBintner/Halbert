@@ -1,6 +1,6 @@
 ---
 name: home-ops
-description: Home Assistant, smart home devices, room lighting, climate, and spatial presence
+description: Home Assistant — devices, lighting, climate, room presence
 aliases: [home, smart-home, homeassistant, ha, iot]
 triggers:
   domains: [home, iot]

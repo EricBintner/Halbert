@@ -32,10 +32,22 @@ from .conversation import Conversation, Message
 logger = logging.getLogger("halbert.agents.conversation_sqlite")
 
 #: SQLite builds whose WAL-reset handling can lose committed
-#: transactions after a crash (A08-G5, FD-11). This venv ships 3.39.4,
-#: which is inside the range.
-_WAL_RESET_VULNERABLE_MIN = (3, 32, 0)
-_WAL_RESET_VULNERABLE_MAX = (3, 51, 2)
+#: transactions after a crash (A08-G5, FD-11; https://sqlite.org/wal.html
+#: #walresetbug). The origin's predicate, which this first got wrong in
+#: two ways: the floor was 3.32.0 rather than 3.7.0, and the two BACKPORT
+#: windows were missing entirely -- so a build that upstream had already
+#: patched was reported vulnerable. A predicate that over-warns teaches
+#: people to ignore it, which costs exactly as much as one that
+#: under-warns.
+_WAL_RESET_VULNERABLE_MIN = (3, 7, 0)
+#: Exclusive: the fix ships in 3.51.3.
+_WAL_RESET_FIXED_AT = (3, 51, 3)
+#: Ranges where the fix was backported to an older series. Each is
+#: [start, end-of-series): 3.44.6+ within 3.44.x, 3.50.7+ within 3.50.x.
+_WAL_RESET_BACKPORTS = (
+    ((3, 44, 6), (3, 45, 0)),
+    ((3, 50, 7), (3, 51, 0)),
+)
 
 _WAL_WARNED = False
 
@@ -57,19 +69,21 @@ def warn_if_wal_vulnerable() -> bool:
         version = sqlite3.sqlite_version_info[:3]
     except Exception:  # pragma: no cover - defensive
         return False
-    vulnerable = (
-        _WAL_RESET_VULNERABLE_MIN <= tuple(version) <= _WAL_RESET_VULNERABLE_MAX
-    )
+    current = tuple(version)
+    vulnerable = _WAL_RESET_VULNERABLE_MIN <= current < _WAL_RESET_FIXED_AT
+    if vulnerable and any(lo <= current < hi for lo, hi in _WAL_RESET_BACKPORTS):
+        vulnerable = False
     if vulnerable and not _WAL_WARNED:
         _WAL_WARNED = True
         logger.error(
-            "SQLite %s is in the WAL-reset range (%s-%s): a crash can lose a "
+            "SQLite %s is in the WAL-reset range (%s to below %s): a crash "
+            "can lose a "
             "committed transaction. The journal mode is NOT being changed -- "
             "that is a decision, not a default (FD-11). Plan the Python/SQLite "
             "bump; ENV-01 is the same conversation.",
             sqlite3.sqlite_version,
             ".".join(str(n) for n in _WAL_RESET_VULNERABLE_MIN),
-            ".".join(str(n) for n in _WAL_RESET_VULNERABLE_MAX),
+            ".".join(str(n) for n in _WAL_RESET_FIXED_AT),
         )
     return vulnerable
 

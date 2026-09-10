@@ -1,6 +1,6 @@
 ---
 name: security-ops
-description: SSH, authentication, permissions, certificates, and hardening
+description: SSH, authentication, permissions, certificates, hardening
 aliases: [security, ssh, auth]
 triggers:
   domains: [security]

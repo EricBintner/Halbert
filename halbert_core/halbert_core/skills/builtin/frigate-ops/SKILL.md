@@ -1,6 +1,6 @@
 ---
 name: frigate-ops
-description: Frigate NVR, camera streams, object tracking, Coral Edge TPU, and MQTT integration
+description: Frigate NVR — cameras, clips, object detection, Coral TPU
 aliases: [frigate, nvr, camera, rtsp, cctv]
 triggers:
   domains: [vision, camera, nvr]

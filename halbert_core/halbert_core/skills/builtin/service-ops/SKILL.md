@@ -1,6 +1,6 @@
 ---
 name: service-ops
-description: Services and daemons — start, stop, enable, and why they failed
+description: Services and daemons — start, stop, enable, why they failed
 aliases: [service, systemd, launchd]
 triggers:
   domains: [service]

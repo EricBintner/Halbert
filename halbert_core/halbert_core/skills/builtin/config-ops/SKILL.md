@@ -1,6 +1,6 @@
 ---
 name: config-ops
-description: Configuration files — what they say, what changed, and what reads them
+description: Config files — what they say, what changed, what reads them
 aliases: [config, conf]
 triggers:
   domains: [config]

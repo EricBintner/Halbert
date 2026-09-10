@@ -187,14 +187,13 @@ class TestNoOneEntryOwnsTheCatalog:
 # ---------------------------------------------------------------------------
 
 class TestTheBundledDescriptionSweep:
-    #: Measured on this branch. FD-20's default is "executor proposes
-    #: trims; founder approves copy before merge", so this records the
-    #: state instead of editing the words: a NEW over-limit description
-    #: fails the test, and every approved trim makes the set smaller.
-    KNOWN_OVER_LIMIT = {
-        "config-ops", "frigate-ops", "home-ops",
-        "security-ops", "service-ops", "understated",
-    }
+    #: Empty, and that is the point. FD-20 was answered on 2026-09-10:
+    #: all six over-limit descriptions were rewritten (founder-approved,
+    #: not mechanically trimmed -- `config-ops` could not reach 60 by
+    #: removing words alone and needed "Configuration" -> "Config").
+    #: The set can only shrink, so an empty one is the end state and a
+    #: new over-limit description now fails outright.
+    KNOWN_OVER_LIMIT = set()
 
     def test_no_bundled_skill_joins_the_over_limit_set(self):
         from halbert_core.skills.loader import daemon_skill_dirs
