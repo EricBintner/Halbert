@@ -28,9 +28,25 @@ from halbert_core.persona.permission.consent import (
 
 
 def _owner(**kw) -> Principal:
+    """An owner whose OS re-auth the SERVER recorded (A11-G12).
+
+    R-08 Phase E: ``may_record_grant`` used to read ``Principal.authn``,
+    a string the caller writes -- so anything that could construct a
+    Principal could mint the strongest grant on the machine. It reads the
+    server's own receipt now. Nothing mints one with ``os_reauth=True``
+    yet (no OS re-authentication exists in the tree to mint it from), so
+    tests build it directly.
+    """
+    from halbert_core.persona.permission.consent import SurfaceReceipt
+
+    surface = kw.pop("receipt_surface", "desktop-app/first-run")
     base = dict(
         kind="owner", id="local:501", name="Eric",
         authn="os_reauth:touchid", at_machine=True,
+        surface_receipt=SurfaceReceipt(
+            surface=surface, principal_id="local:501",
+            at_machine=True, os_reauth=True, method="test-only",
+        ),
     )
     base.update(kw)
     return Principal(**base)
@@ -107,11 +123,33 @@ def test_widening_needs_owner_first_party_surface_and_live_reauth():
     ) is False
 
     # an owner on a remote surface is not a widening path
-    assert may_record_grant(_owner(), "mcp") is False
-    assert may_record_grant(_owner(), "ha_component") is False
+    assert may_record_grant(_owner(receipt_surface="mcp"), "mcp") is False
+    assert may_record_grant(
+        _owner(receipt_surface="ha_component"), "ha_component") is False
 
-    # a session credential is not a live OS re-auth
-    assert may_record_grant(_owner(authn="session"), "desktop-app/first-run") is False
+    # A session credential is not a live OS re-auth -- and since A11-G12
+    # that is decided by the SERVER's receipt, not by the authn string
+    # the caller wrote. SurfaceReceipt.for_session is what a
+    # session-authenticated door can honestly mint: a validated session
+    # token is evidence that someone signed in once, not that the person
+    # at the keyboard just proved themselves again.
+    from halbert_core.persona.permission.consent import SurfaceReceipt
+
+    session_owner = Principal(
+        kind="owner", id="local:501", at_machine=True,
+        surface_receipt=SurfaceReceipt.for_session(
+            surface="desktop-app/first-run", principal_id="local:501",
+            at_machine=True,
+        ),
+    )
+    assert may_record_grant(session_owner, "desktop-app/first-run") is False
+
+    # An authn string that SAYS os_reauth mints nothing on its own.
+    assert may_record_grant(
+        Principal(kind="owner", id="local:501", authn="os_reauth:touchid",
+                  at_machine=True),
+        "desktop-app/first-run",
+    ) is False
 
     # and not from another machine
     assert may_record_grant(_owner(at_machine=False), "desktop-app/first-run") is False
@@ -140,9 +178,16 @@ def test_narrowing_needs_no_authority():
 
 
 def test_a_grant_record_is_not_valid_without_the_words_shown():
-    # text_shown_sha256 is the field that turns a record into evidence
-    assert is_valid_grant_record(_record()) is True
+    # text_shown_sha256 is the field that turns a record into evidence,
+    # and A11-G4 made it evidence of SHIPPED wording: any 64 characters
+    # used to satisfy it, so a grant could carry the digest of words
+    # nobody ever shipped.
+    from halbert_core.consent.copy import digest_for
+
+    assert is_valid_grant_record(
+        _record(text_shown_sha256=digest_for("sensor.screen"))) is True
     assert is_valid_grant_record(_record(text_shown_sha256="")) is False
+    assert is_valid_grant_record(_record(text_shown_sha256="f" * 64)) is False
     # and not for any other decision — only grants carry the evidentiary bar
     assert is_valid_grant_record(_record(decision=ConsentDecision.DENIED)) is False
 

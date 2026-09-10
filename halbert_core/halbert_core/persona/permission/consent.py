@@ -93,14 +93,70 @@ def mandatory_ttl_days(capability: str):
 
 
 @dataclass(frozen=True)
+class SurfaceReceipt:
+    """What the SERVER validated about one request (A11-G12).
+
+    ``Principal.authn`` and ``Principal.surface`` are caller-supplied
+    strings, and ``may_record_grant`` decided the widening asymmetry by
+    reading them — so anything that could construct a ``Principal`` could
+    mint the strongest grant on the machine by typing the right words
+    into it. This is the server's own record instead: the same shape the
+    voice relay receipts use one door over, and for the same reason —
+    the receipt carries the authority, never the caller's word about it.
+
+    ``os_reauth`` is the leg that is NOT mintable today. Nothing in the
+    tree performs an OS re-authentication (no LocalAuthentication, no
+    polkit, no sudo challenge); ``dashboard/auth.py`` validates a session
+    credential and a Host header and nothing more. So a receipt minted
+    from a session says ``os_reauth=False``, and a grant that needs a
+    live re-auth cannot be recorded until that handler exists. That is
+    the correct state rather than a gap: accepting a caller-supplied
+    ``authn`` string as an interim would be a promise the code cannot
+    keep.
+    """
+
+    #: The route or door this was validated on.
+    surface: str
+    #: Who the door authenticated, in its own vocabulary.
+    principal_id: str = ""
+    #: Whether the request came from this machine (not over a wire).
+    at_machine: bool = False
+    #: Whether a LIVE OS re-authentication was performed for THIS request.
+    os_reauth: bool = False
+    #: How it was validated -- for the audit line, never for a decision.
+    method: str = ""
+
+    @classmethod
+    def for_session(
+        cls, *, surface: str, principal_id: str = "", at_machine: bool = False,
+    ) -> "SurfaceReceipt":
+        """The receipt a session-authenticated door can honestly mint.
+
+        Never ``os_reauth``: a validated session token is evidence that
+        someone signed in once, not that the person at the keyboard just
+        proved themselves again.
+        """
+        return cls(
+            surface=surface,
+            principal_id=principal_id,
+            at_machine=at_machine,
+            os_reauth=False,
+            method="session",
+        )
+
+
+@dataclass(frozen=True)
 class Principal:
     """Who decided — never just a name, always an authentication story."""
 
     kind: str            # "owner" | "os" | "system" | "agent" | ...
     id: str = ""         # e.g. "local:501"
     name: str = ""       # display only — names never authorize anything
-    authn: str = ""      # "os_reauth:touchid" | "session" | "none" | ...
+    authn: str = ""      # RECORDING only since A11-G12 — see surface_receipt
     at_machine: bool = False  # False for anything arriving over a wire
+    #: A11-G12: the server's own record of what it validated. The
+    #: widening asymmetry reads THIS, never ``authn``.
+    surface_receipt: Optional["SurfaceReceipt"] = None
 
 
 @dataclass(frozen=True)
@@ -213,7 +269,41 @@ def consent_state(
         current = now or datetime.now(timezone.utc).isoformat()
         if _expired(record, current):
             return ConsentDecision.EXPIRED
+    if record.decision is ConsentDecision.GRANTED and _copy_widened(record):
+        # A11-G5: the shipped words for this capability have WIDENED
+        # since the owner agreed to them, so the grant is consent to a
+        # narrower sentence than the one that would be shown now. It
+        # folds to ABSENT -- ask again -- rather than carrying over to a
+        # broader promise nobody made.
+        return ConsentDecision.ABSENT
     return record.decision
+
+
+def _copy_widened(record: "ConsentRecord") -> bool:
+    """Whether this grant's wording has since been widened (A11-G5).
+
+    Declared, never inferred: a widening is an editorial judgement about
+    MEANING, and inferring it from a text diff would make every typo fix
+    a re-consent -- which trains people to click through the one that
+    matters. A manifest that cannot be read reports no widening: the
+    write-time evidentiary bar is the primary check, and an unreadable
+    manifest must not silently revoke every grant on the machine.
+    """
+    try:
+        from ...consent.copy import (
+            CURRENT_VERSION, digest_for, is_widening, manifest_data,
+        )
+        versions = manifest_data().get(record.capability) or {}
+    except Exception:  # pragma: no cover - import/manifest only
+        return False
+    granted_version = next(
+        (v for v, digest in versions.items()
+         if digest == record.text_shown_sha256),
+        None,
+    )
+    if granted_version is None:
+        return False
+    return is_widening(record.capability, granted_version, CURRENT_VERSION)
 
 
 def may_record_grant(principal: Principal, surface: str) -> bool:
@@ -231,7 +321,18 @@ def may_record_grant(principal: Principal, surface: str) -> bool:
         return False
     if not principal.at_machine:
         return False
-    return principal.authn.startswith(_LIVE_OS_REAUTH_PREFIX)
+    # A11-G12: the receipt, not the string. ``authn`` is a field the
+    # caller writes; reading it here meant anything that could construct
+    # a Principal could mint the strongest grant on the machine by typing
+    # "os_reauth:touchid" into it.
+    receipt = principal.surface_receipt
+    if receipt is None:
+        return False
+    if receipt.surface != surface:
+        return False
+    if not receipt.at_machine:
+        return False
+    return bool(receipt.os_reauth)
 
 
 def is_valid_grant_record(record: ConsentRecord) -> bool:
@@ -243,4 +344,16 @@ def is_valid_grant_record(record: ConsentRecord) -> bool:
     """
     if record.decision is not ConsentDecision.GRANTED:
         return False
-    return bool(record.text_shown_sha256) and bool(record.policy_version)
+    if not record.text_shown_sha256 or not record.policy_version:
+        return False
+    # A11-G4: the digest has to be one the shipped copy can produce.
+    # "Non-empty" let a grant carry the digest of words nobody ever
+    # shipped -- and the reason the digest is recorded at all is that the
+    # grant resolves to SPECIFIC wording the owner actually saw. A
+    # manifest that cannot be read fails closed: an unverifiable grant is
+    # not a grant.
+    try:
+        from ...consent.copy import is_shipped_digest
+    except Exception:  # pragma: no cover - import-time only
+        return False
+    return is_shipped_digest(record.text_shown_sha256)

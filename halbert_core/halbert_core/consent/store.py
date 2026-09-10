@@ -64,6 +64,7 @@ from ..persona.permission.consent import (
     consent_state,
     is_valid_grant_record,
     latest_for,
+    SurfaceReceipt,
     may_record_grant,
 )
 from ..persona.permission.ceiling import NEVER_CEILING_IDS, VOCABULARY, takes_consent_records
@@ -157,6 +158,33 @@ _RECORD_FIELDS = (
 )
 
 
+def _principal_from_payload(data: Mapping[str, Any]) -> Principal:
+    """Rebuild the principal, receipt and all (A11-G12)."""
+    if not isinstance(data, Mapping):
+        # A11 bug 7's case: a shard edited to a string principal. Typed,
+        # so the reader's own except clause turns it into the halt this
+        # ledger is written for.
+        raise TypeError("principal is not an object")
+    raw_receipt = data.get("surface_receipt")
+    receipt = None
+    if isinstance(raw_receipt, dict):
+        receipt = SurfaceReceipt(
+            surface=str(raw_receipt.get("surface", "")),
+            principal_id=str(raw_receipt.get("principal_id", "")),
+            at_machine=bool(raw_receipt.get("at_machine", False)),
+            os_reauth=bool(raw_receipt.get("os_reauth", False)),
+            method=str(raw_receipt.get("method", "")),
+        )
+    return Principal(
+        kind=data["kind"],
+        id=data.get("id", ""),
+        name=data.get("name", ""),
+        authn=data.get("authn", ""),
+        at_machine=bool(data.get("at_machine", False)),
+        surface_receipt=receipt,
+    )
+
+
 def record_to_payload(record: ConsentRecord) -> Dict[str, Any]:
     """Flatten one record into the payload its ledger event carries."""
     payload: Dict[str, Any] = {
@@ -169,6 +197,19 @@ def record_to_payload(record: ConsentRecord) -> Dict[str, Any]:
             "name": record.principal.name,
             "authn": record.principal.authn,
             "at_machine": record.principal.at_machine,
+            # A11-G12: the server's own record of what it validated, so
+            # the ledger row says HOW the decision was authorised rather
+            # than only who claimed to make it.
+            "surface_receipt": (
+                {
+                    "surface": record.principal.surface_receipt.surface,
+                    "principal_id": record.principal.surface_receipt.principal_id,
+                    "at_machine": record.principal.surface_receipt.at_machine,
+                    "os_reauth": record.principal.surface_receipt.os_reauth,
+                    "method": record.principal.surface_receipt.method,
+                }
+                if record.principal.surface_receipt is not None else None
+            ),
         },
         "surface": record.surface,
         "text_shown_sha256": record.text_shown_sha256,
@@ -201,13 +242,7 @@ def record_from_payload(payload: Mapping[str, Any]) -> ConsentRecord:
             capability=payload["capability"],
             decision=ConsentDecision(payload["decision"]),
             ts=payload["ts"],
-            principal=Principal(
-                kind=payload["principal"]["kind"],
-                id=payload["principal"].get("id", ""),
-                name=payload["principal"].get("name", ""),
-                authn=payload["principal"].get("authn", ""),
-                at_machine=bool(payload["principal"].get("at_machine", False)),
-            ),
+            principal=_principal_from_payload(payload["principal"]),
             surface=payload.get("surface", ""),
             text_shown_sha256=payload.get("text_shown_sha256", ""),
             via=payload.get("via", ""),
@@ -532,11 +567,22 @@ class ConsentStore:
                 GrantRefused.NOT_AT_MACHINE,
                 "the decision arrived over a wire",
             )
-        if not principal.authn.startswith("os_reauth"):
+        # A11-G12: the SERVER's receipt, not the caller's authn string.
+        # ``authn`` is a field anything constructing a Principal can
+        # write, so reading it here meant typing "os_reauth:touchid"
+        # minted the strongest grant on the machine.
+        receipt = principal.surface_receipt
+        if receipt is None or not receipt.os_reauth or receipt.surface != surface:
             raise GrantRefused(
                 GrantRefused.NO_LIVE_OS_REAUTH,
-                f"authn '{principal.authn or 'none'}' is not a live OS "
-                f"re-auth; a session credential is not a widening path",
+                "no server-minted receipt records a live OS re-auth on "
+                "this surface; a session credential is not a widening "
+                "path, and the caller's own word about one is not either",
+            )
+        if not receipt.at_machine:
+            raise GrantRefused(
+                GrantRefused.NOT_AT_MACHINE,
+                "the receipt does not record a decision made at the machine",
             )
 
     # -- reads -----------------------------------------------------------

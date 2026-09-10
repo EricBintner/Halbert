@@ -464,3 +464,55 @@ def _self_check() -> None:
 
 
 _self_check()
+
+
+# ---------------------------------------------------------------------------
+# A11-G4 / A11-G5: a grant resolves to shipped wording, and stops when it widens
+# ---------------------------------------------------------------------------
+
+#: Capability copy versions whose wording WIDENED what the capability
+#: means. A grant recorded against the older version is consent to the
+#: older sentence, so it folds to ask-again rather than carrying over.
+#:
+#: Declared, never inferred: a widening is an editorial judgement about
+#: MEANING, and inferring it from a text diff would make every typo fix a
+#: re-consent -- which trains people to click through the one that
+#: matters. Shape: ``{capability: {new_version: previous_version}}``.
+WIDENED_VERSIONS: Dict[str, Dict[str, str]] = {}
+
+
+def known_digests() -> frozenset:
+    """Every digest the shipped copy can produce, capability and review.
+
+    A11-G4: ``is_valid_grant_record`` only checked that
+    ``text_shown_sha256`` was non-empty, so any 64 characters satisfied
+    it -- and the whole point of recording a digest is that the grant
+    resolves to specific wording the owner actually saw.
+    """
+    digests = set()
+    for capability, versions in manifest_data().items():
+        digests.update(versions.values())
+    return frozenset(digests)
+
+
+def is_shipped_digest(digest: str) -> bool:
+    """Whether this digest is one of the shipped sentences."""
+    return bool(digest) and digest in known_digests()
+
+
+def is_widening(capability: str, granted_version: str, current_version: str) -> bool:
+    """Whether the copy widened between two versions of a capability."""
+    if granted_version == current_version:
+        return False
+    chain = WIDENED_VERSIONS.get(capability, {})
+    seen = current_version
+    # Walk back from the current version; a widening anywhere on the path
+    # from the granted version to the current one folds the grant.
+    for _ in range(len(chain) + 1):
+        previous = chain.get(seen)
+        if previous is None:
+            return False
+        if previous == granted_version:
+            return True
+        seen = previous
+    return False

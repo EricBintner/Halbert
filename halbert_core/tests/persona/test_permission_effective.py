@@ -20,6 +20,7 @@ from halbert_core.persona.permission.consent import ConsentDecision, ConsentReco
 from halbert_core.persona.permission.effective import (
     AXIS_AFFORDANCE,
     AXIS_CEILING,
+    AXIS_CLAIM,
     AXIS_CONSENT,
     AXIS_HALT,
     AXIS_OS_GRANT,
@@ -93,7 +94,12 @@ def test_all_five_affirmative_allows():
     assert decision.capability == CAP
     # the full axis evidence is retained for the audit line
     axes = {obs.axis for obs in decision.observations}
-    assert axes == {AXIS_HALT, AXIS_CEILING, AXIS_AFFORDANCE, AXIS_CONSENT, AXIS_OS_GRANT, AXIS_SCOPE}
+    # AXIS_CLAIM joined in R-08 Phase E (A12-G2): the identity claim is
+    # its own axis now rather than a threshold buried in a caller.
+    assert axes == {
+        AXIS_HALT, AXIS_CEILING, AXIS_AFFORDANCE, AXIS_CONSENT,
+        AXIS_OS_GRANT, AXIS_SCOPE, AXIS_CLAIM,
+    }
     assert all(obs.affirmative for obs in decision.observations)
 
 

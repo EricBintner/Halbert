@@ -27,14 +27,25 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def _write_grant(store: ConsentStore) -> None:
+    """R-08 Phase E: a grant now needs the server's own re-auth receipt
+    (A11-G12 -- ``authn`` was a string the caller wrote) and a digest the
+    shipped copy can actually produce (A11-G4 -- "non-empty" let a grant
+    carry the digest of words nobody ever shipped)."""
+    from halbert_core.consent.copy import digest_for
+    from halbert_core.persona.permission.consent import SurfaceReceipt
+
     store.record_decision(
         capability="sensor.screen",
         decision=ConsentDecision.GRANTED,
         principal=Principal(
-            kind="owner", id="local:501", authn="os_reauth:touchid", at_machine=True
+            kind="owner", id="local:501", at_machine=True,
+            surface_receipt=SurfaceReceipt(
+                surface="desktop-app/first-run", principal_id="local:501",
+                at_machine=True, os_reauth=True, method="test-only",
+            ),
         ),
         surface="desktop-app/first-run",
-        text_shown_sha256="9f2c" + "0" * 60,
+        text_shown_sha256=digest_for("sensor.screen"),
     )
 
 

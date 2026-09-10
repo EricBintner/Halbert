@@ -27,6 +27,7 @@ from pathlib import Path
 import pytest
 
 from halbert_core.consent import denials as denials_mod
+from halbert_core.consent.copy import digest_for
 from halbert_core.consent import store as store_mod
 from halbert_core.consent.store import (
     CONSENT_EVENT_KIND,
@@ -46,6 +47,7 @@ from halbert_core.persona.permission import (
     OsGrantState,
     OsGrantTable,
     Principal,
+    SurfaceReceipt,
     VOCABULARY,
     consent_state,
     effective_capability,
@@ -70,10 +72,29 @@ def store(dirs):
     )
 
 
+def _reauth_receipt(surface="desktop-app/first-run") -> SurfaceReceipt:
+    """The receipt a real OS re-auth handler will mint (A11-G12).
+
+    R-08 Phase E: ``may_record_grant`` used to read ``Principal.authn``,
+    a string the caller writes, so anything that could construct a
+    Principal could mint the strongest grant on the machine by typing
+    "os_reauth:touchid" into it. It reads the SERVER's own receipt now.
+    Nothing in the tree mints one with ``os_reauth=True`` yet -- no OS
+    re-authentication exists to mint it from -- so tests build it
+    directly, and production correctly cannot record such a grant until
+    that handler lands.
+    """
+    return SurfaceReceipt(
+        surface=surface, principal_id="local:501",
+        at_machine=True, os_reauth=True, method="test-only",
+    )
+
+
 def _owner(**kw) -> Principal:
     base = dict(
         kind="owner", id="local:501", name="Eric",
         authn="os_reauth:touchid", at_machine=True,
+        surface_receipt=_reauth_receipt(),
     )
     base.update(kw)
     return Principal(**base)
@@ -85,7 +106,11 @@ def _grant(store, capability="sensor.screen", **kw) -> ConsentRecord:
         decision=ConsentDecision.GRANTED,
         principal=_owner(),
         surface="desktop-app/first-run",
-        text_shown_sha256="9f2c" + "0" * 60,
+        # A11-G4: the digest has to be one the shipped copy can produce.
+        # "9f2c" + zeros satisfied the old non-empty check, which is the
+        # gap: the reason the digest is recorded is that the grant
+        # resolves to specific wording the owner actually saw.
+        text_shown_sha256=digest_for(capability),
         ts="2026-09-06T14:12:03Z",
     )
     base.update(kw)
@@ -201,8 +226,14 @@ QUARTET = [
     (dict(kind="peer", authn="none", at_machine=False), "not_owner"),
     (dict(kind="mcp", authn="none", at_machine=False), "not_owner"),
     # The unauthenticated-loopback shape: claims to be the owner, arrives
-    # over a wire with a session credential and no OS re-auth.
-    (dict(kind="owner", authn="session", at_machine=True), "no_live_os_reauth"),
+    # over a wire with a session credential and no OS re-auth. Since
+    # A11-G12 the string is irrelevant -- what refuses it is the absence
+    # of a server-minted receipt recording one.
+    (dict(kind="owner", authn="session", at_machine=True,
+          surface_receipt=None), "no_live_os_reauth"),
+    # And the forged shape: an authn string that SAYS os_reauth.
+    (dict(kind="owner", authn="os_reauth:touchid", at_machine=True,
+          surface_receipt=None), "no_live_os_reauth"),
 ]
 
 
