@@ -4303,6 +4303,22 @@ class AgentStateMachine:
         # them from ``context``, and _receipt_block still feeds the
         # no-builder path below.
         if self.prompts:
+            # A10-G7 + A10-G6: the model is told the spoken budget it is
+            # actually working to, and whether the listener cut off the
+            # last reply. Both were computed by nothing: the engine's
+            # budget block was unreachable, and a barge-in stopped the
+            # audio and told the model nothing at all.
+            spoken_cap = None
+            barge_note = ""
+            try:
+                from ..integrations.modality_wiring import (
+                    spoken_max_words, take_barge_in_note,
+                )
+                if response_modality == "voice":
+                    spoken_cap = spoken_max_words(modality_ctx)
+                    barge_note = take_barge_in_note(self.ctx.session_id) or ""
+            except Exception as e:
+                logger.debug(f"spoken budget/barge-in hint skipped: {e}")
             prompt = self.prompts.build_response_prompt(
                 query=self.ctx.user_query,
                 context=self.ctx.retrieved_context,
@@ -4310,6 +4326,8 @@ class AgentStateMachine:
                 world_observations=self._world_observations(),
                 tools_supported=getattr(self.llm, "tools_supported", None),
                 response_modality=response_modality,
+                spoken_max_words=spoken_cap,
+                barge_in_note=barge_note,
             )
             logger.info("Using AgentPromptBuilder for response prompt")
         else:
@@ -4560,7 +4578,14 @@ class AgentStateMachine:
                         # spoken copy (screen-side record); only what is
                         # synthesized is summarized.
                         spoken_segments: List[tuple] = []
-                        summarizer = make_speech_summarizer(self.ctx.session_id)
+                        # A14-G4 (summarizer half): a secure turn's spoken
+                        # copy is the same material the turn was restricted
+                        # to local models for. Handing it to a cloud utility
+                        # slot to be shortened would undo that in one line.
+                        summarizer = make_speech_summarizer(
+                            self.ctx.session_id,
+                            secure=bool(getattr(self.ctx, "secure_context", False)),
+                        )
                         for line in spoken_segment_lines(
                             clean_response, payload, summarizer=summarizer
                         ):
@@ -4772,10 +4797,26 @@ class AgentStateMachine:
         any_began = False
         sent_cancelled = False
         try:
+            spoken_words = 0
+            total_words = sum(len((t or "").split()) for t, _ in segments)
             for text, rate in segments:
                 # Barge-in between segments: stop before spending a full
                 # sherpa-onnx generation pass on a segment nobody will hear.
                 if token is not None and token.is_set():
+                    # A10-G6: record what the listener actually heard, so
+                    # the NEXT turn knows it was interrupted. Barge-in
+                    # stopped the audio and told the model nothing, and
+                    # the commonest reason a person interrupts is that
+                    # the answer had already gone wrong.
+                    try:
+                        from ..integrations.modality_wiring import record_barge_in
+                        record_barge_in(
+                            session_id,
+                            spoken_words=spoken_words,
+                            total_words=total_words,
+                        )
+                    except Exception as e:
+                        logger.debug(f"barge-in note not recorded: {e}")
                     break
                 if not text.strip():
                     continue
@@ -4796,6 +4837,7 @@ class AgentStateMachine:
                                 "format": "s16le",
                             })
                         await hub.publish(session_id, chunk)
+                    spoken_words += len((text or "").split())
                 finally:
                     tts._speed = original_speed
                 if began:

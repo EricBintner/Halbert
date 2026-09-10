@@ -29,6 +29,17 @@ The model call goes through the one existing client path
 (:func:`.client.call_llm_chat`) — no new provider path, and the GPU
 advisory lock that path takes keeps the summarization from contending
 with a concurrent local generation.
+
+**Dormant, and known to be** (A10 refuter finding, FD-4). This seam's
+600-character gate sits BEHIND the engine's VoiceRiskPolicy word cap,
+which is 12–35 words — a few hundred characters at most. So no real
+voice turn ever reaches the gate, and this module has never summarized
+anything in production. FD-4's ruling is to keep the engine's cap as the
+ceiling, wire the budget hint into the prompt instead (A10-G7), and keep
+this correct but dormant rather than deleting it or raising the cap to
+give it work. It is correct here so that if the cap ever moves, what
+wakes up is right: off the event loop, local-only on a secure turn, and
+retried once through the ladder rather than silently giving up.
 """
 from __future__ import annotations
 
@@ -75,12 +86,52 @@ _SUMMARY_SYSTEM_PROMPT = (
 )
 
 
-def make_speech_summarizer(session_id: str = "") -> Callable[[str], str]:
+def _resolve_aux(**kwargs):
+    """The utility-slot ladder, behind one name (a seam for the tests).
+
+    ``require_local`` and ``exclude`` are passed through when the slot
+    accepts them. R-13 adds both to ``resolve_aux_model``; until it
+    lands this degrades rather than raising, so the two packets do not
+    have to land in the same commit to both be correct.
+    """
+    from ..model import utility_slot
+
+    try:
+        return utility_slot.resolve_aux_model(**kwargs)
+    except TypeError:
+        pruned = {
+            k: v for k, v in kwargs.items()
+            if k not in ("require_local", "exclude")
+        }
+        if pruned.keys() == kwargs.keys():
+            raise
+        logger.debug(
+            "utility slot does not accept require_local/exclude yet; "
+            "resolving without them"
+        )
+        return utility_slot.resolve_aux_model(**pruned)
+
+
+def _call_llm(**kwargs):
+    """The one model client path, behind one name (a seam for the tests)."""
+    from ..model import client
+
+    return client.call_llm_chat(**kwargs)
+
+
+def make_speech_summarizer(
+    session_id: str = "", secure: bool = False,
+) -> Callable[[str], str]:
     """A ``summarizer`` callable for :func:`.tts_quality.adapt_for_speech`.
 
     Args:
         session_id: The turn's session id, carried to the utility-slot
             ladder so a session-scoped utility_model pin resolves.
+        secure: Whether this turn's context was latched secure. A14-G4
+            (summarizer half): the spoken copy of a secure turn is the
+            same material the turn was restricted to local models for,
+            and handing it to a cloud utility slot to be shortened would
+            undo that in one line. ``require_local`` on every rung.
 
     Returns:
         A callable ``summarize(text) -> str`` that returns the summary
@@ -97,43 +148,57 @@ def make_speech_summarizer(session_id: str = "") -> Callable[[str], str]:
         # full, and the model is never consulted for it.
         if len(text) <= SPOKEN_SUMMARY_THRESHOLD_CHARS:
             return text
-        try:
-            from ..model import utility_slot
-            resolved = utility_slot.resolve_aux_model(
-                session_id=session_id,
-                task=SUMMARY_TASK,
-                prefer_fast=True,
-            )
-        except Exception as e:
-            logger.debug("speech summarizer: model resolution failed (%s)", e)
-            return text
-        if resolved is None:
-            logger.debug(
-                "speech summarizer: no utility model available — "
-                "original spoken copy kept"
-            )
-            return text
-        try:
-            from ..model import client
-            result = client.call_llm_chat(
-                endpoint=resolved.url,
-                model=resolved.model,
-                messages=[
-                    {"role": "system", "content": _SUMMARY_SYSTEM_PROMPT},
-                    {"role": "user", "content": text},
-                ],
-                provider=resolved.provider,
-                stream=False,
-                timeout=_SUMMARY_TIMEOUT_S,
-                options={
-                    "temperature": 0.2,
-                    "num_predict": _SUMMARY_NUM_PREDICT,
-                },
-                api_key=resolved.api_key or "",
-            )
-        except Exception as e:
-            logger.debug("speech summarizer: request failed (%s)", e)
-            return text
+        # A14-G7 (summarizer half): a pick that ERRORS is excluded and
+        # the ladder is asked once more. One retry, not a loop: a second
+        # failure is a fact about the host, not about the pick, and a
+        # summarizer that keeps trying is a summarizer that keeps the
+        # listener waiting.
+        result = None
+        excluded: tuple = ()
+        for attempt in (1, 2):
+            try:
+                resolved = _resolve_aux(
+                    session_id=session_id,
+                    task=SUMMARY_TASK,
+                    prefer_fast=True,
+                    require_local=bool(secure),
+                    exclude=excluded,
+                )
+            except Exception as e:
+                logger.debug(
+                    "speech summarizer: model resolution failed (%s)", e)
+                return text
+            if resolved is None:
+                logger.debug(
+                    "speech summarizer: no utility model available — "
+                    "original spoken copy kept"
+                )
+                return text
+            try:
+                result = _call_llm(
+                    endpoint=resolved.url,
+                    model=resolved.model,
+                    messages=[
+                        {"role": "system", "content": _SUMMARY_SYSTEM_PROMPT},
+                        {"role": "user", "content": text},
+                    ],
+                    provider=resolved.provider,
+                    stream=False,
+                    timeout=_SUMMARY_TIMEOUT_S,
+                    options={
+                        "temperature": 0.2,
+                        "num_predict": _SUMMARY_NUM_PREDICT,
+                    },
+                    api_key=resolved.api_key or "",
+                )
+                break
+            except Exception as e:
+                logger.debug(
+                    "speech summarizer: request failed on %s (%s)",
+                    resolved.model, e)
+                if attempt == 2:
+                    return text
+                excluded = tuple(excluded) + (resolved.model,)
         summary = " ".join(((result or {}).get("content") or "").split())
         # Compared against the collapsed input: whitespace normalization
         # alone is not a summary, so it must not count as "shorter".
@@ -146,3 +211,23 @@ def make_speech_summarizer(session_id: str = "") -> Callable[[str], str]:
         return summary
 
     return summarize
+
+
+async def make_async_speech_summarizer(
+    session_id: str = "", secure: bool = False,
+):
+    """The summarizer as an awaitable, run off the event loop (A14 bug 3).
+
+    The sync callable does a blocking HTTP request and, one layer down,
+    a catalog probe — both INLINE on the loop, so a slow or hung utility
+    model froze every other session's turn as well as its own. Callers
+    on the loop take this; the sync form stays for callers that are not.
+    """
+    import asyncio
+
+    summarize = make_speech_summarizer(session_id, secure=secure)
+
+    async def _summarize(text: str) -> str:
+        return await asyncio.to_thread(summarize, text)
+
+    return _summarize

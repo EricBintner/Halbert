@@ -960,6 +960,8 @@ Use first person ("I", "my") for subjective experience and feelings. Use third p
         continuity: str = "",
         tools_supported: Optional[bool] = None,
         response_modality: str = "text",
+        spoken_max_words: Optional[int] = None,
+        barge_in_note: str = "",
     ) -> str:
         """
         Build prompt for RESPONDING state.
@@ -1083,6 +1085,17 @@ The user is asking about your state. Follow these rules:
                 "- Respond in plain text suitable for speech: short "
                 "sentences, no markdown syntax, no code blocks"
             )
+            # A10-G7: tell the model the budget it is actually working
+            # to. The engine's cap is real and deterministic; without
+            # this line every voice reply was written at essay length and
+            # then cut mid-sentence, which a listener hears as a fault.
+            try:
+                from ..integrations.modality_wiring import spoken_budget_hint
+                hint = spoken_budget_hint(spoken_max_words)
+            except Exception:
+                hint = ""
+            if hint:
+                formatting_line = f"{formatting_line}\n- {hint}"
             response_style = "plain text, spoken naturally"
         else:
             formatting_line = (
@@ -1108,6 +1121,7 @@ Answer this question: {query}
 - If you're uncertain, clearly state your confidence level
 - Suggest follow-up actions if appropriate
 {reactive_instructions}
+{barge_in_note}
 
 Your response ({response_style}):"""
 

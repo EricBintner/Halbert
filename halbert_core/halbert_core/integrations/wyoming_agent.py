@@ -220,6 +220,9 @@ class HalbertWyomingAgent:
         turn_session_id = f"wyoming-{uuid.uuid4().hex[:12]}"
 
         response_chunks: list[str] = []
+        #: A10-G5: the COMMITTED spoken text, as the state machine
+        #: emitted it after the parser, the guard and the shaping.
+        spoken_segments: list[str] = []
 
         # Voice turns persist to the same thread store as chat turns (doc 14
         # Gap 3): with the ThreadManager wired, a conversation_id maps to the
@@ -262,7 +265,18 @@ class HalbertWyomingAgent:
                 async with aclosing(stream) as events:
                     async for event in events:
                         if isinstance(event, StreamEvent):
-                            if event.type == "response_chunk":
+                            # A10-G5 (fix-first row 9): take the COMMITTED
+                            # spoken text, not the raw chunks. A
+                            # speech_segment is what the state machine
+                            # emits after the module-invocation parser,
+                            # the echo guard and the shaping have run --
+                            # which is exactly the material this
+                            # screenless surface reads aloud. The chunks
+                            # met none of that.
+                            if event.type == "speech_segment":
+                                spoken_segments.append(
+                                    event.data.get("text", ""))
+                            elif event.type == "response_chunk":
                                 response_chunks.append(event.data.get("content", ""))
                             elif event.type == "response_complete":
                                 break
@@ -276,12 +290,18 @@ class HalbertWyomingAgent:
             return "I encountered an error processing that request."
 
         # This string goes back over the wire to HA's TTS, which reads it
-        # aloud verbatim — so it gets the same treatment proactive_speak
-        # already gave its text. Without it the satellite said "hash hash
-        # Samba shares, star star etc slash samba slash smb dot conf star
-        # star" (U2-05). Pronunciation substitutions ride along so domain
-        # terms (systemd, MQTT, NVMe) are said correctly.
-        spoken = _strip_markdown_for_speech("".join(response_chunks))
+        # aloud verbatim, so it goes through the ONE spoken pipeline
+        # (A10-G5). The committed speech segments are preferred; the raw
+        # chunks are the fallback for a turn that produced none, and they
+        # take the same pipeline rather than being spoken as they are --
+        # a fallback that skips the guard is the hole this closes.
+        from .tts_quality import adapt_for_speech
+
+        if spoken_segments:
+            spoken = " ".join(seg for seg in spoken_segments if seg).strip()
+        else:
+            spoken = adapt_for_speech("".join(response_chunks))
+        spoken = _strip_markdown_for_speech(spoken)
         try:
             from .modality_wiring import apply_pronunciation
             spoken = apply_pronunciation(spoken)
@@ -581,7 +601,11 @@ async def proactive_speak(
         try:
             # TASK-07: strip markdown before sending to TTS. HA's TTS reads
             # raw text aloud — markdown syntax is not spoken language.
-            spoken_text = _strip_markdown_for_speech(text)
+            # A10-G5: the same one pipeline the turn path takes. This
+            # path already stripped markdown; what it did not do was the
+            # reasoning-token strip or the egress scrub.
+            from .tts_quality import adapt_for_speech
+            spoken_text = _strip_markdown_for_speech(adapt_for_speech(text))
             # Phase 2.5: apply pronunciation substitutions for domain terms
             # so HA's TTS pronounces systemd, MQTT, NVMe, etc. correctly.
             try:
