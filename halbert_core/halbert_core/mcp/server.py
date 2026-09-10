@@ -592,6 +592,32 @@ def _get_autonomy_gate():
         return None
 
 
+def run_coroutine_blocking(coro):
+    """Run one coroutine to completion from synchronous code (A17 bug 5).
+
+    The Home Assistant handlers called ``asyncio.run`` directly, which
+    raises ``RuntimeError`` when a loop is already running on the calling
+    thread. MCP-04 -- whether this server is hosted inside the
+    dashboard's loop or run standalone -- is an open topology question,
+    so the handlers have to work either way rather than betting on one.
+
+    No loop running: ``asyncio.run``, exactly as before. A loop running:
+    a worker thread with its own loop, and this call blocks on it. The
+    handler was synchronous either way, so nothing gains or loses
+    concurrency here -- what changes is that the hosted mode stops
+    raising.
+    """
+    import asyncio
+    import concurrent.futures
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(asyncio.run, coro).result()
+
+
 def _tool_ha_get_entities(params: Dict[str, Any]) -> Dict[str, Any]:
     """List HA entities, optionally filtered by domain."""
     import asyncio
@@ -607,7 +633,7 @@ def _tool_ha_get_entities(params: Dict[str, Any]) -> Dict[str, Any]:
             finally:
                 await client.close()  # REV-03 F12
 
-        states = asyncio.run(_get_and_close())
+        states = run_coroutine_blocking(_get_and_close())
         if domain:
             states = [s for s in states if s.get("entity_id", "").startswith(f"{domain}.")]
         # Strip attributes that might contain sensitive data
@@ -641,7 +667,7 @@ def _tool_ha_get_entity_state(params: Dict[str, Any]) -> Dict[str, Any]:
             finally:
                 await client.close()  # REV-03 F12
 
-        state = asyncio.run(_get_and_close())
+        state = run_coroutine_blocking(_get_and_close())
         return mcp_response({
             "entity_id": entity_id,
             "state": state.get("state", ""),
@@ -708,7 +734,7 @@ def _tool_ha_call_service(params: Dict[str, Any]) -> Dict[str, Any]:
             finally:
                 await client.close()  # REV-03 F12 — was leaked per MCP tool call
 
-        result = asyncio.run(_exec_and_close())
+        result = run_coroutine_blocking(_exec_and_close())
         return mcp_response({
             "executed": True,
             "result": result,

@@ -102,6 +102,7 @@ a corrupt config means "no servers", not a dead agent.
 """
 from __future__ import annotations
 
+import fnmatch
 import logging
 import os
 import tempfile
@@ -122,6 +123,50 @@ logger = logging.getLogger("halbert.mcp.config")
 DEFAULT_TIMEOUT_SECONDS = 30.0
 
 _SUPPORTED_TRANSPORTS = ("stdio", "http")
+
+
+def make_tool_filter(tools_entry: Any):
+    """Build the "may this tool register" predicate for one server.
+
+    A17-G18. Without it there was no way to say which of a server's
+    tools to take: the first 64 in whatever order the server returned
+    them, and the 65th dropped with a log line. Include is a whitelist
+    where an EMPTY list means nothing (that is how an operator turns a
+    server off without deleting its entry); exclude is a blacklist;
+    include wins where both name a tool. Names match exactly, by the
+    same sanitized-component rule the risk overrides use, or as an
+    fnmatch glob.
+    """
+    if not isinstance(tools_entry, dict):
+        return lambda _name: True
+    raw_include = tools_entry.get("include")
+    include = None
+    if isinstance(raw_include, list):
+        include = tuple(str(x) for x in raw_include)
+    exclude = tuple(
+        str(x) for x in (tools_entry.get("exclude") or [])
+        if isinstance(tools_entry.get("exclude"), list)
+    )
+    return _tool_filter(include, exclude)
+
+
+def _tool_filter(include: Optional[Tuple[str, ...]], exclude: Tuple[str, ...]):
+    def _matches(patterns, name: str) -> bool:
+        for pattern in patterns:
+            if pattern == name or fnmatch.fnmatchcase(name, pattern):
+                return True
+            if components_match(pattern, name):
+                return True
+        return False
+
+    def keep(name: str) -> bool:
+        if include is not None:
+            return _matches(include, name)
+        if exclude and _matches(exclude, name):
+            return False
+        return True
+
+    return keep
 
 
 def config_path() -> Path:
@@ -238,6 +283,16 @@ class MCPServerConfig:
     risk_override: Optional[RiskLevel] = None       # B3: per-server level
     tool_risk: Mapping[str, RiskLevel] = field(
         default_factory=lambda: MappingProxyType({}))  # B3: per-tool
+    #: A17-G18: which of the server's advertised tools to register.
+    #: ``tool_include`` is a whitelist -- present and empty means NONE,
+    #: which is how an operator turns a server off without removing it;
+    #: absent means "no whitelist". ``tool_exclude`` is a blacklist, and
+    #: include wins where both name a tool. Both accept exact names or
+    #: fnmatch globs. Excluded from ``signature()`` for the same reason
+    #: the risk fields are: a filter change is a registration change,
+    #: not a connection change.
+    tool_include: Optional[Tuple[str, ...]] = None
+    tool_exclude: Tuple[str, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
         """Normalize the collection fields into read-only shapes. The
@@ -502,6 +557,22 @@ def _parse_server(entry: Any, index: int, default_timeout: float) -> Optional[MC
             name, "; ".join(findings))
         return None
 
+    # A17-G18: the operator's tool filter for this server.
+    tools_entry = entry.get("tools")
+    tool_include = None
+    tool_exclude: tuple = ()
+    if isinstance(tools_entry, dict):
+        raw_include = tools_entry.get("include")
+        if isinstance(raw_include, list):
+            tool_include = tuple(str(x) for x in raw_include)
+        raw_exclude = tools_entry.get("exclude")
+        if isinstance(raw_exclude, list):
+            tool_exclude = tuple(str(x) for x in raw_exclude)
+    elif tools_entry is not None:
+        logger.warning(
+            "MCP config: server '%s' tools is not a mapping, ignoring it",
+            name)
+
     return MCPServerConfig(
         name=name,
         transport=transport,
@@ -513,6 +584,8 @@ def _parse_server(entry: Any, index: int, default_timeout: float) -> Optional[MC
         timeout_seconds=timeout,
         risk_override=risk_override,
         tool_risk=tool_risk,
+        tool_include=tool_include,
+        tool_exclude=tool_exclude,
     )
 
 

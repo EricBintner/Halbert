@@ -384,6 +384,42 @@ async def _collect_server_tools(
     return [s for s in schemas if isinstance(s, dict)]
 
 
+def _apply_tool_filter(
+    server_name: str, tool_schemas: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Keep only the tools this server's config asked for (A17-G18).
+
+    A config that cannot be read keeps every tool: the filter is an
+    operator preference, not a security boundary (that is
+    ``tools/mcp_safety.py``'s fail-closed classification), so an
+    unreadable config must not silently NARROW what a working server
+    offers either.
+    """
+    try:
+        from .config import _tool_filter, load_config
+        server = load_config().server(server_name)
+    except Exception as e:
+        logger.debug(
+            "MCP tool filter skipped for server '%s': %s", server_name, e)
+        return tool_schemas
+    if server is None:
+        return tool_schemas
+    if server.tool_include is None and not server.tool_exclude:
+        return tool_schemas
+    keep = _tool_filter(server.tool_include, server.tool_exclude)
+    kept = [
+        schema for schema in tool_schemas
+        if keep(str(schema.get("name") or ""))
+    ]
+    dropped = len(tool_schemas) - len(kept)
+    if dropped:
+        logger.info(
+            "MCP server '%s': %d of %d advertised tools filtered out by "
+            "the configured include/exclude", server_name, dropped,
+            len(tool_schemas))
+    return kept
+
+
 def _warn_unmatched_tool_risk_keys(
     server_name: str,
     tool_schemas: List[Dict[str, Any]],
@@ -441,6 +477,11 @@ def _register_server_tools(
     """Namespace, convert and register one server's tools. Returns how
     many landed on the executor."""
     _warn_unmatched_tool_risk_keys(server_name, tool_schemas)
+    # A17-G18: the operator's include/exclude filter runs BEFORE the cap,
+    # so a filtered tool never becomes a wire schema and the cap is
+    # measured against what was actually asked for -- not against the
+    # server's whole catalogue in whatever order it returned it.
+    tool_schemas = _apply_tool_filter(server_name, tool_schemas)
     count = len(tool_schemas)
     if count > MAX_TOOLS_PER_SERVER:
         logger.warning(

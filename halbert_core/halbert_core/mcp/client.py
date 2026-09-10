@@ -69,6 +69,7 @@ import json
 import logging
 import os
 import signal
+import time
 from typing import Any, Dict, List, Optional, Tuple
 
 import requests
@@ -101,6 +102,12 @@ _CLIENT_INFO = {"name": "halbert-mcp-client", "version": "0.1.0"}
 #: hits it; bounded so a server cannot make the client allocate without
 #: limit.
 MAX_STDIO_FRAME_BYTES = 16 * 1024 * 1024
+
+#: A list walk is bounded three ways, not one (A17-G16). A page COUNT
+#: alone let a hundred pages of a megabyte each through, and let a
+#: slow server hold the walk for a hundred timeouts.
+MAX_LIST_BYTES = 4 * 1024 * 1024
+MAX_LIST_SECONDS = 60.0
 
 #: The one server notification this client acts on (A17-G11).
 TOOLS_CHANGED_NOTIFICATION = "notifications/tools/list_changed"
@@ -273,6 +280,19 @@ def _tool_error_message(server_name: str, tool_name: str, text: str) -> str:
     )
 
 
+def _approx_size(batch: Any) -> int:
+    """Roughly how many bytes a page of list items came to.
+
+    Serializing is the honest measure and cheap enough once per page; a
+    page that cannot be serialized is charged its repr instead, so a
+    hostile shape cannot be free.
+    """
+    try:
+        return len(json.dumps(batch, default=str))
+    except Exception:
+        return len(repr(batch))
+
+
 def _redact(text: str) -> str:
     """Last-ditch redaction of any message leaving this module (see
     server.py's dispatch catch-all for the same pattern)."""
@@ -294,11 +314,42 @@ def _scrub(text: str, secrets: List[str]) -> str:
 
 
 def _initialize_params() -> Dict[str, Any]:
+    """The handshake this client honestly offers (A17 bug 4).
+
+    ``capabilities`` in ``initialize`` is what the CLIENT implements, not
+    what it wants from the server -- ``tools`` and ``resources`` are
+    server capabilities, and advertising them was a category error that
+    invited a server to ask for something that would come back
+    method-not-found. This client implements no roots, no sampling and
+    no elicitation, so it says so by offering nothing. Listing a
+    server's tools does not require announcing a client capability.
+    """
     return {
         "protocolVersion": PROTOCOL_VERSION,
-        "capabilities": {"tools": {}, "resources": {}},
+        "capabilities": {},
         "clientInfo": _CLIENT_INFO,
     }
+
+
+def validate_http_url(name: str, url: str) -> str:
+    """Refuse an HTTP-transport URL that is not http(s) (A17-G15).
+
+    ``mcp_config.yml`` is operator input, and ``requests`` will happily
+    be handed a scheme that means something entirely different from
+    "talk to a server over HTTP". Checked where the transport is built,
+    so nothing downstream has to wonder.
+    """
+    from urllib.parse import urlparse
+    try:
+        parsed = urlparse(url or "")
+    except Exception:
+        parsed = None
+    if parsed is None or parsed.scheme not in ("http", "https") or not parsed.netloc:
+        raise MCPConnectionError(
+            f"MCP server '{name}': the http transport needs an http:// or "
+            f"https:// url with a host"
+        )
+    return url
 
 
 # ---------------------------------------------------------------------------
@@ -558,7 +609,15 @@ class StdioTransport:
                     # Server-initiated request (method + id) or
                     # notification (method, no id). NEVER a response.
                     if "id" in message:
-                        await self._reject_server_request(message["id"])
+                        if message.get("method") == "ping":
+                            # A17 bug 3: ping is the spec's keepalive and
+                            # every peer must answer it. Refusing it with
+                            # method-not-found made a spec-compliant
+                            # server's liveness check read as a broken
+                            # client. An empty result IS the answer.
+                            await self._answer_ping(message["id"])
+                        else:
+                            await self._reject_server_request(message["id"])
                     elif message.get("method") == TOOLS_CHANGED_NOTIFICATION:
                         # A17-G11: the one notification this client
                         # acts on. A FLAG, not a refresh: re-running
@@ -582,6 +641,14 @@ class StdioTransport:
         finally:
             self._fail_pending(MCPDisconnectedError(
                 f"MCP server '{self.name}': stream closed"))
+
+    async def _answer_ping(self, req_id: Any) -> None:
+        """Answer the spec's keepalive (A17 bug 3)."""
+        try:
+            await self._write({"jsonrpc": "2.0", "id": req_id, "result": {}})
+        except MCPClientError as e:
+            logger.debug(
+                "MCP server '%s': could not answer ping: %s", self.name, e)
 
     async def _reject_server_request(self, req_id: Any) -> None:
         """Answer a server-initiated request with method-not-found, so
@@ -818,7 +885,12 @@ class HTTPTransport:
         try:
             response = requests.post(
                 self.url, json=message,
-                headers=headers, timeout=timeout)
+                headers=headers, timeout=timeout,
+                # A17-G15: a redirect carries the session id AND the
+                # bearer token to wherever it points. Following one
+                # hands both to another origin. A server that wants to
+                # move should say so in its config entry.
+                allow_redirects=False)
         except requests.RequestException as e:
             # The exception (and the URL inside it) can carry credentials
             # — a user:pass@ URL, or anything a proxy echoes back. Scrub
@@ -964,7 +1036,30 @@ class HTTPTransport:
         logger.info("MCP server '%s' connected (http)", self.name)
 
     async def close(self) -> None:
-        self._connected = False
+        """Release the server's session, then mark the transport closed.
+
+        A17-G15: without the DELETE the session outlived Halbert's use
+        of it -- a server holding per-session state kept it until its own
+        expiry. Best-effort by design: a close must not fail because the
+        server is already gone.
+        """
+        session_id, self._session_id = self._session_id, None
+        was_connected, self._connected = self._connected, False
+        if session_id and was_connected:
+            try:
+                await asyncio.to_thread(self._delete_session_sync, session_id)
+            except Exception as e:
+                logger.debug(
+                    "MCP server '%s': session DELETE failed: %s",
+                    self.name, e)
+
+    def _delete_session_sync(self, session_id: str) -> None:
+        token = self.token_provider() if self.token_provider else None
+        headers = self._headers(token)
+        headers["Mcp-Session-Id"] = session_id
+        requests.delete(
+            self.url, headers=headers, timeout=min(self.timeout, 5.0),
+            allow_redirects=False)
 
     async def request(
         self,
@@ -1071,9 +1166,12 @@ def build_transport(config: MCPServerConfig):
             timeout=config.timeout_seconds,
         )
     if config.transport == "http":
+        # A17-G15: mcp_config.yml is operator input, and "url" is handed
+        # straight to requests. A scheme that is not http(s) means
+        # something else entirely; refuse it where the transport is built.
         return HTTPTransport(
             name=config.name,
-            url=config.url,
+            url=validate_http_url(config.name, config.url),
             token_provider=(config.auth.resolve_token
                             if config.auth is not None else None),
             timeout=config.timeout_seconds,
@@ -1289,6 +1387,14 @@ class MCPClient:
         connection = await self._ensure(server_name)
         items: List[Dict[str, Any]] = []
         cursor: Optional[str] = None
+        # A17-G16: a page count is not a bound. Three more, all cheap:
+        # the set of cursors already seen (a repeated cursor is a loop,
+        # not a long list), the bytes accumulated, and a wall deadline
+        # (a hundred pages at the per-request timeout is a very long
+        # time to hold discovery).
+        seen_cursors = set()
+        total_bytes = 0
+        deadline = time.monotonic() + MAX_LIST_SECONDS
         for _page in range(self.MAX_LIST_PAGES):
             params = {"cursor": cursor} if cursor else None
             result = await connection.transport.request(method, params)
@@ -1296,9 +1402,26 @@ class MCPClient:
             batch = result.get(key)
             if isinstance(batch, list):
                 items.extend(batch)
+                total_bytes += _approx_size(batch)
+            if total_bytes > MAX_LIST_BYTES:
+                raise MCPProtocolError(
+                    f"MCP server '{server_name}': {method} returned more "
+                    f"than {MAX_LIST_BYTES} bytes across its pages — "
+                    f"refusing to keep reading")
             cursor = result.get("nextCursor")
             if not cursor:
                 return items
+            if cursor in seen_cursors:
+                raise MCPProtocolError(
+                    f"MCP server '{server_name}': {method} repeated a "
+                    f"pagination cursor — the walk is a loop, not a long "
+                    f"list")
+            seen_cursors.add(cursor)
+            if time.monotonic() > deadline:
+                raise MCPProtocolError(
+                    f"MCP server '{server_name}': {method} pagination "
+                    f"exceeded {MAX_LIST_SECONDS:.0f}s — refusing to keep "
+                    f"reading")
         raise MCPProtocolError(
             f"MCP server '{server_name}': {method} pagination exceeded "
             f"{self.MAX_LIST_PAGES} pages — the server keeps returning a "
