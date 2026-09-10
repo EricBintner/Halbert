@@ -333,16 +333,25 @@ class TestMidturnArrivals:
         assert "cancelled" in [e.type for e in events_main]
 
     @pytest.mark.asyncio
-    async def test_a_stop_during_a_tool_batch_demotes_to_steer(self):
-        # The pinned Phase A rule: never kill a tool to deliver guidance —
-        # "/stop" while a tool runs steers (yield), and the turn completes.
+    async def test_guidance_during_a_tool_batch_steers_and_the_turn_completes(self):
+        """Never kill a tool to deliver *guidance*: plain text steers.
+
+        R-01 Phase B (A07-G2): this used to send "/stop" and assert the
+        stop demoted to a steer. The demotion rule is about guidance --
+        transcribed onto the stop verb it left the algebra unable to stop
+        a running command, which is what a stop is for. The rule itself
+        stands, pinned here on the text it was always about; the stop
+        half is pinned in tests/agents/test_stop_semantics.py.
+        """
         llm = _ToolThenAnswerLLM()
         agent = _agent(llm)
         seen = {}
 
         async def fake_execute(tool_name, args, session_id=None, confirmed=False,
                                speaker_role="admin"):
-            decision, events = agent.handle_midturn_arrival("arr", "/stop")
+            decision, events = agent.handle_midturn_arrival(
+                "arr", "actually, check the logs instead"
+            )
             seen["decision"] = decision
             seen["events"] = events
             return ExecutionResult(success=True, result="ok")
@@ -352,12 +361,13 @@ class TestMidturnArrivals:
 
         decision = seen["decision"]
         assert decision.verb is Verdict.STEER
-        assert "interrupt_demoted_to_steer" in decision.notes
         assert seen["events"][0].type == "steer_accepted"
-        assert seen["events"][0].data["demoted"] is True
-        # The stop text rode the steer into the last tool result, and the
-        # tool was never killed: the turn ran to its answer.
-        assert any("[steered] /stop" in o for o in agent.ctx.observations)
+        # The text rode the steer into the last tool result, and the tool
+        # was never killed: the turn ran to its answer.
+        assert any(
+            "[steered] actually, check the logs instead" in o
+            for o in agent.ctx.observations
+        )
         assert agent.current_state == AgentState.IDLE
 
     def test_arrival_when_idle_is_an_ordinary_turn(self):

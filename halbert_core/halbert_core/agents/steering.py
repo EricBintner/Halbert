@@ -103,20 +103,22 @@ def decide_midturn(
 
     # Rule 1 (Hermes run_inbound.py busy branch, command bypass): explicit
     # commands bypass steering — they act, they don't append.
+    #
+    # A07-G2: this branch used to demote a ``/stop`` arriving during a
+    # tool batch to a steer, citing the interrupt-demotion rule. That
+    # rule is "never kill a tool to deliver *guidance*" -- it belongs to
+    # Rule 3's plain text, which steers anyway. Transcribed onto the stop
+    # verb it meant the one verb the algebra names "stop" could not stop
+    # the one thing a user actually wants stopped: a running command.
+    # Rule 1 is unconditional; the redirect verb keeps yield-never-kill.
     if is_command:
-        # Demotion rule (Hermes interrupt_control.py): interrupt demotes to
-        # queue/steer when a turn-critical subsystem is mid-flight — never
-        # kill a tool to deliver guidance.
-        if tool_batch_in_flight:
-            return Decision(
-                Verdict.STEER,
-                "interrupt demoted: tool batch in flight; steer instead of kill",
-                text,
-                tool_batch_in_flight=True,
-                in_model_request=in_model_request,
-                notes=["interrupt_demoted_to_steer"],
-            )
-        return Decision(Verdict.STOP, "command bypass; generation-claimed stop", text)
+        return Decision(
+            Verdict.STOP,
+            "command bypass; generation-claimed stop",
+            text,
+            tool_batch_in_flight=tool_batch_in_flight,
+            in_model_request=in_model_request,
+        )
 
     # Rule 2 (redirect middle ground): plain text arriving while the state
     # machine is inside a model request cancels only that request —

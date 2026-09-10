@@ -135,6 +135,16 @@ def _defang_system_row(text: str) -> str:
     return fenced[: RECEIPT_ROW_MAX - 1].rstrip() + "\u2026"
 
 
+class TurnStopped(Exception):
+    """A step abandoned itself because the turn was stopped (A07-G5).
+
+    Raised from inside a long step -- an in-flight model request -- when
+    ``self.cancelled`` goes up. ``_drive`` catches it as the stop it is
+    (a ``cancelled`` event and a return), rather than the handler error
+    the generic ``except Exception`` would have made of it.
+    """
+
+
 def _unverified_claim():
     """The claim a turn carries when the ladder could not derive one.
 
@@ -244,6 +254,15 @@ class AgentStateMachine:
     # model calls and a long command); overridable per instance in tests.
     TURN_LOCK_TIMEOUT_S: float = 600.0
 
+    # How often a long step -- a running tool, an in-flight model request --
+    # looks up to see whether the turn was stopped (R-01 Phase B, A07-G2 /
+    # A07-G5). _drive polls between steps and between events; this is the
+    # poll *inside* one step, and it is what makes "/stop kills a running
+    # command" true rather than "the stop is honoured once the command
+    # finishes". Short enough to feel immediate, long enough that a turn
+    # spends no measurable time waking up.
+    STOP_POLL_SECONDS: float = 0.05
+
     # How many times an inline thread meta-tool may re-enter PLANNING in one
     # turn. Meta-tools are handled inline and deliberately do not raise
     # loop_count, so max_loops never ends a PLANNING→PLANNING chain, and
@@ -320,6 +339,11 @@ class AgentStateMachine:
         
         # Cancellation tracking for session interruption
         self.cancelled: Dict[str, bool] = {}
+        #: Sessions waiting on the turn lock (A07-G9). A queued turn is
+        #: not in ``active_sessions`` -- it has no context yet -- so this
+        #: is what lets ``request_stop`` answer for one instead of
+        #: declining and letting it run when the lock frees.
+        self._queued_sessions: set = set()
 
         # Packet 07: the interrupt algebra. ``turn_activity`` carries the
         # running turn's activity generation (B1): a stop claims it, so an
@@ -502,6 +526,7 @@ class AgentStateMachine:
         # waiting"); the status is the plain string the badge expects.
         queued = self.turn_lock.locked()
         if queued:
+            self._queued_sessions.add(session_id)
             logger.info(f"Session {session_id} waiting for the current turn to finish")
             yield StreamEvent.conversation_status(
                 session_id, "waiting", waiting_for="previous turn"
@@ -528,9 +553,23 @@ class AgentStateMachine:
         # drives the last step. The wait is bounded (TURN_LOCK_TIMEOUT_S) so
         # a wedged turn surfaces as an error the user can retry instead of
         # queueing every later message behind a badge that never changes.
-        if not await self._acquire_turn_lock(session_id):
+        try:
+            got_lock = await self._acquire_turn_lock(session_id)
+        finally:
+            self._queued_sessions.discard(session_id)
+        if not got_lock:
             for event in self._turn_lock_timeout_events(session_id):
                 yield event
+            return
+
+        # A07-G9: a stop issued while this turn was queued is read here,
+        # the first thing under the lock. The turn never starts: it says
+        # what it was asked to say (cancelled) and releases immediately,
+        # rather than answering a question the user withdrew.
+        if self.cancelled.pop(session_id, False):
+            logger.info(f"Session {session_id} stopped while queued")
+            self.turn_lock.release()
+            yield StreamEvent.cancelled(session_id)
             return
 
         # Packet 07 B1: the turn's activity generation, stamped at the
@@ -1439,6 +1478,17 @@ class AgentStateMachine:
                             )
                             yield StreamEvent.cancelled(session_id)
                             return
+                except TurnStopped:
+                    # A07-G5: a long step abandoned itself because the
+                    # user stopped the turn. Same ending as the poll
+                    # above, reached from inside a step instead of
+                    # between two.
+                    logger.info(
+                        f"Session {session_id} cancelled inside "
+                        f"{self.current_state.value}"
+                    )
+                    yield StreamEvent.cancelled(session_id)
+                    return
                 except Exception as e:
                     logger.error(f"Handler error in {self.current_state}: {e}")
                     self.ctx.error = str(e)
@@ -1649,23 +1699,42 @@ class AgentStateMachine:
         ``turn_lock`` property because this is a plain sync call: the property
         wants a running loop and would build a lock just to report it free.
         """
-        if session_id not in self.active_sessions:
-            return False
-        ctx = self.active_sessions[session_id]
+        # A07-G13 + A07 bug 2 (R-01 Phase B): one stop semantics. This
+        # used to raise the flag with no generation claim while a typed
+        # ``/stop`` claimed it -- two verbs for one act, and a paused turn
+        # that tore down under this one and not under the other. The
+        # button and the command are now the same call; everything the
+        # docstring above describes still happens, in ``_stop_teardown``.
+        return self.request_stop(session_id) == "stopped"
+
+    def _stop_teardown(self, session_id: str) -> None:
+        """Settle a session no turn will ever run a finally for.
+
+        The half of the stop rule that is not "raise the flag": a paused
+        turn, or one whose ``process()`` has already returned, has nobody
+        left to end it, so the machine ends it here -- as a superseded
+        pause is ended (cancelled, keeping what it already said and
+        recording any staged action as never run, spec §5) -- evicts the
+        session and returns to IDLE.
+        """
+        ctx = self.active_sessions.get(session_id)
+        if ctx is None:
+            return
+        self._record_superseded_turn(ctx)
+        del self.active_sessions[session_id]
+        self.current_state = AgentState.IDLE
+
+    def _flag_cancelled(self, session_id: str) -> None:
+        """Raise the stop flag and name the conversation cancelled."""
         self.cancelled[session_id] = True
+        ctx = self.active_sessions.get(session_id)
         # User-facing status: cancelled (A2c). Guard against an already-
         # terminal conversation (e.g. already SUCCESS/ERROR).
-        if not ctx.conversation_status.is_terminal():
+        if ctx is not None and not ctx.conversation_status.is_terminal():
             try:
                 ctx.conversation_status.transition(ConversationStatus.CANCELLED)
             except ValueError:
                 pass
-        paused = self.current_state == AgentState.AWAITING_CONFIRMATION
-        if paused or not self._turn_in_flight():
-            self._record_superseded_turn(ctx)
-            del self.active_sessions[session_id]
-            self.current_state = AgentState.IDLE
-        return True
 
     def _turn_in_flight(self) -> bool:
         """Whether a turn is running right now, lock in hand.
@@ -1703,11 +1772,28 @@ class AgentStateMachine:
         turn's own writes, which the turn's finally owns.
         """
         if session_id not in self.active_sessions:
+            # A07-G9: a turn queued on the turn lock has not entered
+            # active_sessions yet, so it used to be unstoppable -- the
+            # user's stop declined and the queued turn ran anyway the
+            # moment the lock freed. A queued session is stoppable: the
+            # flag is raised now and process() reads it the instant it
+            # takes the lock.
+            if session_id in self._queued_sessions:
+                self._flag_cancelled(session_id)
+                return "stopped"
             return "turn completed, stop declined"
-        if not self._turn_in_flight():
+        # A07 bug 2: the paused rule was asymmetric -- cancel_session
+        # tore a paused turn down whether or not the lock was held, and
+        # this path only looked at the lock. A pause can be reached with
+        # the generator suspended on its last event, still holding the
+        # lock, so both facts have to be read here for the two verbs to
+        # agree.
+        paused = self.current_state == AgentState.AWAITING_CONFIRMATION
+        if paused or not self._turn_in_flight():
             # Paused on a confirmation, or a turn whose finally has not
-            # run yet: the teardown cancel_session owns is the whole stop.
-            self.cancel_session(session_id)
+            # run yet: nothing is racing and no claim is needed.
+            self._flag_cancelled(session_id)
+            self._stop_teardown(session_id)
             return "stopped"
         generation = self._turn_generation
         if generation is None:
@@ -1721,13 +1807,7 @@ class AgentStateMachine:
             # events; the turn's own finally does the teardown and names
             # the turn cancelled. The claim's single-shot lock is what
             # keeps two stops from both firing on one turn.
-            self.cancelled[session_id] = True
-            ctx = self.active_sessions.get(session_id)
-            if ctx is not None and not ctx.conversation_status.is_terminal():
-                try:
-                    ctx.conversation_status.transition(ConversationStatus.CANCELLED)
-                except ValueError:
-                    pass
+            self._flag_cancelled(session_id)
             return True
 
         if self.turn_activity.claim(generation, _abort) is None:
@@ -1994,6 +2074,67 @@ class AgentStateMachine:
             ]
             return decision, events
         return decision, None
+
+    async def _model_call(self, coro):
+        """Await a model request, abandoning it if the turn is stopped.
+
+        A07-G5. ``await self.llm.chat(...)`` is the longest uninterruptible
+        stretch of a turn: ``_drive`` polls the stop flag between steps and
+        between events, and a model call is neither -- so a stop issued
+        while the model was thinking was honoured only once the model had
+        finished thinking, and the user watched the answer they had just
+        stopped arrive in full.
+
+        The request runs as a task; this waits on it in
+        ``STOP_POLL_SECONDS`` slices and cancels it the moment the flag is
+        up. Cancelling the task is what actually reaches the provider
+        client's own request (an ``aiohttp``/``httpx`` await raises
+        ``CancelledError`` and closes the connection); nothing here needs
+        the client to expose an abort handle of its own.
+        """
+        session_id = self.ctx.session_id if self.ctx is not None else None
+        task = asyncio.ensure_future(coro)
+        while True:
+            done, _pending = await asyncio.wait(
+                {task}, timeout=self.STOP_POLL_SECONDS
+            )
+            if task in done:
+                return task.result()
+            if session_id is not None and self.cancelled.get(session_id):
+                task.cancel()
+                try:
+                    await task
+                except (asyncio.CancelledError, Exception):
+                    pass
+                logger.info(
+                    "model request abandoned by stop: session=%s", session_id
+                )
+                raise TurnStopped("model request stopped by the user")
+
+    async def _model_stream(self, agen):
+        """Stream a model response, abandoning it if the turn is stopped.
+
+        The streaming twin of ``_model_call`` (A07-G5). ``_drive`` polls
+        the stop flag between the events a handler yields, which covers
+        every chunk after the first -- but not the wait *for* the first
+        chunk, which is the whole of a wedged request. Each ``__anext__``
+        goes through the same poll, and the generator is closed on the
+        way out so the provider connection does not outlive the turn.
+        """
+        try:
+            while True:
+                try:
+                    chunk = await self._model_call(agen.__anext__())
+                except StopAsyncIteration:
+                    return
+                yield chunk
+        finally:
+            aclose = getattr(agen, "aclose", None)
+            if aclose is not None:
+                try:
+                    await aclose()
+                except Exception:
+                    pass
 
     def _detect_oscillation(self) -> bool:
         """Detect A→B→A→B pattern indicating infinite loop."""
@@ -2740,7 +2881,7 @@ class AgentStateMachine:
         # ``images`` is threaded here as well as in RESPONDING: without it the
         # two halves of one turn resolve different models, so the planner
         # decides what to do about a picture it cannot see.
-        response = await self.llm.chat(
+        response = await self._model_call(self.llm.chat(
             messages=self._build_messages(prompt, tail=self._continuity_tail()),
             tools=tool_schemas,
             intake_result=self.ctx.intake if self.ctx else None,
@@ -2752,8 +2893,8 @@ class AgentStateMachine:
             # question with the continuity hint glued to its front (D1), and
             # routing on that picked the specialist for "hi".
             routing_prompt=self.ctx.user_query if self.ctx else "",
-        )
-        
+        ))
+
         # Parse plan if present
         if hasattr(response, 'plan') and response.plan:
             self.ctx.plan = [
@@ -3506,8 +3647,35 @@ class AgentStateMachine:
             while True:
                 getter = asyncio.ensure_future(queue.get())
                 done, _pending = await asyncio.wait(
-                    {task, getter}, return_when=asyncio.FIRST_COMPLETED
+                    {task, getter},
+                    return_when=asyncio.FIRST_COMPLETED,
+                    # A07-G2: bounded, so the loop is a place a stop can
+                    # be *observed*. Without it the wait blocked until the
+                    # tool finished -- so a stop raised the flag and then
+                    # waited for the very command it was meant to stop,
+                    # and _drive's between-steps poll only saw it after
+                    # the tool had run to completion.
+                    timeout=self.STOP_POLL_SECONDS,
                 )
+                if self.cancelled.get(self.ctx.session_id):
+                    getter.cancel()
+                    logger.info(
+                        "tool cancelled by stop: session=%s tool=%s",
+                        self.ctx.session_id, tool_name,
+                    )
+                    # task.cancel() raises CancelledError inside
+                    # ToolExecutor.execute; run_command's own
+                    # `except BaseException` kills the child and reaps it
+                    # (executor.py's subprocess path), so the stop
+                    # reaches the process, not just the coroutine.
+                    task.cancel()
+                    raise asyncio.CancelledError(
+                        f"tool {tool_name} stopped by the user"
+                    )
+                if not done:
+                    # Neither settled inside the poll window: keep waiting.
+                    getter.cancel()
+                    continue
                 if getter in done:
                     payload = getter.result()
                     self._note_terminal_payload(payload, execution_id)
@@ -4057,7 +4225,7 @@ class AgentStateMachine:
         if hasattr(self.llm, 'stream'):
             logger.info(f"Starting LLM stream for session {self.ctx.session_id}")
             chunk_count = 0
-            async for chunk in self.llm.stream(
+            async for chunk in self._model_stream(self.llm.stream(
                 messages=self._build_messages(
                     prompt, tail=tail, response_modality=response_modality,
                 ),
@@ -4069,7 +4237,7 @@ class AgentStateMachine:
                 on_model_selected=selected.append,
                 # The question, not the hint that rides in front of it (D1).
                 routing_prompt=self.ctx.user_query if self.ctx else "",
-            ):
+            )):
                 if selected and not announced:
                     announced = True
                     yield StreamEvent.model_selected(
@@ -4082,7 +4250,7 @@ class AgentStateMachine:
             logger.info(f"LLM stream complete: {chunk_count} chunks")
         else:
             # Non-streaming fallback
-            response = await self.llm.chat(
+            response = await self._model_call(self.llm.chat(
                 messages=self._build_messages(
                     prompt, tail=tail, response_modality=response_modality,
                 ),
@@ -4094,7 +4262,7 @@ class AgentStateMachine:
                 on_model_selected=selected.append,
                 # The question, not the hint that rides in front of it (D1).
                 routing_prompt=self.ctx.user_query if self.ctx else "",
-            )
+            ))
             if selected:
                 announced = True
                 yield StreamEvent.model_selected(
