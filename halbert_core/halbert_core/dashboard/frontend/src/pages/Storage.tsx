@@ -21,7 +21,7 @@ import { useScan } from '@/contexts/ScanContext'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Progress } from '@/components/ui/progress'
+import { TactileMeter, type StatusTone } from '@halbert/design-system'
 import { Collapsible } from '@/components/ui/collapsible'
 import { api } from '@/lib/api'
 import { 
@@ -679,55 +679,68 @@ function getShortName(mountpoint: string): string {
   return parts[parts.length - 1] || mountpoint
 }
 
-/** Compact usage bar row for grid layout */
-function FilesystemUsageBar({ fs, showName = false }: { fs: FilesystemEntry; showName?: boolean }) {
+/** Two-Tier Vignelli usage row: clean decoupled baseline and 100% full-width meter */
+function FilesystemUsageRow({ 
+  fs, 
+  profileDetail 
+}: { 
+  fs: FilesystemEntry
+  profileDetail?: React.ReactNode 
+}) {
   const shortName = getShortName(fs.mountpoint)
   const { customNames, onRename } = useContext(CustomNamesContext)
   
+  const tone: StatusTone = fs.severity === 'critical' ? 'critical' : fs.severity === 'warning' ? 'warning' : 'nominal'
+
   return (
-    <>
-      {/* Column 1: name + mount (only for multi-fs groups) */}
-      {showName && (
-        <div className="flex items-center gap-1.5">
+    <div className="space-y-1.5 py-1">
+      {/* Tier 1: Identity & Tabular Metrics */}
+      <div className="flex items-center justify-between gap-2 text-xs">
+        <div className="flex items-center gap-1.5 min-w-0">
           <Folder className="h-3.5 w-3.5 text-info shrink-0" />
           <EditableName
             id={`fs-${fs.mountpoint}`}
             defaultName={shortName}
             customNames={customNames}
             onRename={onRename}
-            className="text-sm"
+            className="text-sm font-medium text-foreground truncate"
           />
-          <span className="text-muted-foreground text-xs">
+          <span className="text-muted-foreground font-mono text-xs truncate">
             {fs.mountpoint}
           </span>
+          {profileDetail && (
+            <span className="text-muted-foreground text-[11px] truncate">
+              • {profileDetail}
+            </span>
+          )}
         </div>
-      )}
-      {/* Column 2: Progress bar */}
-      <Progress
+
+        <div className="flex items-center gap-2 shrink-0 font-mono text-xs tabular-nums">
+          <span className="text-muted-foreground">
+            {fs.used} / {fs.size}
+          </span>
+          <Badge
+            className={cn(
+              "text-[10px] w-12 justify-center py-0 h-5 leading-none",
+              fs.severity === 'critical' && 'bg-error text-white',
+              fs.severity === 'warning' && 'bg-warning text-white',
+              fs.severity === 'success' && 'bg-success text-white',
+              !['critical', 'warning', 'success'].includes(fs.severity) && 'bg-info text-white',
+            )}
+          >
+            {fs.percent}%
+          </Badge>
+        </div>
+      </div>
+
+      {/* Tier 2: 100% Full-Width Calibrated Meter */}
+      <TactileMeter
         value={fs.percent}
-        className={cn(
-          "h-2",
-          fs.severity === 'critical' && '[&>div]:bg-error',
-          fs.severity === 'warning' && '[&>div]:bg-warning',
-        )}
+        tone={tone}
+        size="sm"
+        aria-label={`${shortName} (${fs.mountpoint}) capacity`}
       />
-      {/* Column 3: Size info */}
-      <span className="text-muted-foreground text-right text-xs">
-        {fs.used}/{fs.size}
-      </span>
-      {/* Column 4: Percent badge */}
-      <Badge
-        className={cn(
-          "text-xs w-14 justify-center",
-          fs.severity === 'critical' && 'bg-error',
-          fs.severity === 'warning' && 'bg-warning',
-          fs.severity === 'success' && 'bg-success',
-          !['critical', 'warning', 'success'].includes(fs.severity) && 'bg-info',
-        )}
-      >
-        {fs.percent}%
-      </Badge>
-    </>
+    </div>
   )
 }
 
@@ -1004,56 +1017,40 @@ function DiskGroupSection({ group, allDisks }: { group: DiskGroup; allDisks: Sto
         </div>
       </div>
       
-      {/* Usage bars - grid layout for alignment */}
-      <div className="px-4 pb-2">
-        {isSingleFs ? (
-          // Single filesystem - simple flex row with details below
-          <div className="space-y-0.5">
-            <div className="flex items-center gap-2 text-sm">
-              <FilesystemUsageBar fs={primaryFs} showName={false} />
-            </div>
-            {/* Filesystem details line - show metadata first, then data */}
-            <div className="text-[11px] text-muted-foreground pl-0.5">
-              {primaryFs.fstype.toUpperCase()}
-              {(group.dataProfile || group.metadataProfile) ? (
-                <>
-                  {group.metadataProfile && <span> • meta: {group.metadataProfile}</span>}
-                  {group.dataProfile && <span> • data: {group.dataProfile}</span>}
-                </>
-              ) : group.arrayProfile && group.arrayProfile !== 'single' && (
-                <span> • {group.arrayProfile}</span>
-              )}
-            </div>
-          </div>
-        ) : (
-          // Multiple filesystems - each FS with its own details below
-          <div className="space-y-1">
-            {group.filesystems.map((fs, idx) => (
-              <div key={fs.id} className="space-y-0">
-                {/* Filesystem row */}
-                <div 
-                  className="grid gap-x-3 items-center text-sm"
-                  style={{ gridTemplateColumns: 'auto 1fr auto auto' }}
-                >
-                  <FilesystemUsageBar fs={fs} showName={true} />
-                </div>
-                {/* FS type details below this filesystem - metadata first, then data */}
-                <div className="text-[11px] text-muted-foreground pl-5">
+      {/* Usage bars - Two-Tier Vignelli layout for absolute alignment */}
+      <div className="px-4 pb-3 space-y-2.5">
+        {group.filesystems.map((fs, idx) => {
+          let profileDetail: React.ReactNode = null
+          if (idx === 0) {
+            if (group.dataProfile || group.metadataProfile) {
+              profileDetail = (
+                <span>
                   {fs.fstype.toUpperCase()}
-                  {/* Show meta/data profiles for primary FS, or just fstype for others */}
-                  {idx === 0 && (group.dataProfile || group.metadataProfile) ? (
-                    <>
-                      {group.metadataProfile && <span> • meta: {group.metadataProfile}</span>}
-                      {group.dataProfile && <span> • data: {group.dataProfile}</span>}
-                    </>
-                  ) : idx === 0 && group.arrayProfile && group.arrayProfile !== 'single' && (
-                    <span> • {group.arrayProfile}</span>
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
+                  {group.metadataProfile && ` • meta: ${group.metadataProfile}`}
+                  {group.dataProfile && ` • data: ${group.dataProfile}`}
+                </span>
+              )
+            } else if (group.arrayProfile && group.arrayProfile !== 'single') {
+              profileDetail = (
+                <span>
+                  {fs.fstype.toUpperCase()} • {group.arrayProfile}
+                </span>
+              )
+            } else {
+              profileDetail = <span>{fs.fstype.toUpperCase()}</span>
+            }
+          } else {
+            profileDetail = <span>{fs.fstype.toUpperCase()}</span>
+          }
+
+          return (
+            <FilesystemUsageRow
+              key={fs.id}
+              fs={fs}
+              profileDetail={profileDetail}
+            />
+          )
+        })}
       </div>
       
       {/* Compact expand row - no dividers */}
