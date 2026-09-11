@@ -297,6 +297,8 @@ export interface UseAgentStreamReturn {
   isStreaming: boolean;
   response: string;
   thinking: string;
+  /** Duration of the last completed thinking phase, in ms. Null while streaming or before first thought. */
+  thinkingDurationMs: number | null;
   provenance: ProvenanceRef[];
   moduleInvocations: ModuleInvocation[];
   /** Null until the backend reports the model for the current turn. */
@@ -466,6 +468,7 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
     flush: flushThinking,
     clear: clearThinking,
   } = useTokenBuffer();
+  const [thinkingDurationMs, setThinkingDurationMs] = useState<number | null>(null);
   const [provenance, setProvenance] = useState<ProvenanceRef[]>([]);
   const [moduleInvocations, setModuleInvocations] = useState<ModuleInvocation[]>([]);
   const [turnModel, setTurnModel] = useState<TurnModelInfo | null>(null);
@@ -574,6 +577,9 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
       appendResponse(event.content as string);
     } else if (event.type === 'thinking') {
       appendThinking(event.content as string);
+    } else if (event.type === 'thinking_complete') {
+      flushThinking();
+      setThinkingDurationMs(event.duration_ms as number);
     } else if (event.type === 'response_complete') {
       flushNow();
     }
@@ -1071,6 +1077,7 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
     clearResponse();
     setTurnModel(null);
     clearThinking();
+    setThinkingDurationMs(null);
     setProvenance([]);
     setModuleInvocations([]);
     // A session id names ONE TURN, never a conversation. Continuity is the
@@ -1426,6 +1433,7 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
     clearResponse();
     setTurnModel(null);
     clearThinking();
+    setThinkingDurationMs(null);
     setProvenance([]);
     setModuleInvocations([]);
     sessionIdRef.current = null;
@@ -1476,6 +1484,7 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
     isStreaming,
     response,
     thinking,
+    thinkingDurationMs,
     provenance,
     moduleInvocations,
     turnModel,

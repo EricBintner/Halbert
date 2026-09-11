@@ -29,14 +29,14 @@ interface MarkdownRendererProps {
 }
 
 /**
- * Format inline markdown: **bold**, [links](url)
+ * Format inline markdown: **bold**, [links](url), `code`
  */
 function formatInlineMarkdown(text: string): React.ReactNode {
   const parts: React.ReactNode[] = []
   let keyIndex = 0
   
-  // Combined regex for **bold** and [link](url)
-  const combinedRegex = /\*\*(.+?)\*\*|\[([^\]]+)\]\(([^)]+)\)/g
+  // Combined regex for **bold**, [link](url), and `code`
+  const combinedRegex = /\*\*(.+?)\*\*|\[([^\]]+)\]\(([^)]+)\)|`([^`]+)`/g
   let lastIndex = 0
   let match
   
@@ -62,6 +62,13 @@ function formatInlineMarkdown(text: string): React.ReactNode {
           {match[2]}
         </a>
       )
+    } else if (match[4]) {
+      // Inline code `text`
+      parts.push(
+        <code key={keyIndex++} className="px-1.5 py-0.5 rounded bg-muted/80 font-mono text-[12px] text-foreground border border-hairline/60">
+          {match[4]}
+        </code>
+      )
     }
     
     lastIndex = match.index + match[0].length
@@ -82,12 +89,7 @@ export function MarkdownRenderer({
   compact = false,
 }: MarkdownRendererProps): React.ReactNode {
   if (!text) return null
-  
-  // DEBUG: Log the raw text to see if newlines are present
-  console.log('[MarkdownRenderer] Input text (first 500 chars):', JSON.stringify(text.slice(0, 500)));
-  console.log('[MarkdownRenderer] Has double newlines:', text.includes('\n\n'));
-  console.log('[MarkdownRenderer] Newline count:', (text.match(/\n/g) || []).length);
-  
+
   // First, extract and replace code blocks with placeholders
   const codeBlocks: Array<{ lang: string; code: string }> = []
   const textWithPlaceholders = text.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code) => {
@@ -171,7 +173,63 @@ export function MarkdownRenderer({
         </ul>
       )
     }
-    
+
+    // Handle GFM tables (lines starting and ending with |)
+    if (trimmed.split('\n').every(line => line.trim().startsWith('|') && line.trim().endsWith('|'))) {
+      const rows = trimmed.split('\n')
+      // Filter out separator rows (|---|---|)
+      const dataRows = rows.filter(line => !/^\|[\s\-:|]+\|$/.test(line.trim()))
+      if (dataRows.length >= 1) {
+        const parsed = dataRows.map(r =>
+          r.split('|').slice(1, -1).map(c => c.trim())
+        )
+        const colCount = parsed[0].length
+        const widths: number[] = []
+        for (let c = 0; c < colCount; c++) {
+          widths.push(Math.max(...parsed.map(r => (r[c] || '').length)))
+        }
+        return (
+          <div key={pIndex} className="my-2 overflow-x-auto">
+            <table className="w-full border-collapse border border-hairline text-sm">
+              <thead>
+                <tr>
+                  {parsed[0].map((cell, ci) => (
+                    <th key={ci} className="border border-hairline px-2 py-1 text-left font-semibold text-foreground bg-surface/50" style={{ minWidth: `${widths[ci]}ch` }}>
+                      {formatInlineMarkdown(cell)}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              {parsed.length > 1 && (
+                <tbody>
+                  {parsed.slice(1).map((row, ri) => (
+                    <tr key={ri} className={ri % 2 === 0 ? '' : 'bg-surface/30'}>
+                      {row.map((cell, ci) => (
+                        <td key={ci} className="border border-hairline px-2 py-1 text-foreground/90">
+                          {formatInlineMarkdown(cell)}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              )}
+            </table>
+          </div>
+        )
+      }
+    }
+
+    // Handle blockquotes (lines starting with >)
+    if (trimmed.match(/^>\s?/m)) {
+      const lines = trimmed.split('\n')
+      const quoteText = lines.map(line => line.replace(/^>\s?/, '')).join('\n')
+      return (
+        <blockquote key={pIndex} className="border-l-2 border-hairline pl-3 my-2 text-muted-foreground italic">
+          {formatInlineMarkdown(quoteText)}
+        </blockquote>
+      )
+    }
+
     // Regular paragraph with inline formatting
     return (
       <p key={pIndex} className={`text-sm leading-relaxed text-foreground/90 ${compact ? 'mb-2' : 'mb-3'} last:mb-0`}>

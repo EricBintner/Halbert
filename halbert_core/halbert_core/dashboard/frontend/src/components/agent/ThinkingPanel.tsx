@@ -1,10 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 /**
- * ThinkingPanel Component
- * 
- * Displays the agent's thinking/reasoning process in real-time.
- * Supports collapsible sections and streaming updates.
+ * ThinkingPanel — borderless, collapsible reasoning disclosure.
+ *
+ * Header is "Thinking..." while streaming, transforms to
+ * "Thought for {elapsed}" on the `thinking_complete` event.
+ * Defaults to collapsed when finished; borderless, dim/italic,
+ * minimal vertical space.
+ *
+ * Reference: warp/crates/warp_tui/src/agent_block_sections.rs:117-136
+ * (finished_duration -> header swap, auto-collapse on finish).
  */
 
 import { memo, useId, useMemo, useState, useRef, useEffect } from 'react';
@@ -12,17 +17,32 @@ import { memo, useId, useMemo, useState, useRef, useEffect } from 'react';
 interface ThinkingPanelProps {
   thinking: string;
   isStreaming?: boolean;
+  /** Duration of the completed thinking phase, in ms. Null while streaming. */
+  durationMs?: number | null;
   maxHeight?: string;
   className?: string;
 }
 
-function ThinkingPanelImpl({ 
-  thinking, 
+function formatElapsed(ms: number): string {
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  const seconds = ms / 1000;
+  if (seconds < 60) return `${seconds.toFixed(1)}s`;
+  const mins = Math.floor(seconds / 60);
+  const secs = Math.floor(seconds % 60);
+  return `${mins}m${secs}s`;
+}
+
+function ThinkingPanelImpl({
+  thinking,
   isStreaming = false,
+  durationMs = null,
   maxHeight = '200px',
-  className = '' 
+  className = '',
 }: ThinkingPanelProps) {
-  const [isExpanded, setIsExpanded] = useState(false);
+  const isFinished = !isStreaming && durationMs !== null;
+  // Auto-collapse when thinking completes; expand while streaming.
+  const [userToggled, setUserToggled] = useState(false);
+  const [userOpen, setUserOpen] = useState(false);
   const contentRef = useRef<HTMLPreElement>(null);
   const bodyId = useId();
 
@@ -37,42 +57,44 @@ function ThinkingPanelImpl({
     return null;
   }
 
+  // When the user has not overridden, default open while streaming,
+  // collapsed when finished (warp reference pattern).
+  const isOpen = userToggled ? userOpen : isStreaming;
+
   // Reasoning streams in like the reply does, so this ran its four regexes
   // over the whole text on every animation frame (R11-12). Keyed on the
   // text: a frame that added nothing does no work.
   const sections = useMemo(() => parseThinkingSections(thinking), [thinking]);
 
+  const header = isFinished
+    ? `Thought for ${formatElapsed(durationMs!)}`
+    : 'Thinking...';
+
   return (
-    <div className={`border rounded-lg overflow-hidden ${className}`}>
+    <div className={`text-xs text-muted-foreground ${className}`}>
       <button
-        onClick={() => setIsExpanded(!isExpanded)}
-        aria-expanded={isExpanded}
+        onClick={() => { setUserToggled(true); setUserOpen(!isOpen); }}
+        aria-expanded={isOpen}
         aria-controls={bodyId}
-        className="w-full px-4 py-2 flex items-center justify-between bg-muted hover:bg-muted transition-colors"
+        className="w-full flex items-center gap-2 py-1 text-left text-muted-foreground italic hover:text-foreground transition-colors"
       >
-        <div className="flex items-center gap-2">
-          <span className="text-sm font-medium text-foreground">
-            {isStreaming ? 'Thinking...' : 'Thought Process'}
-          </span>
-          {isStreaming && (
-            <span className="inline-flex items-center">
-              <span className="animate-pulse text-info text-xs">●</span>
-            </span>
-          )}
-        </div>
-        <span className="text-muted-foreground text-sm">
-          {isExpanded ? '▲' : '▼'}
+        <span className="italic">{header}</span>
+        {isStreaming && (
+          <span className="animate-pulse text-info">●</span>
+        )}
+        <span className="text-hairline ml-auto">
+          {isOpen ? '▾' : '▸'}
         </span>
       </button>
 
-      {isExpanded && (
-        <div id={bodyId} className="border-t">
+      {isOpen && (
+        <div id={bodyId} className="mt-1">
           {sections.length > 1 ? (
-            <div className="divide-y">
+            <div className="divide-y divide-hairline/40">
               {sections.map((section, idx) => (
-                <ThinkingSection 
-                  key={idx} 
-                  title={section.title} 
+                <ThinkingSection
+                  key={idx}
+                  title={section.title}
                   content={section.content}
                   isLast={idx === sections.length - 1}
                   isStreaming={isStreaming && idx === sections.length - 1}
@@ -80,14 +102,14 @@ function ThinkingPanelImpl({
               ))}
             </div>
           ) : (
-            <pre 
+            <pre
               ref={contentRef}
               // A scrollable region has to be reachable and scrollable from
               // the keyboard alone (R11-09).
               tabIndex={0}
               role="region"
               aria-label="Thought process"
-              className="p-4 text-xs text-muted-foreground whitespace-pre-wrap overflow-auto bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
+              className="py-2 text-xs text-muted-foreground italic whitespace-pre-wrap overflow-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
               style={{ maxHeight }}
             >
               {thinking}
@@ -111,23 +133,23 @@ function ThinkingSection({ title, content, isLast, isStreaming }: ThinkingSectio
   const bodyId = useId();
 
   return (
-    <div>
+    <div className="py-1">
       <button
         onClick={() => setIsOpen(!isOpen)}
         aria-expanded={Boolean(isOpen)}
         aria-controls={bodyId}
-        className="w-full px-4 py-2 flex items-center justify-between hover:bg-muted text-left"
+        className="w-full flex items-center justify-between text-left text-muted-foreground italic"
       >
-        <span className="text-xs font-medium text-muted-foreground">{title}</span>
+        <span className="text-xs italic">{title}</span>
         <div className="flex items-center gap-2">
           {isStreaming && isLast && (
             <span className="animate-pulse text-info text-xs">●</span>
           )}
-          <span className="text-muted-foreground text-xs">{isOpen ? '−' : '+'}</span>
+          <span className="text-hairline text-xs">{isOpen ? '▾' : '▸'}</span>
         </div>
       </button>
       {isOpen && (
-        <pre id={bodyId} className="px-4 pb-3 text-xs text-muted-foreground whitespace-pre-wrap">
+        <pre id={bodyId} className="py-1 text-xs text-muted-foreground italic whitespace-pre-wrap">
           {content}
         </pre>
       )}
@@ -154,10 +176,10 @@ function parseThinkingSections(thinking: string): ParsedSection[] {
   let currentContent: string[] = [];
 
   const lines = thinking.split('\n');
-  
+
   for (const line of lines) {
     let isHeader = false;
-    
+
     // Check for section markers
     for (const marker of markers) {
       const match = line.match(marker.pattern);
@@ -169,19 +191,19 @@ function parseThinkingSections(thinking: string): ParsedSection[] {
             content: currentContent.join('\n').trim()
           });
         }
-        
+
         currentTitle = match[1] || line.replace(/^#+\s*/, '');
         currentContent = [];
         isHeader = true;
         break;
       }
     }
-    
+
     if (!isHeader) {
       currentContent.push(line);
     }
   }
-  
+
   // Add final section
   if (currentContent.length > 0) {
     sections.push({
@@ -189,12 +211,12 @@ function parseThinkingSections(thinking: string): ParsedSection[] {
       content: currentContent.join('\n').trim()
     });
   }
-  
+
   // If no sections found, return single section
   if (sections.length === 0) {
     return [{ title: 'Thinking', content: thinking }];
   }
-  
+
   return sections;
 }
 

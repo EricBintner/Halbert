@@ -57,13 +57,14 @@ describe('a stored block keeps its terminal result', () => {
     expect(exec.blockOutputHead).toBe('no shares')
   })
 
-  it('renders as the one-liner it was live, not as a generic card', () => {
+  it('renders the command, not the internal tool name, and auto-expands on error exit', () => {
     render(
       <ToolExecutionCard execution={executionFromBlock(blockFromServer(fromServer), 'f')} />
     )
 
-    expect(screen.getByText(/\$ smbstatus · exit 1/)).toBeTruthy()
-    expect(screen.getByText(/0\.3s/)).toBeTruthy()
+    // exit 1 -> status 'error' -> card auto-expands to show diagnostics.
+    // The command label renders, not the internal tool name.
+    expect(screen.getByText('smbstatus')).toBeTruthy()
     expect(screen.queryByText('run_command')).toBeNull()
   })
 

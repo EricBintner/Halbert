@@ -19,6 +19,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
+import { Pin, PinOff, Square, Copy, Check } from 'lucide-react';
 import '@xterm/xterm/css/xterm.css';
 import { useTerminalSessions, type TerminalSession } from '../../hooks/useTerminalSessions';
 import { xtermTheme, terminalFontReady } from '../../lib/xtermTheme';
@@ -85,6 +86,28 @@ export function TerminalTile({ session, onTerminated, blockId, blockOutput, bloc
   const writtenRef = useRef(0); // absolute stream chars already written to xterm
   const [now, setNow] = useState(Date.now());
   const [copied, setCopied] = useState(false);
+  const [height, setHeight] = useState(240); // default 240px (was 192px h-48)
+
+  const handleMouseDown = (e: React.MouseEvent) => {
+    e.preventDefault();
+    const startY = e.clientY;
+    const startHeight = height;
+    const onMove = (ev: MouseEvent) => {
+      const delta = startY - ev.clientY; // drag up = taller
+      const next = Math.min(600, Math.max(140, startHeight + delta));
+      setHeight(next);
+      try { fitRef.current?.fit(); } catch { /* ignore during drag */ }
+      if (interactive && termRef.current?.cols && termRef.current?.rows) {
+        resize(session.id, termRef.current.cols, termRef.current.rows);
+      }
+    };
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  };
 
   // 1s ticking clock for the elapsed timer (only while running)
   useEffect(() => {
@@ -297,7 +320,7 @@ export function TerminalTile({ session, onTerminated, blockId, blockOutput, bloc
             title="Copy output"
             className="px-1.5 py-0.5 rounded bg-muted/50 text-muted-foreground hover:text-foreground"
           >
-            {copied ? '✓' : '⧉'}
+            {copied ? <Check className="h-3.5 w-3.5 text-muted-foreground hover:text-foreground" /> : <Copy className="h-3.5 w-3.5 text-muted-foreground hover:text-foreground" />}
           </button>
         </div>
         <pre className="w-full max-h-64 overflow-auto px-3 py-2 text-xs font-mono text-text whitespace-pre-wrap break-all">
@@ -350,14 +373,14 @@ export function TerminalTile({ session, onTerminated, blockId, blockOutput, bloc
             title={session.visible ? 'Unpin (headless)' : 'Pin (live)'}
             className={`px-1.5 py-0.5 rounded ${session.visible ? 'bg-warning/20 text-warning' : 'bg-muted/50 text-muted-foreground hover:text-foreground'}`}
           >
-            {session.visible ? '📌' : '📍'}
+            {session.visible ? <Pin className="h-3.5 w-3.5" /> : <PinOff className="h-3.5 w-3.5" />}
           </button>
           <button
             onClick={handleCopy}
             title="Copy output"
             className="px-1.5 py-0.5 rounded bg-muted/50 text-muted-foreground hover:text-foreground"
           >
-            {copied ? '✓' : '⧉'}
+            {copied ? <Check className="h-3.5 w-3.5 text-muted-foreground hover:text-foreground" /> : <Copy className="h-3.5 w-3.5 text-muted-foreground hover:text-foreground" />}
           </button>
           {session.status === 'running' && interactive && (
             <button
@@ -365,14 +388,21 @@ export function TerminalTile({ session, onTerminated, blockId, blockOutput, bloc
               title="Terminate"
               className="px-1.5 py-0.5 rounded bg-error/20 text-error hover:bg-error/30 border border-error/40"
             >
-              ⏹
+              <Square className="h-3 w-3 fill-current" />
             </button>
           )}
         </div>
       </div>
 
-      {/* xterm container */}
-      <div ref={containerRef} className="w-full h-48 px-1 py-1" />
+      {/* xterm container — resizable via drag handle above */}
+      <div
+        onMouseDown={handleMouseDown}
+        className="w-full h-1.5 cursor-row-resize bg-transparent hover:bg-accent/40 active:bg-accent-strong transition-colors border-t border-hairline flex items-center justify-center"
+        title="Drag to resize terminal height"
+      >
+        <div className="w-8 h-0.5 rounded-full bg-hairline/60" />
+      </div>
+      <div ref={containerRef} className="w-full px-1 py-1" style={{ height: `${height}px` }} />
     </div>
   );
 }

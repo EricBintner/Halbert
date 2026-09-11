@@ -413,8 +413,8 @@ const TurnArticle = memo(function TurnArticle({
       )}
 
       {hasAssistantSide && (
-        <div className="flex justify-start">
-          <div className="max-w-[85%] bg-muted/50 border border-border/50 rounded-lg p-4 space-y-3">
+        <div className="flex justify-start w-full">
+          <div className="w-full space-y-3 text-foreground leading-relaxed">
             {/* Redaction is answered first, before anything folds. A marker
                 carries neither exit code nor status, so it would pass
                 `isQuietInspection`'s success check and disappear into "3

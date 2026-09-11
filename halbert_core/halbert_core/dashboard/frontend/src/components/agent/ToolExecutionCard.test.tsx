@@ -50,7 +50,7 @@ describe('ToolExecutionCard block rendering (Plan B)', () => {
     expect(screen.getByText(/2\.5s/)).toBeTruthy();
   });
 
-  it('renders short block one-line result when not expanded', () => {
+  it('renders short block as compact pill when not expanded', () => {
     render(
       <ToolExecutionCard
         execution={baseExecution}
@@ -60,7 +60,10 @@ describe('ToolExecutionCard block rendering (Plan B)', () => {
         blockDuration={0.3}
       />
     );
-    expect(screen.getByText(/\$ echo hello/)).toBeTruthy();
+    // The compact pill renders as a button with the command in its text.
+    const pill = screen.getByRole('button', { name: /Command: echo hello/ });
+    expect(pill).toBeTruthy();
+    expect(pill.textContent).toContain('echo hello');
   });
 
   it('does not render short block one-liner when duration > 2s', () => {

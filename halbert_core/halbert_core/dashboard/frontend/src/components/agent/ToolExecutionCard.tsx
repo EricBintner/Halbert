@@ -8,6 +8,7 @@
  */
 
 import { Fragment, useState, type ReactNode } from 'react';
+import { ChevronDown } from 'lucide-react';
 import { type ToolExecution } from '../../hooks/useAgentStream';
 import { useTerminalSessions } from '../../hooks/useTerminalSessions';
 import { StatusLight, type StatusLightState } from './StatusLight';
@@ -64,7 +65,8 @@ export function ToolExecutionCard({
   outputHead: outputHeadProp,
   outputTail: outputTailProp,
 }: ToolExecutionCardProps): ReactNode {
-  const [isExpanded, setIsExpanded] = useState(false);
+  // Auto-expand errors so diagnostics are immediately visible
+  const [isExpanded, setIsExpanded] = useState(execution.status === 'error');
   const config = STATUS_CONFIG[execution.status];
 
   // The block id comes from the execution when no caller supplies one. Every
@@ -155,6 +157,34 @@ export function ToolExecutionCard({
       ? `${outputHead}${elisionMarker}${outputTail}`
       : outputHead || outputTail
     : blockOutput;
+
+  // Compact 1-line pill for short successful commands (<2s, exit 0).
+  // Errors fall through to the full card with auto-expanded diagnostics.
+  const isShortSuccess = isShortBlock
+    && execution.status === 'success'
+    && (blockExitCode === 0 || blockExitCode === null)
+    && !isExpanded;
+  if (isShortSuccess) {
+    return (
+      <button
+        type="button"
+        onClick={() => setIsExpanded(true)}
+        className="flex items-center gap-2 py-1 px-2.5 rounded border border-hairline bg-surface/50 text-xs font-mono hover:bg-surface cursor-pointer select-none transition-colors w-full text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
+        aria-expanded={false}
+        aria-label={`Command: ${commandLabel ?? execution.tool}`}
+        data-terminal-block={blockId}
+      >
+        <StatusLight state="done_unseen" size="sm" />
+        <span className="text-muted-foreground">$</span>
+        <span className="text-foreground truncate max-w-[400px]">{commandLabel ?? execution.tool}</span>
+        <span className="text-hairline">·</span>
+        <span className="text-muted-foreground">{blockDuration?.toFixed(2)}s</span>
+        <span className="text-hairline">·</span>
+        <span className="text-muted-foreground">exit 0</span>
+        <ChevronDown className="h-3 w-3 ml-auto text-muted-foreground" />
+      </button>
+    );
+  }
 
   return (
     <div

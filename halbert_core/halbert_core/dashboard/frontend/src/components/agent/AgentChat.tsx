@@ -323,6 +323,7 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
     isStreaming,
     response,
     thinking,
+    thinkingDurationMs,
     provenance,
     moduleInvocations,
     turnModel,
@@ -1085,8 +1086,8 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
             </div>
 
             {session && (
-              <div className="flex justify-start">
-                <div className="max-w-[85%] bg-muted/50 border border-border/50 rounded-lg p-4 space-y-3">
+              <div className="flex justify-start w-full">
+                <div className="w-full space-y-3 text-foreground leading-relaxed">
                   <div className="flex items-center gap-2">
                     <StateBadge state={session.state} showPulse={isStreaming} />
                     {session.loopCount > 0 && (
@@ -1170,7 +1171,7 @@ export function AgentChat({ className, onRunCommand, onOpenModelSettings }: Agen
                     />
                   )}
 
-                  {thinking && <ThinkingPanel thinking={thinking} isStreaming={isStreaming} />}
+                  {thinking && <ThinkingPanel thinking={thinking} isStreaming={isStreaming} durationMs={thinkingDurationMs} />}
 
                   {session.confidence > 0 && (
                     <ConfidenceIndicator

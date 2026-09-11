@@ -10,6 +10,7 @@
 import { memo, useMemo } from 'react';
 
 import { CodeBlock } from '../domain/CodeBlock';
+import { MarkdownRenderer } from '../domain/MarkdownRenderer';
 
 export type RunCommand = (cmd: string) => Promise<{ output?: string; error?: string; exit_code?: number }>;
 
@@ -69,7 +70,7 @@ function MessageContentImpl({ content, onRunCommand }: MessageContentProps) {
           );
         }
         return (
-          <span key={i} className="whitespace-pre-wrap break-words">{part.content}</span>
+          <MarkdownRenderer key={i} text={part.content} />
         );
       })}
     </div>

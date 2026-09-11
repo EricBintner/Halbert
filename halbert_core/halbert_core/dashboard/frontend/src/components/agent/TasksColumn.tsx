@@ -12,7 +12,10 @@
  */
 
 import { useState, type ReactNode } from 'react';
+import { ChevronDown } from 'lucide-react';
 import { StatusLight, type StatusLightState } from './StatusLight';
+import { TerminalTile } from './TerminalTile';
+import { useTerminalSessions } from '../../hooks/useTerminalSessions';
 
 export interface TaskCardData {
   taskId: string;
@@ -57,6 +60,16 @@ export function TaskCard({
   onCopy,
 }: TaskCardProps): ReactNode {
   const isRunning = state === 'running' || state === 'needs_attention';
+  const [expanded, setExpanded] = useState(false);
+  const { sessions } = useTerminalSessions();
+
+  // Look up the terminal session for this block, if any.
+  const session = blockId ? sessions.find((s) => s.blockId === blockId) : undefined;
+  // De-duplication: if the terminal is visible inline in the conversation,
+  // don't mount a duplicate xterm here — show a "live in conversation" link.
+  const isLiveInline = session?.visible === true;
+  const canExpand = isRunning && !!blockId && !!session;
+
   return (
     <div
       className="rounded-lg border border-hairline bg-surface p-2 space-y-1"
@@ -102,10 +115,29 @@ export function TaskCard({
             &#x2191;
           </button>
         )}
+        {canExpand && (
+          <button
+            onClick={() => setExpanded(!expanded)}
+            className="text-[10px] text-muted-foreground hover:text-text"
+            aria-label={expanded ? 'Collapse terminal' : 'Expand terminal'}
+            title={expanded ? 'Collapse terminal' : 'Expand terminal'}
+          >
+            <ChevronDown className={`h-3 w-3 transition-transform ${expanded ? 'rotate-180' : ''}`} />
+          </button>
+        )}
       </div>
       <div className="text-[10px] text-muted-foreground truncate" title={threadTopic}>
         {threadTopic}
       </div>
+      {expanded && canExpand && session && (
+        isLiveInline ? (
+          <div className="text-[10px] text-muted-foreground italic">
+            live in conversation &#x2191;
+          </div>
+        ) : (
+          <TerminalTile session={session} blockId={blockId} owner="agent" />
+        )
+      )}
     </div>
   );
 }

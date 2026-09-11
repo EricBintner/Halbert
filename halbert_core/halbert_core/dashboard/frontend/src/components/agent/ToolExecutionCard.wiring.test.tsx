@@ -34,7 +34,7 @@ describe('ToolExecutionCard wiring', () => {
     expect(screen.queryByText('run_command')).toBeNull();
   });
 
-  it('shows the one-line result for a fast block with no blockId prop', () => {
+  it('shows the compact pill for a fast successful block with no blockId prop', () => {
     render(
       <ToolExecutionCard
         execution={streamed}
@@ -44,12 +44,12 @@ describe('ToolExecutionCard wiring', () => {
       />
     );
 
-    // The duration only ever renders on the block branch -- `exit 0` alone
-    // would also come from STATUS_CONFIG's label, so asserting on it could
-    // not tell a wired card from an unwired one.
-    expect(screen.getByText(/0\.3s/)).toBeTruthy();
-    // ...and the one-line result the short block collapses to.
-    expect(screen.getByText(/\$ smbstatus · exit 0/)).toBeTruthy();
+    // The compact pill renders as a single button with the command, duration, and exit.
+    const pill = screen.getByRole('button', { name: /Command: smbstatus/ });
+    expect(pill).toBeTruthy();
+    expect(pill.textContent).toContain('smbstatus');
+    expect(pill.textContent).toContain('exit 0');
+    expect(screen.getByText(/0\.30s/)).toBeTruthy();
   });
 
   it('leaves a non-command tool alone', () => {
