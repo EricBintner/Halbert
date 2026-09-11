@@ -26,6 +26,7 @@ pytest.importorskip("fastapi")
 from halbert_core.dashboard import app as dashboard_app  # noqa: E402
 from halbert_core.scheduler.job import Job  # noqa: E402
 from halbert_core.scheduler.monitor_hash import MonitorHashGate  # noqa: E402
+from halbert_core.scheduler.run_receipts import RunReceiptStore  # noqa: E402
 
 T0 = datetime(2026, 9, 7, 15, 0, tzinfo=timezone.utc)
 
@@ -38,15 +39,21 @@ CRONS = {
 
 class _FakeExecutor:
     """Records one-time catch-up scheduling; the catch-up path only needs
-    ``schedule_one_time`` and the timezone name."""
+    ``schedule_one_time`` and the timezone name. ``receipts``, when given,
+    is a real ``RunReceiptStore`` (or any object with ``occurrence_completed``)
+    so a test can exercise the R-03 occurrence guard; the production
+    executor always has one, but the guard is written to fail soft when it
+    is absent, which is what a bare ``_FakeExecutor()`` exercises."""
 
     timezone = "UTC"
 
-    def __init__(self):
+    def __init__(self, receipts=None):
         self.one_time = []
+        if receipts is not None:
+            self.receipts = receipts
 
     def schedule_one_time(self, *, job_id, task_func, run_at, **kwargs):
-        self.one_time.append({"job_id": job_id, "task": task_func, "run_at": run_at})
+        self.one_time.append({"job_id": job_id, "task": task_func, "run_at": run_at, **kwargs})
 
 
 def _spec(job_id, task=lambda: None, cron=None):
@@ -160,6 +167,43 @@ def test_slot_already_served_is_not_caught_up(tmp_path):
     }
     assert _run(ex, specs, prior, gate=_ungated(tmp_path)) == {}
     assert ex.one_time == []
+
+
+def test_occurrence_already_completed_overrides_a_blanked_job_record(tmp_path):
+    """R-03 (A06-G1/A15-G1/G2, own-bug 1's other half): the occurrence store
+    is authoritative even when the parent job record was blanked by a
+    re-registration — e.g. a slot served by an earlier catch-up run, which
+    credits the PARENT's occurrence rather than its own sibling id."""
+    ex = _FakeExecutor(receipts=RunReceiptStore(tmp_path / "receipts.json"))
+    due = datetime(2026, 9, 7, 4, 37, tzinfo=timezone.utc)
+    ex.receipts.completed_occurrence("timeline_retention", due.isoformat())
+    specs = {"timeline_retention": _spec("timeline_retention")}
+    # never_ran: the job record itself has no last-run facts at all, which
+    # would normally look like an unmissed... i.e. missed, unserved slot.
+    prior = {"timeline_retention": _prior("timeline_retention", never_ran=True)}
+
+    result = _run(ex, specs, prior, gate=_ungated(tmp_path))
+
+    assert result == {}
+    assert ex.one_time == []
+
+
+def test_catchup_credits_the_parent_occurrence_for_the_missed_slot(tmp_path):
+    """The scheduled run must record the ORIGINAL missed slot (due_at)
+    against the PARENT id — not "now" (run_at) and not the ':catchup'
+    sibling id — or the next boot's occurrence check could never match it."""
+    ex = _FakeExecutor(receipts=RunReceiptStore(tmp_path / "receipts.json"))
+    specs = {"timeline_retention": _spec("timeline_retention")}
+    prior = {"timeline_retention": _prior("timeline_retention")}
+
+    result = _run(ex, specs, prior, gate=_ungated(tmp_path))
+
+    assert result == {"timeline_retention": "caught_up"}
+    (run,) = ex.one_time
+    assert run["job_id"] == "timeline_retention:catchup"
+    assert run["occurrence_job_id"] == "timeline_retention"
+    assert run["scheduled_instant"] == datetime(2026, 9, 7, 4, 37, tzinfo=timezone.utc).isoformat()
+    assert run["scheduled_instant"] != run["run_at"].isoformat()
 
 
 def test_fresh_install_catches_up_nothing(tmp_path):

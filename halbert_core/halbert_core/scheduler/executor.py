@@ -42,6 +42,7 @@ except ImportError:
 
 from .job import Job
 from .engine import SchedulerEngine
+from .catchup import last_due_slot
 from .restart_budget import RestartBudget, RestartDecision
 from .run_receipts import RunReceiptStore
 from ..utils.retry import exponential_backoff_retry, STANDARD_TASK_POLICY
@@ -378,6 +379,7 @@ class AutonomousExecutor:
             run_at=datetime.now(timezone.utc),
             max_retries=max_retries,
             timeout_s=timeout_s,
+            occurrence_job_id=job_id,
         )
         logger.info(
             f"Boot recovery: one bounded re-run armed for {job_id} "
@@ -449,13 +451,27 @@ class AutonomousExecutor:
             timeout_s=timeout_s
         )
         self.scheduler_engine.add_job(job)
-        
+
+        # R-03 (A06-G1/A15-G1/G2): computed live at fire time, not
+        # registration time — a cron has no single instant until it fires.
+        # Same last_due_slot walk the boot catch-up path uses, so a regular
+        # fire and a caught-up one agree on which slot they served.
+        def _cron_instant() -> Optional[str]:
+            try:
+                trigger = CronTrigger(**cron_expr, timezone=self.timezone)
+                due = last_due_slot(trigger, datetime.now(timezone.utc))
+                return due.isoformat() if due is not None else None
+            except Exception as e:
+                logger.debug(f"Job {job_id}: could not compute its own slot instant: {e}")
+                return None
+
         # Wrap task with retry logic
         wrapped_func = self._wrap_task(
             job_id=job_id,
             task_func=task_func,
             max_retries=max_retries,
-            timeout_s=timeout_s
+            timeout_s=timeout_s,
+            scheduled_instant_fn=_cron_instant,
         )
         
         # Schedule with APScheduler
@@ -484,18 +500,30 @@ class AutonomousExecutor:
         task_func: Callable,
         run_at: datetime,
         max_retries: int = 3,
-        timeout_s: int = 600
+        timeout_s: int = 600,
+        occurrence_job_id: Optional[str] = None,
+        scheduled_instant: Optional[str] = None,
     ) -> str:
         """
         Schedule a one-time job.
-        
+
         Args:
             job_id: Unique job identifier
             task_func: Function to execute
             run_at: Execution time (datetime)
             max_retries: Maximum retry attempts
             timeout_s: Timeout in seconds
-        
+            occurrence_job_id: R-03 — who the occurrence is recorded
+                against, when this run serves a known slot (a boot
+                catch-up or recovery run passes the PARENT job's id here,
+                since it executes under a suffixed sibling id). Defaults
+                to ``job_id``.
+            scheduled_instant: R-03 — the slot this run serves, when it is
+                not simply ``run_at`` (a catch-up run fires at "now" but
+                serves the ORIGINAL missed slot — crediting "now" as the
+                occurrence would never match that slot's own due time on a
+                later check). Defaults to ``run_at.isoformat()``.
+
         Returns:
             Job ID
         """
@@ -507,8 +535,13 @@ class AutonomousExecutor:
             timeout_s=timeout_s
         )
         self.scheduler_engine.add_job(job)
-        
-        wrapped_func = self._wrap_task(job_id, task_func, max_retries, timeout_s)
+
+        instant = scheduled_instant if scheduled_instant is not None else run_at.isoformat()
+        wrapped_func = self._wrap_task(
+            job_id, task_func, max_retries, timeout_s,
+            occurrence_job_id=occurrence_job_id,
+            scheduled_instant_fn=lambda: instant,
+        )
         
         self.scheduler.add_job(
             func=wrapped_func,
@@ -561,14 +594,28 @@ class AutonomousExecutor:
         job_id: str,
         task_func: Callable,
         max_retries: int,
-        timeout_s: int
+        timeout_s: int,
+        *,
+        occurrence_job_id: Optional[str] = None,
+        scheduled_instant_fn: Optional[Callable[[], Optional[str]]] = None,
     ) -> Callable:
         """
         Wrap task with retry logic, timeout, and outcome tracking.
-        
+
+        R-03 (A06-G1/A15-G1/G2): ``scheduled_instant_fn``, when given, is
+        called at fire time for the instant this run serves (Hermes
+        occurrence-level idempotency — stronger than any claim TTL). A slot
+        already completed is never dispatched. ``occurrence_job_id``
+        (default ``job_id``) is who the occurrence is recorded against —
+        distinct from ``job_id`` for a boot catch-up or recovery run, which
+        executes under a suffixed sibling id (``<id>:catchup``,
+        ``<id>:recovery``) but must credit the PARENT job's occurrence, or a
+        slot served that way would never read as served on the next boot.
+
         Returns:
             Wrapped function
         """
+        occurrence_id = occurrence_job_id or job_id
         @exponential_backoff_retry(
             max_attempts=max_retries,
             base_delay=1.0,
@@ -580,9 +627,22 @@ class AutonomousExecutor:
         )
         def wrapped():
             import time
-            
+
             start_time = time.time()
-            
+
+            # R-03 (A06-G1/A15-G1/G2): the occurrence check is the real
+            # at-most-once primitive, ahead of even the guardrail checks —
+            # a slot already served needs no guardrail decision at all.
+            scheduled_instant = scheduled_instant_fn() if scheduled_instant_fn else None
+            if scheduled_instant is not None and self.receipts.occurrence_completed(
+                occurrence_id, scheduled_instant
+            ):
+                logger.info(
+                    f"Job {job_id}: occurrence {occurrence_id}@{scheduled_instant} "
+                    f"already completed; skipping"
+                )
+                return None
+
             # Phase 3 M6: Check guardrails before execution
             if self.enable_guardrails and self.guardrail_enforcer:
                 try:
@@ -650,7 +710,8 @@ class AutonomousExecutor:
             # Locked across the worker pool: the store flushes whole-file.
             with self._receipts_lock:
                 receipt_id = self.receipts.mark_started(
-                    job_id, owner_pid=os.getpid()
+                    occurrence_id, owner_pid=os.getpid(),
+                    scheduled_instant=scheduled_instant,
                 )
 
             try:

@@ -552,6 +552,19 @@ def _run_boot_catchup(
         if job_id not in prior_records:
             # Never registered before (fresh install): nothing was missed.
             continue
+        # R-03 (A06-G1/A15-G1/G2): the occurrence store is authoritative
+        # when it has an answer — it is credited the same way whether the
+        # slot was served by a regular fire, an earlier catch-up, or a
+        # boot recovery run, unlike the parent job record alone (own-bug
+        # 1's other half). Falls back to the job-record check when the
+        # receipts store is unavailable (e.g. a bare fake in a test).
+        receipts = getattr(executor, "receipts", None)
+        if receipts is not None:
+            try:
+                if receipts.occurrence_completed(job_id, due.isoformat()):
+                    continue
+            except Exception as e:
+                logger.debug(f"Boot catch-up: occurrence check for {job_id} failed: {e}")
         last_run = _last_run_of(prior_records[job_id])
         if last_run is not None and last_run >= due:
             continue  # the slot was served by the previous boot's run
@@ -635,6 +648,13 @@ def _run_boot_catchup(
                 job_id=run_id,
                 task_func=job["task"],
                 run_at=run_at,
+                # R-03: credit the PARENT job's occurrence for the slot
+                # actually missed (job["due_at"]), not "now" (run_at) and
+                # not the sibling ":catchup" id — the same slot must read
+                # as served on the next boot regardless of which of the
+                # three ids actually served it.
+                occurrence_job_id=job["id"],
+                scheduled_instant=job["due_at"].isoformat(),
             )
         except Exception as e:
             logger.warning(

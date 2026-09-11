@@ -131,6 +131,81 @@ def test_wrapped_task_runs_off_the_main_thread(executor):
     assert executor.scheduler_engine.get_job("bg").state == "completed"
 
 
+def _run_wrapped(executor, job_id, task, *, occurrence_job_id=None, scheduled_instant_fn=None):
+    from halbert_core.scheduler.job import Job
+
+    executor.scheduler_engine.add_job(Job(id=job_id, task="t", schedule="x"))
+    wrapped = executor._wrap_task(
+        job_id, task, max_retries=1, timeout_s=5,
+        occurrence_job_id=occurrence_job_id, scheduled_instant_fn=scheduled_instant_fn,
+    )
+    outcome = {}
+
+    def worker():
+        try:
+            outcome["result"] = wrapped()
+        except Exception as e:  # pragma: no cover
+            outcome["error"] = e
+
+    t = threading.Thread(target=worker)
+    t.start()
+    t.join(10)
+    if "error" in outcome:
+        raise outcome["error"]
+    return outcome.get("result")
+
+
+class TestOccurrenceIdempotency:
+    """R-03 (A06-G1/A15-G1/G2): occurrence_completed exists and is now
+    checked before dispatch and populated on completion -- previously the
+    primitive existed with zero production callers."""
+
+    def test_an_already_completed_occurrence_is_never_dispatched(self, executor):
+        calls = []
+        executor.receipts.completed_occurrence("morning_report", "2026-09-07T08:00:00+00:00")
+        result = _run_wrapped(
+            executor, "morning_report", lambda: calls.append(1) or "ran",
+            scheduled_instant_fn=lambda: "2026-09-07T08:00:00+00:00",
+        )
+        assert calls == []
+        assert result is None
+        # Skipped before dispatch: the job record is untouched (still pending),
+        # not marked completed for a run that never happened.
+        assert executor.scheduler_engine.get_job("morning_report").state == "pending"
+
+    def test_a_fresh_instant_runs_and_is_then_recorded_completed(self, executor):
+        instant = "2026-09-07T08:00:00+00:00"
+        result = _run_wrapped(
+            executor, "morning_report", lambda: "ran",
+            scheduled_instant_fn=lambda: instant,
+        )
+        assert result == "ran"
+        assert executor.receipts.occurrence_completed("morning_report", instant) is True
+
+    def test_no_instant_function_never_checks_or_records_an_occurrence(self, executor):
+        """A job with no cadence to compute an instant from (or a one-time
+        job with no scheduled_instant_fn at all) is unaffected — this is an
+        additive check, not a new requirement on every caller."""
+        result = _run_wrapped(executor, "adhoc", lambda: "ran")
+        assert result == "ran"
+
+    def test_occurrence_credits_a_different_id_than_the_execution_id(self, executor):
+        """A catch-up run executes under 'morning_report:catchup' but must
+        credit the PARENT job's occurrence — the same slot served by a
+        regular fire, a catch-up, or a boot recovery must read as served
+        either way (own-bug 1's other half: crediting a sibling id instead
+        of the parent record)."""
+        instant = "2026-09-07T08:00:00+00:00"
+        result = _run_wrapped(
+            executor, "morning_report:catchup", lambda: "caught up",
+            occurrence_job_id="morning_report",
+            scheduled_instant_fn=lambda: instant,
+        )
+        assert result == "caught up"
+        assert executor.receipts.occurrence_completed("morning_report", instant) is True
+        assert executor.receipts.occurrence_completed("morning_report:catchup", instant) is False
+
+
 def test_one_time_job_runs_and_records_outcome(guarded_executor):
     executor = guarded_executor
     # The guardrail branch is the one with the undefined name; make sure it
