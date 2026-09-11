@@ -174,6 +174,13 @@ class AutonomousExecutor:
         #: Jobs whose boot recovery found an interrupted receipt; they get
         #: one budget-checked re-run when their callable re-registers.
         self._boot_recovery_pending: set = set()
+        #: A15-G3: jobs a receipt-recovery re-run was actually armed for
+        #: this boot. Unlike ``_boot_recovery_pending`` (drained per job
+        #: during registration, before boot catch-up ever runs — the
+        #: audit's own proposed guard checked the wrong set), this one is
+        #: only ever added to during a boot, so boot catch-up can consult
+        #: it afterward and not double-arm the same missed occurrence.
+        self._boot_recovery_armed: set = set()
         
         # Initialize guardrails (Phase 3 M6)
         if self.enable_guardrails:
@@ -412,6 +419,7 @@ class AutonomousExecutor:
             return
         self._restart_ledger.setdefault(job_id, []).append(now)
         self._persist_restart_ledger()
+        self._boot_recovery_armed.add(job_id)
         recovery_id = f"{job_id}:recovery"
         self.schedule_one_time(
             job_id=recovery_id,

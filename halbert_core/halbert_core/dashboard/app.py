@@ -555,6 +555,19 @@ def _run_boot_catchup(
         if job_id not in prior_records:
             # Never registered before (fresh install): nothing was missed.
             continue
+        # A15-G3: recovery and catch-up can otherwise arm the same job at
+        # boot. The audit's own proposed guard (checking
+        # _boot_recovery_pending here) is broken -- registration drains
+        # that set for every job before catch-up ever runs, so it would
+        # always read empty. _boot_recovery_armed is a separate,
+        # boot-scoped set the executor only ever ADDS to (never drains)
+        # when it actually arms a receipt-recovery re-run this boot.
+        if job_id in getattr(executor, "_boot_recovery_armed", ()):
+            logger.info(
+                f"Boot catch-up: {job_id} already armed by boot receipt "
+                f"recovery this boot; not double-armed"
+            )
+            continue
         # R-03 (A06-G1/A15-G1/G2): the occurrence store is authoritative
         # when it has an answer — it is credited the same way whether the
         # slot was served by a regular fire, an earlier catch-up, or a

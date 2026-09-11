@@ -137,6 +137,50 @@ def test_morning_report_catches_up_only_within_twelve_hours(tmp_path):
     assert stale.one_time == []
 
 
+# ---------------------------------------------------------------------------
+# A15-G3: a job already armed by boot receipt-recovery is not double-armed
+# by boot catch-up too (the audit's own proposed _boot_recovery_pending
+# guard is broken -- executor.py drains that set during registration,
+# before catch-up ever runs, so checking it here would always see it empty;
+# _boot_recovery_armed is a separate, boot-scoped set that is only ever
+# added to, never drained, during the same boot).
+# ---------------------------------------------------------------------------
+
+def test_a_job_already_armed_by_boot_recovery_is_not_double_armed(tmp_path):
+    ex = _FakeExecutor()
+    ex._boot_recovery_armed = {"detector_sweep"}
+    specs = {
+        "detector_sweep": _spec("detector_sweep"),
+        "timeline_retention": _spec("timeline_retention"),
+    }
+    prior = {
+        "detector_sweep": _prior("detector_sweep"),
+        "timeline_retention": _prior("timeline_retention"),
+    }
+
+    result = _run(ex, specs, prior, gate=_ungated(tmp_path))
+
+    assert result.get("detector_sweep") != "caught_up"
+    assert not any(r["job_id"].startswith("detector_sweep") for r in ex.one_time)
+    # the guard is job-specific, not a blanket suppression of the whole run
+    assert result.get("timeline_retention") == "caught_up"
+    assert any(r["job_id"].startswith("timeline_retention") for r in ex.one_time)
+
+
+def test_the_guard_is_absent_when_no_boot_recovery_armed_anything(tmp_path):
+    # A bare _FakeExecutor (no _boot_recovery_armed attribute at all) must
+    # not be treated as "everything is guarded" -- fail soft to "nothing
+    # is guarded", the same way the occurrence-store check already does.
+    ex = _FakeExecutor()
+    specs = {"detector_sweep": _spec("detector_sweep")}
+    prior = {"detector_sweep": _prior("detector_sweep")}
+    boot = datetime(2026, 9, 7, 7, 0, tzinfo=timezone.utc)
+
+    result = _run(ex, specs, prior, now=boot, gate=_ungated(tmp_path))
+
+    assert result == {"detector_sweep": "caught_up"}
+
+
 def test_idempotent_housekeeping_has_no_age_bound(tmp_path):
     """detector_sweep missed by most of a day still catches up — it is
     idempotent, so a served slot can never hurt."""

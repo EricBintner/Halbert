@@ -164,6 +164,9 @@ def test_boot_recovery_interrupts_a_dead_owner_and_reruns_once(data_dir):
         lambda: ex.scheduler_engine.get_job("detector_sweep:recovery").state
         == "completed"
     )
+    # A15-G3: recorded as armed this boot, so boot catch-up (a separate
+    # path, running later in registration) knows not to double-arm it.
+    assert "detector_sweep" in ex._boot_recovery_armed
 
     # Bounded: re-registering the job again does not arm a second re-run —
     # the pending set was consumed, and the durable ledger shows one arm.
