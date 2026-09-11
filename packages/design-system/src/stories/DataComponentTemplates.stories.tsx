@@ -6,7 +6,6 @@ import type { Meta, StoryObj } from '@storybook/react'
 import { TactileMeter } from '../primitives/TactileMeter'
 import { SegmentedBar, type SegmentItem } from '../primitives/SegmentedBar'
 import { DataGridRow } from '../primitives/DataGridRow'
-import { StatusBadge } from '../primitives/StatusBadge'
 
 const meta: Meta = {
   title: 'Instruments/Templates',
@@ -14,7 +13,7 @@ const meta: Meta = {
     docs: {
       description: {
         component:
-          'Skeletal data visualization component templates enforcing strict Vignelli Unigrid columnar alignment. All data paths start at the exact same horizontal coordinate, and status alert badges are locked into fixed-width slots so critical alarms never break layout.',
+          'Skeletal data visualization component templates enforcing strict Vignelli Unigrid columnar alignment. All data paths start at the exact same horizontal coordinate, and right-hand tabular metrics line up to the pixel without pills.',
       },
     },
   },
@@ -22,17 +21,91 @@ const meta: Meta = {
 
 export default meta
 
+/** Clean industrial status pip (no pills) */
+const StatusIndicator = ({
+  tone,
+  label,
+}: {
+  tone: 'nominal' | 'warning' | 'critical' | 'telemetry'
+  label: string
+}) => {
+  const color =
+    tone === 'critical'
+      ? 'var(--color-status-critical)'
+      : tone === 'warning'
+        ? 'var(--color-data-amber)'
+        : tone === 'telemetry'
+          ? 'var(--color-data-blue)'
+          : 'var(--color-data-green)'
+  return (
+    <div style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
+      <span
+        style={{
+          width: 6,
+          height: 6,
+          borderRadius: '50%',
+          backgroundColor: color,
+          flexShrink: 0,
+        }}
+      />
+      <span
+        style={{
+          fontFamily: 'var(--font-mono)',
+          fontSize: 11,
+          fontWeight: 600,
+          color,
+          letterSpacing: '0.06em',
+          textTransform: 'uppercase',
+        }}
+      >
+        {label}
+      </span>
+    </div>
+  )
+}
+
+/** Clean tabular percentage or status readout (no pills) */
+const MetricStatus = ({
+  value,
+  tone = 'nominal',
+}: {
+  value: string
+  tone?: 'nominal' | 'warning' | 'critical' | 'telemetry'
+}) => {
+  const color =
+    tone === 'critical'
+      ? 'var(--color-status-critical)'
+      : tone === 'warning'
+        ? 'var(--color-data-amber)'
+        : 'var(--color-ink)'
+  return (
+    <span
+      style={{
+        fontFamily: 'var(--font-mono)',
+        fontSize: 13,
+        fontWeight: tone === 'critical' ? 700 : 600,
+        color,
+        fontVariantNumeric: 'tabular-nums',
+        letterSpacing: '-0.01em',
+        textAlign: 'right',
+      }}
+    >
+      {value}
+    </span>
+  )
+}
+
 const CardContainer = ({
   children,
   title,
   subtitle,
-  badge,
+  status,
   width = 880,
 }: {
   children: React.ReactNode
   title: string
   subtitle?: string
-  badge?: React.ReactNode
+  status?: React.ReactNode
   width?: number
 }) => (
   <div
@@ -85,7 +158,7 @@ const CardContainer = ({
           </p>
         )}
       </div>
-      {badge && <div style={{ flexShrink: 0 }}>{badge}</div>}
+      {status && <div style={{ flexShrink: 0 }}>{status}</div>}
     </div>
 
     {/* Card Body Tray */}
@@ -116,7 +189,7 @@ export const StoragePoolTemplate: StoryObj = {
     <CardContainer
       title="Primary Storage Pool (Fast NVMe Array)"
       subtitle="btrfs · 2 Disks (4.0 TB Total Raw) · UUID: 8f4a-9b12-cc4e"
-      badge={<StatusBadge tone="nominal">HEALTHY</StatusBadge>}
+      status={<StatusIndicator tone="nominal" label="HEALTHY" />}
     >
       {/* Visual Alignment Guide Note */}
       <div
@@ -132,10 +205,10 @@ export const StoragePoolTemplate: StoryObj = {
         }}
       >
         <span>
-          <strong>Vignelli Alignment Proof:</strong> Notice that mount paths (<code>/</code>, <code>/var/lib/docker</code>, etc.) begin at the exact same horizontal coordinate regardless of title character length.
+          <strong>Vignelli Alignment Proof:</strong> Mount paths align horizontally on the left; tabular metrics and percentages align on the right without pills or duplicate headers.
         </span>
         <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--color-ink-tertiary)' }}>
-          Grid: 220px | 180px | 1fr | 130px | 76px
+          Grid: 220px | 180px | 1fr | 180px | 72px
         </span>
       </div>
 
@@ -145,10 +218,12 @@ export const StoragePoolTemplate: StoryObj = {
         path="/ · btrfs"
         detail="Subvolume ID 256 · Compress=zstd:1"
         metrics="142.0 GB / 500.0 GB"
-        status={<StatusBadge tone="nominal">28.4%</StatusBadge>}
+        status={<MetricStatus value="28.4%" tone="nominal" />}
         meter={<TactileMeter value={28.4} tone="telemetry" size="md" />}
         titleWidth={220}
         pathWidth={180}
+        metricsWidth={180}
+        statusWidth={72}
       />
 
       {/* Row 2: Pathological very long volume label */}
@@ -157,22 +232,26 @@ export const StoragePoolTemplate: StoryObj = {
         path="/var/lib/libvirt/images"
         detail="NoCoW · Raw Sparse Images"
         metrics="820.0 GB / 1000.0 GB"
-        status={<StatusBadge tone="warning">82.0%</StatusBadge>}
+        status={<MetricStatus value="82.0%" tone="warning" />}
         meter={<TactileMeter value={82.0} tone="warning" size="md" />}
         titleWidth={220}
         pathWidth={180}
+        metricsWidth={180}
+        statusWidth={72}
       />
 
-      {/* Row 3: Critical alarm volume (Proves alarm badge does NOT push layout) */}
+      {/* Row 3: Critical alarm volume (Proves alarm status does NOT push layout) */}
       <DataGridRow
         title="Database WAL Log Volume"
         path="/data/postgres/wal"
         detail="Direct I/O · Exhausted Storage Margin"
         metrics="958.0 GB / 1000.0 GB"
-        status={<StatusBadge tone="critical">CRITICAL</StatusBadge>}
+        status={<MetricStatus value="95.8% CRIT" tone="critical" />}
         meter={<TactileMeter value={95.8} tone="critical" size="md" />}
         titleWidth={220}
         pathWidth={180}
+        metricsWidth={180}
+        statusWidth={72}
       />
 
       {/* Row 4: Normal container mount */}
@@ -181,10 +260,12 @@ export const StoragePoolTemplate: StoryObj = {
         path="/var/lib/docker/overlay2"
         detail="OverlayFS · 42 Active Containers"
         metrics="380.0 GB / 1000.0 GB"
-        status={<StatusBadge tone="nominal">38.0%</StatusBadge>}
+        status={<MetricStatus value="38.0%" tone="nominal" />}
         meter={<TactileMeter value={38.0} tone="telemetry" size="md" />}
         titleWidth={220}
         pathWidth={180}
+        metricsWidth={180}
+        statusWidth={72}
       />
 
       {/* Pool Allocation Tray */}
@@ -224,17 +305,19 @@ export const HostComputeVitalsTemplate: StoryObj = {
     <CardContainer
       title="Host Telemetry & Hardware Vitals"
       subtitle="halbert-workstation · AMD Ryzen 9 7950X (16C/32T) · Linux 6.12.8-cachyos"
-      badge={<StatusBadge tone="nominal">ONLINE</StatusBadge>}
+      status={<StatusIndicator tone="nominal" label="ONLINE" />}
     >
       <DataGridRow
         title="CPU Core Cluster Load"
         path="cpu · 16 Cores / 32 Threads"
         detail="Governer: schedutil · Boost: 5.4 GHz"
         metrics="42.5% Avg Load"
-        status={<StatusBadge tone="nominal">NOMINAL</StatusBadge>}
+        status={<MetricStatus value="42.5%" tone="nominal" />}
         meter={<TactileMeter value={42.5} tone="telemetry" size="md" ticks={[25, 50, 75, 90]} />}
         titleWidth={220}
         pathWidth={200}
+        metricsWidth={180}
+        statusWidth={72}
       />
 
       <DataGridRow
@@ -242,10 +325,12 @@ export const HostComputeVitalsTemplate: StoryObj = {
         path="mem · DDR5-5600 EXPO"
         detail="ZRAM active · 14.2 GB buffers"
         metrics="24.8 GB / 64.0 GB"
-        status={<StatusBadge tone="nominal">38.7%</StatusBadge>}
+        status={<MetricStatus value="38.7%" tone="nominal" />}
         meter={<TactileMeter value={38.7} tone="telemetry" size="md" ticks={[25, 50, 75, 90]} />}
         titleWidth={220}
         pathWidth={200}
+        metricsWidth={180}
+        statusWidth={72}
       />
 
       <DataGridRow
@@ -253,10 +338,12 @@ export const HostComputeVitalsTemplate: StoryObj = {
         path="pci0000:00/nvme0n1"
         detail="PCIe 4.0 x4 · Flush in progress"
         metrics="1.2 GB / 4.0 GB"
-        status={<StatusBadge tone="nominal">30.0%</StatusBadge>}
+        status={<MetricStatus value="30.0%" tone="telemetry" />}
         meter={<TactileMeter value={30.0} tone="data-amber" size="md" ticks={[25, 50, 75, 90]} />}
         titleWidth={220}
         pathWidth={200}
+        metricsWidth={180}
+        statusWidth={72}
       />
 
       <DataGridRow
@@ -264,10 +351,12 @@ export const HostComputeVitalsTemplate: StoryObj = {
         path="hwmon0/k10temp/Tctl"
         detail="Die Peak: 81.2°C · Ambient: 22°C"
         metrics="78.5°C / 95.0°C"
-        status={<StatusBadge tone="warning">WARN 82%</StatusBadge>}
+        status={<MetricStatus value="82.6% WARN" tone="warning" />}
         meter={<TactileMeter value={82.6} tone="warning" size="md" ticks={[25, 50, 75, 90]} />}
         titleWidth={220}
         pathWidth={200}
+        metricsWidth={180}
+        statusWidth={72}
       />
     </CardContainer>
   ),
@@ -287,7 +376,7 @@ export const AcceleratorVramTemplate: StoryObj = {
     <CardContainer
       title="NVIDIA GeForce RTX 4090 (24 GB VRAM)"
       subtitle="pci:0000:01:00.0 · Driver: 565.77 · CUDA 12.7 · Compute 8.9"
-      badge={<StatusBadge tone="nominal">INFERENCE ACTIVE</StatusBadge>}
+      status={<StatusIndicator tone="nominal" label="INFERENCE ACTIVE" />}
     >
       {/* VRAM Segmentation Tray */}
       <div>
@@ -317,10 +406,12 @@ export const AcceleratorVramTemplate: StoryObj = {
         path="nvml/engine/tensor"
         detail="FP8 Matrix Math · Batch=1"
         metrics="88.4% Load"
-        status={<StatusBadge tone="nominal">NOMINAL</StatusBadge>}
+        status={<MetricStatus value="88.4%" tone="nominal" />}
         meter={<TactileMeter value={88.4} tone="telemetry" size="md" />}
         titleWidth={220}
         pathWidth={180}
+        metricsWidth={180}
+        statusWidth={72}
       />
 
       <DataGridRow
@@ -328,10 +419,12 @@ export const AcceleratorVramTemplate: StoryObj = {
         path="nvml/power/draw"
         detail="TDP Limit: 450W · Peak: 385W"
         metrics="315.0W / 450.0W"
-        status={<StatusBadge tone="nominal">70.0%</StatusBadge>}
+        status={<MetricStatus value="70.0%" tone="nominal" />}
         meter={<TactileMeter value={70.0} tone="data-orange" size="md" />}
         titleWidth={220}
         pathWidth={180}
+        metricsWidth={180}
+        statusWidth={72}
       />
 
       <DataGridRow
@@ -339,10 +432,12 @@ export const AcceleratorVramTemplate: StoryObj = {
         path="nvml/thermal/hotspot"
         detail="Throttling Limit: 105.0°C"
         metrics="74.0°C / 105.0°C"
-        status={<StatusBadge tone="nominal">70.5%</StatusBadge>}
+        status={<MetricStatus value="70.5%" tone="nominal" />}
         meter={<TactileMeter value={70.5} tone="telemetry" size="md" />}
         titleWidth={220}
         pathWidth={180}
+        metricsWidth={180}
+        statusWidth={72}
       />
     </CardContainer>
   ),
@@ -356,17 +451,19 @@ export const ClusterFleetMatrixTemplate: StoryObj = {
     <CardContainer
       title="Federated Cluster Node Health Matrix"
       subtitle="Mesh: WireGuard · 4 Nodes Online · 1 Node Degraded · Latency Floor: 0.4ms"
-      badge={<StatusBadge tone="warning">1 NODE DEGRADED</StatusBadge>}
+      status={<StatusIndicator tone="warning" label="1 NODE DEGRADED" />}
     >
       <DataGridRow
         title="halbert-primary"
         path="192.168.1.10 · Primary"
         detail="16 Cores · 64 GB RAM"
         metrics="CPU: 24.5% · RAM: 58.2%"
-        status={<StatusBadge tone="nominal">ONLINE</StatusBadge>}
+        status={<MetricStatus value="ONLINE" tone="nominal" />}
         meter={<TactileMeter value={24.5} tone="telemetry" size="md" />}
         titleWidth={220}
         pathWidth={180}
+        metricsWidth={180}
+        statusWidth={72}
       />
 
       <DataGridRow
@@ -374,10 +471,12 @@ export const ClusterFleetMatrixTemplate: StoryObj = {
         path="192.168.1.15 · NAS"
         detail="8 Cores · 32 GB RAM · 48 TB Raw"
         metrics="CPU: 8.2% · RAM: 82.0%"
-        status={<StatusBadge tone="nominal">ONLINE</StatusBadge>}
+        status={<MetricStatus value="ONLINE" tone="nominal" />}
         meter={<TactileMeter value={8.2} tone="telemetry" size="md" />}
         titleWidth={220}
         pathWidth={180}
+        metricsWidth={180}
+        statusWidth={72}
       />
 
       {/* Critical Degraded Worker Node */}
@@ -386,10 +485,12 @@ export const ClusterFleetMatrixTemplate: StoryObj = {
         path="192.168.1.20 · Worker"
         detail="32 Cores · 128 GB RAM · 2x RTX 4090"
         metrics="CPU: 97.4% · RAM: 94.1%"
-        status={<StatusBadge tone="critical">CRITICAL</StatusBadge>}
+        status={<MetricStatus value="CRITICAL" tone="critical" />}
         meter={<TactileMeter value={97.4} tone="critical" size="md" />}
         titleWidth={220}
         pathWidth={180}
+        metricsWidth={180}
+        statusWidth={72}
       />
 
       <DataGridRow
@@ -397,10 +498,12 @@ export const ClusterFleetMatrixTemplate: StoryObj = {
         path="192.168.1.50 · Edge Gateway"
         detail="4 Cores · 8 GB RAM · 2.5 GbE WAN"
         metrics="CPU: 12.0% · RAM: 32.5%"
-        status={<StatusBadge tone="nominal">ONLINE</StatusBadge>}
+        status={<MetricStatus value="ONLINE" tone="nominal" />}
         meter={<TactileMeter value={12.0} tone="telemetry" size="md" />}
         titleWidth={220}
         pathWidth={180}
+        metricsWidth={180}
+        statusWidth={72}
       />
     </CardContainer>
   ),
@@ -414,17 +517,19 @@ export const HardwareSensorsTemplate: StoryObj = {
     <CardContainer
       title="Hardware Environmental & Thermal Sensors"
       subtitle="Chassis Telemetry via hwmon / it8688 / k10temp / drivetemp"
-      badge={<StatusBadge tone="nominal">ALL SENSORS NORMAL</StatusBadge>}
+      status={<StatusIndicator tone="nominal" label="ALL SENSORS NORMAL" />}
     >
       <DataGridRow
         title="Samsung 990 PRO (Boot NVMe)"
         path="hwmon2 · nvme0n1"
         detail="Composite Sensor · Critical: 70°C"
         metrics="42.0°C / 70.0°C"
-        status={<StatusBadge tone="nominal">60.0%</StatusBadge>}
+        status={<MetricStatus value="60.0%" tone="nominal" />}
         meter={<TactileMeter value={60.0} tone="telemetry" size="md" />}
         titleWidth={240}
         pathWidth={160}
+        metricsWidth={180}
+        statusWidth={72}
       />
 
       <DataGridRow
@@ -432,10 +537,12 @@ export const HardwareSensorsTemplate: StoryObj = {
         path="hwmon3 · nvme1n1"
         detail="Active Heatsink · Warning: 65°C"
         metrics="64.2°C / 75.0°C"
-        status={<StatusBadge tone="warning">WARN 85%</StatusBadge>}
+        status={<MetricStatus value="85.6% WARN" tone="warning" />}
         meter={<TactileMeter value={85.6} tone="warning" size="md" />}
         titleWidth={240}
         pathWidth={160}
+        metricsWidth={180}
+        statusWidth={72}
       />
 
       <DataGridRow
@@ -443,10 +550,12 @@ export const HardwareSensorsTemplate: StoryObj = {
         path="hwmon1 · it8688/temp2"
         detail="16+2 Power Phases · Limit: 105°C"
         metrics="54.0°C / 105.0°C"
-        status={<StatusBadge tone="nominal">51.4%</StatusBadge>}
+        status={<MetricStatus value="51.4%" tone="nominal" />}
         meter={<TactileMeter value={51.4} tone="telemetry" size="md" />}
         titleWidth={240}
         pathWidth={160}
+        metricsWidth={180}
+        statusWidth={72}
       />
 
       <DataGridRow
@@ -454,10 +563,12 @@ export const HardwareSensorsTemplate: StoryObj = {
         path="hwmon1 · it8688/fan1"
         detail="3x 140mm PWM Fans · Max: 1800 RPM"
         metrics="1120 RPM / 1800 RPM"
-        status={<StatusBadge tone="nominal">62.2%</StatusBadge>}
+        status={<MetricStatus value="62.2%" tone="nominal" />}
         meter={<TactileMeter value={62.2} tone="telemetry" size="md" />}
         titleWidth={240}
         pathWidth={160}
+        metricsWidth={180}
+        statusWidth={72}
       />
     </CardContainer>
   ),

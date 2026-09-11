@@ -714,14 +714,18 @@ function FilesystemUsageRow({
       detail={profileDetail ? `• ${profileDetail}` : undefined}
       metrics={`${fs.used} / ${fs.size}`}
       status={
-        <Badge
+        <span
           className={cn(
-            "text-xs px-2 py-0.5 justify-center h-5 leading-none font-mono",
-            fs.severity === 'critical' ? 'bg-error text-white' : 'bg-muted text-foreground',
+            "font-mono text-xs sm:text-[13px] font-semibold tabular-nums",
+            fs.severity === 'critical'
+              ? 'text-status-critical font-bold'
+              : fs.severity === 'warning'
+                ? 'text-status-warning font-semibold'
+                : 'text-foreground',
           )}
         >
           {fs.percent}%
-        </Badge>
+        </span>
       }
       meter={
         <TactileMeter

@@ -67,6 +67,11 @@ export interface TactileMeterProps extends React.HTMLAttributes<HTMLDivElement> 
    * so critical alerts cannot push the readout or break layout.
    */
   statusBadge?: React.ReactNode
+  /**
+   * Whether to explicitly force rendering the numerical readout even when no label is provided.
+   * By default, a pure meter track with no label or sub will NOT render an empty header.
+   */
+  showReadout?: boolean
 }
 
 /**
@@ -92,6 +97,7 @@ export const TactileMeter = React.forwardRef<HTMLDivElement, TactileMeterProps>(
     offline = false,
     labelWidth,
     statusBadge,
+    showReadout = false,
     className,
     style,
     id,
@@ -120,6 +126,8 @@ export const TactileMeter = React.forwardRef<HTMLDivElement, TactileMeterProps>(
       : {}),
   }
 
+  const hasHeader = Boolean(label || sub || valueLabel !== undefined || statusBadge || showReadout)
+
   return (
     <div
       ref={ref}
@@ -135,7 +143,7 @@ export const TactileMeter = React.forwardRef<HTMLDivElement, TactileMeterProps>(
       style={meterStyles}
       {...props}
     >
-      {(label || sub || valueLabel !== undefined || statusBadge || !offline) && (
+      {hasHeader && (
         <div className="hb-tactile-meter__header">
           <div className="hb-tactile-meter__identity">
             {label && (

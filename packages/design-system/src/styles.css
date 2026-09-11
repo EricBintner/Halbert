@@ -1271,9 +1271,9 @@
     var(--data-row-title-width, 200px)
     var(--data-row-path-width, 180px)
     1fr
-    auto
-    76px;
-  align-items: baseline;
+    var(--data-row-metrics-width, 180px)
+    var(--data-row-status-width, 72px);
+  align-items: center;
   gap: var(--space-3);
   width: 100%;
   line-height: 1.4;
@@ -1350,7 +1350,7 @@
 .hb-data-row__metrics-cell {
   flex-shrink: 0;
   text-align: right;
-  min-width: 110px;
+  width: var(--data-row-metrics-width, 180px);
 }
 
 .hb-data-row__metrics {
@@ -1368,7 +1368,8 @@
   display: inline-flex;
   align-items: center;
   justify-content: flex-end;
-  width: 76px;
+  width: var(--data-row-status-width, 72px);
+  text-align: right;
 }
 
 .hb-data-row__meter-cell {

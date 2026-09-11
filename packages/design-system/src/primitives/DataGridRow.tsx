@@ -28,6 +28,10 @@ export interface DataGridRowProps extends Omit<React.HTMLAttributes<HTMLDivEleme
   titleWidth?: number | string
   /** Allotted width for the Path column on desktop (default: 180px). */
   pathWidth?: number | string
+  /** Allotted width for the Metrics column on desktop (default: 180px). */
+  metricsWidth?: number | string
+  /** Allotted width for the Status column on desktop (default: 72px). */
+  statusWidth?: number | string
 }
 
 /**
@@ -51,6 +55,8 @@ export const DataGridRow = React.forwardRef<HTMLDivElement, DataGridRowProps>(fu
     meter,
     titleWidth = 200,
     pathWidth = 180,
+    metricsWidth = 180,
+    statusWidth = 72,
     className,
     style,
     ...props
@@ -61,6 +67,8 @@ export const DataGridRow = React.forwardRef<HTMLDivElement, DataGridRowProps>(fu
     ...style,
     ['--data-row-title-width' as string]: typeof titleWidth === 'number' ? `${titleWidth}px` : titleWidth,
     ['--data-row-path-width' as string]: typeof pathWidth === 'number' ? `${pathWidth}px` : pathWidth,
+    ['--data-row-metrics-width' as string]: typeof metricsWidth === 'number' ? `${metricsWidth}px` : metricsWidth,
+    ['--data-row-status-width' as string]: typeof statusWidth === 'number' ? `${statusWidth}px` : statusWidth,
   }
 
   return (
