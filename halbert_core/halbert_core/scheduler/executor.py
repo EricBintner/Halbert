@@ -643,6 +643,19 @@ class AutonomousExecutor:
                 )
                 return None
 
+            # R-03 own-bug 5: a receipt now exists before ANY early-return
+            # branch below, including a guardrail rejection or a safe-mode
+            # skip — both used to return before the receipt was created,
+            # so a 'rejected' or 'skipped' run was invisible to the
+            # receipt-based liveness story, indistinguishable from the
+            # scheduler simply being dead. 'blocked_config' is the closed
+            # set's own answer for "refused before spend".
+            with self._receipts_lock:
+                receipt_id = self.receipts.mark_started(
+                    occurrence_id, owner_pid=os.getpid(),
+                    scheduled_instant=scheduled_instant,
+                )
+
             # Phase 3 M6: Check guardrails before execution
             if self.enable_guardrails and self.guardrail_enforcer:
                 try:
@@ -652,6 +665,7 @@ class AutonomousExecutor:
                         self.scheduler_engine.update_job_state(
                             job_id, 'skipped', error='safe_mode_active'
                         )
+                        self._finish_receipt(receipt_id, 'blocked_config', error='safe_mode_active')
                         return None
                     
                     # Check confidence and budgets. Confidence comes from
@@ -688,6 +702,7 @@ class AutonomousExecutor:
                     self.scheduler_engine.update_job_state(
                         job_id, 'rejected', error=str(e)
                     )
+                    self._finish_receipt(receipt_id, 'blocked_config', error=str(e))
                     if self.anomaly_detector:
                         self.anomaly_detector.record_job_outcome(False, job_id)
                     return None
@@ -703,23 +718,24 @@ class AutonomousExecutor:
                 )
                 budget_tracker.start()
 
-            # Packet 03 B1: persist the 'started' receipt BEFORE the task
-            # callable runs — the marker must be on disk before any side
-            # effect begins, so a crash mid-run is distinguishable at the
-            # next boot (recover_on_boot interrupts dead-owner markers).
-            # Locked across the worker pool: the store flushes whole-file.
-            with self._receipts_lock:
-                receipt_id = self.receipts.mark_started(
-                    occurrence_id, owner_pid=os.getpid(),
-                    scheduled_instant=scheduled_instant,
-                )
-
             try:
                 # Execute task under the timeout. SIGALRM is main-thread
                 # only and APScheduler runs jobs on its worker pool, so the
                 # deadline is a thread join, not a signal (C4-01).
                 result = _call_with_timeout(task_func, timeout_s, job_id)
-                
+
+                # R-03 own-bug 3 / A06-G8: a proactive task that catches its
+                # own exception and returns {'status': 'error', ...} raises
+                # nothing, so _call_with_timeout hands back a falsy-looking
+                # "result" that fell straight into the success branch below
+                # — a failed morning report recorded as an 'ok' receipt and
+                # a 'completed' job. Route it through the same failure path
+                # a raised exception already takes.
+                if isinstance(result, dict) and result.get('status') == 'error':
+                    raise RuntimeError(
+                        str(result.get('error') or "task reported status='error'")
+                    )
+
                 # Phase 3 M6: Check budgets during execution
                 if budget_tracker:
                     try:
@@ -762,14 +778,14 @@ class AutonomousExecutor:
             
             except Exception as e:
                 execution_time = time.time() - start_time
-                
+
                 # Phase 3 M6: Stop budget tracking on failure
                 if budget_tracker:
                     try:
                         budget_tracker.stop()
                     except Exception:
                         pass  # Budget tracking failed, but we're already handling an error
-                
+
                 # Log failure
                 self._log_outcome(
                     JobResult(
@@ -779,7 +795,7 @@ class AutonomousExecutor:
                         execution_time_s=execution_time
                     )
                 )
-                
+
                 # Phase 3 M6: Record failure and check for anomalies
                 if self.anomaly_detector:
                     try:
@@ -787,20 +803,20 @@ class AutonomousExecutor:
                     except Exception as anomaly_exc:
                         # Anomaly detected (e.g., repeated failures)
                         logger.critical(f"ANOMALY DETECTED: {anomaly_exc}")
-                        
+
                         # Enter safe-mode
                         if self.guardrail_enforcer:
                             self.guardrail_enforcer.enter_safe_mode(
                                 f"Anomaly: {anomaly_exc}"
                             )
-                        
+
                         # Trigger recovery
                         if self.recovery_executor:
                             self.recovery_executor.execute_alert_user(
                                 f"Job {job_id} triggered anomaly: {anomaly_exc}",
                                 severity="critical"
                             )
-                
+
                 # Update job state
                 self.scheduler_engine.update_job_state(
                     job_id, 'failed', error=str(e)
@@ -808,8 +824,23 @@ class AutonomousExecutor:
 
                 self._finish_receipt(receipt_id, 'error', error=str(e))
 
+                # R-03 own-bug 2: _call_with_timeout explicitly leaves the
+                # worker thread running past its deadline ("the task thread
+                # is a daemon and is left to finish on its own"). TimeoutError
+                # is an OSError, hence an Exception, and the retry decorator's
+                # default exceptions=(Exception,) does not distinguish it —
+                # so a slow task got re-entered by the retry sleep while its
+                # first attempt's thread was still alive underneath it,
+                # running the same side effects twice concurrently. The
+                # receipt and job state above already record this attempt as
+                # failed; not re-raising here is what stops the decorator
+                # from starting a second one on top of the thread it can
+                # never actually stop.
+                if isinstance(e, TimeoutError):
+                    return None
+
                 raise
-        
+
         return wrapped
 
     def _finish_receipt(

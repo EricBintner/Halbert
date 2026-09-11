@@ -206,6 +206,102 @@ class TestOccurrenceIdempotency:
         assert executor.receipts.occurrence_completed("morning_report:catchup", instant) is False
 
 
+def _read_receipts_dict(executor):
+    return {rid: dict(rec) for rid, rec in executor.receipts._receipts.items()}
+
+
+class TestResultProtocolAndRejectionReceipts:
+    """R-03 Phase B: own-bug 2 (a timeout retries a still-running task),
+    own-bug 3 / A06-G8 (a task's own {'status': 'error'} return is recorded
+    as a success), own-bug 5 (a guardrail rejection or safe-mode skip
+    leaves no receipt at all)."""
+
+    def test_a_task_returning_status_error_is_recorded_as_failed(self, executor):
+        # A task-level {'status': 'error'} return is now a genuine failure,
+        # the same as the task raising — the retry decorator sees it too
+        # (max_retries=1 here means no retry budget left, so it propagates).
+        with pytest.raises(RuntimeError, match="smtp unreachable"):
+            _run_wrapped(
+                executor, "morning_report",
+                lambda: {"status": "error", "error": "smtp unreachable"},
+            )
+        job = executor.scheduler_engine.get_job("morning_report")
+        assert job.state == "failed"
+        assert "smtp unreachable" in (job.error or "")
+        receipts = _read_receipts_dict(executor)
+        assert any(r["job_id"] == "morning_report" and r["status"] == "error"
+                  for r in receipts.values())
+
+    def test_a_task_returning_status_ok_is_still_a_success(self, executor):
+        result = _run_wrapped(
+            executor, "morning_report", lambda: {"status": "ok", "event_id": "e1"},
+        )
+        assert result == {"status": "ok", "event_id": "e1"}
+        assert executor.scheduler_engine.get_job("morning_report").state == "completed"
+
+    def test_a_plain_non_dict_result_is_still_a_success(self, executor):
+        # Most tasks return a plain string/None; the result-protocol check
+        # is additive and must not demand every task adopt a dict shape.
+        result = _run_wrapped(executor, "detector_sweep", lambda: "swept 3 issues")
+        assert result == "swept 3 issues"
+        assert executor.scheduler_engine.get_job("detector_sweep").state == "completed"
+
+    def test_a_timeout_is_not_retried_while_the_worker_still_runs(self, executor):
+        calls = []
+        started = threading.Event()
+
+        def slow():
+            calls.append(1)
+            started.set()
+            time.sleep(2)
+            return "too late"
+
+        from halbert_core.scheduler.job import Job
+
+        executor.scheduler_engine.add_job(Job(id="slow", task="t", schedule="x"))
+        wrapped = executor._wrap_task("slow", slow, max_retries=3, timeout_s=0.2)
+        # A timeout is handled (job marked failed, receipt closed) but not
+        # re-raised into the retry decorator, which is exactly what stops
+        # it from re-entering the task while the first attempt's worker
+        # thread — a daemon thread nothing can actually stop — is still
+        # alive underneath it.
+        assert wrapped() is None
+        assert started.wait(1)
+        assert len(calls) == 1
+        assert executor.scheduler_engine.get_job("slow").state == "failed"
+
+    def test_safe_mode_skip_leaves_a_blocked_config_receipt(self, guarded_executor):
+        executor = guarded_executor
+        # In-memory only: GuardrailEnforcer.enter_safe_mode() writes a real
+        # marker file at a cwd-relative path (a separate, pre-existing bug,
+        # not this test's concern) that would leak across unrelated test
+        # runs; setting the flag directly avoids that side effect.
+        executor.guardrail_enforcer.safe_mode_active = True
+        result = _run_wrapped(executor, "morning_report", lambda: "should not run")
+        assert result is None
+        receipts = _read_receipts_dict(executor)
+        assert any(
+            r["job_id"] == "morning_report" and r["status"] == "blocked_config"
+            for r in receipts.values()
+        )
+
+    def test_guardrail_rejection_leaves_a_blocked_config_receipt(self, guarded_executor, monkeypatch):
+        executor = guarded_executor
+        from halbert_core.autonomy import GuardrailViolation
+
+        def _reject(**kwargs):
+            raise GuardrailViolation("budget exceeded")
+
+        monkeypatch.setattr(executor.guardrail_enforcer, "check_all", _reject)
+        result = _run_wrapped(executor, "morning_report", lambda: "should not run")
+        assert result is None
+        receipts = _read_receipts_dict(executor)
+        assert any(
+            r["job_id"] == "morning_report" and r["status"] == "blocked_config"
+            for r in receipts.values()
+        )
+
+
 def test_one_time_job_runs_and_records_outcome(guarded_executor):
     executor = guarded_executor
     # The guardrail branch is the one with the undefined name; make sure it
