@@ -38,6 +38,10 @@ export { SegmentedBar } from './primitives/SegmentedBar'
 export type { SegmentedBarProps, SegmentItem, SegmentTone } from './primitives/SegmentedBar'
 export { DataGridRow } from './primitives/DataGridRow'
 export type { DataGridRowProps } from './primitives/DataGridRow'
+export { DriveCassette } from './primitives/DriveCassette'
+export type { DriveCassetteProps, DrivePartitionItem } from './primitives/DriveCassette'
+export { StorageTierGroup } from './primitives/StorageTierGroup'
+export type { StorageTierGroupProps } from './primitives/StorageTierGroup'
 
 // Surfaces
 export { AppWindow } from './surfaces/AppWindow'

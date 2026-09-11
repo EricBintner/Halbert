@@ -6,6 +6,8 @@ import type { Meta, StoryObj } from '@storybook/react'
 import { TactileMeter } from '../primitives/TactileMeter'
 import { SegmentedBar, type SegmentItem } from '../primitives/SegmentedBar'
 import { DataGridRow } from '../primitives/DataGridRow'
+import { DriveCassette } from '../primitives/DriveCassette'
+import { StorageTierGroup } from '../primitives/StorageTierGroup'
 
 const meta: Meta = {
   title: 'Instruments/Templates',
@@ -995,4 +997,305 @@ export const ResponsiveAdaptiveSimulation: StoryObj = {
     </div>
   ),
 }
+
+/* ------------------------------------------------ 7. Multi-Tier Storage Templates -- */
+
+export const BcachefsMultiTierTemplate: StoryObj = {
+  name: 'Storage / Bcachefs Multi-Tier Array Visualizer',
+  render: () => (
+    <CardContainer
+      title="Bcachefs Tiered Storage Pool (8 Disks · /data)"
+      subtitle="Targets: foreground=nvme, background=hdd, metadata=nvme · data_replicas=2, metadata_replicas=3"
+      status={<StatusIndicator tone="nominal" label="POOL NOMINAL" />}
+      width={940}
+    >
+      {/* Pool-Level Allocation Topology */}
+      <div style={{ marginBottom: 12 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8 }}>
+          <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-ink)' }}>
+            Aggregate Tier Topology & Capacity Breakdown
+          </span>
+          <span style={{ fontSize: 12, fontFamily: 'var(--font-mono)', color: 'var(--color-ink-secondary)' }}>
+            91.68 TB Raw · 58.40 TB Used / 33.28 TB Free (63.7%)
+          </span>
+        </div>
+        <SegmentedBar
+          segments={[
+            { id: 'nvme', label: 'Tier 1: NVMe Write Cache (Active)', value: 2.40, tone: 'data-blue', detail: '3.84 TB Mirror' },
+            { id: 'hdd', label: 'Tier 2: HDD Bulk Storage (Aged)', value: 56.00, tone: 'data-teal', detail: '84.0 TB Replicated' },
+          ]}
+          total={91.68}
+          unit="TB"
+          size="thick"
+          showInSegmentLabels
+          showLegend
+          showFreeHeadroom
+        />
+      </div>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+        {/* Tier 1: Foreground Write Cache */}
+        <StorageTierGroup
+          title="Tier 01: Foreground Write Cache (NVMe U.2)"
+          subtitle="Target: foreground · 2x PM9A3 3.84 TB Mirror · Fast Write Buffer & Metadata"
+          roleLabel="WRITE CACHE · METADATA"
+          capacity="7.68 TB RAW · 2.40 TB ALLOCATED"
+          status={<StatusIndicator tone="nominal" label="HEALTHY" />}
+        >
+          <DriveCassette
+            device="/dev/nvme0n1"
+            label="nvme.u2_01"
+            model="Samsung PM9A3 3.84 TB"
+            transport="PCIe 4.0 x4 NVMe (U.2)"
+            size="3.84 TB"
+            used="1.20 TB"
+            percent={31.2}
+            smartStatus="PASSED"
+            temperature={38}
+            roles={['Write', 'Foreground', 'Metadata']}
+            serial="S67BNG0R102934"
+          />
+          <DriveCassette
+            device="/dev/nvme1n1"
+            label="nvme.u2_02"
+            model="Samsung PM9A3 3.84 TB"
+            transport="PCIe 4.0 x4 NVMe (U.2)"
+            size="3.84 TB"
+            used="1.20 TB"
+            percent={31.2}
+            smartStatus="PASSED"
+            temperature={39}
+            roles={['Write', 'Foreground', 'Metadata']}
+            serial="S67BNG0R102935"
+          />
+        </StorageTierGroup>
+
+        {/* Tier 2: Background Bulk Storage */}
+        <StorageTierGroup
+          title="Tier 02: Background Bulk Storage (HDD 7200 RPM)"
+          subtitle="Target: background · 6x Seagate Exos X16 14 TB · Capacity Tier for Aged Data"
+          roleLabel="BULK DATA · 2 REPLICAS"
+          capacity="84.0 TB RAW · 56.0 TB ALLOCATED"
+          status={<StatusIndicator tone="nominal" label="HEALTHY" />}
+        >
+          <DriveCassette
+            device="/dev/sdi"
+            label="bg.hdd_14t_01"
+            model="Seagate Exos X16 14 TB"
+            transport="SATA 6 Gb/s · 7200 RPM"
+            size="14.0 TB"
+            used="9.33 TB"
+            percent={66.6}
+            smartStatus="PASSED"
+            temperature={33}
+            roles={['Data', 'Background']}
+            serial="WAK28941"
+          />
+          <DriveCassette
+            device="/dev/sdj"
+            label="bg.hdd_14t_02"
+            model="Seagate Exos X16 14 TB"
+            transport="SATA 6 Gb/s · 7200 RPM"
+            size="14.0 TB"
+            used="9.33 TB"
+            percent={66.6}
+            smartStatus="PASSED"
+            temperature={34}
+            roles={['Data', 'Background']}
+            serial="WAK28942"
+          />
+          <DriveCassette
+            device="/dev/sdk"
+            label="bg.hdd_14t_03"
+            model="Seagate Exos X16 14 TB"
+            transport="SATA 6 Gb/s · 7200 RPM"
+            size="14.0 TB"
+            used="9.33 TB"
+            percent={66.6}
+            smartStatus="PASSED"
+            temperature={32}
+            roles={['Data', 'Background']}
+            serial="WAK28943"
+          />
+          <DriveCassette
+            device="/dev/sdl"
+            label="bg.hdd_14t_04"
+            model="Seagate Exos X16 14 TB"
+            transport="SATA 6 Gb/s · 7200 RPM"
+            size="14.0 TB"
+            used="9.34 TB"
+            percent={66.7}
+            smartStatus="PASSED"
+            temperature={34}
+            roles={['Data', 'Background']}
+            serial="WAK28944"
+          />
+          <DriveCassette
+            device="/dev/sdm"
+            label="bg.hdd_14t_05"
+            model="Seagate Exos X16 14 TB"
+            transport="SATA 6 Gb/s · 7200 RPM"
+            size="14.0 TB"
+            used="9.33 TB"
+            percent={66.6}
+            smartStatus="PASSED"
+            temperature={35}
+            roles={['Data', 'Background']}
+            serial="WAK28945"
+          />
+          <DriveCassette
+            device="/dev/sdn"
+            label="bg.hdd_14t_06"
+            model="Seagate Exos X16 14 TB"
+            transport="SATA 6 Gb/s · 7200 RPM"
+            size="14.0 TB"
+            used="9.34 TB"
+            percent={66.7}
+            smartStatus="PASSED"
+            temperature={33}
+            roles={['Data', 'Background']}
+            serial="WAK28946"
+          />
+        </StorageTierGroup>
+      </div>
+    </CardContainer>
+  ),
+}
+
+export const PartitionedDriveTemplate: StoryObj = {
+  name: 'Storage / Partitioned Physical Drive Group',
+  render: () => (
+    <CardContainer
+      title="Physical Parent Disks with Grouped Partition Tables"
+      subtitle="Partitions nested and semi-isolated inside parent physical drive cassettes"
+      status={<StatusIndicator tone="nominal" label="ALL DISKS HEALTHY" />}
+      width={940}
+    >
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+        {/* Physical Drive 1: System Boot & Root NVMe */}
+        <DriveCassette
+          device="/dev/nvme0n1"
+          model="Samsung SSD 990 PRO 2TB"
+          transport="PCIe 4.0 x4 NVMe · M.2 2280"
+          size="2.0 TB"
+          smartStatus="PASSED"
+          temperature={41}
+          serial="S6X4NJ0T104821"
+          partitions={[
+            { id: 'p1', device: '/dev/nvme0n1p1', mountpoint: '/boot/efi', fstype: 'vfat', size: '1.0 GB', used: '96 MB', percent: 9.6 },
+            { id: 'p2', device: '/dev/nvme0n1p2', mountpoint: '/', fstype: 'bcachefs', size: '1.80 TB', used: '142.0 GB', percent: 7.9 },
+            { id: 'p3', device: '/dev/nvme0n1p3', mountpoint: '[swap]', fstype: 'swap', size: '64.0 GB', used: '0 GB', percent: 0.0 },
+          ]}
+        />
+
+        {/* Physical Drive 2: Scratch Pool NVMe PCIe 5.0 */}
+        <DriveCassette
+          device="/dev/nvme1n1"
+          model="Crucial T700 PCIe 5.0 NVMe 4TB"
+          transport="PCIe 5.0 x4 NVMe · Active Heatsink"
+          size="4.0 TB"
+          smartStatus="PASSED"
+          temperature={48}
+          serial="CT4000T700SSD3"
+          partitions={[
+            { id: 's1', device: '/dev/nvme1n1p1', mountpoint: '/scratch/fast', fstype: 'btrfs', size: '2.50 TB', used: '1.85 TB', percent: 74.0 },
+            { id: 's2', device: '/dev/nvme1n1p2', mountpoint: '/models/cache', fstype: 'btrfs', size: '1.50 TB', used: '980.0 GB', percent: 65.3 },
+          ]}
+        />
+      </div>
+    </CardContainer>
+  ),
+}
+
+export const ZfsPoolVdevTemplate: StoryObj = {
+  name: 'Storage / ZFS Enterprise Pool & VDEVs',
+  render: () => (
+    <CardContainer
+      title="ZFS Storage Pool (tank · 96 TB RAW)"
+      subtitle="RAIDZ2 (6 Data Disks) + SLOG (Optane) + L2ARC (NVMe) + 1 Hot Spare"
+      status={<StatusIndicator tone="nominal" label="ONLINE" />}
+      width={940}
+    >
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+        {/* VDEV 1: Data RAIDZ2 */}
+        <StorageTierGroup
+          title="VDEV 01: Primary Data Pool (raidz2-0)"
+          subtitle="6x Seagate Exos 16 TB · Double Parity (Tolerates 2 drive failures)"
+          roleLabel="DATA · RAIDZ2"
+          capacity="96.0 TB RAW · 64.0 TB USABLE · 38.2 TB USED (59.7%)"
+          status={<StatusIndicator tone="nominal" label="ONLINE" />}
+        >
+          <DriveCassette
+            device="/dev/sda"
+            model="Seagate Exos X16 16 TB"
+            transport="SAS 12 Gb/s · 7200 RPM"
+            size="16.0 TB"
+            used="9.55 TB"
+            percent={59.7}
+            smartStatus="PASSED"
+            temperature={31}
+            roles={['Data', 'RAIDZ2']}
+          />
+          <DriveCassette
+            device="/dev/sdb"
+            model="Seagate Exos X16 16 TB"
+            transport="SAS 12 Gb/s · 7200 RPM"
+            size="16.0 TB"
+            used="9.55 TB"
+            percent={59.7}
+            smartStatus="PASSED"
+            temperature={32}
+            roles={['Data', 'RAIDZ2']}
+          />
+          <DriveCassette
+            device="/dev/sdc"
+            model="Seagate Exos X16 16 TB"
+            transport="SAS 12 Gb/s · 7200 RPM"
+            size="16.0 TB"
+            used="9.55 TB"
+            percent={59.7}
+            smartStatus="PASSED"
+            temperature={31}
+            roles={['Data', 'RAIDZ2']}
+          />
+        </StorageTierGroup>
+
+        {/* VDEV 2 & 3: Cache Tiers (SLOG & L2ARC) */}
+        <StorageTierGroup
+          title="VDEV 02: High-Speed Caching (SLOG & L2ARC)"
+          subtitle="Synchronous write intent log + secondary read cache"
+          roleLabel="SPECIAL VDEV"
+          capacity="2.28 TB CACHE"
+          status={<StatusIndicator tone="nominal" label="ONLINE" />}
+        >
+          <DriveCassette
+            device="/dev/nvme2n1"
+            label="slog-0"
+            model="Intel Optane SSD 905P 280 GB"
+            transport="PCIe 3.0 x4 NVMe (3D XPoint)"
+            size="280 GB"
+            used="14.2 GB"
+            percent={5.1}
+            smartStatus="PASSED"
+            temperature={42}
+            roles={['SLOG', 'Write Log']}
+          />
+          <DriveCassette
+            device="/dev/nvme3n1"
+            label="l2arc-0"
+            model="Samsung SSD 980 PRO 2TB"
+            transport="PCIe 4.0 x4 NVMe"
+            size="2.0 TB"
+            used="1.82 TB"
+            percent={91.0}
+            smartStatus="PASSED"
+            temperature={44}
+            roles={['L2ARC', 'Read Cache']}
+          />
+        </StorageTierGroup>
+      </div>
+    </CardContainer>
+  ),
+}
+
 

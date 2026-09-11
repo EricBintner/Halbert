@@ -4,6 +4,8 @@ import { render, screen } from '@testing-library/react'
 import { TactileMeter } from '../primitives/TactileMeter'
 import { SegmentedBar, type SegmentItem } from '../primitives/SegmentedBar'
 import { DataGridRow } from '../primitives/DataGridRow'
+import { DriveCassette } from '../primitives/DriveCassette'
+import { StorageTierGroup } from '../primitives/StorageTierGroup'
 
 describe('TactileMeter', () => {
   it('renders with meter role and correct ARIA values', () => {
@@ -301,4 +303,82 @@ describe('SegmentedBar In-Segment Labels', () => {
     expect(inSegmentLabels.length).toBeGreaterThanOrEqual(2)
   })
 })
+
+describe('DriveCassette', () => {
+  it('renders physical drive hardware identity, diagnostics, and in-bar gauge', () => {
+    const { container } = render(
+      <DriveCassette
+        device="/dev/nvme0n1"
+        label="nvme.u2_01"
+        model="Samsung PM9A3 3.84 TB"
+        transport="PCIe 4.0 x4 NVMe"
+        size="3.84 TB"
+        used="1.20 TB"
+        percent={31.2}
+        smartStatus="PASSED"
+        temperature={38}
+        roles={['Write', 'Foreground']}
+      />
+    )
+
+    expect(container.querySelector('.hb-drive-cassette')).toBeInTheDocument()
+    expect(screen.getByText('/dev/nvme0n1')).toBeInTheDocument()
+    expect(screen.getByText('nvme.u2_01')).toBeInTheDocument()
+    expect(screen.getByText('Samsung PM9A3 3.84 TB')).toBeInTheDocument()
+    expect(screen.getByText('PCIe 4.0 x4 NVMe')).toBeInTheDocument()
+    expect(screen.getByText('38°C')).toBeInTheDocument()
+    expect(screen.getByText('PASSED')).toBeInTheDocument()
+    expect(screen.getByText('Write')).toBeInTheDocument()
+    expect(screen.getByText('Foreground')).toBeInTheDocument()
+  })
+
+  it('renders nested partitions when partitions array is supplied', () => {
+    const partitions = [
+      { id: 'p1', device: '/dev/nvme0n1p1', mountpoint: '/boot/efi', fstype: 'vfat', size: '1.0 GB', used: '96 MB', percent: 9.4 },
+      { id: 'p2', device: '/dev/nvme0n1p2', mountpoint: '/', fstype: 'bcachefs', size: '1.8 TB', used: '142 GB', percent: 7.9 },
+    ]
+
+    const { container } = render(
+      <DriveCassette
+        device="/dev/nvme0n1"
+        model="Samsung 990 PRO 2.0 TB"
+        size="2.0 TB"
+        partitions={partitions}
+      />
+    )
+
+    expect(container.querySelector('.hb-drive-cassette__partition-block')).toBeInTheDocument()
+    expect(screen.getByText('/dev/nvme0n1p1')).toBeInTheDocument()
+    expect(screen.getByText('→ /boot/efi')).toBeInTheDocument()
+    expect(screen.getByText('/dev/nvme0n1p2')).toBeInTheDocument()
+    expect(screen.getByText('→ /')).toBeInTheDocument()
+  })
+})
+
+describe('StorageTierGroup', () => {
+  it('renders tier cassette container with title, role badge, and member drive cassettes', () => {
+    const { container } = render(
+      <StorageTierGroup
+        title="Tier 01: Foreground Write Cache"
+        subtitle="Target: foreground · 2x NVMe U.2 Mirror"
+        roleLabel="WRITE CACHE"
+        capacity="7.68 TB Raw"
+        status={<span data-testid="tier-status">● NOMINAL</span>}
+      >
+        <DriveCassette device="/dev/nvme0n1" label="nvme.u2_01" size="3.84 TB" />
+        <DriveCassette device="/dev/nvme1n1" label="nvme.u2_02" size="3.84 TB" />
+      </StorageTierGroup>
+    )
+
+    expect(container.querySelector('.hb-tier-group')).toBeInTheDocument()
+    expect(screen.getByText('Tier 01: Foreground Write Cache')).toBeInTheDocument()
+    expect(screen.getByText('Target: foreground · 2x NVMe U.2 Mirror')).toBeInTheDocument()
+    expect(screen.getByText('WRITE CACHE')).toBeInTheDocument()
+    expect(screen.getByText('7.68 TB Raw')).toBeInTheDocument()
+    expect(screen.getByTestId('tier-status')).toBeInTheDocument()
+    expect(screen.getByText('/dev/nvme0n1')).toBeInTheDocument()
+    expect(screen.getByText('/dev/nvme1n1')).toBeInTheDocument()
+  })
+})
+
 
