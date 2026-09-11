@@ -1164,6 +1164,7 @@ class AgentStateMachine:
         # starts, so it is where the previous turn's cache stops being true.
         self._reset_world_observations()
         self._reset_interest_block()
+        self._reset_aside_block()
         tm = self.ctx.thread_manager
         if tm is None:
             return
@@ -2661,6 +2662,7 @@ class AgentStateMachine:
     #: what makes the once-a-day rule survive a restart and gives the
     #: `memory_recalled` chip a row to cite.
     INTEREST_RECALL_EVENT = "interest_recalled"
+    INTEREST_ASIDE_EVENT = "interest_aside_offered"
 
     def _reset_interest_block(self) -> None:
         self._interest_cache = None
@@ -2743,6 +2745,135 @@ class AgentStateMachine:
             block = ""
         self._interest_cache = block
         return block
+
+    def _aside_block(self) -> str:
+        """The one confirmation aside this turn may carry (RQ-3).
+
+        Separate from ``_interest_block`` and mutually exclusive with it: a
+        turn that both recalls something about the person and asks to
+        remember something else about them is a turn that is mostly about
+        the person, which is the reading the whole design exists to avoid.
+        Recall wins, because it was earned by relevance to what they asked.
+
+        Never raises, cached per turn like the recall block.
+        """
+        cached = getattr(self, "_aside_cache", None)
+        if cached is not None:
+            return cached
+        block = ""
+        try:
+            from ..continuity.interest_aside import (
+                ASIDE_COOLDOWN_SECONDS,
+                render_aside,
+                select_candidate,
+            )
+            from ..continuity.interests import Interest
+            from ..integrations.cognition_wiring import (
+                get_persona_memory_store,
+                get_timeline_store,
+            )
+
+            store = get_persona_memory_store()
+            intake = getattr(self.ctx, "intake", None)
+            if store is None or intake is None:
+                self._aside_cache = ""
+                return ""
+
+            rows = [
+                i for i in (
+                    Interest.from_persona_memory(m)
+                    for m in (getattr(store, "list_memories", list)() or [])
+                ) if i is not None
+            ]
+            if not rows:
+                self._aside_cache = ""
+                return ""
+
+            thread_id = getattr(self.ctx, "thread_id", "") or ""
+            timeline = get_timeline_store()
+            last_at = None
+            if timeline is not None and thread_id:
+                prior = timeline.query(
+                    event_type=self.INTEREST_ASIDE_EVENT,
+                    entity_id=thread_id,
+                    since=time.time() - ASIDE_COOLDOWN_SECONDS,
+                    limit=1,
+                )
+                if prior:
+                    last_at = prior[0].get("timestamp")
+
+            chosen = select_candidate(
+                rows, intake,
+                dial=self._proactivity_dial(),
+                thread_id=thread_id,
+                last_aside_at=last_at,
+                required_confirmation=bool(
+                    getattr(self.ctx, "required_confirmation", False)
+                ),
+                finding_store=getattr(self, "finding_store", None),
+            )
+            if chosen is None:
+                self._aside_cache = ""
+                return ""
+
+            block = render_aside(chosen)
+            self._mark_offered(chosen, store)
+            self._record_interest_aside(chosen, thread_id, timeline)
+        except Exception:
+            logger.warning("the confirmation aside failed; continuing without it",
+                           exc_info=True)
+            block = ""
+        self._aside_cache = block
+        return block
+
+    def _reset_aside_block(self) -> None:
+        self._aside_cache = None
+
+    def _mark_offered(self, interest, store) -> None:
+        """Stamp the candidate as asked about, before the model replies.
+
+        Before, not after: a turn that crashes between assembling the prompt
+        and finishing the answer must not leave the question askable again.
+        "Once, ever" is the promise, and erring toward not asking is the
+        recoverable direction.
+
+        Written onto the candidate's own evidence rather than the ledger,
+        because the ledger is body-local and the candidate travels.
+        """
+        try:
+            from ..continuity.interest_aside import OFFERED_KEY
+
+            memory = store.get(f"interest_{interest.slug}")
+            if memory is None:
+                return
+            meta = dict(getattr(memory, "metadata", None) or {})
+            evidence = dict(meta.get("evidence") or {})
+            evidence[OFFERED_KEY] = time.time()
+            meta["evidence"] = evidence
+            memory.metadata = meta
+            save = getattr(store, "_save_to_disk", None)
+            if save is not None:
+                save()
+        except Exception:
+            logger.debug("could not mark the candidate as offered", exc_info=True)
+
+    def _record_interest_aside(self, interest, thread_id: str, timeline) -> None:
+        """Log the ask, so it is citable and countable."""
+        if timeline is None or not thread_id:
+            return
+        try:
+            from ..continuity.timeline import TimelineEvent
+
+            timeline.record(TimelineEvent(
+                timestamp=time.time(),
+                event_type=self.INTEREST_ASIDE_EVENT,
+                source="recall",
+                entity_id=thread_id,
+                title=f"Asked about: {interest.topic}",
+                data={"topic": interest.topic, "reason": interest.reason},
+            ))
+        except Exception:
+            logger.debug("could not record the interest aside", exc_info=True)
 
     def _record_interest_recall(self, interest, thread_id: str, timeline) -> None:
         """Log the injection, so it is citable and countable.
@@ -3010,7 +3141,15 @@ class AgentStateMachine:
         # turn -- so putting it in the stable head would invalidate the
         # cached prefix on every turn to save nothing.
         interest_block = self._interest_block()
-        below = "\n\n".join(p for p in (interest_block, prompt) if p)
+        # The confirmation aside, and only when recall is silent. A turn
+        # that recalls one thing about the person and asks to remember
+        # another is a turn mostly about the person -- the exact reading
+        # RECALL-v1 exists to avoid. Recall wins: it was earned by
+        # relevance to what they actually asked.
+        aside_block = self._aside_block() if not interest_block else ""
+        below = "\n\n".join(
+            p for p in (interest_block, aside_block, prompt) if p
+        )
         content = f"{head}\n\n{below}" if head else below
         messages: List[Dict[str, Any]] = [{"role": "system", "content": content}]
         if self.ctx.thread_receipt_block:

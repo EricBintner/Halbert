@@ -256,6 +256,10 @@ GUEST_DENIED_TOOLS: FrozenSet[str] = frozenset({
     # whether to mode-scope these needs to see that both halves were
     # considered, not infer it from an absence.
     "what_i_remember",
+    # ...and cannot answer the question either. `confirm_interest` writes a
+    # fact about the owner on the strength of a "yes"; a guest's yes is not
+    # the household's.
+    "confirm_interest",
     # The world
     "web_search",
     # Becoming someone else. A guest that could call this would walk out of

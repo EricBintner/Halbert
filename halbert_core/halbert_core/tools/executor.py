@@ -340,6 +340,13 @@ class ToolExecutor:
 
         self.register("what_i_remember", what_i_remember, WHAT_I_REMEMBER_SCHEMA)
 
+        # The "yes" half of the confirmation aside. Registered beside the
+        # other two and gated the same way: an outstanding candidate, the
+        # person's own affirmative read from the turn, and the member floor.
+        from .confirm_interest import CONFIRM_INTEREST_SCHEMA, confirm_interest
+
+        self.register("confirm_interest", confirm_interest, CONFIRM_INTEREST_SCHEMA)
+
         # Thread meta-tools (Plan A, spec §7). The schemas are what the model
         # sees; PLANNING handles the calls inline and never dispatches them
         # here, so the handler is a stub (see execute()). Descriptions stay
