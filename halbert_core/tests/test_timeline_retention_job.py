@@ -12,9 +12,9 @@ class _Executor:
     def __init__(self):
         self.jobs = {}
 
-    def schedule_cron_job(self, *, job_id, task_func, cron_expr, description):
+    def schedule_cron_job(self, *, job_id, task_func, cron_expr, description, period_s=None):
         self.jobs[job_id] = {"func": task_func, "cron": cron_expr,
-                             "description": description}
+                             "description": description, "period_s": period_s}
 
 
 class TestTheRetentionJobIsRegistered:
