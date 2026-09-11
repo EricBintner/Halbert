@@ -60,22 +60,26 @@ def test_halberts_own_ceilings_do_not_break_the_vectors():
     assert config.attachment.max_proactive_per_day > 0
 
 
-def test_ask_first_is_currently_unreachable_in_our_default_case():
-    """A tripwire on an engine boundary bug, not a preference.
+def test_ask_first_is_reachable_in_our_default_case():
+    """The tripwire, turned over: the engine fixed the comparison.
 
-    The plain case — a warning, no sensor, normal invitation, established
-    relationship, default extraversion — computes `value - cost` as
-    0.19999999999999996 against `ASK_T[warning]` of 0.2, and misses by
-    5.55e-17. It falls through to HOLD.
+    This asserted the opposite until 2026-09-10. The plain case — a warning,
+    no sensor, normal invitation, established relationship, default
+    extraversion — computes `value - cost` as 0.19999999999999996 against
+    `ASK_T[warning]` of 0.2, and missed by 5.55e-17. It fell to HOLD, which
+    made `ASK_FIRST` unreachable in the exact configuration every consumer
+    has before wiring anything, on the severity our detectors overwhelmingly
+    emit. `ASK_FIRST` *is* A-HB-26's exploration arm, so Phase C was defined
+    over an arm that could not appear in a Halbert row.
 
-    It matters because `ASK_FIRST` *is* A-HB-26's exploration arm, and
-    `warning` is the severity our detectors overwhelmingly emit: the arm
-    Phase C is defined over cannot appear in a Halbert row at all while this
-    holds. Reported in
-    `.handoff/RESEARCH-ATTUNEMENT-DECISIONS-2026-09-10.md` §0.
+    Reported as `BUG-ATTUNEMENT-ASK-FIRST-UNREACHABLE`; Haloysius applied
+    `THRESHOLD_EPS` to all three threshold comparisons rather than only the
+    one that bit, and a sweep found five exact-threshold cases, not one.
 
-    **When this starts failing, the engine has fixed the comparison —
-    delete it, and expect our shadow rows to start carrying `ask_first`.**
+    Kept rather than deleted, and inverted. A margin that the spec means to
+    *equal* a threshold has to meet it, and the arithmetic that decides
+    whether it does is floating point — which regresses silently and in both
+    directions. The tripwire is worth as much pointing this way.
     """
     from haloysius.attunement.policy import CONSTANTS, decide
     from haloysius.attunement.types import (
@@ -93,9 +97,9 @@ def test_ask_first_is_currently_unreachable_in_our_default_case():
     )
     decision = decide(ctx)
 
-    assert decision.outcome is EngagementOutcome.HOLD
+    assert decision.outcome is EngagementOutcome.ASK_FIRST
+    # Still the same arithmetic: it meets the threshold, it does not clear it.
     assert decision.margin < CONSTANTS["ASK_T"][Severity.WARNING]
-    # ...but only just. The gap is arithmetic, not judgment.
     assert CONSTANTS["ASK_T"][Severity.WARNING] - decision.margin < 1e-12
 
 
