@@ -54,10 +54,20 @@ __all__ = [
 #: written by any other consumer is not mistaken for an interest.
 INTEREST_TAG = "interest"
 
-#: The canonical content. Fixed rather than templated per call: the string is
-#: what the engine's negation handling matches on ("interested in X"), and a
-#: writer that phrases it differently loses supersession on withdrawal.
-CANONICAL_PREFIX = "User is interested in: "
+#: The canonical content. Fixed rather than templated per call, and **without
+#: a colon**, which is load-bearing.
+#:
+#: The engine's ``_extract_subject`` matches ``interested in X`` and returns
+#: ``interest in X`` -- the same subject its withdrawal form
+#: ("no longer interested in X") returns, which is what makes a withdrawal
+#: supersede rather than accumulate beside the interest.
+#:
+#: A colon defeats it. ``"User is interested in: sailing"`` extracts **None**,
+#: and with no subject every interest reads as contradicting every other: six
+#: stated interests collapsed to two, and "sailing" replaced "thinkpads".
+#: Measured 2026-09-10; the research brief's §5 prescribes the colon form and
+#: is wrong about it.
+CANONICAL_PREFIX = "User is interested in "
 
 #: The engine calibrates 0.9 on provenance AND this tag. See the module
 #: docstring -- the handoff omits the tag, and without it a stated fact is

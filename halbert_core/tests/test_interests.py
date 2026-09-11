@@ -74,8 +74,10 @@ class TestTheTopicSlug:
 class TestTheStatedRow:
 
     def test_it_carries_the_canonical_content(self):
+        # No colon: it defeats the engine's subject extraction. See
+        # TestTheCanonicalContentIsCompatibleWithTheEngine.
         m = _stated().to_persona_memory("halbert")
-        assert m.content == "User is interested in: vintage thinkpads"
+        assert m.content == "User is interested in vintage thinkpads"
 
     def test_a_stated_interest_is_calibrated_at_the_stated_confidence(self):
         # source alone is not enough -- see the module docstring.
@@ -222,3 +224,47 @@ class TestTheConfidenceCalibrationEndToEnd:
         import halbert_core.continuity.interests as mod
         monkeypatch.setattr(mod, "_USER_STATED_TAG", "not-the-tag")
         assert self._confidence(store, _stated("roman aqueducts")) == 0.7
+
+
+class TestTheCanonicalContentIsCompatibleWithTheEngine:
+    """The content string is not cosmetic; it is a key the engine parses.
+
+    ``_extract_subject`` matches ``interested in X`` and returns ``interest in
+    X`` -- the same subject its withdrawal form returns, which is what makes
+    "no longer interested in X" supersede rather than pile up beside the
+    interest.
+
+    A colon defeats the match entirely. The research brief's §5 prescribes
+    ``"User is interested in: <topic>"``; with it, six stated interests
+    collapsed to two and "sailing" replaced "thinkpads" -- unrelated topics
+    read as contradicting each other because they all extracted the same
+    subject, which was ``None``.
+    """
+
+    @pytest.fixture
+    def store(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HALOYSIUS_DATA_HOME", str(tmp_path))
+        from haloysius.memory_v2.store import PersonaMemoryStore
+        return PersonaMemoryStore("canon")
+
+    def test_the_engine_can_read_a_subject_out_of_our_content(self, store):
+        subject = store._extract_subject(_stated("sailing").content)
+        assert subject, "no subject means every interest contradicts every other"
+        assert "sailing" in subject
+
+    def test_two_unrelated_interests_do_not_replace_each_other(self, store):
+        for topic in ("vintage thinkpads", "sailing", "zfs"):
+            store.smart_add(_stated(topic).to_persona_memory("canon"))
+        contents = {m.content for m in store._memories.values()}
+        assert len(contents) == 3, (
+            f"unrelated interests collapsed into each other: {contents}"
+        )
+
+    def test_a_withdrawal_supersedes_the_interest(self, store):
+        # The reason the format matters at all: the engine's negation handling
+        # only reaches this if both forms extract the same subject.
+        interest = _stated("sailing")
+        store.smart_add(interest.to_persona_memory("canon"))
+        assert store._extract_subject(interest.content) == store._extract_subject(
+            "User is no longer interested in sailing"
+        )

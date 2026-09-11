@@ -20,6 +20,42 @@ import sys
 WORKTREE = os.path.dirname(os.path.abspath(__file__))
 PKG_PARENT = os.path.join(WORKTREE, "halbert_core")  # dir holding the halbert_core/ package
 
+# 0. Re-exec under the shared venv's interpreter when started under another.
+#
+#    The shebang is `/usr/bin/env python3`, so `./wt_pytest.py` runs under
+#    whatever python3 is first on PATH -- on this machine a pyenv shim, not
+#    the venv. That interpreter has a pytest but no pytest-asyncio, and the
+#    failure is silent in the worst way: the wrapper's own
+#    `--asyncio-mode=auto` is rejected as an unknown argument, and without it
+#    every `async def test_` is SKIPPED rather than failed. A run of a suite
+#    that is mostly async reports "2 passed, 21 skipped" and looks green.
+#
+#    Found 2026-09-10: CLAUDE.md documents `arch -arm64 ./wt_pytest.py`, which
+#    is exactly the broken invocation.
+#    Walked up rather than computed: a worktree can sit at any depth, and an
+#    off-by-one here reintroduces the silent skip it exists to prevent.
+def _find_venv_python(start):
+    d = start
+    while True:
+        cand = os.path.join(d, ".venv", "bin", "python")
+        if os.path.exists(cand):
+            return cand
+        parent = os.path.dirname(d)
+        if parent == d:
+            return ""
+        d = parent
+
+
+#    Compared on sys.prefix, NOT on the executable path: a venv's bin/python
+#    is usually a symlink to the very interpreter that is already running, so
+#    realpath(sys.executable) == realpath(venv python) is True even when the
+#    environments -- and therefore the installed plugins -- differ. Comparing
+#    the executables silently skipped the re-exec and left the bug in place.
+_VENV_PY = _find_venv_python(WORKTREE)
+_VENV_ROOT = os.path.dirname(os.path.dirname(_VENV_PY)) if _VENV_PY else ""
+if _VENV_PY and os.path.realpath(sys.prefix) != os.path.realpath(_VENV_ROOT):
+    os.execv(_VENV_PY, [_VENV_PY, os.path.abspath(__file__)] + sys.argv[1:])
+
 # 1. Drop every custom MetaPathFinder. The standard finders are the frozen
 #    ones (classes — hence 'builtins' as their type's module — or instances
 #    from _frozen_importlib_external); everything else (_distutils_hack, the
