@@ -166,3 +166,51 @@ def test_a_contained_store_still_writes_new_receipts(tmp_path):
     assert store.status(rid) == "running"
     reopened = RunReceiptStore(path)
     assert reopened.status(rid) == "running"
+
+
+# ---------------------------------------------------------------------------
+# A06-G5: receipts.json has no retention -- every write rewrites and fsyncs
+# the whole file, unbounded, forever.
+# ---------------------------------------------------------------------------
+
+
+def test_closed_receipts_are_bounded(tmp_path):
+    store = RunReceiptStore(tmp_path / "receipts.json", max_receipts=3)
+    rids = []
+    for i in range(5):
+        rid = store.mark_started(f"j{i}", owner_pid=os.getpid())
+        store.mark_finished(rid, "ok")
+        rids.append(rid)
+
+    remaining = {r for r in rids if r in store._receipts}
+    assert len(remaining) == 3
+    # oldest evicted first
+    assert rids[0] not in remaining and rids[1] not in remaining
+    assert rids[2] in remaining and rids[3] in remaining and rids[4] in remaining
+
+
+def test_a_running_receipt_is_never_pruned_regardless_of_count(tmp_path):
+    store = RunReceiptStore(tmp_path / "receipts.json", max_receipts=2)
+    running_rid = store.mark_started("still-running", owner_pid=os.getpid())
+    for i in range(5):
+        rid = store.mark_started(f"j{i}", owner_pid=os.getpid())
+        store.mark_finished(rid, "ok")
+
+    assert running_rid in store._receipts
+    assert store.status(running_rid) == "running"
+
+
+def test_the_default_retention_matches_hermes(tmp_path):
+    store = RunReceiptStore(tmp_path / "receipts.json")
+    assert store.max_receipts == 1000
+
+
+def test_pruning_survives_reopen(tmp_path):
+    path = tmp_path / "receipts.json"
+    store = RunReceiptStore(path, max_receipts=2)
+    for i in range(4):
+        rid = store.mark_started(f"j{i}", owner_pid=os.getpid())
+        store.mark_finished(rid, "ok")
+
+    reopened = RunReceiptStore(path, max_receipts=2)
+    assert len(reopened._receipts) == 2

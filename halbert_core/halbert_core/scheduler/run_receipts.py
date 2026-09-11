@@ -81,9 +81,16 @@ def _occurrence_key(job_id: str, scheduled_instant) -> str:
     return f"{job_id}@{scheduled_instant}"
 
 
+#: A06-G5: receipts.json is rewritten and fsynced whole on every write, so
+#: unbounded growth is a cost, not just disk space. Hermes's own bound
+#: (MAX_TERMINAL_EXECUTIONS); OpenClaw retains only 64.
+DEFAULT_MAX_RECEIPTS = 1000
+
+
 class RunReceiptStore:
-    def __init__(self, path):
+    def __init__(self, path, max_receipts: int = DEFAULT_MAX_RECEIPTS):
         self.path = os.fspath(path)
+        self.max_receipts = max_receipts
         self._receipts: Dict[str, dict] = {}
         self._occurrences: Dict[str, dict] = {}
         self._load()
@@ -206,7 +213,25 @@ class RunReceiptStore:
         scheduled = receipt.get("scheduled_instant")
         if scheduled is not None:
             self.completed_occurrence(receipt["job_id"], scheduled)
+        self._prune_receipts()
         self._flush()
+
+    def _prune_receipts(self) -> None:
+        """A06-G5: only CLOSED (terminal) receipts are ever pruned -- a
+        receipt is a pre-execution marker, not durable truth, so the
+        oldest closed ones are safe to drop once there are more than
+        ``max_receipts``. A running/interrupted receipt is never pruned
+        regardless of count; it is still live bookkeeping."""
+        closed = [
+            (rid, rec) for rid, rec in self._receipts.items()
+            if rec.get("status") in CLOSED_STATUSES
+        ]
+        overflow = len(closed) - self.max_receipts
+        if overflow <= 0:
+            return
+        closed.sort(key=lambda item: item[1].get("finished_at_epoch") or 0)
+        for rid, _ in closed[:overflow]:
+            del self._receipts[rid]
 
     def status(self, rid: str) -> str:
         return self._receipts[rid]["status"]
