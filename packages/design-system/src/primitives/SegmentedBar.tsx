@@ -2,23 +2,19 @@
 // Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 import * as React from 'react'
 import { cx, useId } from '../lib'
-import type { StatusTone } from './StatusBadge'
 
 export type SegmentTone =
-  | StatusTone
+  | 'neutral'
+  | 'critical'
+  | 'data-neutral'
   | 'data-1'
   | 'data-2'
   | 'data-3'
   | 'data-4'
-  | 'data-5'
-  | 'data-6'
   | 'data-blue'
   | 'data-teal'
-  | 'data-green'
-  | 'data-amber'
   | 'data-purple'
   | 'data-orange'
-  | 'data-neutral'
 
 export interface SegmentItem {
   id: string

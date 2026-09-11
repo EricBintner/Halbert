@@ -1018,21 +1018,15 @@
   transition: width var(--duration-shutter) var(--ease-shutter);
 }
 
-.hb-tactile-meter--nominal .hb-tactile-meter__fill { background-color: var(--color-status-nominal); }
-.hb-tactile-meter--warning .hb-tactile-meter__fill { background-color: var(--color-status-warning); }
+.hb-tactile-meter--neutral .hb-tactile-meter__fill { background-color: var(--color-ink); }
 .hb-tactile-meter--critical .hb-tactile-meter__fill { background-color: var(--color-status-critical); }
-.hb-tactile-meter--telemetry .hb-tactile-meter__fill { background-color: var(--color-status-telemetry); }
 .hb-tactile-meter--data-1 .hb-tactile-meter__fill,
 .hb-tactile-meter--data-blue .hb-tactile-meter__fill { background-color: var(--color-data-blue); }
 .hb-tactile-meter--data-2 .hb-tactile-meter__fill,
 .hb-tactile-meter--data-teal .hb-tactile-meter__fill { background-color: var(--color-data-teal); }
 .hb-tactile-meter--data-3 .hb-tactile-meter__fill,
-.hb-tactile-meter--data-green .hb-tactile-meter__fill { background-color: var(--color-data-green); }
-.hb-tactile-meter--data-4 .hb-tactile-meter__fill,
-.hb-tactile-meter--data-amber .hb-tactile-meter__fill { background-color: var(--color-data-amber); }
-.hb-tactile-meter--data-5 .hb-tactile-meter__fill,
 .hb-tactile-meter--data-purple .hb-tactile-meter__fill { background-color: var(--color-data-purple); }
-.hb-tactile-meter--data-6 .hb-tactile-meter__fill,
+.hb-tactile-meter--data-4 .hb-tactile-meter__fill,
 .hb-tactile-meter--data-orange .hb-tactile-meter__fill { background-color: var(--color-data-orange); }
 
 .hb-tactile-meter__tick {
@@ -1103,25 +1097,18 @@
   border-right: none;
 }
 
-.hb-segmented-bar__segment--neutral   { background-color: var(--color-ink); }
-.hb-segmented-bar__segment--nominal   { background-color: var(--color-status-nominal); }
-.hb-segmented-bar__segment--warning   { background-color: var(--color-status-warning); }
-.hb-segmented-bar__segment--critical  { background-color: var(--color-status-critical); }
-.hb-segmented-bar__segment--telemetry { background-color: var(--color-status-telemetry); }
+.hb-segmented-bar__segment--neutral,
+.hb-segmented-bar__segment--data-neutral { background-color: var(--color-data-neutral); }
+.hb-segmented-bar__segment--critical     { background-color: var(--color-status-critical); }
 
 .hb-segmented-bar__segment--data-1,
 .hb-segmented-bar__segment--data-blue   { background-color: var(--color-data-blue); }
 .hb-segmented-bar__segment--data-2,
 .hb-segmented-bar__segment--data-teal   { background-color: var(--color-data-teal); }
 .hb-segmented-bar__segment--data-3,
-.hb-segmented-bar__segment--data-green  { background-color: var(--color-data-green); }
-.hb-segmented-bar__segment--data-4,
-.hb-segmented-bar__segment--data-amber  { background-color: var(--color-data-amber); }
-.hb-segmented-bar__segment--data-5,
 .hb-segmented-bar__segment--data-purple { background-color: var(--color-data-purple); }
-.hb-segmented-bar__segment--data-6,
+.hb-segmented-bar__segment--data-4,
 .hb-segmented-bar__segment--data-orange { background-color: var(--color-data-orange); }
-.hb-segmented-bar__segment--data-neutral{ background-color: var(--color-data-neutral); }
 
 .hb-segmented-bar__segment.is-hatched {
   background-image: repeating-linear-gradient(
@@ -1178,11 +1165,9 @@
   flex-shrink: 0;
 }
 
-.hb-segmented-bar__legend-bullet--neutral   { background-color: var(--color-ink); }
-.hb-segmented-bar__legend-bullet--nominal   { background-color: var(--color-status-nominal); }
-.hb-segmented-bar__legend-bullet--warning   { background-color: var(--color-status-warning); }
-.hb-segmented-bar__legend-bullet--critical  { background-color: var(--color-status-critical); }
-.hb-segmented-bar__legend-bullet--telemetry { background-color: var(--color-status-telemetry); }
+.hb-segmented-bar__legend-bullet--neutral,
+.hb-segmented-bar__legend-bullet--data-neutral { background-color: var(--color-data-neutral); }
+.hb-segmented-bar__legend-bullet--critical     { background-color: var(--color-status-critical); }
 .hb-segmented-bar__legend-bullet--free      { background-color: var(--color-surface-subtle); border: 1px solid var(--color-border); }
 
 .hb-segmented-bar__legend-bullet--data-1,
@@ -1190,14 +1175,9 @@
 .hb-segmented-bar__legend-bullet--data-2,
 .hb-segmented-bar__legend-bullet--data-teal   { background-color: var(--color-data-teal); }
 .hb-segmented-bar__legend-bullet--data-3,
-.hb-segmented-bar__legend-bullet--data-green  { background-color: var(--color-data-green); }
-.hb-segmented-bar__legend-bullet--data-4,
-.hb-segmented-bar__legend-bullet--data-amber  { background-color: var(--color-data-amber); }
-.hb-segmented-bar__legend-bullet--data-5,
 .hb-segmented-bar__legend-bullet--data-purple { background-color: var(--color-data-purple); }
-.hb-segmented-bar__legend-bullet--data-6,
+.hb-segmented-bar__legend-bullet--data-4,
 .hb-segmented-bar__legend-bullet--data-orange { background-color: var(--color-data-orange); }
-.hb-segmented-bar__legend-bullet--data-neutral{ background-color: var(--color-data-neutral); }
 
 .hb-segmented-bar__legend-bullet.is-hatched {
   background-image: repeating-linear-gradient(

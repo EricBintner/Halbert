@@ -21,7 +21,7 @@ import { useScan } from '@/contexts/ScanContext'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { TactileMeter, type StatusTone } from '@halbert/design-system'
+import { TactileMeter, type TactileMeterTone } from '@halbert/design-system'
 import { Collapsible } from '@/components/ui/collapsible'
 import { api } from '@/lib/api'
 import { 
@@ -690,14 +690,14 @@ function FilesystemUsageRow({
   const shortName = getShortName(fs.mountpoint)
   const { customNames, onRename } = useContext(CustomNamesContext)
   
-  const tone: StatusTone = fs.severity === 'critical' ? 'critical' : fs.severity === 'warning' ? 'warning' : 'nominal'
+  const tone: TactileMeterTone = fs.severity === 'critical' ? 'critical' : 'neutral'
 
   return (
     <div className="space-y-1.5 py-1">
       {/* Tier 1: Identity & Tabular Metrics */}
       <div className="flex items-center justify-between gap-2 text-xs">
         <div className="flex items-center gap-1.5 min-w-0">
-          <Folder className="h-3.5 w-3.5 text-info shrink-0" />
+          <Folder className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
           <EditableName
             id={`fs-${fs.mountpoint}`}
             defaultName={shortName}
@@ -722,10 +722,7 @@ function FilesystemUsageRow({
           <Badge
             className={cn(
               "text-[10px] w-12 justify-center py-0 h-5 leading-none",
-              fs.severity === 'critical' && 'bg-error text-white',
-              fs.severity === 'warning' && 'bg-warning text-white',
-              fs.severity === 'success' && 'bg-success text-white',
-              !['critical', 'warning', 'success'].includes(fs.severity) && 'bg-info text-white',
+              fs.severity === 'critical' ? 'bg-error text-white' : 'bg-muted text-foreground',
             )}
           >
             {fs.percent}%
@@ -733,7 +730,7 @@ function FilesystemUsageRow({
         </div>
       </div>
 
-      {/* Tier 2: 100% Full-Width Calibrated Meter */}
+      {/* Tier 2: 100% Full-Width Calibrated Meter (Calm precision graphite ink) */}
       <TactileMeter
         value={fs.percent}
         tone={tone}

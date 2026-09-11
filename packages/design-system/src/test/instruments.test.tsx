@@ -33,20 +33,17 @@ describe('TactileMeter', () => {
     expect(screen.getByText('0.0%')).toBeInTheDocument()
   })
 
-  it('resolves auto tones: nominal (<75), warning (75-89), critical (>=90)', () => {
-    const { container, rerender } = render(<TactileMeter value={50} />)
-    expect(container.querySelector('.hb-tactile-meter--nominal')).toBeInTheDocument()
-
-    rerender(<TactileMeter value={80} />)
-    expect(container.querySelector('.hb-tactile-meter--warning')).toBeInTheDocument()
-
-    rerender(<TactileMeter value={95} />)
-    expect(container.querySelector('.hb-tactile-meter--critical')).toBeInTheDocument()
+  it('defaults to calm neutral graphite tone (avoiding pseudo-meaning traffic lights)', () => {
+    const { container } = render(<TactileMeter value={50} />)
+    expect(container.querySelector('.hb-tactile-meter--neutral')).toBeInTheDocument()
   })
 
-  it('allows explicit tone override', () => {
-    const { container } = render(<TactileMeter value={30} tone="critical" />)
+  it('allows explicit tone overrides (critical fault, data series)', () => {
+    const { container, rerender } = render(<TactileMeter value={30} tone="critical" />)
     expect(container.querySelector('.hb-tactile-meter--critical')).toBeInTheDocument()
+
+    rerender(<TactileMeter value={30} tone="data-blue" />)
+    expect(container.querySelector('.hb-tactile-meter--data-blue')).toBeInTheDocument()
   })
 
   it('renders honest offline state without displaying a plausible-looking number', () => {
@@ -81,8 +78,8 @@ describe('TactileMeter', () => {
 
 describe('SegmentedBar', () => {
   const testSegments: SegmentItem[] = [
-    { id: 'data', label: 'Data', value: 400, tone: 'nominal', detail: 'RAID1' },
-    { id: 'meta', label: 'Metadata', value: 50, tone: 'warning', pattern: 'hatched' },
+    { id: 'data', label: 'Data', value: 400, tone: 'data-blue', detail: 'RAID1' },
+    { id: 'meta', label: 'Metadata', value: 50, tone: 'data-purple', pattern: 'hatched' },
   ]
 
   it('renders segments with proportional widths based on total', () => {
@@ -98,7 +95,7 @@ describe('SegmentedBar', () => {
     expect(segments.length).toBe(2)
     // 400/1000 = 40%
     expect(segments[0]).toHaveStyle({ width: '40%' })
-    expect(segments[0]).toHaveClass('hb-segmented-bar__segment--nominal')
+    expect(segments[0]).toHaveClass('hb-segmented-bar__segment--data-blue')
     // 50/1000 = 5%
     expect(segments[1]).toHaveStyle({ width: '5%' })
     expect(segments[1]).toHaveClass('is-hatched')

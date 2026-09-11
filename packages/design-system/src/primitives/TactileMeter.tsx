@@ -2,21 +2,12 @@
 // Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 import * as React from 'react'
 import { cx, useId } from '../lib'
-import type { StatusTone } from './StatusBadge'
 
 export type TactileMeterTone =
-  | StatusTone
-  | 'auto'
-  | 'data-1'
-  | 'data-2'
-  | 'data-3'
-  | 'data-4'
-  | 'data-5'
-  | 'data-6'
+  | 'neutral'
+  | 'critical'
   | 'data-blue'
   | 'data-teal'
-  | 'data-green'
-  | 'data-amber'
   | 'data-purple'
   | 'data-orange'
 
@@ -36,9 +27,10 @@ export interface TactileMeterProps extends React.HTMLAttributes<HTMLDivElement> 
   /** Whether to render tick marks on the track (default: true). */
   showTicks?: boolean
   /**
-   * Semantic tone for the gauge fill:
-   * - 'auto': automatically selects nominal (<75%), warning (75-89%), or critical (>=90%)
-   * - StatusTone or data tone: explicitly forces a specific tone
+   * Tone for the gauge fill:
+   * - 'neutral' (default): calm precision graphite ink (Tufte baseline)
+   * - 'critical': alarm crimson (active fault or critical capacity)
+   * - categorical data series: 'data-blue', 'data-teal', 'data-purple', 'data-orange'
    */
   tone?: TactileMeterTone
   /** Track height variant (default: 'md'). */
@@ -68,7 +60,7 @@ export const TactileMeter = React.forwardRef<HTMLDivElement, TactileMeterProps>(
     unit = '%',
     ticks = [25, 50, 75, 90],
     showTicks = true,
-    tone = 'auto',
+    tone = 'neutral',
     size = 'md',
     offline = false,
     className,
@@ -81,13 +73,8 @@ export const TactileMeter = React.forwardRef<HTMLDivElement, TactileMeterProps>(
   const labelId = label ? `${meterId}-label` : undefined
   const clamped = Math.max(0, Math.min(100, isNaN(value) ? 0 : value))
 
-  // Determine tone
-  const resolvedTone: Exclude<TactileMeterTone, 'auto'> = React.useMemo(() => {
-    if (tone !== 'auto') return tone
-    if (clamped >= 90) return 'critical'
-    if (clamped >= 75) return 'warning'
-    return 'nominal'
-  }, [tone, clamped])
+  // In elite dataviz, single meters default to neutral ink; only critical faults tint red
+  const resolvedTone: TactileMeterTone = tone
 
   const formattedValue = valueLabel ?? (offline ? '[Sensor offline]' : `${clamped.toFixed(1)}${unit}`)
 

@@ -93,11 +93,9 @@
   --terracotta-600: #C32337;  --terracotta-500: #EB5569;  --terracotta-50: #FDF2F0;
   --blueprint-600:  #1E5FAF;  --blueprint-500:  #5AA0F0;  --blueprint-50:  #F0F6F9;
 
-  /* Categorical data visualization pigments (Vignelli / Olivetti multi-series) */
+  /* Categorical data visualization pigments (Restrained cool palette) */
   --cobalt-600:     #1E5FAF;  --cobalt-400:     #5AA0F0;
   --copper-teal-600:#0F7D8C;  --copper-teal-400:#32B9C8;
-  --emerald-600:    #1E7E50;  --emerald-400:    #38AF78;
-  --marigold-600:   #C8730F;  --marigold-400:   #EBA02D;
   --amethyst-600:   #6941AF;  --amethyst-400:   #A57DF5;
   --coral-600:      #D34E24;  --coral-400:      #E8683C;
 
@@ -158,21 +156,17 @@
   --hb-status-critical-line:  rgba(195, 35, 55, 0.33);
   --hb-status-telemetry-line: rgba(30, 95, 175, 0.33);
 
-  /* Categorical Data Visualization — 6 distinct chromatic series + neutral */
-  --hb-data-1: var(--cobalt-600);
-  --hb-data-2: var(--copper-teal-600);
-  --hb-data-3: var(--emerald-600);
-  --hb-data-4: var(--marigold-600);
-  --hb-data-5: var(--amethyst-600);
-  --hb-data-6: var(--coral-600);
+  /* Categorical Data Visualization — Restrained 4-Series Cool Palette */
+  --hb-data-blue:    var(--cobalt-600);
+  --hb-data-teal:    var(--copper-teal-600);
+  --hb-data-purple:  var(--amethyst-600);
+  --hb-data-orange:  var(--coral-600);
   --hb-data-neutral: var(--graphite-700);
 
-  --hb-data-blue:   var(--hb-data-1);
-  --hb-data-teal:   var(--hb-data-2);
-  --hb-data-green:  var(--hb-data-3);
-  --hb-data-amber:  var(--hb-data-4);
-  --hb-data-purple: var(--hb-data-5);
-  --hb-data-orange: var(--hb-data-6);
+  --hb-data-1: var(--hb-data-blue);
+  --hb-data-2: var(--hb-data-teal);
+  --hb-data-3: var(--hb-data-purple);
+  --hb-data-4: var(--hb-data-orange);
 
   --hb-shadow-subtle:  0 2px 8px -2px rgba(28, 25, 23, 0.08);
   --hb-shadow-plate:   0 12px 32px -16px rgba(28, 25, 23, 0.35);
@@ -218,20 +212,16 @@
   --color-status-telemetry-bg:   var(--hb-status-telemetry-bg);
   --color-status-telemetry-line: var(--hb-status-telemetry-line);
 
+  --color-data-blue:    var(--hb-data-blue);
+  --color-data-teal:    var(--hb-data-teal);
+  --color-data-purple:  var(--hb-data-purple);
+  --color-data-orange:  var(--hb-data-orange);
+  --color-data-neutral: var(--hb-data-neutral);
+
   --color-data-1: var(--hb-data-1);
   --color-data-2: var(--hb-data-2);
   --color-data-3: var(--hb-data-3);
   --color-data-4: var(--hb-data-4);
-  --color-data-5: var(--hb-data-5);
-  --color-data-6: var(--hb-data-6);
-  --color-data-neutral: var(--hb-data-neutral);
-
-  --color-data-blue:   var(--hb-data-blue);
-  --color-data-teal:   var(--hb-data-teal);
-  --color-data-green:  var(--hb-data-green);
-  --color-data-amber:  var(--hb-data-amber);
-  --color-data-purple: var(--hb-data-purple);
-  --color-data-orange: var(--hb-data-orange);
 
   --shadow-subtle:  var(--hb-shadow-subtle);
   --shadow-plate:   var(--hb-shadow-plate);
@@ -339,21 +329,17 @@
   --hb-status-critical-line:  rgba(235, 85, 105, 0.40);
   --hb-status-telemetry-line: rgba(90, 160, 240, 0.40);
 
-  /* Categorical Data Visualization — 6 distinct chromatic series + neutral */
-  --hb-data-1: var(--cobalt-400);
-  --hb-data-2: var(--copper-teal-400);
-  --hb-data-3: var(--emerald-400);
-  --hb-data-4: var(--marigold-400);
-  --hb-data-5: var(--amethyst-400);
-  --hb-data-6: var(--coral-400);
+  /* Categorical Data Visualization — Restrained 4-Series Cool Palette */
+  --hb-data-blue:    var(--cobalt-400);
+  --hb-data-teal:    var(--copper-teal-400);
+  --hb-data-purple:  var(--amethyst-400);
+  --hb-data-orange:  var(--coral-400);
   --hb-data-neutral: var(--graphite-400);
 
-  --hb-data-blue:   var(--hb-data-1);
-  --hb-data-teal:   var(--hb-data-2);
-  --hb-data-green:  var(--hb-data-3);
-  --hb-data-amber:  var(--hb-data-4);
-  --hb-data-purple: var(--hb-data-5);
-  --hb-data-orange: var(--hb-data-6);
+  --hb-data-1: var(--hb-data-blue);
+  --hb-data-2: var(--hb-data-teal);
+  --hb-data-3: var(--hb-data-purple);
+  --hb-data-4: var(--hb-data-orange);
 
   --hb-shadow-subtle:  0 2px 8px -2px rgba(0, 0, 0, 0.50);
   --hb-shadow-plate:   0 12px 32px -16px rgba(0, 0, 0, 0.75);
@@ -402,21 +388,17 @@
     --hb-status-critical-line:  rgba(235, 85, 105, 0.40);
     --hb-status-telemetry-line: rgba(90, 160, 240, 0.40);
 
-    /* Categorical Data Visualization — 6 distinct chromatic series + neutral */
-    --hb-data-1: var(--cobalt-400);
-    --hb-data-2: var(--copper-teal-400);
-    --hb-data-3: var(--emerald-400);
-    --hb-data-4: var(--marigold-400);
-    --hb-data-5: var(--amethyst-400);
-    --hb-data-6: var(--coral-400);
+    /* Categorical Data Visualization — Restrained 4-Series Cool Palette */
+    --hb-data-blue:    var(--cobalt-400);
+    --hb-data-teal:    var(--copper-teal-400);
+    --hb-data-purple:  var(--amethyst-400);
+    --hb-data-orange:  var(--coral-400);
     --hb-data-neutral: var(--graphite-400);
 
-    --hb-data-blue:   var(--hb-data-1);
-    --hb-data-teal:   var(--hb-data-2);
-    --hb-data-green:  var(--hb-data-3);
-    --hb-data-amber:  var(--hb-data-4);
-    --hb-data-purple: var(--hb-data-5);
-    --hb-data-orange: var(--hb-data-6);
+    --hb-data-1: var(--hb-data-blue);
+    --hb-data-2: var(--hb-data-teal);
+    --hb-data-3: var(--hb-data-purple);
+    --hb-data-4: var(--hb-data-orange);
 
     --hb-shadow-subtle:  0 2px 8px -2px rgba(0, 0, 0, 0.50);
     --hb-shadow-plate:   0 12px 32px -16px rgba(0, 0, 0, 0.75);
