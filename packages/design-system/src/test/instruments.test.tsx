@@ -3,6 +3,7 @@ import { render, screen } from '@testing-library/react'
 
 import { TactileMeter } from '../primitives/TactileMeter'
 import { SegmentedBar, type SegmentItem } from '../primitives/SegmentedBar'
+import { DataGridRow } from '../primitives/DataGridRow'
 
 describe('TactileMeter', () => {
   it('renders with meter role and correct ARIA values', () => {
@@ -151,5 +152,67 @@ describe('SegmentedBar', () => {
     expect(container.querySelector('.is-offline')).toBeInTheDocument()
     expect(container.querySelector('.hb-segmented-bar__offline-strip')).toBeInTheDocument()
     expect(container.querySelectorAll('.hb-segmented-bar__segment').length).toBe(0)
+  })
+})
+
+describe('DataGridRow', () => {
+  it('renders all 5 grid slots with strict columnar structure', () => {
+    const { container } = render(
+      <DataGridRow
+        icon={<span data-testid="test-icon">📁</span>}
+        title="Root Volume"
+        path="/ · btrfs"
+        detail="RAID1 · Subvol 256"
+        metrics="142 GB / 500 GB"
+        status={<span data-testid="test-badge">28.4%</span>}
+        meter={<TactileMeter value={28.4} size="md" />}
+      />
+    )
+
+    expect(screen.getByTestId('test-icon')).toBeInTheDocument()
+    expect(screen.getByText('Root Volume')).toBeInTheDocument()
+    expect(screen.getByText('/ · btrfs')).toBeInTheDocument()
+    expect(screen.getByText('RAID1 · Subvol 256')).toBeInTheDocument()
+    expect(screen.getByText('142 GB / 500 GB')).toBeInTheDocument()
+    expect(screen.getByTestId('test-badge')).toBeInTheDocument()
+    expect(screen.getByRole('meter')).toBeInTheDocument()
+
+    const grid = container.querySelector('.hb-data-row__grid')
+    expect(grid).toBeInTheDocument()
+  })
+
+  it('applies custom title and path widths', () => {
+    const { container } = render(
+      <DataGridRow
+        title="Database Array"
+        path="/var/lib/postgresql"
+        titleWidth={240}
+        pathWidth={220}
+      />
+    )
+
+    const row = container.querySelector('.hb-data-row') as HTMLElement
+    expect(row.style.getPropertyValue('--data-row-title-width')).toBe('240px')
+    expect(row.style.getPropertyValue('--data-row-path-width')).toBe('220px')
+  })
+})
+
+describe('TactileMeter Grid Alignment', () => {
+  it('applies labelWidth style and renders statusBadge in dedicated slot', () => {
+    const { container } = render(
+      <TactileMeter
+        value={92.5}
+        label="Root Volume"
+        sub="/ · btrfs"
+        labelWidth={220}
+        statusBadge={<span data-testid="crit-badge">CRITICAL</span>}
+      />
+    )
+
+    const meter = container.querySelector('.hb-tactile-meter') as HTMLElement
+    expect(meter).toHaveClass('hb-tactile-meter--has-label-width')
+    expect(meter.style.getPropertyValue('--meter-label-width')).toBe('220px')
+    expect(screen.getByTestId('crit-badge')).toBeInTheDocument()
+    expect(container.querySelector('.hb-tactile-meter__status')).toBeInTheDocument()
   })
 })

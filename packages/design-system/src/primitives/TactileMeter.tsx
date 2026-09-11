@@ -57,6 +57,16 @@ export interface TactileMeterProps extends React.HTMLAttributes<HTMLDivElement> 
    * rather than a plausible-looking zero — Computational Honesty Gate.
    */
   offline?: boolean
+  /**
+   * Fixed column width for the label (e.g. 200 or '220px').
+   * Guarantees that the `sub` (data path) starts at the exact same horizontal coordinate across stacked meters.
+   */
+  labelWidth?: number | string
+  /**
+   * Optional status indicator or alert badge. Rendered in a dedicated layout slot
+   * so critical alerts cannot push the readout or break layout.
+   */
+  statusBadge?: React.ReactNode
 }
 
 /**
@@ -80,7 +90,10 @@ export const TactileMeter = React.forwardRef<HTMLDivElement, TactileMeterProps>(
     tone = 'telemetry',
     size = 'md',
     offline = false,
+    labelWidth,
+    statusBadge,
     className,
+    style,
     id,
     ...props
   },
@@ -100,6 +113,13 @@ export const TactileMeter = React.forwardRef<HTMLDivElement, TactileMeterProps>(
 
   const formattedValue = valueLabel ?? (offline ? '[Sensor offline]' : `${clamped.toFixed(1)}${unit}`)
 
+  const meterStyles: React.CSSProperties = {
+    ...style,
+    ...(labelWidth != null
+      ? { ['--meter-label-width' as string]: typeof labelWidth === 'number' ? `${labelWidth}px` : labelWidth }
+      : {}),
+  }
+
   return (
     <div
       ref={ref}
@@ -108,12 +128,14 @@ export const TactileMeter = React.forwardRef<HTMLDivElement, TactileMeterProps>(
         'hb-tactile-meter',
         `hb-tactile-meter--${size}`,
         `hb-tactile-meter--${resolvedTone}`,
+        labelWidth != null && 'hb-tactile-meter--has-label-width',
         offline && 'is-offline',
         className,
       )}
+      style={meterStyles}
       {...props}
     >
-      {(label || sub || valueLabel !== undefined || !offline) && (
+      {(label || sub || valueLabel !== undefined || statusBadge || !offline) && (
         <div className="hb-tactile-meter__header">
           <div className="hb-tactile-meter__identity">
             {label && (
@@ -125,6 +147,7 @@ export const TactileMeter = React.forwardRef<HTMLDivElement, TactileMeterProps>(
           </div>
           <div className="hb-tactile-meter__readout">
             <span className="hb-tactile-meter__value">{formattedValue}</span>
+            {statusBadge && <div className="hb-tactile-meter__status">{statusBadge}</div>}
           </div>
         </div>
       )}

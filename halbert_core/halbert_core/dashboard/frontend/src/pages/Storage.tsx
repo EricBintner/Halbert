@@ -21,7 +21,7 @@ import { useScan } from '@/contexts/ScanContext'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { TactileMeter, type TactileMeterTone } from '@halbert/design-system'
+import { TactileMeter, type TactileMeterTone, DataGridRow } from '@halbert/design-system'
 import { Collapsible } from '@/components/ui/collapsible'
 import { api } from '@/lib/api'
 import { 
@@ -698,51 +698,42 @@ function FilesystemUsageRow({
         : 'telemetry'
 
   return (
-    <div className="space-y-2 py-1.5 sm:py-2">
-      {/* Tier 1: Identity & Tabular Metrics */}
-      <div className="flex items-center justify-between gap-3 text-xs sm:text-sm">
-        <div className="flex items-center gap-2 min-w-0">
-          <Folder className="h-4 w-4 text-muted-foreground shrink-0" />
-          <EditableName
-            id={`fs-${fs.mountpoint}`}
-            defaultName={shortName}
-            customNames={customNames}
-            onRename={onRename}
-            className="text-sm sm:text-[15px] font-medium text-foreground truncate"
-          />
-          <span className="text-muted-foreground font-mono text-xs sm:text-[13px] truncate">
-            {fs.mountpoint}
-          </span>
-          {profileDetail && (
-            <span className="text-muted-foreground text-xs truncate">
-              • {profileDetail}
-            </span>
+    <DataGridRow
+      className="py-1.5 sm:py-2"
+      icon={<Folder className="h-4 w-4 text-muted-foreground shrink-0" />}
+      title={
+        <EditableName
+          id={`fs-${fs.mountpoint}`}
+          defaultName={shortName}
+          customNames={customNames}
+          onRename={onRename}
+          className="text-sm sm:text-[15px] font-medium text-foreground truncate"
+        />
+      }
+      path={fs.mountpoint}
+      detail={profileDetail ? `• ${profileDetail}` : undefined}
+      metrics={`${fs.used} / ${fs.size}`}
+      status={
+        <Badge
+          className={cn(
+            "text-xs px-2 py-0.5 justify-center h-5 leading-none font-mono",
+            fs.severity === 'critical' ? 'bg-error text-white' : 'bg-muted text-foreground',
           )}
-        </div>
-
-        <div className="flex items-center gap-2.5 shrink-0 font-mono text-xs sm:text-[13px] tabular-nums">
-          <span className="text-muted-foreground">
-            {fs.used} / {fs.size}
-          </span>
-          <Badge
-            className={cn(
-              "text-xs px-2 py-0.5 justify-center h-5 leading-none font-mono",
-              fs.severity === 'critical' ? 'bg-error text-white' : 'bg-muted text-foreground',
-            )}
-          >
-            {fs.percent}%
-          </Badge>
-        </div>
-      </div>
-
-      {/* Tier 2: 100% Full-Width Calibrated Meter (Calm precision graphite ink) */}
-      <TactileMeter
-        value={fs.percent}
-        tone={tone}
-        size="md"
-        aria-label={`${shortName} (${fs.mountpoint}) capacity`}
-      />
-    </div>
+        >
+          {fs.percent}%
+        </Badge>
+      }
+      meter={
+        <TactileMeter
+          value={fs.percent}
+          tone={tone}
+          size="md"
+          aria-label={`${shortName} (${fs.mountpoint}) capacity`}
+        />
+      }
+      titleWidth={220}
+      pathWidth={180}
+    />
   )
 }
 

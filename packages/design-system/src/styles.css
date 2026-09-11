@@ -990,6 +990,11 @@
   text-overflow: ellipsis;
 }
 
+.hb-tactile-meter--has-label-width .hb-tactile-meter__label {
+  width: var(--meter-label-width, 200px);
+  flex-shrink: 0;
+}
+
 .hb-tactile-meter__readout {
   flex-shrink: 0;
   font-family: var(--font-mono);
@@ -999,6 +1004,17 @@
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.01em;
   text-align: right;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.hb-tactile-meter__status {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-width: 64px;
 }
 
 .hb-tactile-meter__track {
@@ -1238,5 +1254,124 @@
   color: var(--color-ink-secondary);
   font-weight: 400;
   margin-left: 2px;
+}
+
+/* ------------------------------------------------------------- DataGridRow -- */
+
+.hb-data-row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: 100%;
+}
+
+.hb-data-row__grid {
+  display: grid;
+  grid-template-columns: 
+    var(--data-row-title-width, 200px)
+    var(--data-row-path-width, 180px)
+    1fr
+    auto
+    76px;
+  align-items: baseline;
+  gap: var(--space-3);
+  width: 100%;
+  line-height: 1.4;
+}
+
+@media (max-width: 640px) {
+  .hb-data-row__grid {
+    grid-template-columns: 1fr auto;
+    gap: var(--space-1) var(--space-2);
+  }
+  .hb-data-row__path-cell,
+  .hb-data-row__detail-cell {
+    grid-column: 1 / -1;
+  }
+}
+
+.hb-data-row__title-cell {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  overflow: hidden;
+}
+
+.hb-data-row__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: var(--color-ink-secondary);
+}
+
+.hb-data-row__title {
+  font-family: var(--font-sans);
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--color-ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.hb-data-row__path-cell {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.hb-data-row__path {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--color-ink-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: block;
+}
+
+.hb-data-row__detail-cell {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.hb-data-row__detail {
+  font-family: var(--font-sans);
+  font-size: 12px;
+  color: var(--color-ink-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: block;
+}
+
+.hb-data-row__metrics-cell {
+  flex-shrink: 0;
+  text-align: right;
+  min-width: 110px;
+}
+
+.hb-data-row__metrics {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-ink-secondary);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+}
+
+.hb-data-row__status-cell {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  width: 76px;
+}
+
+.hb-data-row__meter-cell {
+  width: 100%;
 }
 

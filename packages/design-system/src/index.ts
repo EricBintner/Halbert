@@ -36,6 +36,8 @@ export { TactileMeter } from './primitives/TactileMeter'
 export type { TactileMeterProps, TactileMeterTone } from './primitives/TactileMeter'
 export { SegmentedBar } from './primitives/SegmentedBar'
 export type { SegmentedBarProps, SegmentItem, SegmentTone } from './primitives/SegmentedBar'
+export { DataGridRow } from './primitives/DataGridRow'
+export type { DataGridRowProps } from './primitives/DataGridRow'
 
 // Surfaces
 export { AppWindow } from './surfaces/AppWindow'
