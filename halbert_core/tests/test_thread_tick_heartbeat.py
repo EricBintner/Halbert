@@ -107,6 +107,45 @@ def test_a_failing_tick_does_not_stop_the_loop():
     assert beats == 2 and len(calls) == 2
 
 
+class _NonExceptionFailure(BaseException):
+    """A failure outside the Exception hierarchy (like SystemExit,
+    GeneratorExit) -- Hermes's own tick loop catches BaseException for
+    exactly this reason (A15-G6)."""
+
+
+def test_a_base_exception_does_not_silently_end_the_loop():
+    calls = []
+
+    def tick():
+        calls.append(1)
+        if len(calls) == 1:
+            raise _NonExceptionFailure("disk unmounted mid-tick")
+        return []
+
+    beats = asyncio.run(dashboard_app.run_thread_tick_loop(
+        0.01, tick=tick, turn_busy=lambda: False, max_beats=2,
+    ))
+    assert beats == 2 and len(calls) == 2
+
+
+def test_cancelling_the_loop_still_stops_it():
+    # The broadened BaseException catch must not also swallow the loop's
+    # own cancellation -- asyncio.CancelledError is a BaseException.
+    async def scenario():
+        task = asyncio.get_event_loop().create_task(
+            dashboard_app.run_thread_tick_loop(
+                0.01, tick=lambda: [], turn_busy=lambda: False,
+            )
+        )
+        await asyncio.sleep(0.05)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert task.cancelled()
+
+    asyncio.run(scenario())
+
+
 def test_tick_runs_off_the_event_loop_thread():
     import threading
 
@@ -188,3 +227,31 @@ def test_stop_heartbeat_is_a_no_op_without_one():
     from fastapi import FastAPI
 
     asyncio.run(dashboard_app.stop_thread_tick_heartbeat(FastAPI()))
+
+
+def test_stop_joins_an_in_flight_sweep():
+    # A15-G7: task.cancel() only stops WAITING on the executor thread the
+    # sweep runs in -- the thread itself keeps running to completion,
+    # orphaned, unless stop explicitly joins it. Contradicts app.py's own
+    # "stop joins the in-flight sweep" comment as it stood before this fix.
+    import time
+    from fastapi import FastAPI
+
+    finished_at = []
+
+    def slow_tick():
+        time.sleep(0.3)
+        finished_at.append(time.monotonic())
+        return []
+
+    async def scenario():
+        app = FastAPI()
+        dashboard_app.start_thread_tick_heartbeat(
+            app, interval_s=0.01, tick=slow_tick, turn_busy=lambda: False,
+        )
+        await asyncio.sleep(0.05)  # let the sweep actually start
+        await dashboard_app.stop_thread_tick_heartbeat(app)
+        assert finished_at, "stop returned before the in-flight sweep finished"
+        assert time.monotonic() >= finished_at[0]
+
+    asyncio.run(scenario())

@@ -11,6 +11,7 @@ import asyncio
 import logging
 import json
 import os
+import threading
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, List, Optional
 from pathlib import Path
@@ -822,12 +823,18 @@ def _tick_thread_manager() -> list:
     return manager.tick()
 
 
+#: A15-G7: bounds stop's join of an in-flight sweep. The sweep is expected
+#: to be fast (an idle housekeeping tick); this is generous, not tuned.
+_TICK_JOIN_TIMEOUT_S = 30.0
+
+
 async def run_thread_tick_loop(
     interval_s: float,
     *,
     tick: Callable[[], Any] = _tick_thread_manager,
     turn_busy: Callable[[], bool] = _agent_turn_busy,
     max_beats: Optional[int] = None,
+    inflight: Optional[Dict[str, Any]] = None,
 ) -> int:
     """Every ``interval_s`` seconds, run ``tick`` off the event loop unless a
     turn is in flight (then wait for the next beat). Returns the number of
@@ -835,7 +842,19 @@ async def run_thread_tick_loop(
 
     A failing tick is logged and the loop carries on: the sweep is the
     being's housekeeping, and a locked store this minute is not a reason to
-    stop sweeping for the rest of the process's life.
+    stop sweeping for the rest of the process's life. Catches
+    ``BaseException`` (A15-G6, Hermes's own choice) — a tick that raises
+    something outside the ``Exception`` hierarchy must not silently end the
+    heartbeat task; ``asyncio.CancelledError`` is re-raised immediately, so
+    the loop's own cancellation (``stop_thread_tick_heartbeat``) is
+    unaffected by the broadened catch.
+
+    ``inflight`` (A15-G7), when given, is a caller-owned dict this loop
+    records a ``threading.Event`` into for the duration of each real tick —
+    ``stop_thread_tick_heartbeat`` waits on it after cancelling, because
+    cancelling this coroutine only stops AWAITING the executor thread the
+    tick runs in; the thread itself keeps running to completion, orphaned,
+    unless something explicitly joins it.
     """
     beats = 0
     while max_beats is None or beats < max_beats:
@@ -843,12 +862,32 @@ async def run_thread_tick_loop(
         beats += 1
         if turn_busy():
             continue
+        done = threading.Event()
+        if inflight is not None:
+            inflight["done"] = done
+
+        def _tick_and_signal(_tick=tick, _done=done):
+            try:
+                return _tick()
+            finally:
+                _done.set()
+
         try:
-            closed = await asyncio.to_thread(tick)
+            closed = await asyncio.to_thread(_tick_and_signal)
             if closed:
                 logger.info(f"Idle tick closed {len(closed)} thread(s)")
-        except Exception as e:
+        except asyncio.CancelledError:
+            # Deliberately NOT cleared here: cancellation reaches this
+            # coroutine well before the executor thread actually finishes
+            # (it keeps running, orphaned, underneath the cancelled await),
+            # so the reference must survive for stop_thread_tick_heartbeat
+            # to join it. The thread's own `finally` still sets `done`
+            # when it genuinely completes.
+            raise
+        except BaseException as e:
             logger.warning(f"Thread tick failed (non-fatal): {e}")
+        if inflight is not None:
+            inflight["done"] = None
     return beats
 
 
@@ -862,17 +901,22 @@ def start_thread_tick_heartbeat(
     """Start the heartbeat task on the running loop and park it on ``app.state``."""
     if interval_s is None:
         interval_s = heartbeat_interval_s()
+    inflight: Dict[str, Any] = {"done": None}
     task = asyncio.get_running_loop().create_task(
-        run_thread_tick_loop(interval_s, tick=tick, turn_busy=turn_busy),
+        run_thread_tick_loop(interval_s, tick=tick, turn_busy=turn_busy, inflight=inflight),
         name="halbert-thread-tick",
     )
     app.state.thread_tick_task = task
+    app.state.thread_tick_inflight = inflight
     logger.info(f"Thread tick heartbeat started (every {interval_s:g}s)")
     return task
 
 
 async def stop_thread_tick_heartbeat(app: FastAPI) -> None:
-    """Cancel the heartbeat task started by ``start_thread_tick_heartbeat``."""
+    """Cancel the heartbeat task started by ``start_thread_tick_heartbeat``,
+    and join an in-flight sweep (A15-G7) — cancelling only stops awaiting
+    the executor thread the sweep runs in; the thread itself runs to
+    completion regardless, orphaned unless this waits for it too."""
     task = getattr(app.state, "thread_tick_task", None)
     if task is None:
         return
@@ -883,7 +927,17 @@ async def stop_thread_tick_heartbeat(app: FastAPI) -> None:
         pass
     except Exception as e:
         logger.warning(f"Thread tick heartbeat ended with an error: {e}")
+    inflight = getattr(app.state, "thread_tick_inflight", None)
+    done = inflight.get("done") if inflight else None
+    if done is not None and not done.is_set():
+        joined = await asyncio.to_thread(done.wait, _TICK_JOIN_TIMEOUT_S)
+        if not joined:
+            logger.warning(
+                "Thread tick heartbeat stopped, but the in-flight sweep did "
+                f"not finish within {_TICK_JOIN_TIMEOUT_S:g}s (orphaned thread)"
+            )
     app.state.thread_tick_task = None
+    app.state.thread_tick_inflight = None
     logger.info("Thread tick heartbeat stopped")
 
 
