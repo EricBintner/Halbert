@@ -61,9 +61,13 @@ HISTORY_ROWS = 12
 #: its own turn was cut, and a template is enough.
 INTERRUPTED_MARKER = "[turn interrupted before an answer]"
 
-#: The edge a topic switch stamps, and the edge a return stamps. Both are
-#: ``move_leaf`` kinds; ``root`` is not, because a move always records a
-#: departure and a root has no parent by definition.
+#: Design §1.1's move kinds. ``root`` is not among them: a move always
+#: records a departure, and a root has no parent by definition.
+#:
+#: The distinction is worth keeping rather than stamping one word on
+#: everything. A model that declares a new subject has BRANCHED; a
+#: conversation that drifts into one by itself, and a return to a subject
+#: set aside earlier, are both CONTINUATIONS of the same conversation.
 EDGE_BRANCH = "branch"
 EDGE_CONTINUATION = "continuation"
 
@@ -672,6 +676,11 @@ class ThreadManager:
         return self._open_new_thread(
             provisional_title(title or ""), "model", now,
             from_thread_id=previous_id, reason=reason,
+            # A model declaring a new subject is a BRANCH; the conversation
+            # drifting into one on its own is a continuation of the same
+            # conversation. Design §1.1 has both words, and using only one
+            # of them throws away the distinction the column exists for.
+            edge_kind=EDGE_BRANCH,
         )
 
     def tick(self) -> List[str]:
@@ -788,7 +797,7 @@ class ThreadManager:
     # Internals
     # ------------------------------------------------------------------
 
-    def _open_new_thread(self, title: str, title_source: str, now: float, *, from_thread_id: Optional[str], reason: str) -> str:
+    def _open_new_thread(self, title: str, title_source: str, now: float, *, from_thread_id: Optional[str], reason: str, edge_kind: str = EDGE_CONTINUATION) -> str:
         """Open the next leaf thread -- or join the one a concurrent body
         opened first (P3c, founder ruling D-5).
 
@@ -823,6 +832,7 @@ class ThreadManager:
             if self._move_leaf_to_new(
                 new_id, title, title_source, now,
                 from_thread_id=from_thread_id, reason=reason,
+                edge_kind=edge_kind,
             ):
                 return new_id
             # Degraded: the leaf moved under us, or the store refused. Take
@@ -837,7 +847,7 @@ class ThreadManager:
             # transaction to mint one in -- and that is the honest
             # difference between the two paths.
             parent_thread_id=from_thread_id,
-            edge_kind=EDGE_BRANCH if from_thread_id else "root",
+            edge_kind=edge_kind if from_thread_id else "root",
             metadata={"reason": reason, "previous_thread_id": from_thread_id},
         )
         if thread is None:
@@ -861,6 +871,7 @@ class ThreadManager:
         *,
         from_thread_id: str,
         reason: str,
+        edge_kind: str = EDGE_CONTINUATION,
     ) -> bool:
         """Open ``new_id`` by moving the leaf onto it. False if it could not.
 
@@ -885,7 +896,7 @@ class ThreadManager:
         if not created:
             return False
         if not self.store.move_leaf(
-            from_thread_id, new_id, EDGE_BRANCH, now=now
+            from_thread_id, new_id, edge_kind, now=now
         ):
             return False
         self._refresh_receipt(from_thread_id)

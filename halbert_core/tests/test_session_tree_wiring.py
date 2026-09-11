@@ -120,6 +120,24 @@ class TestTheTreeColumnsAreWritten:
             "previous_thread_id"
         )
 
+    def test_the_two_kinds_of_switch_are_told_apart(self, store, mgr):
+        """Design §1.1 has both words, and they mean different things.
+
+        A model declaring a new subject has BRANCHED. A conversation
+        drifting into one on its own is a CONTINUATION of the same
+        conversation. Stamping one word on everything throws away the
+        distinction the typed column exists for.
+        """
+        first = _root(mgr)
+        declared = mgr.new_thread("Camera", "topic switch", from_thread_id=first)
+        assert store.get_thread(declared)["edge_kind"] == "branch"
+
+        clock_driven = mgr._open_new_thread(
+            "Disks", "provisional", mgr._now(),
+            from_thread_id=declared, reason="auto",
+        )
+        assert store.get_thread(clock_driven)["edge_kind"] == "continuation"
+
     def test_the_first_thread_is_a_root(self, store, mgr):
         first = _root(mgr)
         row = store.get_thread(first)
