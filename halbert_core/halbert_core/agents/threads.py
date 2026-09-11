@@ -675,6 +675,20 @@ class ThreadManager:
                 self._consolidator.consolidate(now=now)
             except Exception as e:
                 logger.warning(f"consolidation tick failed (non-fatal): {e}")
+            # RQ-3's inferred half, on the same idle window and separately
+            # guarded: proposing a candidate is a different write from
+            # consolidating a machine fact, and one failing must not take
+            # the other with it.
+            try:
+                self._consolidator.propose_interests(now=now)
+            except Exception as e:
+                logger.warning(f"interest candidates failed (non-fatal): {e}")
+            # MEM-04: retire what ran out of evidence. Self-rate-limited to
+            # once a day, so this costs a timestamp comparison per tick.
+            try:
+                self._consolidator.sweep_interests(now=now)
+            except Exception as e:
+                logger.warning(f"interest sweep failed (non-fatal): {e}")
         return [row["thread_id"] for row in closed]
 
     # ------------------------------------------------------------------

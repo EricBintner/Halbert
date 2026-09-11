@@ -1163,6 +1163,8 @@ class AgentStateMachine:
         # The Eyes rows are read once per turn (A4); this is where a turn
         # starts, so it is where the previous turn's cache stops being true.
         self._reset_world_observations()
+        self._reset_interest_block()
+        self._reset_aside_block()
         tm = self.ctx.thread_manager
         if tm is None:
             return
@@ -1349,9 +1351,15 @@ class AgentStateMachine:
         change to the whole registry for one field. See
         continuity/provenance.current_turn.
         """
-        from ..continuity.provenance import current_turn
+        from ..continuity.provenance import current_turn, current_user_message
 
         self._turn_scope_token = current_turn.set(turn_id)
+        # The user's own words, for the same reason and with the same
+        # lifetime. ``remember`` checks a recorded reason against them; a
+        # writer that cannot see them refuses rather than trusting the model.
+        self._turn_message_token = current_user_message.set(
+            getattr(self.ctx, "user_query", "") or ""
+        )
 
     def _leave_turn_scope(self) -> None:
         """Restore whatever was in scope before this turn.
@@ -1362,19 +1370,21 @@ class AgentStateMachine:
         after it on no turn at all. Called from an outer finally that may fire
         for a turn that never began, so a missing token is not an error.
         """
-        from ..continuity.provenance import current_turn
+        from ..continuity.provenance import current_turn, current_user_message
 
-        token = getattr(self, "_turn_scope_token", None)
-        if token is None:
-            return
-        self._turn_scope_token = None
-        try:
-            current_turn.reset(token)
-        except ValueError:
-            # The token belongs to another context (the turn began on a
-            # different task). Nothing to restore here; leaving the id set
-            # would be worse than leaving it alone.
-            pass
+        for attr, var in (("_turn_scope_token", current_turn),
+                          ("_turn_message_token", current_user_message)):
+            token = getattr(self, attr, None)
+            if token is None:
+                continue
+            setattr(self, attr, None)
+            try:
+                var.reset(token)
+            except ValueError:
+                # The token belongs to another context (the turn began on a
+                # different task). Nothing to restore here; leaving the value
+                # set would be worse than leaving it alone.
+                pass
 
     def _end_turn(self, status: str) -> None:
         """Hand the finished turn to the ThreadManager (spec §4.7).
@@ -2647,6 +2657,250 @@ class AgentStateMachine:
             self._world_obs_cache = []
             return []
 
+    #: Event type for an interest injection. It is an event -- it happened,
+    #: at a time, on a thread -- so it lives in the event ledger, which is
+    #: what makes the once-a-day rule survive a restart and gives the
+    #: `memory_recalled` chip a row to cite.
+    INTEREST_RECALL_EVENT = "interest_recalled"
+    INTEREST_ASIDE_EVENT = "interest_aside_offered"
+
+    def _reset_interest_block(self) -> None:
+        self._interest_cache = None
+
+    def _interest_block(self) -> str:
+        """The one remembered interest this turn may carry (RECALL-v1).
+
+        Computed once per turn and cached: ``_build_messages`` runs at both
+        LLM call sites, and a second selection could differ -- a model that
+        planned with a fact and answered without it has no way to notice.
+
+        Never raises. A recall that fails costs the turn its colour, not its
+        answer.
+        """
+        cached = getattr(self, "_interest_cache", None)
+        if cached is not None:
+            return cached
+        block = ""
+        try:
+            from ..continuity.interests import Interest
+            from ..continuity.recall_interest import (
+                RECALL_COOLDOWN_SECONDS,
+                render_interest_block,
+                select_interest,
+            )
+            from ..integrations.cognition_wiring import (
+                get_persona_memory_store,
+                get_timeline_store,
+            )
+
+            store = get_persona_memory_store()
+            intake = getattr(self.ctx, "intake", None)
+            if store is None or intake is None:
+                self._interest_cache = ""
+                return ""
+
+            rows = [
+                i for i in (
+                    Interest.from_persona_memory(m)
+                    for m in (getattr(store, "list_memories", list)() or [])
+                ) if i is not None
+            ]
+            if not rows:
+                self._interest_cache = ""
+                return ""
+
+            thread_id = getattr(self.ctx, "thread_id", "") or ""
+            timeline = get_timeline_store()
+            last_at = None
+            if timeline is not None and thread_id:
+                prior = timeline.query(
+                    event_type=self.INTEREST_RECALL_EVENT,
+                    entity_id=thread_id,
+                    since=time.time() - RECALL_COOLDOWN_SECONDS,
+                    limit=1,
+                )
+                if prior:
+                    last_at = prior[0].get("timestamp")
+
+            dial = "balanced"
+            try:
+                from ..config.being_config import load_being_config
+                dial = getattr(load_being_config(), "proactivity", "balanced") or "balanced"
+            except Exception:
+                pass
+
+            chosen = select_interest(
+                rows, intake, thread_id=thread_id, dial=dial,
+                last_injection_at=last_at,
+            )
+            if chosen is None:
+                self._interest_cache = ""
+                return ""
+
+            block = render_interest_block(chosen)
+            self._record_interest_recall(chosen, thread_id, timeline)
+        except Exception:
+            logger.warning("interest recall failed; continuing without it",
+                           exc_info=True)
+            block = ""
+        self._interest_cache = block
+        return block
+
+    def _aside_block(self) -> str:
+        """The one confirmation aside this turn may carry (RQ-3).
+
+        Separate from ``_interest_block`` and mutually exclusive with it: a
+        turn that both recalls something about the person and asks to
+        remember something else about them is a turn that is mostly about
+        the person, which is the reading the whole design exists to avoid.
+        Recall wins, because it was earned by relevance to what they asked.
+
+        Never raises, cached per turn like the recall block.
+        """
+        cached = getattr(self, "_aside_cache", None)
+        if cached is not None:
+            return cached
+        block = ""
+        try:
+            from ..continuity.interest_aside import (
+                ASIDE_COOLDOWN_SECONDS,
+                render_aside,
+                select_candidate,
+            )
+            from ..continuity.interests import Interest
+            from ..integrations.cognition_wiring import (
+                get_persona_memory_store,
+                get_timeline_store,
+            )
+
+            store = get_persona_memory_store()
+            intake = getattr(self.ctx, "intake", None)
+            if store is None or intake is None:
+                self._aside_cache = ""
+                return ""
+
+            rows = [
+                i for i in (
+                    Interest.from_persona_memory(m)
+                    for m in (getattr(store, "list_memories", list)() or [])
+                ) if i is not None
+            ]
+            if not rows:
+                self._aside_cache = ""
+                return ""
+
+            thread_id = getattr(self.ctx, "thread_id", "") or ""
+            timeline = get_timeline_store()
+            last_at = None
+            if timeline is not None and thread_id:
+                prior = timeline.query(
+                    event_type=self.INTEREST_ASIDE_EVENT,
+                    entity_id=thread_id,
+                    since=time.time() - ASIDE_COOLDOWN_SECONDS,
+                    limit=1,
+                )
+                if prior:
+                    last_at = prior[0].get("timestamp")
+
+            chosen = select_candidate(
+                rows, intake,
+                dial=self._proactivity_dial(),
+                thread_id=thread_id,
+                last_aside_at=last_at,
+                required_confirmation=bool(
+                    getattr(self.ctx, "required_confirmation", False)
+                ),
+                finding_store=getattr(self, "finding_store", None),
+            )
+            if chosen is None:
+                self._aside_cache = ""
+                return ""
+
+            block = render_aside(chosen)
+            self._mark_offered(chosen, store)
+            self._record_interest_aside(chosen, thread_id, timeline)
+        except Exception:
+            logger.warning("the confirmation aside failed; continuing without it",
+                           exc_info=True)
+            block = ""
+        self._aside_cache = block
+        return block
+
+    def _reset_aside_block(self) -> None:
+        self._aside_cache = None
+
+    def _mark_offered(self, interest, store) -> None:
+        """Stamp the candidate as asked about, before the model replies.
+
+        Before, not after: a turn that crashes between assembling the prompt
+        and finishing the answer must not leave the question askable again.
+        "Once, ever" is the promise, and erring toward not asking is the
+        recoverable direction.
+
+        Written onto the candidate's own evidence rather than the ledger,
+        because the ledger is body-local and the candidate travels.
+        """
+        try:
+            from ..continuity.interest_aside import OFFERED_KEY
+
+            memory = store.get(f"interest_{interest.slug}")
+            if memory is None:
+                return
+            meta = dict(getattr(memory, "metadata", None) or {})
+            evidence = dict(meta.get("evidence") or {})
+            evidence[OFFERED_KEY] = time.time()
+            meta["evidence"] = evidence
+            memory.metadata = meta
+            save = getattr(store, "_save_to_disk", None)
+            if save is not None:
+                save()
+        except Exception:
+            logger.debug("could not mark the candidate as offered", exc_info=True)
+
+    def _record_interest_aside(self, interest, thread_id: str, timeline) -> None:
+        """Log the ask, so it is citable and countable."""
+        if timeline is None or not thread_id:
+            return
+        try:
+            from ..continuity.timeline import TimelineEvent
+
+            timeline.record(TimelineEvent(
+                timestamp=time.time(),
+                event_type=self.INTEREST_ASIDE_EVENT,
+                source="recall",
+                entity_id=thread_id,
+                title=f"Asked about: {interest.topic}",
+                data={"topic": interest.topic, "reason": interest.reason},
+            ))
+        except Exception:
+            logger.debug("could not record the interest aside", exc_info=True)
+
+    def _record_interest_recall(self, interest, thread_id: str, timeline) -> None:
+        """Log the injection, so it is citable and countable.
+
+        Recorded whether or not the model ends up using it: the person is
+        entitled to know the fact was put in front of it, and a chip that only
+        appears when the model happened to mention something is not
+        visibility.
+        """
+        if timeline is None or not thread_id:
+            return
+        try:
+            from ..continuity.timeline import TimelineEvent
+
+            timeline.record(TimelineEvent(
+                timestamp=time.time(),
+                event_type=self.INTEREST_RECALL_EVENT,
+                source="recall",
+                entity_id=thread_id,
+                title=f"Recalled: {interest.topic}",
+                data={"topic": interest.topic,
+                      "origin": getattr(interest.origin, "value", ""),
+                      "reason": interest.reason},
+            ))
+        except Exception:
+            logger.debug("could not record the interest recall", exc_info=True)
+
     def _composed_prompt_block(self) -> str:
         """The active skills' expertise text, or "" when none matched.
 
@@ -2654,12 +2908,28 @@ class AgentStateMachine:
         for retrieval scoping. Never raises: a skill that cannot be composed
         costs the turn its expertise, not its answer -- the rule intake
         already applies to matching.
+
+        **B4a runs here** (``CD-9``): this is the assemble call, the only
+        place intake, context and the finding store meet, and it is on both
+        the trigger path and the explicit one. A matcher-side gate would be
+        bypassed by ``/skill``, because ``match()`` returns ``_explicit()``
+        first.
+
+        Suppression drops **lenses, not ops skills**. A turn mid-fault still
+        gets the storage expertise it matched; what it does not get is a
+        voice. Dropping the whole block would make a bad moment also a
+        stupid one.
         """
         try:
             intake = getattr(self.ctx, "intake", None)
             matches = getattr(intake, "active_skills", None) if intake else None
             if not matches:
                 return ""
+
+            matches = self._gate_lenses(matches, intake)
+            if not matches:
+                return ""
+
             from ..skills.composer import compose_matches
 
             composed = compose_matches(matches)
@@ -2667,6 +2937,92 @@ class AgentStateMachine:
         except Exception:
             logger.warning("composing the skill prompt failed; continuing",
                            exc_info=True)
+            return ""
+
+    def _gate_lenses(self, matches, intake):
+        """B4a: drop lens-kind matches when the turn may carry nothing extra.
+
+        Returns the matches that survive. Never raises -- a gate that throws
+        takes down the turn it was meant to keep plain.
+
+        An **explicitly invoked** lens is refused out loud rather than
+        silently dropped. A person who typed the lens's name and got their
+        ordinary voice back would conclude the feature is broken; told which
+        signal stopped it, they can disagree with the machine instead of
+        with reality. The reason reaches them through the same block the
+        lens would have occupied.
+        """
+        try:
+            from ..skills.suppression import suppress_lens
+
+            lenses = [m for m in matches
+                      if getattr(getattr(m, "skill", None), "kind", "ops") == "lens"]
+            if not lenses:
+                return matches
+
+            reason = suppress_lens(
+                intake,
+                required_confirmation=bool(
+                    getattr(self.ctx, "required_confirmation", False)
+                ),
+                proactivity=self._proactivity_dial(),
+                lens_intensity=self._lens_intensity(),
+                finding_store=getattr(self, "finding_store", None),
+            )
+            if not reason:
+                return matches
+
+            self._lens_refusal = ""
+            named = [m for m in lenses if getattr(m, "explicit", False)]
+            if named:
+                which = ", ".join(sorted(m.name for m in named))
+                self._lens_refusal = (
+                    f"{which} was not applied this turn: {reason}."
+                )
+                logger.info("lens refused (%s): %s", which, reason)
+            else:
+                logger.debug("lens suppressed: %s", reason)
+            return [m for m in matches if m not in lenses]
+        except Exception:
+            logger.warning("the lens gate failed; composing unchanged",
+                           exc_info=True)
+            return matches
+
+    def _take_lens_refusal(self) -> str:
+        """The refusal for a lens the person named, once, or "".
+
+        Deterministic text on the response stream, not a line in the prompt:
+        a lens being refused is a fact about the machine, and asking a model
+        to report it invites it to soften, explain or forget it. It lands in
+        ``response_chunks`` as well as on the wire, so the transcript records
+        what the person was actually told.
+
+        Taken rather than read: the same turn assembles messages at both LLM
+        call sites, and the person is told once.
+        """
+        reason = getattr(self, "_lens_refusal", "") or ""
+        self._lens_refusal = ""
+        return f"{reason}\n\n" if reason else ""
+
+    def _proactivity_dial(self) -> str:
+        try:
+            from ..config.being_config import load_being_config
+            return getattr(load_being_config(), "proactivity", "balanced") or "balanced"
+        except Exception:
+            return "balanced"
+
+    def _lens_intensity(self) -> str:
+        """The lens dial, when one exists. Absent is not Off.
+
+        ``lens_intensity`` is not on ``BeingConfig`` yet -- it arrives with
+        branch 5's format work. Reading it as "" rather than defaulting to
+        "off" is the difference between a setting that has not shipped and a
+        person who switched lenses off.
+        """
+        try:
+            from ..config.being_config import load_being_config
+            return getattr(load_being_config(), "lens_intensity", "") or ""
+        except Exception:
             return ""
 
     def _catalog_block(self) -> str:
@@ -2780,7 +3136,21 @@ class AgentStateMachine:
         # everything below it volatile.
         catalog = self._catalog_block()
         head = self._stable_head(identity, catalog, skills_block)
-        content = f"{head}\n\n{prompt}" if head else prompt
+        # RECALL-v1: its own dated block, BELOW the cache boundary. It is a
+        # per-turn selection -- a different interest, or none, on the next
+        # turn -- so putting it in the stable head would invalidate the
+        # cached prefix on every turn to save nothing.
+        interest_block = self._interest_block()
+        # The confirmation aside, and only when recall is silent. A turn
+        # that recalls one thing about the person and asks to remember
+        # another is a turn mostly about the person -- the exact reading
+        # RECALL-v1 exists to avoid. Recall wins: it was earned by
+        # relevance to what they actually asked.
+        aside_block = self._aside_block() if not interest_block else ""
+        below = "\n\n".join(
+            p for p in (interest_block, aside_block, prompt) if p
+        )
+        content = f"{head}\n\n{below}" if head else below
         messages: List[Dict[str, Any]] = [{"role": "system", "content": content}]
         if self.ctx.thread_receipt_block:
             messages[0]["content"] += "\n\n" + self.ctx.thread_receipt_block
@@ -4348,14 +4718,23 @@ class AgentStateMachine:
         selected: List[Dict[str, Any]] = []
         announced = False
 
+        # Built before the stream opens, because assembling the prompt is
+        # what runs B4a -- and a lens the person named and did not get has
+        # to be said *before* the answer, not after it.
+        built = self._build_messages(
+            prompt, tail=tail, response_modality=response_modality,
+        )
+        refusal = self._take_lens_refusal()
+        if refusal:
+            self.ctx.response_chunks.append(refusal)
+            yield StreamEvent.response_chunk(self.ctx.session_id, refusal)
+
         # Stream response
         if hasattr(self.llm, 'stream'):
             logger.info(f"Starting LLM stream for session {self.ctx.session_id}")
             chunk_count = 0
             async for chunk in self._model_stream(self.llm.stream(
-                messages=self._build_messages(
-                    prompt, tail=tail, response_modality=response_modality,
-                ),
+                messages=built,
                 intake_result=self.ctx.intake if self.ctx else None,
                 images=self.ctx.images if self.ctx else None,
                 model_override=self.ctx.model_override if self.ctx else None,
@@ -4379,9 +4758,7 @@ class AgentStateMachine:
         else:
             # Non-streaming fallback
             response = await self._model_call(self.llm.chat(
-                messages=self._build_messages(
-                    prompt, tail=tail, response_modality=response_modality,
-                ),
+                messages=built,
                 intake_result=self.ctx.intake if self.ctx else None,
                 images=self.ctx.images if self.ctx else None,
                 model_override=self.ctx.model_override if self.ctx else None,

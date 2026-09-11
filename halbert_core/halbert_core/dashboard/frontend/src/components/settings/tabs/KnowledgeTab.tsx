@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { DataVersionCard } from '@/components/domain'
+import { AboutYouCard } from '@/components/settings/AboutYouCard'
 import {
   Brain,
   BookOpen,
@@ -337,6 +338,16 @@ export function KnowledgeTab({
           </div>
         </CardContent>
       </Card>
+
+      {/* What I remember about you (RQ-5).
+          Beside self-knowledge because it is the mirror of it: the same
+          page, the other subject. A person who can inspect what the machine
+          believes about the machine should not have to go elsewhere to
+          inspect what it believes about them. Self-contained -- it fetches
+          and acts on its own rather than joining this tab's props bag,
+          because the verbs it offers are destructive and belong next to the
+          list they act on. */}
+      <AboutYouCard />
 
       {/* RAG Knowledge Sources Section */}
       <Card>

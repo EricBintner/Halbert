@@ -319,6 +319,34 @@ class ToolExecutor:
 
         self.register("recall_memory", recall_memory, RECALL_MEMORY_SCHEMA)
 
+        # RQ-3: the explicit write path for a fact about the person, beside
+        # the read one. Registered unconditionally for the same reason
+        # recall_memory is -- it gates itself on the speaker's role and on
+        # the person having actually asked, which is a stronger check than a
+        # capability could make, and a tool that is absent cannot refuse
+        # legibly when a model tries to use it.
+        from .remember import REMEMBER_SCHEMA, remember
+
+        self.register("remember", remember, REMEMBER_SCHEMA)
+
+        # RQ-5: "what do you remember about me", answered from the store.
+        # A model asked this will round a list of three up to a plausible
+        # four, and an invented memory of a person is the worst output this
+        # mechanism could produce -- so the answer is rendered rows, and the
+        # rendering says the list is complete. It deliberately cannot forget:
+        # erasure is staged on a surface and confirmed, never executed from a
+        # model's reading of a sentence.
+        from .about_you_tool import WHAT_I_REMEMBER_SCHEMA, what_i_remember
+
+        self.register("what_i_remember", what_i_remember, WHAT_I_REMEMBER_SCHEMA)
+
+        # The "yes" half of the confirmation aside. Registered beside the
+        # other two and gated the same way: an outstanding candidate, the
+        # person's own affirmative read from the turn, and the member floor.
+        from .confirm_interest import CONFIRM_INTEREST_SCHEMA, confirm_interest
+
+        self.register("confirm_interest", confirm_interest, CONFIRM_INTEREST_SCHEMA)
+
         # Thread meta-tools (Plan A, spec §7). The schemas are what the model
         # sees; PLANNING handles the calls inline and never dispatches them
         # here, so the handler is a stub (see execute()). Descriptions stay

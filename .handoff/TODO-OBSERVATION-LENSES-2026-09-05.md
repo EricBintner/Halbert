@@ -150,7 +150,7 @@ Original spec, kept for reference:
 
 - B5 remainder (opus · high): `suppress_on` in the frontmatter; the `active_skills` carve-out (`MessageIntake.active_lens`; `compose()`, `_skill_model_tier()`, `ContextAssembler._composed_skills()` stay ops-only); the `~/.config/halbert/lenses/` load path (`CD-11`); `kind` and the voice-only parse rule already shipped in `66ed1447`.
 - B6 (sonnet · med): `lens_intensity` and `active_lens` on `BeingConfig` (four touch points each) and the BeingTab control; dial → row cap Off 0 / Subtle 1 / Flavorful 3.
-- B4a (sonnet · xhigh): `suppress_lens()` at the assemble call on both paths over signals that exist.
+- ~~B4a: `suppress_lens()` at the assemble call on both paths over signals that exist.~~ **DONE 2026-09-10** on `feat/user-interest-memory`, because RECALL-v1 could not stop keeping a second copy of the list until it existed. `halbert_core/skills/suppression.py`, wired at `_composed_prompt_block`; it drops lens-kind matches only, and refuses an explicitly invoked lens out loud on the response stream. `lens_intensity` is read but not yet a `BeingConfig` field — B6 adds it, and absent reads as "" rather than "off".
 - B7: done (`skills/builtin/understated/SKILL.md`, inactive).
 
 ## 7. Branch 6 — `feat/morning-lens` = C1b (opus · max; needs `CD-7`, `C4-07` ratified, persistence)
@@ -163,25 +163,48 @@ Observations-only input; `summarizer=None` unless `active_lens` is set and `lens
 - C2 (opus · xhigh): recurrence remarks as an aside inside a solicited reply, one per `thread_id` per rolling window, sourced from A5 only; judged from a week of persisted reports first.
 - C3 (sonnet · high): `/api/skills` with each entry's kind and source directory; raw markdown via `/api/editor/file`; provenance affordance over `[t{id}]`; no `dangerouslySetInnerHTML`; nothing named "observations" or bare "timeline".
 
-## 9. The user-interest half — deferred per `CD-5`; the v1 shape once `RQ-1..9` are ratified and the C1a week has passed
+## 9. The user-interest half — **the loop is built and green on `feat/user-interest-memory`**, 2026-09-10
+
+`RQ-1`, `RQ-3`, `RQ-5`, `RQ-6` and `RQ-8` were live-decided while building and are recorded in `DECISIONS.md`. What ships on the branch is the whole explicit path: **say it → stored → mirrored → listed → it colours a turn → stop using it → turns stop carrying it → remember it again → forget it → gone from both planes.** `tests/test_interest_lifecycle.py` asserts exactly that sequence with nothing stubbed between the tool and the disk; if it passes, the feature works.
+
+The **inferred** path is built too, as of the same day. Recurrence proposes, a person decides, and the machine forgets its own guesses on a clock it never applies to a person's words:
+
+**noticed on 3 distinct days across 3 non-ephemeral threads in 30 → candidate → asked once, or answered from the list → confirmed → recalled → lapses at 90 days without evidence.**
+
+`tests/test_interest_aside.py` walks that end to end with nothing stubbed. Both confirmation doors call one promotion (`continuity/confirm.py`) so a candidate confirmed by voice cannot behave differently from one confirmed by button.
 
 | Piece | Tier | Spec |
 |---|---|---|
-| `remember` writer in `tools/executor.py`: deterministic phrase list, reason must be a substring of the user's message, `speaker_role ≥ member`, `redact_text` first, Tier-2 refused, echo the stored sentence | opus · high | research §1 |
-| Candidate rule in `continuity/consolidation.py`: entity or domain on ≥ 3 distinct days in 30 across ≥ 3 non-ephemeral closed threads; status `candidate`, never injected; 30-day expiry | sonnet · med | research §1 |
-| The one confirmation aside (dial-gated, C2-shaped, once per candidate) | opus · high | after B4a and C2's row |
-| Interest row as a `PersonaMemory` with a Halbert-side dataclass (topic, origin, evidence, timestamps, status, actor, reason, body_id) and the derived `ObservationStore` `preference` row | opus · high | research §5 |
-| Settings section "What I remember about you": list with who / when / how, Forget (or Stop using), Show forgotten; `GET/POST /api/memory/about-you…`; the deterministic "what do you remember about me" tool; edit = forget + re-record | sonnet · xhigh | research §2 |
-| Forget orchestrator in `continuity/` mirroring `forget_request`: per-plane report, `complete=False` on a miss; `stale_reason` convention `forgotten_by_user:<turn>` / `lapsed:<date>` / `superseded_by:<id>` | opus · high | research §2, §5 |
-| RECALL-v1 with tests T1–T9 asserted on the prompt and the store | opus · max | research §3 |
-| Lapse sweep on APScheduler (`MEM-04`): inferred interests lapse at 90 days without evidence | sonnet · med | research §3 |
+| ~~`remember` writer: deterministic phrase list, reason must be a substring of the user's message, `speaker_role ≥ member`, `redact_text` first, Tier-2 refused, echo the stored sentence~~ | **DONE** | `tools/remember.py` |
+| ~~Candidate rule: entity or domain on ≥ 3 distinct days in 30 across ≥ 3 non-ephemeral closed threads; status `candidate`, never injected; 30-day expiry~~ | **DONE** | `Consolidator.propose_interests`, on the idle tick |
+| ~~The one confirmation aside (dial-gated, C2-shaped, once per candidate)~~ | **DONE** | `continuity/interest_aside.py`; `tools/confirm_interest.py` and the Settings "Noticed, not remembered" section are its two answers |
+| ~~Interest row as a `PersonaMemory` with a Halbert-side dataclass and the derived `ObservationStore` `preference` row~~ | **DONE** | `continuity/interests.py` |
+| ~~Settings section "What I remember about you"; `GET/POST /api/memory/about-you…`; the deterministic "what do you remember about me" tool~~ | **DONE** | `continuity/about_you.py`, `tools/about_you_tool.py`, `dashboard/routes/memory.py`, `AboutYouCard.tsx` |
+| ~~Forget orchestrator mirroring `forget_request`: per-plane report, `complete=False` on a miss; the `stale_reason` convention~~ | **DONE** | `continuity/forget_interest.py` — two verbs per `RQ-6` |
+| ~~RECALL-v1 asserted on the prompt and the store~~ | **DONE** | `continuity/recall_interest.py`, wired at `state_machine._interest_block` |
+| ~~Lapse sweep (`MEM-04`): inferred interests lapse at 90 days without evidence~~ | **DONE** | `continuity/interest_sweep.py`, once a day off the idle tick rather than its own scheduler job — proposing and retiring are two halves of one mechanism |
 | "Study this": user-pasted URL verbatim (MEDIUM egress, audited) + `doc_suggester` as a Knowledge-tab suggestion; one writer into an XDG research scope of provenanced markdown files; staged into the SourcePrep knowledge project; citations open (`KNOW-1`); one honest delete; freshness re-fetch later | opus · xhigh | research §4 |
 | Manifest line (`RQ-7`) and `ERASURE_LIMITS` text for the research plane | — | with the above |
 | A user-editable noun file under `~/.config/halbert/` so inference can see nouns intake does not know (`RQ-4`) | sonnet · med | still no model |
 
-## 10. Haloysius upstream asks (Phase-1 items) — **all four landed 2026-09-06**
+**Four traps, each measured rather than reasoned about, that the next person here will otherwise re-find:**
 
-On Haloysius `main`, pushed. API facts: [`/Volumes/4TB-BAD/Haloysius/.handoff/HANDOFF-OBSERVATION-LENSES-UPSTREAM-ASKS-2026-09-06.md`](file:///Volumes/4TB-BAD/Haloysius/.handoff/HANDOFF-OBSERVATION-LENSES-UPSTREAM-ASKS-2026-09-06.md). Nothing in §9 waits on the engine any more.
+- **No colon in the canonical content.** The engine's `_extract_subject` matches `interested in X` and returns `interest in X`, which is what makes a withdrawal supersede rather than accumulate beside the interest. `"User is interested in: sailing"` extracts `None`, and with no subject every interest reads as contradicting every other — six stated interests collapsed to two, and "sailing" replaced "thinkpads". The research brief's §5 prescribes the colon form and is **wrong** about it.
+- **A stated fact needs the `user_stated` tag, not just the provenance.** §10 below says a writer "must set `source="user"` itself". Measured against the engine as it stands, that alone calibrates at **0.7** — the inferred confidence. `0.9` needs `Provenance.USER_ORGANIC` *and* the tag, which is what `teach()` does internally.
+- **The record carries the status, not the mirror.** RECALL-v1 reads status from the `PersonaMemory`, because under Singular Entity the observation store is body-local and does not travel. Marking only the mirror stale means the person asked for a fact to stop being used and it kept appearing.
+- **`smart_add` merges; it does not replace.** A candidate and its confirmation share an id *and* their content, so the second is treated as a duplicate and merged — the write returns success and the status stays `candidate`. Promotion mutates the row and calls `_save_to_disk`, then `confirm_memory()` for the engine's own confirmation count. This is the fourth appearance of one shape in this workstream: a green-looking write that changed nothing.
+- **Read the store through `cognition_wiring`, never `PersonaMemoryStore` directly.** `routes/memory.py` has a module-local body-local accessor for the peer endpoints, which is right for a peer and wrong for anything user-facing: `_create_memory_store()` returns a proxy to the canonical host, so a Settings page on the body-local one shows an empty list on the very node where the writes went somewhere else.
+
+## 10. Haloysius upstream asks — four landed 2026-09-06; a fifth fixed 2026-09-10; two still open
+
+**Unmerged and load-bearing:** Halbert's about-you tests now depend on Haloysius `fix/sqlite-thread-affinity` (`95ecaad`), which is on a branch, not `main`. `ObservationStore` and `RecallEventRecorder` each cached one `sqlite3.Connection` per instance, and a connection belongs to the thread that opened it — so the dashboard routes (event-loop thread) and `remember` (agent turn) could not share a store. The forget endpoint reported that it could not reach the observation plane, which is the worst place for it to surface. In `RecallEventRecorder`, which is fail-soft by contract, the same fault was *silent*: recall events stopped being recorded on every thread but the first. Fixed with per-thread connections; 64,616 engine tests green. **Check out that branch or merge it, or Halbert's route tests fail.**
+
+Two asks stand, both found while building the forget path:
+
+- **`ObservationStore.delete_by_memory(memory_id)`**, symmetric with `mark_stale_by_memory`. Nothing returns a row by `source_memory_id`, so a hard forget enumerates the mirror through FTS and keeps only exact `source_memory_id` matches. The search is the enumeration, never the decision — but a topic with no shared FTS token is unreachable, and the report has to say the plane was not reached rather than claim it was.
+- **A public metadata setter on `PersonaMemoryStore`.** `confirm_memory`, `correct_memory` and `add_keywords` each mutate and persist, but there is no general one, so `_set_status` mutates the object from `get()` and persists through `_save_to_disk`. A peer-backed store may expose neither, which is why that function returns a reason instead of a bool.
+
+Original four, on Haloysius `main`, pushed. API facts: [`/Volumes/4TB-BAD/Haloysius/.handoff/HANDOFF-OBSERVATION-LENSES-UPSTREAM-ASKS-2026-09-06.md`](file:///Volumes/4TB-BAD/Haloysius/.handoff/HANDOFF-OBSERVATION-LENSES-UPSTREAM-ASKS-2026-09-06.md). Nothing in §9 waits on the engine any more.
 
 | Ask | Landed |
 |---|---|

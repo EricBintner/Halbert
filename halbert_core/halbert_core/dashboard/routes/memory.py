@@ -360,3 +360,231 @@ async def peer_memory_delete(memory_id: str) -> Dict[str, Any]:
         raise HTTPException(status_code=404, detail=f"Memory {memory_id} not found")
 
     return {"status": "ok", "deleted": memory_id}
+
+
+# -------------------------------------------------------------------------
+# "What I remember about you" (RQ-5)
+#
+# The Settings surface for facts about the *person*. Mounted under
+# /api/memory deliberately: the path must not say "observations", which now
+# means the world stream (the event ledger). One word, two meanings, is how
+# the next reader confuses a grey-van count with a person's taste.
+#
+# **These read through cognition_wiring, not through the module-local
+# `_get_persona_memory_store` above.** That one builds a body-local store for
+# the peer endpoints, which is right for a peer asking this body for its own
+# rows. It is wrong here: under Singular Entity `_create_memory_store`
+# returns a proxy to the canonical host, and `tools/remember` writes through
+# it. A Settings page reading the body-local store would show an empty list
+# on the very node where the writes went somewhere else.
+#
+# No role dependency, and that is not an oversight: the dashboard door is
+# already decided to be the owner's (`routes/agent.py` ignores a claimed
+# `speaker_role` over this channel). A second check here would be a second
+# place the same thing is decided.
+# -------------------------------------------------------------------------
+
+
+def _about_you_stores():
+    """The pair these routes operate on. Either may be ``None``."""
+    from ...integrations import cognition_wiring
+
+    return (
+        cognition_wiring.get_persona_memory_store(),
+        cognition_wiring.get_observation_store(),
+    )
+
+
+def _load_interest(memory_store: Any, memory_id: str):
+    """The stored interest for an id, or ``None``."""
+    from ...continuity.interests import Interest
+
+    if memory_store is None:
+        return None
+    memory = memory_store.get(memory_id)
+    if memory is None:
+        return None
+    return Interest.from_persona_memory(memory)
+
+
+def _unreached(verb: str, detail: str) -> Dict[str, Any]:
+    """A report for something that was never reached.
+
+    Deliberately a 200 carrying ``complete: False`` rather than a 404. The
+    report shape *is* the contract of this surface: a person asking to be
+    forgotten is owed a statement of what was and was not reached, and an
+    error page states nothing. This mirrors ``continuity.provenance``'s
+    ``forget_request``, which never raises for the same reason.
+    """
+    from ...continuity.forget_interest import FORGET_LIMITS
+
+    return {
+        "verb": verb,
+        "memory": False,
+        "observations": 0,
+        "errors": [detail],
+        "limits": FORGET_LIMITS,
+        "complete": False,
+    }
+
+
+@router.get("/about-you")
+async def about_you(
+    include_forgotten: bool = Query(
+        False, description="Also list interests that were stopped ('Show forgotten')"
+    ),
+) -> Dict[str, Any]:
+    """Everything recorded about the person, newest first.
+
+    The same rows, from the same function, that the conversational answer
+    uses -- two readers of one store cannot disagree about what is
+    remembered. Candidates are never listed and no confidence number is ever
+    returned; see ``continuity.about_you``.
+
+    ``limits`` rides along on the read, not only on the erase: a person
+    deciding whether to press "Forget" needs to know its reach *before* they
+    press it, on the same screen as the button.
+    """
+    from ...continuity.about_you import list_remembered
+    from ...continuity.forget_interest import FORGET_LIMITS
+
+    memory_store, _ = _about_you_stores()
+    items = list_remembered(memory_store, include_forgotten=include_forgotten)
+    return {
+        "status": "ok" if memory_store is not None else "unavailable",
+        "items": items,
+        "count": len(items),
+        "limits": FORGET_LIMITS,
+    }
+
+
+@router.get("/about-you/noticed")
+async def about_you_noticed() -> Dict[str, Any]:
+    """Things noticed but not remembered, and not being used.
+
+    A separate endpoint from the remembered list because it is a separate
+    claim. The confirmation path has two doors -- the one conversational
+    aside, and this -- and a candidate nobody can find is a candidate that
+    only ever expires.
+    """
+    from ...continuity.about_you import list_candidates
+
+    memory_store, _ = _about_you_stores()
+    items = list_candidates(memory_store)
+    return {
+        "status": "ok" if memory_store is not None else "unavailable",
+        "items": items,
+        "count": len(items),
+    }
+
+
+@router.post("/about-you/{memory_id}/remember-this")
+async def about_you_remember_this(memory_id: str) -> Dict[str, Any]:
+    """Yes, from the list rather than from the conversation.
+
+    The same promotion the tool performs, with the difference that matters
+    for ``MEM-06``: the reason is a button in a surface that says what it
+    does, which is a self-naming rule rather than a human utterance. Both
+    are reasons MEM-06 accepts; a sentence a model composed is not.
+    """
+    from ...continuity.confirm import confirm_candidate
+
+    memory_store, observation_store = _about_you_stores()
+    interest = _load_interest(memory_store, memory_id)
+    if interest is None:
+        return _unreached("confirm", f"memory {memory_id!r} was not found")
+
+    return confirm_candidate(
+        interest, memory_id,
+        reason="confirmed in Settings under 'What I remember about you'",
+        memory_store=memory_store,
+        observation_store=observation_store,
+    )
+
+
+@router.post("/about-you/{memory_id}/not-interested")
+async def about_you_not_interested(memory_id: str) -> Dict[str, Any]:
+    """No. The candidate stops waiting; nothing records the refusal.
+
+    It is retired the way a lapse retires one -- status only, reversible --
+    rather than erased, so the arithmetic cannot immediately re-propose it
+    off the same threads.
+    """
+    from ...continuity.forget_interest import stop_using_interest
+    from ...continuity.provenance import current_turn
+
+    memory_store, observation_store = _about_you_stores()
+    interest = _load_interest(memory_store, memory_id)
+    if interest is None:
+        return _unreached("decline", f"memory {memory_id!r} was not found")
+
+    return stop_using_interest(
+        interest, memory_id,
+        turn=(current_turn.get() or "settings"),
+        memory_store=memory_store,
+        observation_store=observation_store,
+    )
+
+
+@router.post("/about-you/{memory_id}/stop-using")
+async def about_you_stop_using(memory_id: str) -> Dict[str, Any]:
+    """Keep it, stop using it. Reversible, and listed under "Show forgotten"."""
+    from ...continuity.forget_interest import stop_using_interest
+
+    memory_store, observation_store = _about_you_stores()
+    interest = _load_interest(memory_store, memory_id)
+    if interest is None:
+        return _unreached("stop_using", f"memory {memory_id!r} was not found")
+
+    from ...continuity.provenance import current_turn
+
+    return stop_using_interest(
+        interest,
+        memory_id,
+        turn=(current_turn.get() or ""),
+        memory_store=memory_store,
+        observation_store=observation_store,
+    )
+
+
+@router.post("/about-you/{memory_id}/remember-again")
+async def about_you_remember_again(memory_id: str) -> Dict[str, Any]:
+    """Undo a stop-using. The mirror is rebuilt by the next save, not here."""
+    from ...continuity.forget_interest import resume_interest
+
+    memory_store, observation_store = _about_you_stores()
+    interest = _load_interest(memory_store, memory_id)
+    if interest is None:
+        return _unreached("resume", f"memory {memory_id!r} was not found")
+
+    return resume_interest(
+        interest,
+        memory_id,
+        memory_store=memory_store,
+        observation_store=observation_store,
+    )
+
+
+@router.post("/about-you/{memory_id}/forget")
+async def about_you_forget(memory_id: str) -> Dict[str, Any]:
+    """Erase it, and report each plane honestly.
+
+    Not the same verb as stop-using and not named as if it were: this one
+    destroys the row, so there is nothing left to show under "Show
+    forgotten". The response carries ``limits`` -- what erasure does not
+    reach -- because "forgotten everywhere" is a lie when it is two planes of
+    several.
+    """
+    from ...continuity.forget_interest import forget_interest
+
+    memory_store, observation_store = _about_you_stores()
+    interest = _load_interest(memory_store, memory_id)
+    if interest is None:
+        return _unreached("forget", f"memory {memory_id!r} was not found")
+
+    return forget_interest(
+        interest,
+        memory_id,
+        memory_store=memory_store,
+        observation_store=observation_store,
+    )
