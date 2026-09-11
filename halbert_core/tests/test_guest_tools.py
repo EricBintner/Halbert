@@ -125,6 +125,39 @@ class TestGuestToolAllowlist:
         assert RECALL_GUEST_MEMORY_TOOL_NAME in private
         assert private < normal
 
+    def test_a_fact_about_the_person_is_denied_in_BOTH_modes(self):
+        """Unlike the conversation store above, this pair is not mode-scoped.
+
+        The 2026-09-10 ruling shares Halbert's memory with a fronting guest
+        in normal mode, and I6 permits that because the read is symmetric
+        there -- `route_write` sends `conversation.message` to HALBERT, so
+        the guest writes what it then reads.
+
+        That symmetry does not exist for a fact about the *person*.
+        `remember` has a member floor (`RQ-8`) that no mode lifts, so a guest
+        can never write one; granting the read anyway is precisely the
+        one-way valve I6 exists to close. Mode-scoping these would be a wider
+        ruling than the one that was made.
+        """
+        from unittest import mock
+        from halbert_core.persona import guest_tools as gt
+
+        pair = ("remember", "what_i_remember")
+        for name in pair:
+            assert name in GUEST_DENIED_TOOLS, name
+        for private in (True, False):
+            with mock.patch.object(
+                gt, "_private_mode_for_tools", return_value=private
+            ):
+                for name in pair:
+                    assert not gt.is_tool_allowed_for_guest(name), (name, private)
+                assert gt.filter_tools_for_guest(
+                    ["what_i_remember", "ha_get_entity_state"]
+                ) == ["ha_get_entity_state"]
+
+        # And neither ever reaches the mode-scoped set by some later edit.
+        assert not (set(pair) & gt.HALBERT_MODE_ONLY_TOOLS)
+
     def test_the_write_plane_never_enters_the_allowlist(self):
         """Design §6: the hash-chained audit log receives user words only
         through the write plane, so a guest turn never reaches it as long as
