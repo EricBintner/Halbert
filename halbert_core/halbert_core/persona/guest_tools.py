@@ -249,6 +249,13 @@ GUEST_DENIED_TOOLS: FrozenSet[str] = frozenset({
     # Mode-scoping this one would therefore be a wider ruling than the one
     # that was made, not an application of it.
     "remember",
+    # ...and cannot read them back either. `what_i_remember` lists what is
+    # recorded about the *owner*, so it is the read half of the write above
+    # and falls on the same side of I6 for the same reason. Listing it
+    # separately rather than trusting the allowlist: a reader deciding
+    # whether to mode-scope these needs to see that both halves were
+    # considered, not infer it from an absence.
+    "what_i_remember",
     # The world
     "web_search",
     # Becoming someone else. A guest that could call this would walk out of

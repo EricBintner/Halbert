@@ -329,6 +329,17 @@ class ToolExecutor:
 
         self.register("remember", remember, REMEMBER_SCHEMA)
 
+        # RQ-5: "what do you remember about me", answered from the store.
+        # A model asked this will round a list of three up to a plausible
+        # four, and an invented memory of a person is the worst output this
+        # mechanism could produce -- so the answer is rendered rows, and the
+        # rendering says the list is complete. It deliberately cannot forget:
+        # erasure is staged on a surface and confirmed, never executed from a
+        # model's reading of a sentence.
+        from .about_you_tool import WHAT_I_REMEMBER_SCHEMA, what_i_remember
+
+        self.register("what_i_remember", what_i_remember, WHAT_I_REMEMBER_SCHEMA)
+
         # Thread meta-tools (Plan A, spec §7). The schemas are what the model
         # sees; PLANNING handles the calls inline and never dispatches them
         # here, so the handler is a stub (see execute()). Descriptions stay
