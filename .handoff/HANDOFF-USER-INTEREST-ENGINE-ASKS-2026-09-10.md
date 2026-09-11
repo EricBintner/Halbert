@@ -120,6 +120,26 @@ invites.
 
 ---
 
+## 4. No public way to update a memory's metadata
+
+`confirm_memory`, `correct_memory` and `add_keywords` each mutate a memory and
+persist it; there is no general equivalent. A consumer that keeps its own state
+in `metadata` -- which the engine invites, since `metadata` is a free dict and
+the handoff's §1 advice points writers at building their own `PersonaMemory` --
+has to reach for `_save_to_disk` to make a change durable.
+
+Halbert hit this on the "stop using" verb: the interest's status lives in
+`metadata`, recall reads it from the memory (the observation mirror is
+body-local and does not travel under Singular Entity), and leaving it unwritten
+meant a person could ask for a fact to stop being used and have it keep
+appearing. The workaround mutates the object from `get()` and calls
+`_save_to_disk`, and returns a reason when either is absent so the caller can
+report `complete=False` rather than claim a status it did not set.
+
+**Ask:** `set_metadata(memory_id, **fields) -> bool`, persisting like the three
+that already do. A peer-backed store can then implement it honestly instead of
+a consumer guessing at privates that may not exist on that backend.
+
 ## Not an ask: the dedup interaction, recorded
 
 `smart_add`'s semantic duplicate check (0.85) collapses near-miss topics —

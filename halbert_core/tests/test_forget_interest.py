@@ -214,3 +214,78 @@ class TestTheStaleReasonConvention:
             "if these drift the engine stops recognising our tombstone and "
             "silently resurrects what a person asked to drop"
         )
+
+
+class TestStopUsingActuallyStopsRecall:
+    """The verb's whole promise, and it was broken.
+
+    "Stop using" marked the mirror stale and left the memory's own status at
+    `active` -- and RECALL-v1 reads status from the memory, because under
+    Singular Entity the observation store is body-local and does not travel.
+    So a person asked for a fact to stop being used and it kept appearing in
+    every on-topic turn.
+    """
+
+    def test_the_memory_status_changes_not_just_the_mirror(self, stores):
+        from halbert_core.continuity.interests import Interest
+
+        mem, obs, plant = stores
+        interest, memory_id, _ = plant()
+        stop_using_interest(interest, memory_id, turn="t7",
+                            memory_store=mem, observation_store=obs)
+        back = Interest.from_persona_memory(mem.get(memory_id))
+        assert back is not None
+        assert back.status is not InterestStatus.ACTIVE
+
+    def test_recall_no_longer_selects_it(self, stores):
+        from halbert_core.continuity.interests import Interest
+        from halbert_core.continuity.recall_interest import select_interest
+
+        class _S:
+            entities = {"thinkpads"}
+            detected_domains = []
+            intent = "question"
+            is_troubleshooting = False
+            has_error_indicators = False
+
+        mem, obs, plant = stores
+        interest, memory_id, _ = plant()
+        rows = [r for r in (Interest.from_persona_memory(m)
+                            for m in mem.list_memories()) if r]
+        assert select_interest(rows, _S(), thread_id="t") is not None, (
+            "precondition: it was being injected before"
+        )
+
+        stop_using_interest(interest, memory_id, turn="t7",
+                            memory_store=mem, observation_store=obs)
+
+        rows = [r for r in (Interest.from_persona_memory(m)
+                            for m in mem.list_memories()) if r]
+        assert select_interest(rows, _S(), thread_id="t") is None, (
+            "the person asked for it to stop being used"
+        )
+
+    def test_remember_again_restores_it(self, stores):
+        from halbert_core.continuity.interests import Interest
+        from halbert_core.continuity.forget_interest import resume_interest
+
+        mem, obs, plant = stores
+        interest, memory_id, _ = plant()
+        stop_using_interest(interest, memory_id, turn="t7",
+                            memory_store=mem, observation_store=obs)
+        report = resume_interest(interest, memory_id,
+                                 memory_store=mem, observation_store=obs)
+        assert report["complete"] is True
+        back = Interest.from_persona_memory(mem.get(memory_id))
+        assert back.status is InterestStatus.ACTIVE
+
+    def test_a_store_that_cannot_persist_reports_incomplete(self, stores, monkeypatch):
+        mem, obs, plant = stores
+        interest, memory_id, _ = plant()
+        monkeypatch.setattr(mem, "get", lambda _id: None)
+        report = stop_using_interest(interest, memory_id, turn="t",
+                                     memory_store=mem, observation_store=obs)
+        assert report["complete"] is False, (
+            "the mirror was marked but the record still says active; saying "
+            "'done' would leave the fact in play"
+        )

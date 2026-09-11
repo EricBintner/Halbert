@@ -34,6 +34,8 @@ import logging
 from datetime import date
 from typing import Any, Dict, List, Optional
 
+from .interests import InterestStatus
+
 logger = logging.getLogger("halbert.continuity.forget_interest")
 
 __all__ = [
@@ -93,6 +95,45 @@ def _report(**kw: Any) -> Dict[str, Any]:
     return base
 
 
+
+def _set_status(memory_store: Any, memory_id: str, status: str) -> Optional[str]:
+    """Write the interest's status onto the memory row. ``None`` on success.
+
+    **Why this is not optional.** RECALL-v1 reads status from the *memory*,
+    not from the mirror -- under Singular Entity the observation store is
+    body-local and does not travel, so the memory is the only copy the whole
+    entity sees. Marking the mirror stale and leaving the record ``active``
+    means the person asked for a fact to stop being used and it kept
+    appearing.
+
+    **The engine gap.** ``PersonaMemoryStore`` has no public metadata update:
+    ``confirm_memory``, ``correct_memory`` and ``add_keywords`` each mutate
+    and persist, but there is no general one. So this mutates the live object
+    from ``get()`` and persists through ``_save_to_disk``. Returns a reason
+    when it cannot -- a peer-backed store may expose neither -- so the caller
+    reports ``complete=False`` rather than claiming a status it did not set.
+    A public ``set_metadata`` is the upstream ask.
+    """
+    if memory_store is None:
+        return "no memory store"
+    try:
+        getter = getattr(memory_store, "get", None)
+        memory = getter(memory_id) if getter else None
+        if memory is None:
+            return f"memory {memory_id!r} was not found"
+        meta = dict(getattr(memory, "metadata", None) or {})
+        meta["status"] = status
+        memory.metadata = meta
+        save = getattr(memory_store, "_save_to_disk", None)
+        if save is None:
+            return "this store cannot persist a status change"
+        save()
+        return None
+    except Exception as e:
+        logger.warning("could not set status on %s: %s", memory_id, e)
+        return f"status: {e}"
+
+
 def _mirror_rows(observation_store: Any, interest: Any, memory_id: str) -> List[Any]:
     """The observation rows this memory wrote, enumerated through FTS.
 
@@ -122,6 +163,15 @@ def stop_using_interest(
     """
     report = _report(memory=True, verb="stop_using")
     reason = f"{STALE_REASON_USER}{turn or 'unknown-turn'}"
+
+    # The record first: the mirror is an index, and leaving the record active
+    # is what made this verb a no-op for recall.
+    status_error = _set_status(
+        memory_store, memory_id, InterestStatus.FORGET_REQUESTED.value
+    )
+    if status_error:
+        report["memory"] = False
+        report["errors"].append(status_error)
 
     if observation_store is None:
         report["errors"].append("no observation store")
@@ -190,3 +240,30 @@ def forget_interest(
 
     report["complete"] = not report["errors"]
     return report
+
+
+def resume_interest(
+    interest: Any,
+    memory_id: str,
+    *,
+    memory_store: Any = None,
+    observation_store: Any = None,
+) -> Dict[str, Any]:
+    """"Remember again" -- undo a stop-using.
+
+    Only the record is restored. The mirror is rebuilt by the next save rather
+    than un-staled here: the engine's tombstone deliberately refuses to
+    un-stale a row, and routing around that would defeat the protection that
+    makes "stop using" trustworthy in the first place.
+    """
+    report = _report(verb="resume")
+    status_error = _set_status(
+        memory_store, memory_id, InterestStatus.ACTIVE.value
+    )
+    if status_error:
+        report["errors"].append(status_error)
+    else:
+        report["memory"] = True
+    report["complete"] = not report["errors"]
+    return report
+
