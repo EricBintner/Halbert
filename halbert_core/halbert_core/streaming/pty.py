@@ -42,6 +42,33 @@ _KILL_REAP_INTERVAL_S = 0.05
 
 _DEFAULT_BUFFER_BYTES = 1024 * 1024  # 1 MiB scrollback
 
+#: Pagers are a shell escape, so no command run here gets one.
+#:
+#: The command classifier decides at spawn whether a session is safe. A pager
+#: invalidates that decision the moment it opens: ``less`` offers ``!command``,
+#: and ``git``/``systemctl``/``man`` execute ``$GIT_PAGER``/``$SYSTEMD_PAGER``/
+#: ``$MANPAGER`` *as a shell command*. So a command the classifier waved through
+#: as read-only becomes an interactive shell, and writes into a live session's
+#: stdin are not re-classified.
+#:
+#: Verified on this machine: ``git log -1`` classifies MEDIUM and auto-runs, and
+#: with ``GIT_PAGER`` set in the environment the pager ran as uid 501. The
+#: environment is inherited from Halbert's own process, so this closes the case
+#: where that inherited value is not what the owner would have chosen, and — the
+#: reason it is worth doing — it stops every allowlisted read-only command from
+#: being a route to an interactive prompt.
+#:
+#: ``LESSSECURE=1`` is the belt to that brace: it disables ``!``, ``|`` and
+#: ``:e`` inside ``less`` for the cases where something invokes it directly.
+_PAGER_NEUTERED = {
+    "PAGER": "cat",
+    "GIT_PAGER": "cat",
+    "SYSTEMD_PAGER": "cat",
+    "SYSTEMD_LESS": "",
+    "MANPAGER": "cat",
+    "LESSSECURE": "1",
+}
+
 
 class PTYSession:
     """Async PTY session using ``os.openpty()`` + ``aiofiles``.
@@ -287,6 +314,7 @@ class PTYSession:
                 if self._cwd:
                     os.chdir(self._cwd)
                 child_env = dict(os.environ)
+                child_env.update(_PAGER_NEUTERED)
                 if self._env:
                     child_env.update(self._env)
                 # Ensure the PTY is the controlling terminal

@@ -25,7 +25,13 @@ Status key: `[ ]` not started · `[~]` in progress · `[x]` done, wired and test
 - [x] Host-header allowlist middleware → 421 for any unlisted Host (DNS rebinding)
 - [x] Origin **and** credential check on all four WebSocket handlers
 - [x] `_is_local_client` returns **False** on absent `request.client`
-- [x] Non-loopback bind refuses to start without a token (`guard_bind`, wired in `__main__`)
+- [~] Non-loopback bind refuses to start without a token — **claimed done, actually partial.**
+      `guard_bind` runs only in `python -m halbert_core.dashboard`. The two shipped `deploy/*.service`
+      units, `packaging/systemd/.../halbert-dashboard.service`, `Halbert/main.py:cmd_dashboard_serve`
+      and `app.py`'s own `__main__` block all run uvicorn against `dashboard.app:app` directly and
+      never reach it. `Environment=HALBERT_HOST` in those units is inert for the same reason.
+      The unit comments have been corrected to say so; the guard still needs wiring where the bind
+      address is actually known. Bounded by the fact that `require_owner` now covers every route.
 - [x] MCP HTTP refuses to serve with no bearer token; validates Origin and Host
       (`_check_forgery`; "open mode" deleted)
 - [x] Wyoming binds `127.0.0.1` (`audio/config.py`, `wyoming_ingress.py`)
@@ -44,20 +50,52 @@ Status key: `[ ]` not started · `[~]` in progress · `[x]` done, wired and test
 - [ ] Tauri audio socket per-connection token (`src-tauri/src/audio_capture.rs`) — **still open**
 - [ ] `scripts/halbert-kiosk.service` updated to mint a ticket at start
 
-### `[ ]` SEC-2 · Command classification and execution containment — 11 findings (C1 H3 M6 L1)
-- [ ] Deny-by-default classification; unrecognised command no longer auto-runs at MEDIUM
-- [ ] Normalise (expand `~`, resolve relative) **before** the sensitive-path check
+### `[~]` SEC-2 · Command classification and execution containment — 11 findings (C1 H3 M6 L1)
+- [x] `get_service_status` stops shell-interpolating a model-supplied argument — the whole module
+      is argv now, there is no shell to inject into (`75e3f47c`)
+- [x] **Credential reads gated** (not in the audit; `79dca611`). `read_file /etc/shadow` and
+      `read_file ~/.ssh/id_ed25519` returned SAFE; `cat ~/.ssh/id_ed25519` returned LOW. The
+      SENSITIVE_PATHS elevation only bumps one level and only MEDIUM→HIGH gates, so it never fired
+      for a read. Filename-keyed, not directory-keyed, so `sshd_config` stays readable.
+- [x] **Pager escape closed** (not in the audit; `79dca611`). `git log -1` auto-runs at MEDIUM,
+      spawns a pager, and the pager executes `$GIT_PAGER` as a shell command. Verified running as
+      uid 501 through the real `PTYSession`.
+- [ ] **Deny-by-default classification — DESIGNED AND MEASURED, NOT LANDED.** The plan's
+      `unknown → HIGH` takes the prompt rate on Halbert's own command repertoire from 3.1% to
+      **82.8%**. The allowlist alternative converges to ~11%, but the proposed patch has five live
+      defects. Referred to Fable — see `REVIEW-PACKET-12` §5.1 and `research/sec-2-3/`.
+- [ ] Normalise (expand `~`, `$HOME`, relative) **before** the sensitive-path check
 - [ ] `cwd` classified alongside the command
-- [ ] `find … -exec` no longer SAFE; word-boundary anchor on the `ls|dir|find|locate` rule
-- [ ] Sandbox applied to the agent's own commands, not only the two HTTP routes
-- [ ] `get_service_status` stops shell-interpolating a model-supplied argument
+- [ ] `find … -exec` no longer SAFE; word boundary on the `ls|dir|find|locate` rule.
+      **Coupled to the default:** 27 of 38 currently-SAFE argv commands (`lspci`, `lsof`,
+      `findmnt`…) are SAFE *only* because the rule is a bare prefix match. Fixing the regex alone
+      pushes them all into the default branch.
+- [ ] Sandbox applied to the agent's own commands, not only the two HTTP routes.
+      **See the seatbelt ruling first** — the proposed profile fails silently (`diskutil list`
+      returns rc=0 and zero bytes), and the *current* one already blocks all network.
+- [ ] `man -P`, `less`/`LESSOPEN` and other read-only binaries that take a program as an argument
 
-### `[ ]` SEC-3 · Path containment and the privileged write path — 17 findings (C2 H5 M8 L2)
-- [ ] One realpath-resolved containment helper; `startswith('/')` gone
-- [ ] `sudo -n tee` / `sudo -n cat` fallback deleted
+### `[~]` SEC-3 · Path containment and the privileged write path — 17 findings (C2 H5 M8 L2)
+- [x] Persona purge traversal closed — a persona is a name that cannot express a path, plus a
+      resolved-containment check (`75e3f47c`, F7/F171)
+- [x] `backup_id` traversal closed — pinned to the shape `create_backup` generates (`75e3f47c`, F28)
+- [ ] **One containment primitive — PROPOSED, NOT LANDED.** `research/sec-2-3/containment.py`
+      is good work but is not a drop-in: on macOS with `root="/"` it refuses `/etc/hosts` because
+      `etc` is a symlink to `private/etc`, so it needs a root allowlist (a product decision — which
+      roots may the editor open?). `ResolvedPath` cannot be threaded through `editor.py`, which uses
+      the path as a *string* in six places. It breaks the 7 tests in `test_write_paths_guarded.py`.
+      And `write_bytes` is `ftruncate(0)` then `write` — a crash mid-write on `sshd_config` leaves
+      it empty. Needs the atomic-replace method first.
+- [ ] `startswith('/')` gone from `editor.py` (`:348`, `:388`)
+- [ ] `sudo -n tee` / `sudo -n cat` fallback deleted — on macOS these can never succeed anyway
+      (no polkit, no NOPASSWD, no TTY)
 - [ ] Shell helpers replaced by a typed broker; per-action polkit ids;
-      `auth_admin_keep` only on the read-only diagnostic set
+      `auth_admin_keep` only on the read-only diagnostic set (it is currently on all three,
+      including write and exec, so one password unlocks a session of root writes)
 - [ ] Editor backups stop writing privileged content into world-readable files
+- [ ] Platform note verified on this machine: `O_TMPFILE`, `os.linkat` and `os.openat2` are all
+      **absent**; `os.rename in os.supports_dir_fd` is **True**. The plan's stated
+      `O_TMPFILE`+`linkat` primitive does not exist here.
 
 ### `[ ]` SEC-4 · One enforcing approval and autonomy gate; policy engine deleted — 17 findings (H4 M11 L2)
 - [ ] Policy engine deleted (`SEC-D11`); `reach.*` grants become the per-tool policy

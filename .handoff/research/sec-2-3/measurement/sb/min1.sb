@@ -1,0 +1,5 @@
+(version 1)
+(deny default)
+(allow process-exec)
+(allow process-fork)
+(allow file-read*)

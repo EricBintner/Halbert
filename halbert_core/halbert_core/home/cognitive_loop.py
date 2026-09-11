@@ -187,10 +187,15 @@ class HomeCognitiveLoop:
 
             # --- Phase 4: ACT (through AutonomyGate) ---
             for action in desired_actions:
-                decision = self.gate.evaluate(
+                # SEC-9: the fourth call site, and the one that runs unattended.
+                # `_execute_action` forwards `action["data"]` to Home Assistant,
+                # so judging `entity_id` alone left the gate ruling on a field
+                # the executor does not send.
+                decision = self.gate.evaluate_call(
                     domain=action["domain"],
                     entity_id=action.get("entity_id", ""),
                     service=action.get("service", ""),
+                    data=action.get("data"),
                 )
                 action_record = {
                     "action": action,

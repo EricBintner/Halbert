@@ -104,18 +104,39 @@ export function authHeaders(): Record<string, string> {
  * Only requests to our own backend are touched: a model provider or any other
  * third party must never receive this header.
  */
+/**
+ * This machine's own backend origin — never a peer's.
+ *
+ * Deliberately not `apiBase()`. That returns the *active body*, which the
+ * Presence Pill switches to another machine on the LAN; using it here sent this
+ * machine's API token to a peer's host, over plain HTTP, on every request after
+ * a body switch. A credential that identifies this machine has no business
+ * leaving it, and a peer authenticates with its own bearer token through the
+ * federation routes.
+ */
+function localApiBase(): string {
+  if (typeof window === 'undefined') return ''
+  const injected = window.__HALBERT_API_BASE__
+  return injected ? injected.replace(/\/$/, '') : ''
+}
+
 export function installAuthFetch(): void {
   if (typeof window === 'undefined' || !window.fetch) return
   const token = apiToken()
   if (!token) return // browser: the session cookie carries it
 
   const original = window.fetch.bind(window)
-  const base = apiBase()
+  const localBase = localApiBase()
 
   window.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
     const url =
       typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
-    const ours = base ? url.startsWith(base) : url.startsWith('/')
+    // Same-origin relative URLs are ours; an absolute URL is ours only if it is
+    // this machine's backend. Anything else — a peer body, a model provider, a
+    // documentation fetch — gets nothing.
+    const ours = url.startsWith('/')
+      ? true
+      : localBase !== '' && (url === localBase || url.startsWith(localBase + '/'))
     if (!ours) return original(input, init)
 
     const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined))

@@ -82,6 +82,44 @@ describe('installAuthFetch', () => {
     expect(new Headers(init?.headers).get('X-Halbert-Token')).toBe('secret')
   })
 
+  it('never sends the credential to a peer body after a Presence Pill switch', async () => {
+    // The regression this guards: installAuthFetch keyed on apiBase(), which
+    // returns the *active body*. Switching to a peer therefore sent this
+    // machine's token to another host on the LAN, over plain HTTP, on every
+    // request. A credential that identifies this machine must not leave it.
+    window.__HALBERT_TOKEN__ = 'secret'
+    window.__HALBERT_API_BASE__ = 'http://127.0.0.1:8042'
+    localStorage.setItem('halbert:active-body', 'http://192.168.1.50:8001')
+
+    const spy = vi.fn(
+      (_input: RequestInfo | URL, _init?: RequestInit) => Promise.resolve(new Response('{}')),
+    )
+    window.fetch = spy as unknown as typeof fetch
+    installAuthFetch()
+
+    await window.fetch('http://192.168.1.50:8001/api/findings')
+    const init = spy.mock.calls[0][1]
+    const sent = init?.headers ? new Headers(init.headers).get('X-Halbert-Token') : null
+    expect(sent).toBeFalsy()
+
+    localStorage.removeItem('halbert:active-body')
+  })
+
+  it('does not send the credential to a host that merely shares a prefix', async () => {
+    window.__HALBERT_TOKEN__ = 'secret'
+    window.__HALBERT_API_BASE__ = 'http://127.0.0.1:80'
+    const spy = vi.fn(
+      (_input: RequestInfo | URL, _init?: RequestInit) => Promise.resolve(new Response('{}')),
+    )
+    window.fetch = spy as unknown as typeof fetch
+    installAuthFetch()
+
+    await window.fetch('http://127.0.0.1:8080/api/findings')
+    const init = spy.mock.calls[0][1]
+    const sent = init?.headers ? new Headers(init.headers).get('X-Halbert-Token') : null
+    expect(sent).toBeFalsy()
+  })
+
   it('never sends the credential to a third party', async () => {
     window.__HALBERT_TOKEN__ = 'secret'
     window.__HALBERT_API_BASE__ = 'http://127.0.0.1:8042'

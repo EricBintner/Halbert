@@ -15,7 +15,7 @@
  */
 
 import { useState, useCallback, useRef, useEffect } from 'react';
-import { apiUrl } from '@/lib/apiBase';
+import { apiToken, apiUrl } from '@/lib/apiBase';
 import type { AcousticAnomalyData } from '@/components/audio';
 
 // -----------------------------------------------------------------------------
@@ -165,7 +165,14 @@ export function useBeingEvents(): UseBeingEventsResult {
       eventSourceRef.current.close();
     }
 
-    const es = new EventSource(apiUrl('/api/being/events'));
+    // EventSource cannot set a header, and in the Tauri webview it cannot use a
+    // cookie either (the webview is cross-origin to its own sidecar), so the
+    // credential goes in the query string — the one route that accepts it there.
+    // Without this the proactive feed is permanently 401 in the desktop app.
+    const token = apiToken();
+    const es = new EventSource(
+      apiUrl('/api/being/events') + (token ? `?token=${encodeURIComponent(token)}` : ''),
+    );
     eventSourceRef.current = es;
 
     es.onmessage = (e) => {

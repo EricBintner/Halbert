@@ -23,13 +23,12 @@
   - **Still open, deliberately:** the SPDX `WITH LicenseRef-Halbert-AppStore-Exception` header
     rewrite across ~1,036 files. Deferred as a large mechanical commit, not part of the decision.
 
-- [x] **`FDR-DEC-03` Bundle identifiers & packaging namespaces** — **decided 2026-09-04.**
-  `ai.halbert.home` (App Store) / `ai.halbert.pro` (direct DMG) / `ai.halbert.dashboard`
-  (dev, internal **and Linux**). Linux takes `dashboard` to match the already-published
-  `packaging/flatpak/ai.halbert.dashboard.yml` app-id rather than renaming it — a fourth
-  conflict the earlier drafts missed.
-  - **Still open:** applying it. `config/platforms.yml` still says `ai.halbert.macos.*`, and
-    `scripts/build-macos.sh` has no per-channel injection at all. Tracked as `DIST-1` in `ROADMAP.md`.
+- [x] **`FDR-DEC-03` Bundle identifiers & packaging namespaces** — **decided 2026-09-04,
+  superseded 2026-09-07 by `SEC-D10`.** Canonical ids are now `config/platforms.yml`'s:
+  `ai.halbert.macos.pro` (direct DMG) / `ai.halbert.macos.free` (App Store) /
+  `ai.halbert.linux` (Linux, flatpak renamed accordingly) / `ai.halbert.dev` (dev builds).
+  - **Still open:** applying the per-channel injection. `scripts/build-macos.sh` has no
+    per-channel injection at all. Tracked as `DIST-1` in `ROADMAP.md`.
 
 - [ ] **`FDR-DEC-04` Lock pricing & perpetual terms for Halbert Pro** — **still yours to set.**
   Three different numbers are written down and none is a decision: this file previously said
@@ -51,8 +50,8 @@
 
 - [ ] **`FDR-INF-01` Apple Developer Program Account Provisioning**
   - Verify Apple Developer Program membership ($99/year) under Magnetic Anomaly LLC or individual developer account.
-  - Create **Mac App Store Provisioning Profile** with App Sandbox enabled for `ai.halbert.home`.
-  - Create **Developer ID Application Certificate** for signing direct unsandboxed DMGs for `ai.halbert.pro`.
+  - Create **Mac App Store Provisioning Profile** with App Sandbox enabled for `ai.halbert.macos.free`.
+  - Create **Developer ID Application Certificate** for signing direct unsandboxed DMGs for `ai.halbert.macos.pro`.
   - Set up `notarytool` credentials in local macOS keychain for automated CI notarization.
 
 - [ ] **`FDR-INF-02` Lemon Squeezy / Payment Merchant Setup**

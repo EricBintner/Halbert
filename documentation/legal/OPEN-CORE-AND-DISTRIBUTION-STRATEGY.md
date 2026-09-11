@@ -79,15 +79,15 @@ mounted nowhere; mounting it is this commercial decision, not a wiring fix. Unre
 |---|---|---|---|
 | Product | Halbert Home (free) | Halbert Pro (sold) | OSS core (free) |
 | Sandbox | `com.apple.security.app-sandbox` | unsandboxed, Hardened Runtime | n/a |
-| Bundle id | `ai.halbert.home` | `ai.halbert.pro` | `ai.halbert.dashboard` |
+| Bundle id | `ai.halbert.macos.free` | `ai.halbert.macos.pro` | `ai.halbert.linux` |
 | Signing | Mac App Store provisioning | Developer ID + notarization | distro-native |
 | Private API | **off** (`FDR-08`) | on | n/a |
 | Licence | `GPL-3.0-or-later` + App Store §7 exception | `GPL-3.0-or-later` | `GPL-3.0-or-later` |
 | Corpus | FDL/NC content barred by the gate | full | full |
 | Updates | Mac App Store | Sparkle (Phase B) | distro package manager |
 
-Dev and internal builds keep `ai.halbert.dashboard`; per-channel identifiers are
-injected at build time.
+Dev and internal builds use `ai.halbert.dev`; per-channel identifiers are
+injected at build time (`SEC-D10`, superseding `FDR-03`).
 
 ### 5.1 What fits inside the sandbox
 

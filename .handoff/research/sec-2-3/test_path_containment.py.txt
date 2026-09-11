@@ -1,0 +1,213 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
+"""The exploits SEC-3 found, run against the primitive that answers them."""
+import os
+import stat
+
+import pytest
+
+from halbert_core.utils.containment import (
+    PathRefusal,
+    resolve_once,
+    resolve_under_any,
+)
+
+
+@pytest.fixture
+def root(tmp_path):
+    """A root with a real subtree and an outside neighbour to aim at."""
+    r = tmp_path / "etc"
+    (r / "nginx").mkdir(parents=True)
+    (r / "nginx" / "nginx.conf").write_text("worker_processes 1;\n")
+    outside = tmp_path / "root" / ".ssh"
+    outside.mkdir(parents=True)
+    (outside / "authorized_keys").write_text("ssh-rsa MINE\n")
+    return str(r)
+
+
+def _refusal(fn, *a, **kw):
+    with pytest.raises(PathRefusal) as e:
+        fn(*a, **kw)
+    return e.value
+
+
+# --- the exploits ----------------------------------------------------------
+
+
+def test_dotdot_escape_is_refused(root):
+    """The bash helper accepts this today: `/etc/` is a prefix of it."""
+    attack = root + "/../root/.ssh/authorized_keys"
+    assert attack.startswith(root + "/")  # the helper's whole test
+    assert _refusal(resolve_once, attack, root=root).reason == "traversal"
+
+
+def test_symlinked_parent_is_refused(root):
+    """A directory inside the root pointing out of it."""
+    os.symlink(os.path.join(root, "..", "root", ".ssh"),
+               os.path.join(root, "keys"))
+    r = _refusal(resolve_once, "keys/authorized_keys", root=root)
+    assert r.reason == "symlink"
+
+
+def test_symlinked_leaf_is_refused(root):
+    os.symlink(os.path.join(root, "..", "root", ".ssh", "authorized_keys"),
+               os.path.join(root, "shortcut"))
+    assert _refusal(resolve_once, "shortcut", root=root).reason == "symlink"
+
+
+def test_tilde_is_refused_never_expanded(root):
+    """write_file's gate reads the raw arg while the handler expands it."""
+    assert _refusal(resolve_once, "~/.ssh/authorized_keys",
+                    root=root).reason == "tilde"
+
+
+def test_relative_path_is_anchored_to_root_not_cwd(root, tmp_path, monkeypatch):
+    """A caller-supplied cwd cannot move where a relative path lands."""
+    monkeypatch.chdir(tmp_path / "root" / ".ssh")
+    assert os.path.exists("authorized_keys")  # cwd really does hold it
+    assert _refusal(resolve_once, "authorized_keys", root=root).reason == "missing"
+
+
+def test_absolute_path_outside_root_is_refused(root, tmp_path):
+    outside = str(tmp_path / "root" / ".ssh" / "authorized_keys")
+    assert _refusal(resolve_once, outside, root=root).reason == "outside_root"
+
+
+def test_null_byte_is_refused(root):
+    assert _refusal(resolve_once, "nginx/nginx.conf\x00.txt",
+                    root=root).reason == "null_byte"
+
+
+# --- the good path ---------------------------------------------------------
+
+
+def test_legitimate_path_resolves_and_reads(root):
+    with resolve_once("nginx/nginx.conf", root=root) as r:
+        assert r.read_bytes() == b"worker_processes 1;\n"
+        assert r.st_ino == os.stat(os.path.join(root, "nginx/nginx.conf")).st_ino
+
+
+def test_absolute_form_of_the_same_file_is_the_same_inode(root):
+    with resolve_once("nginx/nginx.conf", root=root) as a, \
+            resolve_once(root + "/nginx/nginx.conf", root=root) as b:
+        assert (a.st_dev, a.st_ino) == (b.st_dev, b.st_ino)
+
+
+def test_write_goes_through_the_descriptor(root):
+    with resolve_once("nginx/nginx.conf", root=root, for_write=True) as r:
+        r.write_bytes(b"worker_processes 4;\n")
+    assert (open(os.path.join(root, "nginx/nginx.conf")).read()
+            == "worker_processes 4;\n")
+
+
+def test_resolve_under_any_picks_the_root_that_holds_it(root, tmp_path):
+    other = tmp_path / "varlib"
+    other.mkdir()
+    (other / "state").write_text("s")
+    with resolve_under_any("state", [root, str(other)]) as r:
+        assert r.read_bytes() == b"s"
+    # Missing in the first root is not a verdict; every root gets asked.
+    assert _refusal(resolve_under_any, "nope",
+                    [root, str(other)]).reason == "missing"
+    outside = str(tmp_path / "root" / ".ssh" / "authorized_keys")
+    assert _refusal(resolve_under_any, outside,
+                    [root, str(other)]).reason == "outside_root"
+
+
+# --- the API refuses to be re-opened by name -------------------------------
+
+
+def test_resolved_path_cannot_be_used_as_a_path(root):
+    with resolve_once("nginx/nginx.conf", root=root) as r:
+        assert _refusal(open, r).reason == "reopen_by_name"
+        assert _refusal(os.fspath, r).reason == "reopen_by_name"
+
+
+# --- creation --------------------------------------------------------------
+
+
+def test_create_makes_the_file_beneath_the_root(root):
+    with resolve_once("nginx/new.conf", root=root, for_write=True,
+                      create=True) as r:
+        assert r.created
+        r.write_bytes(b"x")
+    assert (open(os.path.join(root, "nginx/new.conf")).read()) == "x"
+
+
+def test_create_over_a_planted_symlink_does_not_follow_it(root, tmp_path):
+    """O_CREAT|O_EXCL loses the race safely; the second open is O_NOFOLLOW."""
+    target = tmp_path / "root" / ".ssh" / "authorized_keys"
+    os.symlink(str(target), os.path.join(root, "nginx", "new.conf"))
+    assert _refusal(resolve_once, "nginx/new.conf", root=root,
+                    for_write=True, create=True).reason == "symlink"
+    assert target.read_text() == "ssh-rsa MINE\n"
+
+
+def test_create_on_an_existing_file_opens_it_rather_than_failing(root):
+    with resolve_once("nginx/nginx.conf", root=root, for_write=True,
+                      create=True) as r:
+        assert not r.created
+
+
+# --- what a component walk cannot see, and therefore refuses ---------------
+
+
+def test_hardlinked_target_is_refused_for_write(root, tmp_path):
+    """Genuinely beneath the root, and genuinely also outside it."""
+    outside = tmp_path / "root" / ".ssh" / "authorized_keys"
+    link = os.path.join(root, "nginx", "innocent.conf")
+    try:
+        os.link(str(outside), link)
+    except OSError:
+        pytest.skip("filesystem refuses hardlinks here")
+    assert _refusal(resolve_once, "nginx/innocent.conf", root=root,
+                    for_write=True).reason == "hardlink"
+
+
+def test_fifo_at_the_target_is_refused_not_blocked_on(root):
+    os.mkfifo(os.path.join(root, "nginx", "pipe.conf"))
+    r = _refusal(resolve_once, "nginx/pipe.conf", root=root, for_write=True)
+    assert r.reason in ("not_regular", "open_failed")
+
+
+# --- the filesystem's own ambiguities --------------------------------------
+
+
+def test_case_variant_names_the_same_inode_on_a_case_insensitive_fs(root):
+    """APFS default. Containment holds; string identity does not."""
+    p = os.path.join(root, "nginx", "nginx.conf")
+    if not os.path.exists(os.path.join(root, "nginx", "NGINX.CONF")):
+        pytest.skip("case-sensitive filesystem")
+    with resolve_once("nginx/NGINX.CONF", root=root) as r:
+        assert r.st_ino == os.stat(p).st_ino
+        # The kernel, not the caller, says what it is really called.
+        assert r.on_disk is None or r.on_disk.endswith("nginx.conf")
+
+
+def test_nfd_and_nfc_spellings_resolve_to_one_inode(root):
+    import unicodedata
+
+    nfc = unicodedata.normalize("NFC", "café.conf")
+    nfd = unicodedata.normalize("NFD", "café.conf")
+    (os.path.join(root, "nginx")) and open(
+        os.path.join(root, "nginx", nfc), "w").write("c")
+    if not os.path.exists(os.path.join(root, "nginx", nfd)):
+        pytest.skip("filesystem distinguishes NFC from NFD")
+    with resolve_once("nginx/" + nfd, root=root) as a, \
+            resolve_once("nginx/" + nfc, root=root) as b:
+        assert (a.st_dev, a.st_ino) == (b.st_dev, b.st_ino)
+
+
+def test_the_root_itself_may_be_a_symlink(tmp_path):
+    """/etc is a symlink to /private/etc on macOS; the root is trusted."""
+    real = tmp_path / "private" / "etc"
+    real.mkdir(parents=True)
+    (real / "hosts").write_text("127.0.0.1\n")
+    os.symlink(str(real), str(tmp_path / "etc"))
+    with resolve_once("hosts", root=str(tmp_path / "etc")) as r:
+        assert r.read_bytes() == b"127.0.0.1\n"
+
+
+def test_directory_root_itself_resolves(root):
+    with resolve_once("", root=root) as r:
+        assert stat.S_ISDIR(os.fstat(r.fd).st_mode)

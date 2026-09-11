@@ -14,7 +14,7 @@ import fnmatch
 import os
 import re
 import logging
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 logger = logging.getLogger('halbert.tools.safety')
 
@@ -62,6 +62,76 @@ class SafetyCheckResult:
 # model sees their schemas and the safety framework never treats them as
 # unknown (MEDIUM) tools.
 THREAD_META_TOOLS = ("new_thread", "recall_thread", "resume_thread")
+
+
+#: Filenames whose *contents* are a credential. Reading one is the harm.
+#:
+#: Deliberately keyed on the FILENAME, not the directory. A directory rule on
+#: ~/.ssh or /etc/ssh would gate `sshd_config` — the file `routes/editor.py`
+#: exists to edit — and `known_hosts`, which is ordinary troubleshooting. A gate
+#: that fires on the flagship use case is a gate the owner switches off, and
+#: then it protects nothing. Reading `sshd_config` is not the harm; reading the
+#: private key next to it is.
+#:
+#: Before this, `read_file` returned SAFE for every path (`_classify_builtin`),
+#: so /etc/shadow and ~/.ssh/id_ed25519 auto-executed. The `cat` path was no
+#: better: SENSITIVE_PATHS elevates by exactly one level, and SAFE -> LOW still
+#: auto-runs. Only MEDIUM -> HIGH ever gated anything.
+_SECRET_BASENAMES: Set[str] = {
+    "shadow", "gshadow", "sudoers", "master.passwd",
+    "credentials", "identity", ".netrc", "netrc", ".pgpass", ".my.cnf",
+    ".htpasswd", "api-token", ".env",
+}
+
+#: Suffixes that mean "this file is a key or a keystore".
+_SECRET_SUFFIXES: tuple = (
+    ".pem", ".key", ".p12", ".pfx", ".jks", ".keystore", ".kdbx", ".ppk", ".asc",
+)
+
+
+def _command_reads_secret(command: str) -> Optional[str]:
+    """The credential a command line names, or None.
+
+    Every whitespace token is tested, quotes stripped. Quoting is the bypass
+    that matters here: a path analysis fed raw whitespace-split tokens sees
+    ``"/Users/me/.ssh/id_ed25519"`` as a token that does not start with ``/``
+    and drops it, so one pair of quotes skips the whole check.
+    """
+    if not command:
+        return None
+    for token in command.split():
+        hit = _secret_read(token)
+        if hit:
+            return hit
+    return None
+
+
+def _secret_read(path: str) -> Optional[str]:
+    """The credential this path names, or None.
+
+    Quote-tolerant: a model writes ``cat "/Users/me/.ssh/id_ed25519"`` about as
+    often as the bare form, and a check that only sees the bare form is a check
+    one keystroke from being skipped.
+    """
+    if not path:
+        return None
+    cleaned = path.strip().strip("'\"")
+    if not cleaned:
+        return None
+    name = PurePosixPath(cleaned).name
+    lowered = name.lower()
+
+    # A public key is not a secret, and it lives beside one — check this first
+    # or `id_ed25519.pub` matches the private-key rule below.
+    if lowered.endswith(".pub"):
+        return None
+    if lowered in _SECRET_BASENAMES:
+        return name
+    if lowered.startswith("id_"):
+        return name
+    if lowered.endswith(_SECRET_SUFFIXES):
+        return name
+    return None
 
 
 def _command_segments(command: str) -> List[str]:
@@ -569,6 +639,19 @@ class ToolSafetyFramework:
         elif tool_name in ("write_file", "write_config"):
             return self._classify_write(args.get("path", ""))
         elif tool_name in ("read_file", "cat", "read_config"):
+            # "Read-only" is a statement about the filesystem, not about harm.
+            # This branch returned SAFE for every path, so `read_file` on
+            # /etc/shadow, ~/.ssh/id_ed25519 or ~/.aws/credentials auto-executed
+            # with no confirmation and no warning. Exfiltrating a key is a read.
+            secret = _secret_read(args.get("path", ""))
+            if secret:
+                return SafetyCheckResult(
+                    risk_level=RiskLevel.HIGH,
+                    allowed=True,
+                    requires_confirmation=True,
+                    reason=f"Reads a credential: {secret}",
+                    matched_rule="SECRET_FILENAMES",
+                )
             return SafetyCheckResult(
                 risk_level=RiskLevel.SAFE,
                 allowed=True,
@@ -788,6 +871,22 @@ class ToolSafetyFramework:
                     matched_rule=pattern.pattern
                 )
         
+        # A credential read outranks every rule below, including the SAFE ones.
+        #
+        # `cat ~/.ssh/id_ed25519` matched the "File reading" rule and elevated
+        # SAFE -> LOW on SENSITIVE_PATHS, which still auto-runs: the one-level
+        # bump only gates when it starts at MEDIUM. Checked here, before the
+        # rule table, so no rule can vouch for the line first.
+        secret = _command_reads_secret(command)
+        if secret:
+            return SafetyCheckResult(
+                risk_level=RiskLevel.HIGH,
+                allowed=True,
+                requires_confirmation=True,
+                reason=f"Reads a credential: {secret}",
+                matched_rule="SECRET_FILENAMES",
+            )
+
         # A SAFE rule may only speak for a line it can see all of. The
         # dangerous rules below are searched against the whole string and so
         # already catch a chained `rm`; what they cannot catch is a chained
@@ -831,6 +930,7 @@ class ToolSafetyFramework:
                     requires_confirmation=False,
                     reason=f"Accesses sensitive path: {path}"
                 )
+
         
         # Default for unrecognized commands
         return SafetyCheckResult(

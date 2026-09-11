@@ -154,7 +154,16 @@ class MemoryPurge:
         for file in target_dir.rglob("*"):
             if file.is_file():
                 estimated_size += file.stat().st_size
-                will_delete.append(str(file.relative_to(self.memory_root)))
+                # Against the RESOLVED root: `file` comes from rglob over the
+                # resolved target directory, and relative_to is a pure string
+                # operation. Comparing it to the unresolved root raised
+                # ValueError for every purge whenever memory_root was reached
+                # through a symlink — which is the ordinary macOS case, where
+                # /var is a symlink to /private/var. Introduced by the SEC-3
+                # containment fix and caught in review, not by its own tests:
+                # pytest's tmp_path is already resolved on this machine, so the
+                # fixture never exercised the case it was written to protect.
+                will_delete.append(str(file.relative_to(self._root_resolved)))
                 
                 # Count JSONL entries
                 if file.suffix == '.jsonl':

@@ -70,6 +70,57 @@ class TestTraversalIsRefused:
         assert (tmp_path / "outside" / "important.txt").exists()
 
 
+class TestSymlinkedRoot:
+    """The regression the first version of this fix shipped.
+
+    ``_persona_dir`` resolves the target, but ``preview_purge`` compared the
+    resulting files against the *unresolved* root — so every purge raised
+    ValueError whenever memory_root was reached through a symlink. That is the
+    ordinary macOS case: /var is a symlink to /private/var.
+
+    The original fixture missed it because pytest's ``tmp_path`` is already
+    resolved on this machine, so the tests never exercised the shape they were
+    written to protect. This class builds the symlink explicitly.
+    """
+
+    def test_preview_works_through_a_symlinked_root(self, tmp_path):
+        real = tmp_path / "real"
+        (real / "personas" / "friend").mkdir(parents=True)
+        (real / "personas" / "friend" / "n.jsonl").write_text('{"a": 1}\n')
+        link = tmp_path / "link"
+        link.symlink_to(real)
+
+        mp = MemoryPurge(memory_root=link)
+        confirmation = mp.preview_purge("friend")
+        assert confirmation.estimated_entries == 1
+        assert confirmation.will_delete == ["personas/friend/n.jsonl"]
+
+    def test_purge_works_through_a_symlinked_root(self, tmp_path):
+        real = tmp_path / "real"
+        (real / "personas" / "friend").mkdir(parents=True)
+        (real / "personas" / "friend" / "n.jsonl").write_text('{"a": 1}\n')
+        link = tmp_path / "link"
+        link.symlink_to(real)
+
+        mp = MemoryPurge(memory_root=link)
+        mp.execute_purge("friend", user="test", export_before=False)
+        assert not (real / "personas" / "friend" / "n.jsonl").exists()
+
+    def test_traversal_is_still_refused_through_a_symlinked_root(self, tmp_path):
+        """The containment guarantee must survive the fix to the regression."""
+        real = tmp_path / "real"
+        (real / "personas" / "friend").mkdir(parents=True)
+        (tmp_path / "outside").mkdir()
+        (tmp_path / "outside" / "keep.txt").write_text("keep")
+        link = tmp_path / "link"
+        link.symlink_to(real)
+
+        mp = MemoryPurge(memory_root=link)
+        with pytest.raises(ValueError):
+            mp.execute_purge("../../outside", user="test", export_before=False)
+        assert (tmp_path / "outside" / "keep.txt").exists()
+
+
 class TestOrdinaryUseStillWorks:
     def test_a_real_persona_previews(self, purge):
         mp, _ = purge

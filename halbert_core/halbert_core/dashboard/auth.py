@@ -384,6 +384,45 @@ if FASTAPI_AVAILABLE:
             headers={"WWW-Authenticate": "Bearer"},
         )
 
+    async def require_owner_stream(request: Request) -> None:
+        """``require_owner``, plus a ``?token=`` query parameter.
+
+        For ``EventSource`` only. The browser's SSE client cannot set a header,
+        and in the Tauri webview it cannot use a cookie either — the webview is
+        cross-origin to its own sidecar, where a ``SameSite`` cookie will not be
+        sent. So the credential has nowhere to ride except the URL.
+
+        That is a real cost: a URL lands in access logs and in ``Referer``. It is
+        accepted here and nowhere else, on one route that streams events the UI
+        already displays, and it is the same mechanism the WebSocket door
+        already uses. If the token in a URL becomes unacceptable, the fix for
+        both is a short-lived stream ticket rather than a different exception.
+        """
+        state = _state(request.app)
+        if not host_allowed(request.headers.get("host"), state.allowed_hosts):
+            raise HTTPException(
+                status_code=status.HTTP_421_MISDIRECTED_REQUEST,
+                detail="Unrecognised Host header.",
+            )
+        if not origin_allowed(request.headers.get("origin"), state.allowed_hosts):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Unrecognised Origin.",
+            )
+        kind, value = credential_from_headers(request.headers, request.cookies)
+        if state.check(kind, value):
+            request.state.principal = "owner"
+            return
+        qp = request.query_params.get("token")
+        if qp and state.check("bearer", qp):
+            request.state.principal = "owner"
+            return
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="This machine does not answer to callers it cannot identify.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
     class HostHeaderMiddleware(BaseHTTPMiddleware):
         """Refuse a Host we do not answer to, before routing.
 

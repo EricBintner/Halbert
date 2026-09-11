@@ -1,4 +1,4 @@
-app-id: ai.halbert.dashboard
+app-id: ai.halbert.linux
 runtime: org.gnome.Platform
 runtime-version: '45'
 sdk: org.gnome.Sdk
@@ -48,12 +48,12 @@ modules:
         EOF
         chmod +x /app/bin/halbert-api
       # Desktop file
-      - install -Dm644 /dev/stdin /app/share/applications/ai.halbert.dashboard.desktop << 'DESKTOP'
+      - install -Dm644 /dev/stdin /app/share/applications/ai.halbert.linux.desktop << 'DESKTOP'
         [Desktop Entry]
         Name=Halbert
         Comment=AI-Powered System Administration Assistant
         Exec=halbert
-        Icon=ai.halbert.dashboard
+        Icon=ai.halbert.linux
         Terminal=false
         Type=Application
         Categories=System;Utility;

@@ -1,0 +1,7 @@
+(version 1)
+(deny default)
+(allow process-exec)
+(allow process-fork)
+(allow signal (target self))
+(allow sysctl-read)
+(allow file-read* (subpath "/usr/lib") (subpath "/usr/bin") (subpath "/bin") (subpath "/sbin") (subpath "/usr/sbin") (subpath "/System"))
