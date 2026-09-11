@@ -1966,8 +1966,21 @@ class SqliteConversationStore:
                      status, title_source, parent_thread_id),
                 )
             return True
-        except sqlite3.IntegrityError:
-            logger.warning(f"create_thread: thread {thread_id} already exists")
+        except sqlite3.IntegrityError as e:
+            # Two different constraints reach here and they mean opposite
+            # things: a PRIMARY KEY collision (this id exists) and the
+            # one-leaf partial unique index (a thread is already open, and
+            # this id does not exist at all). Saying "already exists" for
+            # the second sends whoever reads the log looking for a duplicate
+            # that is not there, instead of at the open leaf.
+            if "conversations.status" in str(e):
+                logger.warning(
+                    "create_thread: refused %s -- a thread is already open "
+                    "(one leaf at a time); pause or move the leaf first",
+                    thread_id,
+                )
+            else:
+                logger.warning(f"create_thread: thread {thread_id} already exists: {e}")
             return False
         except Exception as e:
             logger.warning(f"create_thread failed: {e}")
@@ -2575,13 +2588,19 @@ class SqliteConversationStore:
                     " preserved_message_ids, summary_message_id, created_at, "
                     " coverage_end_id, generation, unresolved_request, "
                     " trigger_detail) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?)",
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         plan.thread_id, plan.trigger,
                         plan.pre_chars, plan.post_chars,
                         json.dumps(list(plan.preserved_message_ids)),
                         summary_id, time.time(), plan.coverage_end_id,
-                        plan.generation, plan.trigger_detail,
+                        plan.generation,
+                        # A16-G2: the column shipped NOT NULL DEFAULT '' and
+                        # every writer wrote the default, so a rotation that
+                        # folded away an unanswered question folded away the
+                        # only record that it had been asked.
+                        self._unresolved_request_locked(plan.thread_id),
+                        plan.trigger_detail,
                     ),
                 ).lastrowid
             logger.info(
@@ -2593,6 +2612,60 @@ class SqliteConversationStore:
         except Exception as e:
             logger.warning("write_compact_boundary failed: %s", e)
             return None
+
+    def unresolved_request(self, thread_id: str) -> str:
+        """The last thing asked that was never answered (A16-G2).
+
+        Design §4.3's extractor, deterministic and in SQL: the most recent
+        ``origin='human'`` row whose turn produced no assistant row marked
+        ``complete``. No model is asked what the open question was, because
+        a template answers it and the standing rule is that a template
+        always wins where one suffices.
+
+        The point is survival. A stopped turn's question is a row like any
+        other, so thirteen turns later it has scrolled out of the replayed
+        window and there is nothing anywhere — not the receipt, not the
+        notes, not ``open_loops``, which reads the *assistant's* last
+        message — that records the machine was asked for something and
+        never came back with it.
+        """
+        if self._conn is None or not thread_id:
+            return ""
+        try:
+            with self._lock:
+                return self._unresolved_request_locked(thread_id)
+        except Exception as e:
+            logger.warning("unresolved_request failed: %s", e)
+            return ""
+
+    def _unresolved_request_locked(self, thread_id: str) -> str:
+        """``unresolved_request`` with the lock already held.
+
+        ``write_compact_boundary`` reads this from inside its own
+        transaction, on purpose: the boundary and the question it records
+        have to describe the same instant, and the lock is re-entrant but
+        the transaction is not re-readable once it has written.
+        """
+        if self._conn is None or not thread_id:
+            return ""
+        try:
+            row = self._conn.execute(
+                    "SELECT m.content FROM messages m "
+                    "WHERE m.conversation_id = ? AND m.origin = 'human' "
+                    "  AND m.turn_id IS NOT NULL "
+                    "  AND NOT EXISTS ("
+                    "    SELECT 1 FROM messages a "
+                    "    WHERE a.conversation_id = m.conversation_id "
+                    "      AND a.turn_id = m.turn_id "
+                    "      AND a.role = 'assistant' "
+                    "      AND a.status = 'complete') "
+                    "ORDER BY m.id DESC LIMIT 1",
+                    (thread_id,),
+            ).fetchone()
+            return str(row[0] or "") if row else ""
+        except Exception as e:
+            logger.warning("unresolved_request read failed: %s", e)
+            return ""
 
     def last_compact_boundary(self, thread_id: str) -> Optional[Dict[str, Any]]:
         """The most recent rotation for a thread, or None.
@@ -3284,6 +3357,27 @@ class SqliteConversationStore:
                 ).fetchone()[0]
                 if int(present) != 2:
                     return None
+                # A merge says the split was spurious -- "no, same topic" --
+                # so the divider that announced it is a record of something
+                # that did not happen. Left visible it would be replayed
+                # inside the very thread it claims the conversation left,
+                # naming a subject that no longer exists as one. Hidden, not
+                # deleted: superseded rows stay on disk, unread, and this is
+                # the same visible_in_timeline the rotation writer uses. Only
+                # the crossings between THESE two threads, matched on the
+                # crossing key's own "from->to@boundary" shape, so a divider
+                # to a third subject is untouched.
+                self._conn.execute(
+                    "UPDATE messages SET visible_in_timeline = 0 "
+                    "WHERE origin = 'branch' AND conversation_id IN (?, ?) "
+                    "  AND (json_extract(metadata, '$.crossing') LIKE ? "
+                    "    OR json_extract(metadata, '$.crossing') LIKE ?)",
+                    (
+                        src_thread_id, dst_thread_id,
+                        f"{src_thread_id}->{dst_thread_id}@%",
+                        f"{dst_thread_id}->{src_thread_id}@%",
+                    ),
+                )
                 cur = self._conn.execute(
                     "UPDATE messages SET conversation_id = ? WHERE conversation_id = ?",
                     (dst_thread_id, src_thread_id),
