@@ -41,6 +41,8 @@ This documentation serves two audiences:
 | [13-adversarial-review-modality-handoff.md](13-adversarial-review-modality-handoff.md) | Theoretical Foundations & Blue-Sky Review: How humans truly want to engage with an embodied computer/home voice assistant |
 | [14-system-prompts-and-modality-gap-analysis.md](14-system-prompts-and-modality-gap-analysis.md) | Embodied System Prompts & Codebase Gap Analysis: Modality-aware prompt engineering, <speech> demuxing, and file-by-file implementation gaps |
 | [15-voice-mode-visual-ui-and-touchscreen-spec.md](15-voice-mode-visual-ui-and-touchscreen-spec.md) | Voice Mode Visual UI & Touchscreen Architecture: Audio-reactive Halbert Mark SVG vibration mechanics, N150 appliance power management, and touch interactions |
+| [DATA-VISUALIZATION-SPEC-AND-OPPORTUNITIES.md](DATA-VISUALIZATION-SPEC-AND-OPPORTUNITIES.md) | Data Visualization Specification & Opportunity Catalog: Olivetti/Rams aesthetic, Storage baseline fix, 9-domain viz blueprint, and Nivo (React+D3) integration |
+| [SCRUTINY-AND-REVERSE-ENGINEERING-DATA-VISUALIZATION-2026-09-11.md](SCRUTINY-AND-REVERSE-ENGINEERING-DATA-VISUALIZATION-2026-09-11.md) | Scrutiny, Reverse-Engineering & Best Practices Audit: Backend telemetry feasibility, D3/CSS variable crash, Cleveland-McGill perceptual rules, and Storage layout re-engineering |
 
 ---
 
