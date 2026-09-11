@@ -2777,12 +2777,28 @@ class AgentStateMachine:
         for retrieval scoping. Never raises: a skill that cannot be composed
         costs the turn its expertise, not its answer -- the rule intake
         already applies to matching.
+
+        **B4a runs here** (``CD-9``): this is the assemble call, the only
+        place intake, context and the finding store meet, and it is on both
+        the trigger path and the explicit one. A matcher-side gate would be
+        bypassed by ``/skill``, because ``match()`` returns ``_explicit()``
+        first.
+
+        Suppression drops **lenses, not ops skills**. A turn mid-fault still
+        gets the storage expertise it matched; what it does not get is a
+        voice. Dropping the whole block would make a bad moment also a
+        stupid one.
         """
         try:
             intake = getattr(self.ctx, "intake", None)
             matches = getattr(intake, "active_skills", None) if intake else None
             if not matches:
                 return ""
+
+            matches = self._gate_lenses(matches, intake)
+            if not matches:
+                return ""
+
             from ..skills.composer import compose_matches
 
             composed = compose_matches(matches)
@@ -2790,6 +2806,92 @@ class AgentStateMachine:
         except Exception:
             logger.warning("composing the skill prompt failed; continuing",
                            exc_info=True)
+            return ""
+
+    def _gate_lenses(self, matches, intake):
+        """B4a: drop lens-kind matches when the turn may carry nothing extra.
+
+        Returns the matches that survive. Never raises -- a gate that throws
+        takes down the turn it was meant to keep plain.
+
+        An **explicitly invoked** lens is refused out loud rather than
+        silently dropped. A person who typed the lens's name and got their
+        ordinary voice back would conclude the feature is broken; told which
+        signal stopped it, they can disagree with the machine instead of
+        with reality. The reason reaches them through the same block the
+        lens would have occupied.
+        """
+        try:
+            from ..skills.suppression import suppress_lens
+
+            lenses = [m for m in matches
+                      if getattr(getattr(m, "skill", None), "kind", "ops") == "lens"]
+            if not lenses:
+                return matches
+
+            reason = suppress_lens(
+                intake,
+                required_confirmation=bool(
+                    getattr(self.ctx, "required_confirmation", False)
+                ),
+                proactivity=self._proactivity_dial(),
+                lens_intensity=self._lens_intensity(),
+                finding_store=getattr(self, "finding_store", None),
+            )
+            if not reason:
+                return matches
+
+            self._lens_refusal = ""
+            named = [m for m in lenses if getattr(m, "explicit", False)]
+            if named:
+                which = ", ".join(sorted(m.name for m in named))
+                self._lens_refusal = (
+                    f"{which} was not applied this turn: {reason}."
+                )
+                logger.info("lens refused (%s): %s", which, reason)
+            else:
+                logger.debug("lens suppressed: %s", reason)
+            return [m for m in matches if m not in lenses]
+        except Exception:
+            logger.warning("the lens gate failed; composing unchanged",
+                           exc_info=True)
+            return matches
+
+    def _take_lens_refusal(self) -> str:
+        """The refusal for a lens the person named, once, or "".
+
+        Deterministic text on the response stream, not a line in the prompt:
+        a lens being refused is a fact about the machine, and asking a model
+        to report it invites it to soften, explain or forget it. It lands in
+        ``response_chunks`` as well as on the wire, so the transcript records
+        what the person was actually told.
+
+        Taken rather than read: the same turn assembles messages at both LLM
+        call sites, and the person is told once.
+        """
+        reason = getattr(self, "_lens_refusal", "") or ""
+        self._lens_refusal = ""
+        return f"{reason}\n\n" if reason else ""
+
+    def _proactivity_dial(self) -> str:
+        try:
+            from ..config.being_config import load_being_config
+            return getattr(load_being_config(), "proactivity", "balanced") or "balanced"
+        except Exception:
+            return "balanced"
+
+    def _lens_intensity(self) -> str:
+        """The lens dial, when one exists. Absent is not Off.
+
+        ``lens_intensity`` is not on ``BeingConfig`` yet -- it arrives with
+        branch 5's format work. Reading it as "" rather than defaulting to
+        "off" is the difference between a setting that has not shipped and a
+        person who switched lenses off.
+        """
+        try:
+            from ..config.being_config import load_being_config
+            return getattr(load_being_config(), "lens_intensity", "") or ""
+        except Exception:
             return ""
 
     def _catalog_block(self) -> str:
@@ -4477,14 +4579,23 @@ class AgentStateMachine:
         selected: List[Dict[str, Any]] = []
         announced = False
 
+        # Built before the stream opens, because assembling the prompt is
+        # what runs B4a -- and a lens the person named and did not get has
+        # to be said *before* the answer, not after it.
+        built = self._build_messages(
+            prompt, tail=tail, response_modality=response_modality,
+        )
+        refusal = self._take_lens_refusal()
+        if refusal:
+            self.ctx.response_chunks.append(refusal)
+            yield StreamEvent.response_chunk(self.ctx.session_id, refusal)
+
         # Stream response
         if hasattr(self.llm, 'stream'):
             logger.info(f"Starting LLM stream for session {self.ctx.session_id}")
             chunk_count = 0
             async for chunk in self._model_stream(self.llm.stream(
-                messages=self._build_messages(
-                    prompt, tail=tail, response_modality=response_modality,
-                ),
+                messages=built,
                 intake_result=self.ctx.intake if self.ctx else None,
                 images=self.ctx.images if self.ctx else None,
                 model_override=self.ctx.model_override if self.ctx else None,
@@ -4508,9 +4619,7 @@ class AgentStateMachine:
         else:
             # Non-streaming fallback
             response = await self._model_call(self.llm.chat(
-                messages=self._build_messages(
-                    prompt, tail=tail, response_modality=response_modality,
-                ),
+                messages=built,
                 intake_result=self.ctx.intake if self.ctx else None,
                 images=self.ctx.images if self.ctx else None,
                 model_override=self.ctx.model_override if self.ctx else None,

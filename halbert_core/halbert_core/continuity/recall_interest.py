@@ -25,9 +25,13 @@ Three rules this module exists to hold:
   nothing injected. Read here rather than through ``ProactiveGate``, which is
   severity-keyed and would either always pass a preference or never pass one.
 
-Suppression currently uses the signals that exist. ``B4a``, the lens
-suppression gate, was never built; when it lands this should delegate to it
-rather than keep a second copy of the same list.
+Suppression is **delegated**, not reimplemented. ``B4a``
+(:func:`~halbert_core.skills.suppression.suppress_lens`) owns the one list of
+turns where nothing optional may be injected, and this module asks it. The
+first version of this file kept its own copy and said so in this paragraph;
+the copy was already missing two of the gate's reasons by the time the gate
+landed, which is exactly how two lists drift -- invisibly, in the direction
+of injecting on turns the other one had learned to avoid.
 """
 
 from __future__ import annotations
@@ -66,21 +70,27 @@ def _is_eligible(row: Any) -> bool:
         return False
 
 
-def _suppressed(signals: Any, dial: str) -> Optional[str]:
-    """Why nothing may be injected this turn, or ``None``.
+def _suppressed(
+    signals: Any,
+    dial: str,
+    *,
+    required_confirmation: bool = False,
+    finding_store: Any = None,
+) -> Optional[str]:
+    """Why nothing may be injected this turn, or ``None`` -- asked, not answered.
 
-    Returns the reason rather than a bool so a caller can log which rule fired;
-    a suppression nobody can name is indistinguishable from a bug.
+    The dial is passed as ``proactivity`` because that is what it is. The one
+    coupling this module cares about is ``off``, and the gate applies it for
+    the same reason: at Off the machine is purely reactive.
     """
-    if (dial or "").strip().lower() == "off":
-        return "the proactivity dial is off"
-    if getattr(signals, "is_troubleshooting", False):
-        return "the turn is diagnostic"
-    if (getattr(signals, "intent", "") or "") == "troubleshooting":
-        return "the turn is diagnostic"
-    if getattr(signals, "has_error_indicators", False):
-        return "the turn carries error indicators"
-    return None
+    from ..skills.suppression import suppress_lens
+
+    return suppress_lens(
+        signals,
+        required_confirmation=required_confirmation,
+        proactivity=dial,
+        finding_store=finding_store,
+    )
 
 
 def _turn_terms(signals: Any) -> set:
@@ -123,6 +133,8 @@ def select_interest(
     dial: str = "balanced",
     last_injection_at: Optional[float] = None,
     now: Optional[float] = None,
+    required_confirmation: bool = False,
+    finding_store: Any = None,
 ) -> Optional[Any]:
     """The one interest this turn may carry, or ``None``.
 
@@ -133,7 +145,11 @@ def select_interest(
         if signals is None or not rows:
             return None
 
-        reason = _suppressed(signals, dial)
+        reason = _suppressed(
+            signals, dial,
+            required_confirmation=required_confirmation,
+            finding_store=finding_store,
+        )
         if reason:
             logger.debug("interest recall suppressed: %s", reason)
             return None
