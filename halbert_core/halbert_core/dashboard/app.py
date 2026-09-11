@@ -483,33 +483,14 @@ def _last_run_of(record) -> Optional[datetime]:
     return None
 
 
+# R-03 (A06-G1/A15-G1/G2): the last-due-slot binary search moved to
+# scheduler/catchup.py::last_due_slot so executor._wrap_task's live
+# occurrence-instant computation can share it; kept as a module-level name
+# here since existing callers/tests import ``_last_due_slot`` from this module.
 def _last_due_slot(trigger, now: datetime, *, horizon_s: float = 7 * 86400.0,
                    max_steps: int = 64):
-    """The most recent slot at or before ``now`` for an APScheduler trigger.
-
-    APScheduler 3.x has no ``get_prev_fire_time``, so binary-search the
-    anchor whose "next slot" is the last one not after ``now``:
-    ``f(anchor) = get_next_fire_time(None, anchor)`` is monotonic, the last
-    due slot is ``f`` evaluated just below the point where ``f`` jumps past
-    ``now``, and the search is bounded regardless of how fast the cron
-    runs (a forward walk from a horizon is not — a 15-minute cron walks
-    672 slots in 7 days). None when no slot lies in the window.
-    """
-    lo = now - timedelta(seconds=horizon_s)
-    hi = now
-    first = trigger.get_next_fire_time(None, lo)
-    if first is None or first > now:
-        return None  # no slot between the horizon and now
-    for _ in range(max_steps):
-        mid = lo + (hi - lo) / 2
-        cand = trigger.get_next_fire_time(None, mid)
-        if cand is not None and cand <= now:
-            lo = mid
-        else:
-            hi = mid
-        if hi - lo <= timedelta(microseconds=1):
-            break
-    return trigger.get_next_fire_time(None, lo)
+    from ..scheduler.catchup import last_due_slot
+    return last_due_slot(trigger, now, horizon_s=horizon_s, max_steps=max_steps)
 
 
 def _run_boot_catchup(

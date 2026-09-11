@@ -62,3 +62,42 @@ def test_load_ignores_temp_files(tmp_path):
     leftover.write_text('{"id": "j3", "task": "residue"', encoding="utf-8")
     engine = SchedulerEngine(persist_dir=str(tmp_path))
     assert "j3" not in engine.jobs
+
+
+class TestAddJobPreservesLastRunFacts:
+    """R-03 own-bug 1: add_job replaced the whole record, so re-registering
+    the same job id at every boot (jobs are re-registered at every boot,
+    C4-01) blanked started_at/completed_at/state -- a boot catch-up decision
+    made right after registration reads the correct prior facts (captured
+    before registration runs), but the FILE itself is now blanked, so a
+    SECOND reboot before the next real fire sees no last-run facts at all
+    and re-serves an already-served slot."""
+
+    def test_reregistering_the_same_id_keeps_the_last_run_facts(self, engine):
+        engine.add_job(Job(id="morning_report", task="t", schedule="cron"))
+        engine.update_job_state("morning_report", "completed")
+        completed_at = engine.get_job("morning_report").completed_at
+        assert completed_at
+
+        # Boot: the job is re-registered with a fresh Job() (registration's
+        # own shape -- state='pending', no timestamps).
+        engine.add_job(Job(id="morning_report", task="t", schedule="cron"))
+
+        reregistered = engine.get_job("morning_report")
+        assert reregistered.state == "completed"
+        assert reregistered.completed_at == completed_at
+
+    def test_the_preserved_facts_survive_a_reload_from_disk(self, engine, tmp_path):
+        engine.add_job(Job(id="morning_report", task="t", schedule="cron"))
+        engine.update_job_state("morning_report", "completed")
+        completed_at = engine.get_job("morning_report").completed_at
+        engine.add_job(Job(id="morning_report", task="t", schedule="cron"))
+
+        reloaded = SchedulerEngine(persist_dir=str(tmp_path))
+        assert reloaded.get_job("morning_report").completed_at == completed_at
+
+    def test_a_genuinely_new_id_is_unaffected(self, engine):
+        engine.add_job(Job(id="brand_new", task="t", schedule="cron"))
+        job = engine.get_job("brand_new")
+        assert job.state == "pending"
+        assert job.completed_at is None
