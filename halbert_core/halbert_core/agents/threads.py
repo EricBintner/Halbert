@@ -22,6 +22,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+from ..continuity.rotation import RotationPlan, plan_rotation
 from ..intake.signals import MessageSignals
 from . import conversation_sqlite as _cs
 from .conversation_sqlite import SqliteConversationStore
@@ -485,6 +486,7 @@ class ThreadManager:
             turns_since_pause=int(thread.get("turns_since_pause") or 0) + 1,
         )
         self._refresh_receipt(thread_id)
+        self._maybe_rotate(thread_id, now)
 
     def _anchor_blocks(
         self,
@@ -1132,6 +1134,45 @@ class ThreadManager:
         self._sync_open_loops(thread_id, t, messages)
         self.store.upsert_receipt(thread_id, t.get("title") or "", receipt)
         return receipt
+
+    def _maybe_rotate(self, thread_id: str, now: float) -> None:
+        """R-12 Phase A: the rotation writer's caller (A16-G1, FD-3's v0).
+
+        ``compact_boundaries`` shipped with a schema, an index and a writer
+        (``write_compact_boundary``) that nothing ever called — a long
+        thread grew until whatever budget it hit truncated the part that
+        had scrolled away, exactly the part someone expects the machine to
+        remember. Called every turn; ``plan_rotation``'s own guards
+        (cooldown, merge-max, futility, empty summary, clock jump) decide
+        whether anything actually happens, so this is cheap to call and
+        never raises into the turn it is finishing.
+
+        Same ownership gate as the receipt: a rotation is the machine's own
+        durable processing of the transcript, not something a guest turn or
+        a private-mode conversation gets (matches ``_refresh_receipt``'s
+        gate, and the standing rule that private-mode content is not
+        written where a later erasure cannot reach it).
+        """
+        t = self.store.get_thread(thread_id)
+        if t is None or t.get("ephemeral") or not _conversation_is_halberts():
+            return
+        try:
+            messages = [
+                {"id": m["message_id"], "content": m.get("content")}
+                for m in self.store.list_messages(thread_id)
+                if m.get("visible_in_timeline", True)
+            ]
+            boundary = self.store.last_compact_boundary(thread_id)
+            generation = int(boundary["generation"]) + 1 if boundary else 1
+            last_rotated_at = boundary["created_at"] if boundary else None
+            plan = plan_rotation(
+                thread_id, messages, generation=generation,
+                last_rotated_at=last_rotated_at, now=now,
+            )
+            if isinstance(plan, RotationPlan):
+                self.store.write_compact_boundary(plan)
+        except Exception as e:
+            logger.warning(f"rotation check failed for {thread_id} (non-fatal): {e}")
 
     def _sync_open_loops(
         self, thread_id: str, thread: Dict[str, Any], messages: List[Dict[str, Any]]

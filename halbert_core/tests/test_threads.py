@@ -242,6 +242,28 @@ class TestBeginEndTurn:
         assert rows[1]["role"] == "assistant" and rows[1]["status"] == "interrupted"
         assert rows[1]["content"] == "[turn interrupted before an answer]"
 
+    def test_end_turn_rotates_a_thread_that_grew_past_the_window(self, tm):
+        # R-12 Phase A: the rotation writer (Phase B, continuity/rotation.py)
+        # shipped with no caller in the turn loop -- compact_boundaries had
+        # a schema, an index, and nothing that ever wrote to it, so a long
+        # thread grew until whatever budget it hit truncated the part that
+        # had scrolled away, which is exactly the part someone expects the
+        # machine to remember.
+        assistant = (
+            "$ systemctl restart nginx\n"
+            + "\n".join(f"  reading configuration block {j} ... ok" for j in range(20))
+            + "\nExit code 1\nerror: permission denied on /etc/nginx/nginx.conf\n"
+        )
+        for i in range(15):
+            _turn(tm, f"turn {i}", assistant=assistant)
+        thread_id = tm.current()["thread_id"]
+        boundary = tm.store.last_compact_boundary(thread_id)
+        assert boundary is not None
+        assert boundary["generation"] == 1
+        visible = [m for m in tm.store.list_messages(thread_id) if m["visible_in_timeline"]]
+        assert any("compacted generation 1" in str(m["content"]) for m in visible)
+        assert len(visible) < 30  # earlier turns are hidden, not just appended past
+
     def test_receipt_carries_the_unresolved_request(self, tm):
         # A16-G2: the receipt is what survives a compaction window today,
         # before compact_boundaries.unresolved_request (T3) lands.
