@@ -128,6 +128,93 @@ class TestGatesBeforeJudge:
         assert result.source == "turn-budget"
 
 
+class TestFingerprintReplay:
+    """A02-G15: a gate's ``check`` is deterministic by contract, so re-running
+    it on byte-identical claims can never change the answer — an unchanged
+    workspace between two turns should replay the cached result instead of
+    re-running the check, without changing any observable outcome (the
+    retry counter, exhaustion, and continuation prompt all behave exactly
+    as if the check had actually run again)."""
+
+    def test_an_unchanged_claims_blob_is_not_re_checked(self):
+        circuit = verdict_module.JudgeCircuit()
+        calls = []
+
+        def check(c):
+            calls.append(c)
+            return False
+
+        gate = Gate(name="g", check=check, output="still missing")
+        claims = {"deliverable": "missing"}
+        verdict(claims, gates=[gate], judge=_never_called, circuit=circuit)
+        verdict(claims, gates=[gate], judge=_never_called, circuit=circuit)
+        verdict(claims, gates=[gate], judge=_never_called, circuit=circuit)
+        assert len(calls) == 1
+
+    def test_a_changed_claims_blob_re_runs_the_check(self):
+        circuit = verdict_module.JudgeCircuit()
+        calls = []
+
+        def check(c):
+            calls.append(c)
+            return False
+
+        gate = Gate(name="g", check=check, output="still missing")
+        verdict({"deliverable": "missing"}, gates=[gate], judge=_never_called, circuit=circuit)
+        verdict({"deliverable": "still missing"}, gates=[gate], judge=_never_called, circuit=circuit)
+        assert len(calls) == 2
+
+    def test_a_replayed_failure_still_counts_toward_exhaustion(self):
+        # Same fixture as test_gate_exhausts_after_max_retries_and_blocks,
+        # but proving the replay path (identical claims every call) reaches
+        # the exact same exhaustion outcome as a freshly re-run check would.
+        circuit = verdict_module.JudgeCircuit()
+        gate = Gate(name="never-passes", check=lambda c: False, output="still missing",
+                    max_retries=2)
+        first = verdict({}, gates=[gate], judge=_never_called, circuit=circuit)
+        second = verdict({}, gates=[gate], judge=_never_called, circuit=circuit)
+        third = verdict({}, gates=[gate], judge=_never_called, circuit=circuit)
+        assert first.kind is VerdictKind.CONTINUE
+        assert second.kind is VerdictKind.CONTINUE
+        assert third.kind is VerdictKind.BLOCKED
+        assert third.source == "gate-exhausted"
+
+    def test_a_replayed_pass_still_resets_the_retry_counter(self):
+        circuit = verdict_module.JudgeCircuit()
+        calls = []
+
+        def check(c):
+            calls.append(c)
+            return True
+
+        gate = Gate(name="g", check=check, output="", max_retries=1)
+        claims = {"deliverable": "present"}
+        first = verdict(claims, gates=[gate],
+                         judge=lambda c: "CONTINUE ok", circuit=circuit)
+        second = verdict(claims, gates=[gate],
+                          judge=lambda c: "CONTINUE ok", circuit=circuit)
+        assert len(calls) == 1
+        assert first.source == "judge"
+        assert second.source == "judge"
+        assert gate.name not in circuit.gate_attempts
+
+    def test_a_raising_check_is_never_replayed(self):
+        # Exceptions carry a diagnostic that may not be safe to cache
+        # verbatim across turns; the fingerprint-skip is scoped to the
+        # boolean pass/fail path only.
+        circuit = verdict_module.JudgeCircuit()
+        calls = []
+
+        def check(c):
+            calls.append(1)
+            raise RuntimeError("boom")
+
+        gate = Gate(name="flaky", check=check, output="the deliverable is missing")
+        verdict({}, gates=[gate], judge=_never_called, circuit=circuit)
+        verdict({}, gates=[gate], judge=_never_called, circuit=circuit)
+        assert len(calls) == 2
+
+
 class TestClosedVocabulary:
     def test_parse_accepts_each_closed_term(self):
         for word, kind in [

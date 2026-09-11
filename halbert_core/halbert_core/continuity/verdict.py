@@ -39,11 +39,12 @@ nothing claims DONE without evidence.
 
 from __future__ import annotations
 
+import hashlib
 import re
 import threading
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Callable, Dict, Optional, Sequence
+from typing import Any, Callable, Dict, Optional, Sequence, Tuple
 
 __all__ = [
     "VerdictKind", "WaitDirective", "Verdict", "Gate",
@@ -126,6 +127,18 @@ JUDGE_INPUT_CHARS = 8000
 MAX_BARRIER_WAIT_S = 1800.0
 
 _TRUNCATION_MARKER = "[gate output truncated]\n"
+
+
+def _fingerprint(claims: Any) -> str:
+    """A stable content hash of ``claims`` (A02-G15).
+
+    A gate's ``check`` must not call a model (documented contract) — it is
+    deterministic, so re-running it on byte-identical claims can never
+    produce a different answer. The fingerprint lets ``verdict()`` skip the
+    redundant re-run on an unchanged workspace between turns and replay the
+    cached pass/fail instead, with no change to any observable outcome.
+    """
+    return hashlib.sha256(repr(claims).encode("utf-8", "replace")).hexdigest()
 
 
 def _bound(text: str, limit: int = MAX_GATE_OUTPUT_CHARS) -> str:
@@ -256,6 +269,9 @@ class JudgeCircuit:
         self.transport_failures = 0
         self.turns = 0
         self.gate_attempts: Dict[str, int] = {}
+        #: A02-G15: (fingerprint, passed) of the last real check per gate,
+        #: for fingerprint-skip replay — never populated for a raising check.
+        self.gate_fingerprints: Dict[str, Tuple[str, bool]] = {}
 
     def _reset(self) -> None:
         self.parse_failures = 0
@@ -286,6 +302,18 @@ class JudgeCircuit:
 
     def reset_gate(self, gate_name: str) -> None:
         self.gate_attempts.pop(gate_name, None)
+
+    def gate_replay(self, gate_name: str, fingerprint: str) -> Optional[bool]:
+        """The cached pass/fail for ``gate_name`` at this exact fingerprint,
+        or ``None`` when nothing is cached (a fresh gate, or the workspace
+        changed since the last real check)."""
+        cached = self.gate_fingerprints.get(gate_name)
+        if cached is not None and cached[0] == fingerprint:
+            return cached[1]
+        return None
+
+    def record_gate_result(self, gate_name: str, fingerprint: str, passed: bool) -> None:
+        self.gate_fingerprints[gate_name] = (fingerprint, passed)
 
 
 def _call_judge(judge: Callable[[Any], str], claims: Any,
@@ -363,18 +391,24 @@ def verdict(claims: Any,
         )
 
     for gate in gates:
-        try:
-            passed = gate.check(claims)
-        except Exception as exc:  # noqa: BLE001 - a raising gate is a failed gate
-            return Verdict(
-                kind=VerdictKind.CONTINUE,
-                reason=f"gate {gate.name} raised {type(exc).__name__}: {exc}",
-                source="gate",
-                continuation_prompt=_bound(
-                    f"{gate.output}\n[gate could not run: {type(exc).__name__}: {exc}]",
-                    gate_output_limit,
-                ),
-            )
+        fingerprint = _fingerprint(claims)
+        replay = circuit.gate_replay(gate.name, fingerprint)
+        if replay is not None:
+            passed = replay
+        else:
+            try:
+                passed = gate.check(claims)
+            except Exception as exc:  # noqa: BLE001 - a raising gate is a failed gate
+                return Verdict(
+                    kind=VerdictKind.CONTINUE,
+                    reason=f"gate {gate.name} raised {type(exc).__name__}: {exc}",
+                    source="gate",
+                    continuation_prompt=_bound(
+                        f"{gate.output}\n[gate could not run: {type(exc).__name__}: {exc}]",
+                        gate_output_limit,
+                    ),
+                )
+            circuit.record_gate_result(gate.name, fingerprint, passed)
         if passed:
             circuit.reset_gate(gate.name)
             continue
