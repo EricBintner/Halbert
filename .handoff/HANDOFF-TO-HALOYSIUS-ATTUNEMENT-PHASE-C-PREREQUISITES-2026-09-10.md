@@ -30,7 +30,7 @@ three are event-shaped and one is a sweep.
 `SuppressionRecorder` had **no production caller**. `ProactiveGate` takes a
 `recorder=` and none of its three real construction sites — the detector
 sweep, the morning report, the dashboard's visual watcher — ever passed one.
-`record_outcome_raw` had no caller either. So the suppression log was not
+`record_outcome_raw` had no caller either — none outside the typed `record_outcome` façade, which is to say no production path. So the suppression log was not
 writing rows with a flat margin; it was writing **no rows at all**, and the
 outcome ledger Phase C reads is the same table.
 
@@ -73,22 +73,55 @@ rather than our local convention. A zero margin has to be able to mean *the
 policy computed one and it landed on a threshold* — that is exactly the case
 A-HB-26's exploration arm is defined over — so "no margin was computed" needs
 a different value or the filter that finds near-threshold cases is a lie the
-moment any non-engine row enters the table. `OutcomeEntry.margin` is typed
-`float`; a `None` rides through `from_dict` fine, but you may want to widen the
-hint or say so in the docstring.
+moment any non-engine row enters the table.
+
+**And it needs one line from you.** `ledger.py:209` is
+`margin=float(data.get("margin", 0.0))`, and an explicit `null` is not a
+missing key, so `_outcome_from_dict` raises `TypeError` on one of our rows. We
+decode through our own `attunement/codec.py`, which short-circuits on `None`,
+so nothing of ours breaks — but Phase C's reader would, and
+`OutcomeEntry.margin` is a required non-`Optional` `float`. We have pinned it
+as a tripwire test on our side (`test_the_engines_own_decoder_cannot_yet_read_a_null_margin`)
+that fails, deliberately and helpfully, the day you widen the hint. Our earlier
+draft of this paragraph said a `None` rides through `from_dict` fine; that was
+true of our codec and false of yours, and we would rather correct it here than
+have you find it in Phase C.
 
 **`shadow_agrees` uses your definition of speech, not a second one.**
 `{speak, speak_minimal, ask_first}` — the three `record_attempt` counts toward
 the daily proactive total. We did not want a local opinion about whether
 ASK_FIRST reaches a person.
 
-**We did not swap `SuppressionRecorder` out**, per your §2.1. We also do not
-call `record_attempt`, which means **we do not call `note_proactive`** — the
-engine's daily count does not advance from shadow decisions. That is a
-deliberate choice and we are not certain it is the right one: a faithful
-shadow would advance it, so the cap bites in the log the way it would bite in
-production, but it is a durable write to subject state from a hypothetical.
-Tell us if you would rather shadow rows advanced the counter.
+**We did not swap `SuppressionRecorder` out**, per your §2.1, and we do not
+call `record_attempt`. We *do* advance two of the counters it would have
+advanced, and both were forced on us by the same discovery — a counter the
+wiring cannot move does not stay neutral, it pins a term in the policy:
+
+- **`note_proactive`**, when the shadow's own decision speaks. Left alone,
+  `proactive_count_today` is zero on every row, `attachment:daily_cap` can
+  never appear, and the shadow models a policy whose cap does not exist. It is
+  a durable write from a hypothetical, which is why we flagged it as a
+  question in our first draft; the answer turned out to be that not doing it
+  makes the log describe nothing anyone would ship. Per-day, reset daily, read
+  by nothing else. **This is the line to tell us to delete if you disagree.**
+- **`note_accepted`**, via your `record_reaction` rather than a bare
+  `update_reaction`. This one was a real defect in our first cut and it is
+  worth your attention because any consumer wiring reactions by hand will hit
+  it: `policy.py:337` adds `W_QUIET_PERIOD` (0.25) to `cost` while
+  `accepted_interactions < QUIET_PERIOD_N`, and nothing in a hand-wired
+  consumer advances `accepted_interactions`. Measured on our own context
+  before the fix, every margin carried a fixed −0.25 that could never clear —
+  `hold, margin −0.05` where the same decision with the counter past the
+  threshold gives `hold, margin +0.20`. The sign of the margin was being
+  decided by a counter our wiring could not move. A note in `record_reaction`'s
+  docstring saying it is not a wrapper around `update_reaction` would have
+  saved us; `record_attempt` has the same shape with `note_proactive`.
+
+**Two counters we still do not advance, and you should size §3 knowing it:**
+`sessions_count` and `first_seen_at` — nothing calls `note_session`, so
+`relationship_age_days` is 0.0 and `sessions_count` is 0 on every row, forever.
+With our ATN-1 zeros the new-relationship gate is inert either way; with your
+defaults it would be a permanent mute rather than a week's one.
 
 ### The third loss, fixed on our side of the line
 
@@ -139,10 +172,29 @@ evidence**:
    dismissing a stale finding through the same method would enter the ledger
    looking exactly like someone saying no. The route is where "a human did
    this" is known.
-2. **The sweep never labels a suppressed attempt `IGNORED`.** Nobody saw it, so
-   nobody ignored it. Labelling our own silence as a negative would corrupt the
-   arm precisely where your P2 warning bites — and it would do it while looking
-   like it was *filling* the sparse arm, which is the dangerous version.
+2. **No reaction ever lands on an attempt the gate suppressed** — not the
+   sweep, and not the three event-shaped arms. This is worth spelling out
+   because our first cut got it wrong in a way that is easy for any consumer
+   to reproduce, and it was *not* an edge case. A finding is still written and
+   still listed when its push is suppressed, so the ordinary path is: dial is
+   quiet → no interruption → the person meets the finding on the Findings page
+   → dismisses it → the dismissal lands on the suppressed attempt. With a
+   shadow attached that row's `outcome` is the *engine's* verdict, so the row
+   reads *"the engine would have spoken, and the person said no"* about an
+   event the person never saw. That is your P2 ratchet being fed by the
+   product's own silence, arriving through the arm meant to protect against
+   it. The join now defaults to spoken attempts only
+   (`latest_attempt_for_context(..., spoken_only=True)`), and the sweep
+   filters in SQL before the `LIMIT` rather than after — suppressed rows stay
+   unanswered forever, so filtering them in the consumer let enough of them
+   hide every spoken row behind them.
+
+   **The consequence for Phase C, stated positively:** a `reaction` only ever
+   attaches to a row where `gate_outcome == "speak"`. So on any reacted row
+   the engine's `outcome` is a counterfactual *about an event the person
+   actually saw* — a `hold` on a row the gate spoke and the person engaged
+   with is exactly the retrospective evidence A-HB-26 asks for, and the pairing
+   is sound rather than dangerous.
 3. **Four hours, not a day.** Past four hours the person has plausibly not been
    at the machine at all, and *away* is not *ignored*.
 
@@ -213,8 +265,16 @@ drop-in conflicts, fstab phantoms and permissions hygiene are all first-sweep
 findings. A consumer that took your defaults unexamined would be silent for
 seven days and then capped at three, and would read that as the policy working.
 
-Pending founder ratification, and nothing user-visible turns on it while we
-are in shadow.
+Pending founder ratification — with one caveat we owe you, since it bears on
+your defaults rather than ours: **keeping the engine's numbers is not currently
+a ratifiable option here.** Nothing calls `note_session`, so `sessions_count`
+is 0 and `relationship_age_days` is 0.0 permanently; with 5/7 the
+new-relationship gate would not mute Halbert for a week, it would mute it
+forever. Our zeros make it inert, which is why the gap has not bitten. Either
+way the counters want wiring before that ceiling means anything, and that is
+ours to do.
+
+Nothing user-visible turns on any of it while we are in shadow.
 
 ---
 
@@ -238,6 +298,25 @@ built:
   reply needs the agent path.
 - **`topic` is always None** on our utterances. F2's opaque `topic_key` is
   unbuilt, so DEFER_TOPIC cannot match anything we emit.
+- **`channel_class` is PUSH on every row, and that over-states us.**
+  `ProactiveGate` makes one decision for the whole event bus, whose
+  subscribers span a bell badge (AMBIENT) and, where wired, voice and the
+  auto-opening panel (PUSH). PUSH is the loudest reachable surface, so it is
+  the conservative default for a suppression system — but the bias has a
+  direction: you treat AMBIENT more permissively (a quiet dial yields
+  `SPEAK_MINIMAL` rather than a hold; the social cost applies to PUSH alone),
+  so **the shadow reads quieter than the product would be** if it decided per
+  surface. Named as `SHADOW_CHANNEL_CLASS` so the choice is visible rather
+  than an accidental default.
+- **`previous_decision` is never passed**, so `PolicyStability`'s hysteresis
+  and dwell never apply to a shadow row. Our P5 (decision flapping reads as a
+  hardware fault) is therefore unmeasured here.
+- **`sessions_count` and `relationship_age_days` are pinned at 0** — see §2.
+- **We pass `ledger.active()`, not `active_for_unknown()`.** With
+  `subject_confidence=UNATTRIBUTED` that is the right reading for a push to
+  the host's primary user, but it does mean A-HB-3's most-restrictive
+  inheritance is not exercised. Latent today because nothing writes standing
+  requests at all; flagged so it is not discovered later as a gap.
 
 So: the arms exist and the rows are real, but the population is narrow —
 severity, source, dial, the ceilings, and the reaction. That is enough for the
@@ -249,7 +328,7 @@ the shape of the data.
 
 ## 7. Where it is
 
-Branch `feat/attunement-phase-c-prereqs`, one commit.
+Branch `feat/attunement-phase-c-prereqs`, three commits.
 
 - `halbert_core/attunement/context.py` — the `AttunementContext` builder (HB-D3)
 - `halbert_core/attunement/shadow.py` — `ShadowDecider`, the two-verdict row, `default_recorder`
@@ -261,4 +340,4 @@ Branch `feat/attunement-phase-c-prereqs`, one commit.
 Tests: `test_attunement_shadow_decide.py`, `test_attunement_reactions.py`,
 `test_attunement_reaction_wiring.py`, `test_attunement_recorder_wiring.py`,
 `test_attunement_conformance.py`, `test_proactive_gate_composition.py`.
-Full suite 8626 passed, 18 skipped, 6 xfailed, 0 failed.
+Full suite 8641 passed, 18 skipped, 6 xfailed, 0 failed.

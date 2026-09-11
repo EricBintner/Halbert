@@ -255,13 +255,22 @@ class AttunementStore:
 
     def latest_attempt_for_context(
         self, context_key: Optional[str], *, persona_id: str,
-        subject_id: Optional[str] = None,
+        subject_id: Optional[str] = None, spoken_only: bool = True,
     ) -> Optional[str]:
         """The newest attempt recorded against ``context_key``, or None.
 
         This is the join that lets a dismissal or a snooze find the attempt
         it is a reaction to: the recorder stashes the finding id in
         ``context_key``, and the findings surfaces know only the finding id.
+
+        **``spoken_only`` defaults to True, and that default is the point.**
+        A finding is still written and still listed when the gate suppresses
+        its push, so a person can meet it on the Findings page having never
+        been interrupted by it — and dismissing it there is not a reaction
+        to an attempt, because no attempt reached them. Labelling the
+        suppressed row anyway would pair a real "no" with an outcome the
+        person never saw, which is the exact way A-HB-26's ratchet gets fed
+        by the product's own silence.
 
         A blank key matches nothing. Most rows carry no context key at all
         — a morning report is not about a finding — so a blank lookup that
@@ -279,6 +288,8 @@ class AttunementStore:
         if subject_id is not None:
             where += " AND subject_id=?"
             args.append(subject_id)
+        if spoken_only:
+            where += " AND json_extract(payload, '$.gate_outcome')='speak'"
         order = " ORDER BY ts DESC, rowid DESC LIMIT 1"
         try:
             with self._read() as conn:
@@ -291,21 +302,36 @@ class AttunementStore:
         except sqlite3.OperationalError as exc:  # pragma: no cover - no JSON1
             logger.debug("attunement: json_extract unavailable (%s); scanning", exc)
 
+        # The scan is bounded because it is a degraded path, not the design:
+        # 2000 rows is several weeks of proactive events at any plausible
+        # rate, and an unbounded scan under a lock is worse than a miss.
         for entry in self.list_outcomes_raw(persona_id, subject_id, limit=2000):
-            if entry.get("context_key") == context_key:
-                return entry.get("attempt_id")
+            if entry.get("context_key") != context_key:
+                continue
+            if spoken_only and entry.get("gate_outcome") != "speak":
+                continue
+            return entry.get("attempt_id")
         return None
 
     def unanswered_attempts(
         self, persona_id: str, *, before_ts: str, subject_id: Optional[str] = None,
-        limit: int = 500,
+        limit: int = 500, spoken_only: bool = True,
     ) -> List[Dict[str, Any]]:
         """Attempts older than ``before_ts`` that carry no reaction yet."""
-        sql = "SELECT payload FROM outcomes WHERE persona_id=? AND reaction IS NULL AND ts < ?"
+        sql = (
+            "SELECT payload FROM outcomes WHERE persona_id=? "
+            "AND reaction IS NULL AND ts < ?"
+        )
         args: List[Any] = [persona_id, before_ts]
         if subject_id is not None:
             sql += " AND subject_id=?"
             args.append(subject_id)
+        if spoken_only:
+            # Filtered here rather than by the caller, because the LIMIT is
+            # applied by SQLite: suppressed rows are never labelled, so they
+            # stay unanswered forever and would otherwise fill the newest-
+            # first window and hide the spoken rows the sweep exists for.
+            sql += " AND json_extract(payload, '$.gate_outcome')='speak'"
         sql += " ORDER BY ts DESC, rowid DESC LIMIT ?"
         args.append(int(limit))
         with self._read() as conn:

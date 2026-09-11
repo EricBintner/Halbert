@@ -155,3 +155,95 @@ def test_an_already_labelled_attempt_is_left_alone(store):
 
     assert ReactionRecorder(store).sweep_ignored(after_s=3600) == 0
     assert _reaction(store, "a1") == "engaged"
+
+
+# --- the arms must not reach an attempt nobody received ---------------------
+
+def test_dismissing_a_finding_whose_push_was_suppressed_labels_nothing(store):
+    """The routine path, not an edge case: the dial is quiet, the push is
+    suppressed, the finding is still written and still listed, the person
+    meets it on the Findings page and dismisses it there.
+
+    Labelling that row pairs a real "no" with an outcome the person never
+    saw — and with a shadow attached that outcome is often the engine's
+    `speak`, so the row reads "the engine would have spoken and they said
+    no". That is the ratchet this module's docstring quotes the engine
+    warning about, arriving through the arm it claims to protect.
+    """
+    _attempt(store, "a1", finding_id="f-1", gate_outcome="silent")
+
+    assert ReactionRecorder(store).on_dismissed("f-1") is False
+    assert _reaction(store, "a1") is None
+
+
+def test_snoozing_and_engaging_are_held_to_the_same_rule(store):
+    _attempt(store, "a1", finding_id="f-1", gate_outcome="silent")
+    recorder = ReactionRecorder(store)
+
+    assert recorder.on_snoozed("f-1") is False
+    assert recorder.on_engaged("f-1") is False
+    assert _reaction(store, "a1") is None
+
+
+def test_a_spoken_attempt_is_still_found_past_a_suppressed_one(store):
+    """The suppressed row is newer. The join must skip it rather than stop
+    at it, or a real reaction is lost every time a dial change straddles
+    one finding."""
+    older = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+    _attempt(store, "spoke", finding_id="f-1", ts=older)
+    _attempt(store, "held", finding_id="f-1", gate_outcome="silent")
+
+    assert ReactionRecorder(store).on_dismissed("f-1") is True
+    assert _reaction(store, "spoke") == "dismissed"
+    assert _reaction(store, "held") is None
+
+
+def test_the_sweep_filters_before_the_limit_not_after(store):
+    """Suppressed rows are never labelled, so they stay unanswered forever.
+    Filtered in Python after SQLite applied the LIMIT, enough of them at the
+    head of a newest-first window hide every spoken row behind them."""
+    stale = (datetime.now(timezone.utc) - timedelta(hours=6)).isoformat()
+    older = (datetime.now(timezone.utc) - timedelta(hours=7)).isoformat()
+    for i in range(5):
+        _attempt(store, f"held-{i}", finding_id=f"f-{i}",
+                 gate_outcome="silent", ts=stale)
+    _attempt(store, "spoke", finding_id="f-x", ts=older)
+
+    rows = store.unanswered_attempts("halbert", before_ts=stale, limit=3)
+
+    assert [r["attempt_id"] for r in rows] == ["spoke"]
+
+
+# --- the counter the margin is measured against ----------------------------
+
+def test_engaging_advances_the_counter_the_policy_reads(store):
+    """`record_reaction` is not a wrapper around `update_reaction`: it also
+    calls `note_accepted`. While that counter is below the engine's
+    quiet-period threshold every decision carries a fixed extra cost, so a
+    wiring that writes the reaction and never advances the counter pins
+    that cost on forever and depresses every margin it records."""
+    pytest.importorskip("haloysius.attunement.ledger")
+    from haloysius.attunement.ledger import StandingRequestLedger
+
+    from halbert_core.attunement.context import halbert_config
+
+    _attempt(store, "a1", finding_id="f-1")
+    ledger = StandingRequestLedger(store, "halbert", halbert_config())
+    assert ledger.state("primary").accepted_interactions == 0
+
+    ReactionRecorder(store).on_engaged("f-1")
+
+    assert ledger.state("primary").accepted_interactions == 1
+
+
+def test_a_negative_reaction_does_not_advance_it(store):
+    pytest.importorskip("haloysius.attunement.ledger")
+    from haloysius.attunement.ledger import StandingRequestLedger
+
+    from halbert_core.attunement.context import halbert_config
+
+    _attempt(store, "a1", finding_id="f-1")
+    ReactionRecorder(store).on_dismissed("f-1")
+
+    ledger = StandingRequestLedger(store, "halbert", halbert_config())
+    assert ledger.state("primary").accepted_interactions == 0

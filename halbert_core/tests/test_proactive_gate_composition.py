@@ -138,3 +138,33 @@ def test_a_guest_persona_does_not_leak_a_name_into_the_log(store, monkeypatch):
     keys = store.list_outcomes_raw("halbert")[0]["gate_reasons"]
     assert keys == ["guest:fronting"]
     assert not any("aurelius" in k.lower() for k in keys)
+
+
+def test_a_findings_store_that_raises_suppresses_one_event_not_a_sweep(store):
+    """Composing the reasons means this read is reached for events that
+    previously returned at the dial or quiet hours. In the detector sweep it
+    sits under one broad try covering the whole per-detector loop, so an
+    unguarded error here would now abandon that detector's remaining
+    findings rather than cost a single event its dismissal check."""
+    class _Exploding:
+        def get(self, finding_id):
+            raise RuntimeError("database is locked")
+
+    gate = ProactiveGate(
+        _config(proactivity="quiet"),
+        finding_store=_Exploding(),
+        recorder=SuppressionRecorder(store=store),
+    )
+
+    allowed, reason = gate.should_notify(_event(severity="info", finding_id="f-1"))
+
+    assert allowed is False
+    assert reason == "proactivity dial is 'quiet' (requires severity >= 2)"
+    assert store.list_outcomes_raw("halbert")[0]["gate_reasons"] == ["dial:quiet"]
+
+
+def test_the_gate_has_one_verdict_path():
+    """`_decide` was a second single-answer view over `_evaluate` with no
+    caller. A second verdict path is the drift CLAUDE.md's one-choke-point
+    rule exists to stop."""
+    assert not hasattr(ProactiveGate, "_decide")

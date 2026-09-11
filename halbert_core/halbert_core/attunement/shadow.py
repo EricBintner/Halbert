@@ -40,6 +40,8 @@ import re
 import uuid
 from typing import Any, Dict, List, Optional, Sequence
 
+from .context import DEFAULT_PERSONA_ID
+from .subject import DEFAULT_SUBJECT_ID
 from .surfaces import ChannelClass
 
 logger = logging.getLogger("halbert.attunement.shadow")
@@ -100,7 +102,8 @@ class ShadowDecider:
     """
 
     def __init__(self, store: Any, being_config: Any = None, *,
-                 persona_id: str = "halbert", subject_id: str = "primary"):
+                 persona_id: str = DEFAULT_PERSONA_ID,
+                 subject_id: str = DEFAULT_SUBJECT_ID):
         self.store = store
         self.being_config = being_config
         self.persona_id = persona_id
@@ -119,7 +122,15 @@ class ShadowDecider:
 
     def decide(self, event: Any, *, channel_class: ChannelClass,
                quiet_hours_active: bool = False) -> Any:
-        """The engine's decision for this event, or None."""
+        """The engine's decision and the context it was taken on, or None.
+
+        Returns the pair because the row needs both: the decision carries
+        the outcome and the margin, and the *context* carries the activity
+        label and the provenance that says whether it may be persisted.
+        ``Receptivity`` carries neither — it is ``level``, ``score``,
+        ``reasons`` and ``stale`` — which is why the engine's own
+        ``record_attempt`` reads ``ctx.signals`` for them too.
+        """
         being_config = self._config()
         if being_config is None:
             return None
@@ -139,17 +150,46 @@ class ShadowDecider:
             )
             if ctx is None:
                 return None
-            return engine_decide(ctx)
+            decision = engine_decide(ctx)
+            self._note_proactive(ctx, decision)
+            return decision, ctx
         except Exception as exc:
             logger.warning("attunement: shadow decision failed: %s", exc)
             return None
+
+    def _note_proactive(self, ctx: Any, decision: Any) -> None:
+        """Advance the engine's daily count when the shadow would have spoken.
+
+        A durable write from a decision nothing acts on, and deliberate: the
+        daily cap is the one ceiling whose effect is invisible unless the
+        counter it reads moves. Left un-advanced, ``proactive_count_today``
+        is zero on every row, ``attachment:daily_cap`` can never appear, and
+        the shadow models a policy whose cap does not exist — which is not
+        the policy anyone would ship.
+
+        The counter is per-day and read by nothing else today. Reported to
+        Haloysius rather than assumed: if the engine would rather a shadow
+        left its subject state alone, this is the line to delete.
+        """
+        outcome = getattr(decision.outcome, "value", decision.outcome)
+        if outcome not in SPEAKING_OUTCOMES:
+            return
+        try:
+            from haloysius.attunement.ledger import StandingRequestLedger
+
+            StandingRequestLedger(
+                self.store, self.persona_id, ctx.config
+            ).note_proactive(ctx.subject_id, ctx.now)
+        except Exception as exc:
+            logger.debug("attunement: could not advance the daily count: %s", exc)
 
 
 class SuppressionRecorder:
     """Writes one row per proactive decision, allowed or suppressed."""
 
-    def __init__(self, store: Any = None, *, persona_id: str = "halbert",
-                 subject_id: str = "primary", decider: Optional[ShadowDecider] = None):
+    def __init__(self, store: Any = None, *, persona_id: str = DEFAULT_PERSONA_ID,
+                 subject_id: str = DEFAULT_SUBJECT_ID,
+                 decider: Optional[ShadowDecider] = None):
         self.store = store
         self.persona_id = persona_id
         self.subject_id = subject_id
@@ -184,17 +224,20 @@ class SuppressionRecorder:
             return None
         try:
             gate_keys = self._gate_keys(allowed, reason, reason_keys)
+            context = None
             if decision is None and self.decider is not None:
                 # Its own guard, inside the recorder's. The shadow is the
                 # speculative half of this row and the gate's verdict is the
                 # half that describes what happened, so a policy that blows
                 # up must cost its own opinion and nothing else.
                 try:
-                    decision = self.decider.decide(
+                    shadow = self.decider.decide(
                         event,
                         channel_class=channel_class,
                         quiet_hours_active=quiet_hours_active,
                     )
+                    if shadow is not None:
+                        decision, context = shadow
                 except Exception as exc:
                     logger.warning("attunement: shadow decision failed: %s", exc)
                     decision = None
@@ -213,7 +256,7 @@ class SuppressionRecorder:
                 "gate_outcome": gate_outcome,
                 "gate_reasons": gate_keys,
             }
-            entry.update(self._verdict(decision, gate_outcome, gate_keys))
+            entry.update(self._verdict(decision, gate_outcome, gate_keys, context))
             self.store.record_outcome_raw(entry)
             return attempt_id
         except Exception as exc:
@@ -229,7 +272,7 @@ class SuppressionRecorder:
         return [key] if key else []
 
     def _verdict(self, decision: Any, gate_outcome: str,
-                 gate_keys: List[str]) -> Dict[str, Any]:
+                 gate_keys: List[str], context: Any = None) -> Dict[str, Any]:
         """The top-level ``OutcomeEntry`` fields, and who produced them."""
         if decision is None:
             return {
@@ -255,28 +298,33 @@ class SuppressionRecorder:
                 getattr(receptivity.level, "value", receptivity.level)
                 if receptivity is not None else None
             ),
-            "activity": self._persistable_activity(decision),
+            "activity": self._persistable_activity(context),
             "shadow_agrees": (outcome in SPEAKING_OUTCOMES) == (gate_outcome == "speak"),
         }
 
     @staticmethod
-    def _persistable_activity(decision: Any) -> Optional[str]:
+    def _persistable_activity(context: Any) -> Optional[str]:
         """The activity label, if its provenance may be persisted (A-HB-19).
 
         An activity enum at a timestamp is still a fact about a person's
-        home, so a vision- or audio-derived label never reaches the durable
-        row. Read off the decision's receptivity rather than the raw
-        signals, because that is what the decision was actually taken on.
+        home, so a label whose provenance is not persistable never reaches
+        the durable row. The allow-list is ``config.persist_activity_
+        provenance`` rather than a deny-list written here: a second copy of
+        that set is a second thing to drift, and the failure mode of the
+        copy is a vision-derived label in a durable log.
+
+        Always None today — nothing on the proactive path feeds the sensor,
+        so ``signals.activity`` is UNKNOWN with no provenance.
         """
-        receptivity = getattr(decision, "receptivity", None)
-        activity = getattr(receptivity, "activity", None) if receptivity else None
-        if activity is None:
+        signals = getattr(context, "signals", None)
+        provenance = getattr(signals, "activity_provenance", None)
+        if signals is None or provenance is None:
             return None
-        provenance = getattr(receptivity, "activity_provenance", None)
-        provenance = getattr(provenance, "value", provenance)
-        if provenance in ("vision", "audio"):
+        allowed = getattr(getattr(context, "config", None),
+                          "persist_activity_provenance", ())
+        if provenance not in allowed:
             return None
-        return getattr(activity, "value", activity)
+        return getattr(signals.activity, "value", signals.activity)
 
     def recent_suppressions(self, limit: int = 50) -> List[Dict[str, Any]]:
         """The rows behind "what haven't you told me?".

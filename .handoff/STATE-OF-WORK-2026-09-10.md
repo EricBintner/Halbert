@@ -24,7 +24,7 @@ once.
 | **MCP package preflight (FD-10)** | Built by a concurrent session, reviewed, adversarially passed, founder-ratified. Merged `c9e70623`. |
 | **WAL-reset correction** | The audit's mechanism was wrong (a data race, not a crash bug); severity downgraded to INFO; predicate corrected to exact patched versions. `87b6418e`. |
 | **Six SKILL.md descriptions** | FD-20 answered — written rather than trimmed; over-limit set now empty. `4defc08c`. |
-| **Attunement Phase C prerequisites** | Haloysius' 2026-09-10 handoff §2.1 and §2.2, both landed. Shadow mode calls `decide()` and records both verdicts on one row; dismiss / snooze / "propose fix" label the attempt; the ignored sweep runs hourly. `feat/attunement-phase-c-prereqs`. Suite 8626 passed, 0 failed. |
+| **Attunement Phase C prerequisites** | Haloysius' 2026-09-10 handoff §2.1 and §2.2, both landed. Shadow mode calls `decide()` and records both verdicts on one row; dismiss / snooze / "propose fix" label the attempt; the ignored sweep runs hourly. Reviewed and two criticals fixed before merge — a reaction could land on a suppressed attempt (the ordinary path, not an edge case), and every shadow margin carried a fixed −0.25 from a counter the wiring could not advance. `feat/attunement-phase-c-prereqs`. Suite 8641 passed, 0 failed. |
 
 ## 2. Ready to build — nothing blocking
 

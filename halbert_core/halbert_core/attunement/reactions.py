@@ -36,6 +36,9 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
+from .context import DEFAULT_PERSONA_ID
+from .subject import DEFAULT_SUBJECT_ID
+
 logger = logging.getLogger("halbert.attunement.reactions")
 
 #: How long an attempt stays open before silence counts as being ignored.
@@ -47,8 +50,8 @@ DEFAULT_IGNORED_AFTER_S = 4 * 3600
 class ReactionRecorder:
     """Attaches a person's reaction to the attempt that prompted it."""
 
-    def __init__(self, store: Any, *, persona_id: str = "halbert",
-                 subject_id: str = "primary"):
+    def __init__(self, store: Any, *, persona_id: str = DEFAULT_PERSONA_ID,
+                 subject_id: str = DEFAULT_SUBJECT_ID):
         self.store = store
         self.persona_id = persona_id
         self.subject_id = subject_id
@@ -101,6 +104,9 @@ class ReactionRecorder:
             return 0
 
         for row in rows:
+            # Belt and braces: the query already restricts to spoken,
+            # unanswered rows, and this is the assertion that a store which
+            # stopped doing so cannot quietly start minting negatives.
             if row.get("gate_outcome", row.get("outcome")) != "speak":
                 continue
             if row.get("reaction"):
@@ -109,7 +115,7 @@ class ReactionRecorder:
             if not attempt_id:
                 continue
             try:
-                if self.store.update_reaction(attempt_id, "ignored"):
+                if self._attach(attempt_id, "ignored"):
                     labelled += 1
             except Exception as exc:
                 logger.warning("attunement: could not label %s: %s", attempt_id, exc)
@@ -120,9 +126,12 @@ class ReactionRecorder:
     def _label(self, context_key: Optional[str], reaction: str) -> bool:
         """Find the attempt this reaction is about, and label it.
 
-        False when there is no attempt — a finding the person found by
-        navigating to the page was never pushed at them, so there is
-        nothing to react to and no row is invented to hold one.
+        False when there is no attempt the person actually received. A
+        finding whose push the gate suppressed is still written and still
+        listed, so it can be met on the Findings page and dismissed there
+        having never interrupted anyone — that is a reaction to a *finding*,
+        not to an attempt, and the store's ``spoken_only`` default is what
+        keeps the two apart.
         """
         if not context_key:
             return False
@@ -133,13 +142,45 @@ class ReactionRecorder:
             )
             if not attempt_id:
                 return False
-            return bool(self.store.update_reaction(attempt_id, reaction))
+            return self._attach(attempt_id, reaction)
         except Exception as exc:
             logger.warning(
                 "attunement: could not record reaction %s for %s: %s",
                 reaction, context_key, exc,
             )
             return False
+
+    def _attach(self, attempt_id: str, reaction: str) -> bool:
+        """Write the reaction through the engine's writer where we can.
+
+        ``record_reaction`` is not a wrapper around ``update_reaction``: it
+        also calls ``note_accepted`` on ENGAGED, and that counter is read by
+        the policy. While ``accepted_interactions`` is below the engine's
+        quiet-period threshold every decision carries a fixed extra cost, so
+        a wiring that writes the reaction but never advances the counter
+        pins that cost on forever and depresses every margin it records —
+        and ``margin`` is the one quantity Phase C's exploration arm is
+        defined over.
+
+        Falls back to the store when the engine is absent, which loses the
+        counter and nothing else.
+        """
+        try:
+            from haloysius.attunement.ledger import (
+                StandingRequestLedger,
+                record_reaction,
+            )
+
+            from .context import halbert_config
+
+            ledger = StandingRequestLedger(
+                self.store, self.persona_id, halbert_config()
+            )
+            return bool(record_reaction(
+                ledger, attempt_id, reaction, self.subject_id
+            ))
+        except ImportError:
+            return bool(self.store.update_reaction(attempt_id, reaction))
 
 
 def default_reactions() -> Optional[ReactionRecorder]:

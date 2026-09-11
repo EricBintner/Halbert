@@ -93,15 +93,6 @@ class ProactiveGate:
                 logger.warning("proactive gate: could not record decision: %s", exc)
         return allowed, reason
 
-    def _decide(self, event: ProactiveEvent) -> Tuple[bool, str]:
-        """The gate's verdict: ``(True, "")`` or ``(False, first_reason)``.
-
-        Kept as the single-answer view over :meth:`_evaluate` for callers
-        that want the verdict without the composition.
-        """
-        fired = self._evaluate(event)
-        return (not fired), (fired[0][1] if fired else "")
-
     def _evaluate(self, event: ProactiveEvent) -> List[Tuple[str, str]]:
         """Every mechanism that would eat this event, in check order.
 
@@ -180,9 +171,22 @@ class ProactiveGate:
                 "incident:safe_mode", "safe mode active (non-critical suppressed)"
             ))
 
-        # 4. Check snooze and dismissal for finding-linked events
+        # 4. Check snooze and dismissal for finding-linked events.
+        #    Guarded on its own: composing the reasons means this read is
+        #    reached for events that previously returned at the guest check,
+        #    the dial, quiet hours or safe mode, and in the detector sweep
+        #    it sits under one broad try that covers the whole per-detector
+        #    loop — so an unguarded sqlite error here would now abandon that
+        #    detector's remaining findings rather than suppress one event.
         if event.finding_id and self.findings:
-            finding = self.findings.get(event.finding_id)
+            try:
+                finding = self.findings.get(event.finding_id)
+            except Exception as exc:
+                logger.warning(
+                    "proactive gate: could not read finding %s: %s",
+                    event.finding_id, exc,
+                )
+                finding = None
             if finding:
                 if finding.status == FindingStatus.SNOOZED.value:
                     # Suppress only while the snooze is still active —

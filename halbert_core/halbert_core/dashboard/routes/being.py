@@ -156,6 +156,14 @@ def _resolve_finding_id(event_id: str, store: FindingStore) -> str:
     raise HTTPException(status_code=404, detail="Finding not found")
 
 
+def _note_safely(reaction: str, finding_id: str) -> None:
+    """Record the reaction; never let the ledger cost the user their action."""
+    try:
+        note(reaction, finding_id)
+    except Exception as exc:  # pragma: no cover - `note` already swallows
+        logger.warning("Could not record the %s reaction: %s", reaction, exc)
+
+
 @router.post("/being/events/{event_id}/snooze")
 async def snooze_event(event_id: str, req: SnoozeRequest = SnoozeRequest()):
     """Snooze a finding for N days.
@@ -171,7 +179,10 @@ async def snooze_event(event_id: str, req: SnoozeRequest = SnoozeRequest()):
             raise HTTPException(status_code=500, detail="Failed to snooze")
         # A-HB-26: label the attempt this is a reaction to. "Not now" and
         # "no" are different evidence and the ledger keeps them apart.
-        note("not_now", finding_id)
+        # Guarded here as well as inside `note`: the reaction is the
+        # secondary effect, and losing it is a gap in the evidence where
+        # losing the snooze is a bug the person sees.
+        _note_safely("not_now", finding_id)
         return store.get(finding_id).snoozed_until
 
     snoozed_until = await asyncio.to_thread(_do_snooze)
@@ -191,7 +202,7 @@ async def dismiss_event(event_id: str, req: DismissRequest = DismissRequest()):
         finding_id = _resolve_finding_id(event_id, store)
         if not store.dismiss(finding_id, req.reason):
             raise HTTPException(status_code=500, detail="Failed to dismiss")
-        note("dismissed", finding_id)
+        _note_safely("dismissed", finding_id)
 
     await asyncio.to_thread(_do_dismiss)
     return {"status": "ok", "dismissed": True}

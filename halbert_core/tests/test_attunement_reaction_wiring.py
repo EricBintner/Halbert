@@ -86,17 +86,21 @@ async def test_a_ledger_that_is_down_does_not_cost_the_user_the_dismissal(
     monkeypatch, findings
 ):
     """The reaction is the secondary effect here. Losing it is a gap in the
-    evidence; losing the dismissal is a bug the person sees."""
+    evidence; losing the dismissal is a bug the person sees.
+
+    Guarded at the call site rather than only inside `note`, so the safety
+    is structural and does not rest on a downstream contract holding.
+    """
     def _explode(*a, **kw):
         raise RuntimeError("ledger gone")
 
     monkeypatch.setattr(being_routes, "note", _explode)
 
-    with pytest.raises(RuntimeError):
-        await being_routes.dismiss_event(
-            "f-1", being_routes.DismissRequest(reason="x")
-        )
-    # The finding is dismissed regardless of what happened to the ledger.
+    result = await being_routes.dismiss_event(
+        "f-1", being_routes.DismissRequest(reason="x")
+    )
+
+    assert result["dismissed"] is True
     assert findings.get("f-1").status == "dismissed"
 
 

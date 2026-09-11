@@ -43,6 +43,19 @@ DEFAULT_PERSONA_ID = "halbert"
 #: A runaway guard, not a volume policy — see :func:`halbert_config`.
 MAX_PROACTIVE_PER_DAY = 24
 
+#: The channel class every shadow decision is taken at, and a known
+#: over-statement. ``ProactiveGate`` makes one decision for the whole event
+#: bus, whose subscribers span a bell badge (AMBIENT) and, where it is
+#: wired, voice and the auto-opening panel (PUSH). PUSH is the loudest
+#: surface an event here can reach, so it is the conservative choice for a
+#: suppression system — but the bias has a direction and it is worth
+#: knowing: the policy treats AMBIENT more permissively (a quiet dial
+#: yields SPEAK_MINIMAL rather than a hold, and the social cost applies to
+#: PUSH alone), so the shadow reads **quieter than the product would be**
+#: if it decided per surface. ``surfaces.SURFACE_CHANNEL`` is the map to use
+#: when a caller can say which surface it is about; none can today.
+SHADOW_CHANNEL_CLASS = ChannelClass.PUSH
+
 
 def engine_available() -> bool:
     """Whether ``haloysius.attunement`` can be imported."""
@@ -144,7 +157,7 @@ def _life_safety(event: Any) -> bool:
 
 
 def utterance_for(
-    event: Any, *, channel_class: ChannelClass = ChannelClass.PUSH
+    event: Any, *, channel_class: ChannelClass = SHADOW_CHANNEL_CLASS
 ) -> Any:
     """A ``ProactiveEvent`` as the engine's ``Utterance``, or None.
 
@@ -187,7 +200,7 @@ def build_context(
     store: Any,
     persona_id: str = DEFAULT_PERSONA_ID,
     subject_id: str = DEFAULT_SUBJECT_ID,
-    channel_class: ChannelClass = ChannelClass.PUSH,
+    channel_class: ChannelClass = SHADOW_CHANNEL_CLASS,
     signals: Any = None,
     quiet_hours_active: bool = False,
     now: Optional[str] = None,

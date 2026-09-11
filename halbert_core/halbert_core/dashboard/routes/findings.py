@@ -151,7 +151,10 @@ def propose_fix(finding_id: str):
     # A-HB-26's positive arm: asking for the fix is acting on the finding,
     # and it is the evidence a silence can never produce. Founder ruling
     # (2026-09-10): acted on or replied counts; merely opening does not.
-    note("engaged", finding_id)
+    try:
+        note("engaged", finding_id)
+    except Exception as exc:  # pragma: no cover - `note` already swallows
+        logger.warning("Could not record the engaged reaction: %s", exc)
     proposal = ps.get(proposal_id)
     return {
         "status": "ok",

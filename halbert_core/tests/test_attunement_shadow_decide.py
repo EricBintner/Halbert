@@ -14,6 +14,8 @@ So the row now carries both verdicts and says which is which — and a
 `margin` of None, never 0.0, when no engine decision produced one.
 """
 
+from datetime import datetime, timezone
+
 import pytest
 
 from halbert_core.attunement.shadow import (
@@ -206,9 +208,12 @@ def test_the_daily_cap_is_a_runaway_guard_not_a_ration():
     assert halbert_config().attachment.max_proactive_per_day == 24
 
 
-def test_a_null_margin_survives_the_round_trip_to_the_engines_dataclass(store):
+def test_a_null_margin_survives_halberts_own_codec(store):
     """The whole point of None-not-0.0 is that a Phase C reader can filter on
-    it. That only works if it arrives intact."""
+    it. That only works if it arrives intact.
+
+    Scoped to *our* codec deliberately — see the test below for where the
+    convention currently stops."""
     cfg = _config(proactivity="quiet")
     ProactiveGate(
         cfg, recorder=SuppressionRecorder(store=store)
@@ -218,3 +223,98 @@ def test_a_null_margin_survives_the_round_trip_to_the_engines_dataclass(store):
     assert entry.margin is None
     assert entry.outcome is engine.EngagementOutcome.SILENT
     assert entry.reasons == ("dial:quiet",)
+
+
+def test_the_engines_own_decoder_cannot_yet_read_a_null_margin():
+    """A tripwire, not a preference.
+
+    `ledger._outcome_from_dict` does `float(data.get("margin", 0.0))`, and an
+    explicit null is not a missing key, so it raises. Our store never calls
+    it — we decode through `attunement/codec.py` — but Phase C's reader
+    might, and `OutcomeEntry.margin` is a required non-Optional float.
+
+    Reported to Haloysius in
+    `.handoff/HANDOFF-TO-HALOYSIUS-ATTUNEMENT-PHASE-C-PREREQUISITES-2026-09-10.md`
+    §2. **When this test starts failing, the engine has widened the hint —
+    delete it and say thank you.**
+    """
+    from haloysius.attunement.ledger import _outcome_from_dict
+
+    row = {
+        "attempt_id": "a", "subject_id": "s", "persona_id": "p",
+        "source": "finding", "severity": "info", "channel_class": "push",
+        "outcome": "silent", "reasons": ["dial:quiet"], "margin": None,
+    }
+
+    with pytest.raises(TypeError):
+        _outcome_from_dict(row)
+
+
+def test_the_daily_cap_can_actually_fire(store):
+    """`max_proactive_per_day` is the one ceiling whose effect is invisible
+    unless the counter it reads moves. Left un-advanced,
+    `proactive_count_today` is zero on every row and `attachment:daily_cap`
+    can never appear — so the shadow would model a policy whose cap does not
+    exist, which is not the policy anyone would ship."""
+    from haloysius.attunement.ledger import StandingRequestLedger
+
+    from halbert_core.attunement.context import halbert_config
+
+    cfg = _config(proactivity="assertive")
+    rec = _recorder(store, cfg)
+    for _ in range(3):
+        ProactiveGate(cfg, recorder=rec).should_notify(_event(severity="critical"))
+
+    ledger = StandingRequestLedger(store, "halbert", halbert_config())
+    now = datetime.now(timezone.utc).isoformat()
+    assert ledger.proactive_count_today("primary", now) == 3
+
+
+def test_a_held_shadow_does_not_advance_the_daily_count(store):
+    from haloysius.attunement.ledger import StandingRequestLedger
+
+    from halbert_core.attunement.context import halbert_config
+
+    cfg = _config(proactivity="off")
+    ProactiveGate(cfg, recorder=_recorder(store, cfg)).should_notify(_event())
+
+    ledger = StandingRequestLedger(store, "halbert", halbert_config())
+    now = datetime.now(timezone.utc).isoformat()
+    assert ledger.proactive_count_today("primary", now) == 0
+
+
+def test_the_activity_label_is_read_from_the_signals_not_the_receptivity(store):
+    """`Receptivity` is level/score/reasons/stale — it carries no activity
+    and no provenance, so a reader that went looking there would silently
+    always find None and A-HB-19's guard would never actually run."""
+    import dataclasses
+
+    fields = {f.name for f in dataclasses.fields(engine.Receptivity)}
+
+    assert "activity" not in fields
+    assert "activity_provenance" not in fields
+
+
+def test_a_vision_derived_activity_never_reaches_the_row():
+    """A-HB-19: an activity enum at a timestamp is still a fact about a
+    person's home. The allow-list is the engine config's, not a deny-list
+    copied here."""
+    from halbert_core.attunement.context import halbert_config
+    from halbert_core.attunement.shadow import SuppressionRecorder as R
+
+    class _Ctx:
+        config = halbert_config()
+        signals = engine.SituationSignals(
+            activity=engine.Activity.FOCUSED_WORK,
+            activity_provenance=engine.SignalProvenance.VISION,
+        )
+
+    class _SensorCtx:
+        config = halbert_config()
+        signals = engine.SituationSignals(
+            activity=engine.Activity.IDLE,
+            activity_provenance=engine.SignalProvenance.SENSOR,
+        )
+
+    assert R._persistable_activity(_Ctx()) is None
+    assert R._persistable_activity(_SensorCtx()) == "idle"
