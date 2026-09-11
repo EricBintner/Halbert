@@ -104,6 +104,55 @@ class TestDeclaredRung:
         assert (resolved.model, source) == ("small-a", AuxSource.DECLARED)
 
 
+class TestExcludeKwarg:
+    """A14-G7: a pick that ERRORS at request time is never rescued by the
+    next rung -- the caller (speech_summarizer.py) already retries once
+    with ``exclude``, waiting on the ladder to accept it."""
+
+    def test_an_excluded_declared_pick_falls_through_to_the_chat_floor(
+        self, models_config_dir, monkeypatch
+    ):
+        _configured(models_config_dir,
+                    chat_model=("e_local", "family-a:32b"),
+                    utility_model=("e_local", "small-a"))
+        resolved, source = aux._resolve_aux(exclude=("small-a",))
+        assert (resolved.model, source) == ("family-a:32b", AuxSource.CHAT)
+
+    def test_an_excluded_catalog_pick_falls_through_to_the_next_smallest(
+        self, models_config_dir, monkeypatch
+    ):
+        _configured(models_config_dir, chat_model=("e_local", "family-a:32b"),
+                    utility_model=None)
+        monkeypatch.setattr(aux, "_fetch_catalog", lambda *a, **k: [
+            {"name": "family-a:3b", "details": {"parameter_size": "3B"}},
+            {"name": "family-a:8b", "details": {"parameter_size": "8B"}},
+        ])
+        resolved, source = aux._resolve_aux(prefer_fast=True, exclude=("family-a:3b",))
+        assert (resolved.model, source) == ("family-a:8b", AuxSource.CATALOG)
+
+    def test_an_excluded_chat_floor_yields_none_when_nothing_else_serves(
+        self, models_config_dir, monkeypatch
+    ):
+        _configured(models_config_dir, chat_model=("e_local", "family-a:32b"),
+                    utility_model=None)
+        resolved, source = aux._resolve_aux(exclude=("family-a:32b",))
+        assert (resolved, source) == (None, AuxSource.NONE)
+
+    def test_public_resolve_aux_model_forwards_exclude(self, models_config_dir):
+        _configured(models_config_dir,
+                    chat_model=("e_local", "family-a:32b"),
+                    utility_model=("e_local", "small-a"))
+        resolved = aux.resolve_aux_model(exclude=("small-a",))
+        assert resolved.model == "family-a:32b"
+
+    def test_exclude_defaults_to_nothing_excluded(self, models_config_dir):
+        _configured(models_config_dir,
+                    chat_model=("e_local", "family-a:32b"),
+                    utility_model=("e_local", "small-a"))
+        resolved, source = aux._resolve_aux()
+        assert (resolved.model, source) == ("small-a", AuxSource.DECLARED)
+
+
 class TestCatalogRung:
     """Live-catalog family match — attempted only on a per-task prefer_fast opt-in."""
 

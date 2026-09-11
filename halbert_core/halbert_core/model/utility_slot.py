@@ -140,6 +140,7 @@ def resolve_aux_model(
     task: str = "utility",
     prefer_fast: bool = False,
     require_local: bool = False,
+    exclude: Tuple[str, ...] = (),
 ) -> Optional[ResolvedModel]:
     """A model for an internal side task, or None when nothing can serve one.
 
@@ -150,11 +151,14 @@ def resolve_aux_model(
     secure-turn gate: every rung's candidate must pass
     :func:`llm_config.is_local_model`, and the floor becomes ``secure_model``
     (already guaranteed local, SEC-21) instead of ``chat_model``, which
-    carries no such guarantee.
+    carries no such guarantee. ``exclude`` (A14-G7) names models a caller
+    already tried and had fail at request time — every rung skips them, so
+    a retry after a failed pick can reach a different one instead of
+    getting the same failing model back.
     """
     resolved, source = _resolve_aux(
         session_id=session_id, task=task, prefer_fast=prefer_fast,
-        require_local=require_local,
+        require_local=require_local, exclude=exclude,
     )
     logger.debug("utility ladder: task=%s rung=%s", task, source.value)
     return resolved
@@ -169,6 +173,7 @@ def _resolve_aux(
     task: str = "utility",
     prefer_fast: bool = False,
     require_local: bool = False,
+    exclude: Tuple[str, ...] = (),
 ) -> Tuple[Optional[ResolvedModel], AuxSource]:
     """The ladder proper: (model, rung). Private; tests drive this directly."""
     # Captured before any load: migrating the file on first read removes the
@@ -180,20 +185,22 @@ def _resolve_aux(
     except Exception as e:
         logger.debug("utility ladder: declared rung failed (%s)", e)
         declared = None
-    if declared is not None and (not require_local or _is_local(declared)):
+    if (declared is not None and declared.model not in exclude
+            and (not require_local or _is_local(declared))):
         return declared, AuxSource.DECLARED
 
     anchor: Optional[ResolvedModel] = None
     if prefer_fast:
         anchor = _anchor(session_id)
         if anchor is not None:
-            picked = _catalog_pick(anchor, require_local=require_local)
+            picked = _catalog_pick(anchor, require_local=require_local, exclude=exclude)
             if picked is not None:
                 return picked, AuxSource.CATALOG
 
     if legacy:
         resolved = _resolve_legacy(legacy, anchor or _anchor(session_id))
-        if resolved is not None and (not require_local or _is_local(resolved)):
+        if (resolved is not None and resolved.model not in exclude
+                and (not require_local or _is_local(resolved))):
             return resolved, AuxSource.LEGACY
 
     if require_local:
@@ -205,7 +212,7 @@ def _resolve_aux(
         except Exception as e:
             logger.debug("utility ladder: secure floor failed (%s)", e)
             secure = None
-        if secure is not None:
+        if secure is not None and secure.model not in exclude:
             return secure, AuxSource.SECURE
         return None, AuxSource.NONE
 
@@ -214,7 +221,7 @@ def _resolve_aux(
     except Exception as e:
         logger.debug("utility ladder: chat floor failed (%s)", e)
         chat = None
-    if chat is not None:
+    if chat is not None and chat.model not in exclude:
         return chat, AuxSource.CHAT
     return None, AuxSource.NONE
 
@@ -239,7 +246,9 @@ def _anchor(session_id: Optional[str]) -> Optional[ResolvedModel]:
 # ── Rung 2: live-catalog family match ─────────────────────────────
 
 
-def _catalog_pick(anchor: ResolvedModel, require_local: bool = False) -> Optional[ResolvedModel]:
+def _catalog_pick(
+    anchor: ResolvedModel, require_local: bool = False, exclude: Tuple[str, ...] = ()
+) -> Optional[ResolvedModel]:
     """The smallest strictly-cheaper same-family model the provider lists.
 
     One probe, short timeout, best effort. Anything odd — no listing, no size
@@ -250,7 +259,9 @@ def _catalog_pick(anchor: ResolvedModel, require_local: bool = False) -> Optiona
     endpoint's catalog can list both. A candidate below ``_MIN_UTILITY_PARAMS_B``
     is never picked, however cheap (A14-G5). A tie in size is broken by name,
     not by whichever order the catalog happened to list them in — the same
-    ranking on every call, regardless of provider listing order.
+    ranking on every call, regardless of provider listing order. ``exclude``
+    (A14-G7) drops a named candidate entirely, so a retry after a failed
+    pick can reach the next-smallest sibling instead.
     """
     try:
         entries = _cached_fetch_catalog(anchor.url, anchor.provider, anchor.api_key)
@@ -269,7 +280,7 @@ def _catalog_pick(anchor: ResolvedModel, require_local: bool = False) -> Optiona
         if not isinstance(entry, dict):
             continue
         name = str(entry.get("name") or entry.get("model") or "").strip()
-        if not name or _is_excluded_sibling(name):
+        if not name or _is_excluded_sibling(name) or name in exclude:
             continue
         candidate_token = _family_token(name)
         if not _same_family(candidate_token, token):
