@@ -247,3 +247,100 @@ class TestItNeverRaises:
             {"thread_id": "worse", "entities_json": None, "topic_domains": None},
         ]
         assert _run(rows, memory) == 1
+
+
+class TestAskingAgain:
+    """"Never re-raised on the same evidence" -- and the other half of that.
+
+    A candidate that expired was a question nobody answered. Asking again
+    off the same threads is nagging. But never asking again would be a
+    different failure: the machine noticing and saying nothing, forever,
+    because of one shrug months ago.
+    """
+
+    def _expired_candidate(self, memory, threads):
+        from halbert_core.continuity.interests import InterestStatus
+
+        interest = Interest(
+            topic="zfs", origin=Origin.INFERRED, status=InterestStatus.LAPSED,
+            reason="appeared on 3 days in 30 across 3 threads",
+            evidence={"threads": list(threads), "days": 3, "window_days": 30},
+        )
+        memory.smart_add(interest.to_persona_memory("candidates"))
+
+    def test_not_on_the_same_threads(self, memory):
+        self._expired_candidate(memory, ["t1", "t2", "t3"])
+        assert _run(_qualifying(), memory) == 0
+
+    def test_not_when_the_evidence_merely_overlaps(self, memory):
+        # One shared thread means the first question is partly prompting the
+        # second. Disjoint or nothing.
+        self._expired_candidate(memory, ["t3", "t9", "t8"])
+        assert _run(_qualifying(), memory) == 0
+
+    def test_yes_on_genuinely_new_evidence(self, memory):
+        self._expired_candidate(memory, ["old1", "old2", "old3"])
+        assert _run(_qualifying(), memory) == 1
+
+    def test_a_lapsed_interest_the_person_confirmed_is_never_re_proposed(self, memory):
+        """They already agreed to it once; it is in their list. Asking again
+        is asking them to re-confirm something they never withdrew."""
+        from halbert_core.continuity.interests import InterestStatus
+
+        interest = Interest(
+            topic="zfs", origin=Origin.INFERRED_CONFIRMED,
+            status=InterestStatus.LAPSED, actor="user",
+            reason="appeared on 3 days in 30 across 3 threads",
+            evidence={"threads": ["old1"], "days": 3, "window_days": 30},
+        )
+        memory.smart_add(interest.to_persona_memory("candidates"))
+        assert _run(_qualifying(), memory) == 0
+
+    def test_an_unreadable_store_proposes_nothing(self, memory):
+        """A store that cannot be searched cannot rule out a retraction, and
+        proposing into that uncertainty is the one error this must not make.
+
+        Written because the first draft of the re-proposal rule returned the
+        same value for "nothing found" and "could not look", which silently
+        stopped every proposal in the suite.
+        """
+        class _Unreadable:
+            persona_id = "candidates"
+
+            def __init__(self):
+                self.writes = []
+
+            def list_memories(self, **kw):
+                raise RuntimeError("gone")
+
+            def smart_add(self, memory):
+                # Recorded, not raised. `_write_candidate` catches every
+                # Exception -- AssertionError included -- so raising here
+                # would be swallowed and the test would pass either way.
+                # It did, until mutation said so.
+                self.writes.append(memory)
+                return ("ADD", "", getattr(memory, "id", ""))
+
+        store = _Unreadable()
+        assert _run(_qualifying(), store) == 0
+        assert store.writes == []
+
+    def test_an_empty_store_does_propose(self, memory):
+        # The other side of that bug: nothing found is not the same as
+        # could not look.
+        assert _run(_qualifying(), memory) == 1
+
+
+class TestTheSweepRunsBeside(object):
+
+    def test_it_is_rate_limited_to_once_a_day(self, memory):
+        from halbert_core.continuity.consolidation import Consolidator
+
+        c = Consolidator(_Threads([]), None, memory)
+        assert c.sweep_interests(now=NOW) == 0
+        c._last_sweep = NOW
+        # A second call inside the window returns without scanning at all.
+        assert c.sweep_interests(now=NOW + 60) == 0
+        assert c._last_sweep == NOW
+        c.sweep_interests(now=NOW + 2 * 24 * 3600)
+        assert c._last_sweep == NOW + 2 * 24 * 3600

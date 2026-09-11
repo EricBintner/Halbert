@@ -76,6 +76,8 @@ class Consolidator:
         # the wiring at call time", which is also what lets a test inject one
         # without touching the two callers.
         self._memory = memory_store
+        #: When the MEM-04 sweep last ran. None means never.
+        self._last_sweep: Optional[float] = None
 
     def consolidate(self, *, now: Optional[float] = None) -> int:
         """Scan closed threads and record durable facts.
@@ -147,7 +149,7 @@ class Consolidator:
                 return 0
             written = 0
             for topic, days, thread_ids in self._recurring_terms(threads):
-                if self._already_known(store, topic):
+                if self._already_known(store, topic, thread_ids):
                     continue
                 if self._write_candidate(store, topic, days, thread_ids, ts):
                     written += 1
@@ -241,25 +243,53 @@ class Consolidator:
         return out
 
     @staticmethod
-    def _already_known(store: Any, topic: str) -> bool:
-        """Whether this topic is already an interest, in **any** status.
+    def _already_known(store: Any, topic: str, thread_ids: List[str]) -> bool:
+        """Whether this topic may not be proposed again.
 
-        Any status is the point. Re-proposing something the person stopped
-        using would walk their retraction back through the side door, and
-        re-proposing an active interest would ask them to confirm what they
-        already told us.
+        Almost always yes, for any existing row in any status. Re-proposing
+        something the person stopped using would walk their retraction back
+        through the side door; re-proposing an active one would ask them to
+        confirm what they already told us; re-proposing a lapsed confirmed
+        one would ask again about something they already agreed to and that
+        simply ran out of evidence.
+
+        **The one exception is an expired candidate on genuinely new
+        evidence.** A candidate that expired was a question nobody answered.
+        Asking again off the same threads is nagging, and the spec forbids
+        it in those words -- *never re-raised on the same evidence*. But a
+        person who ignored it once and then spent a fortnight back in the
+        same subject has produced new evidence, and never asking again
+        would be a different failure from nagging: the machine noticing and
+        saying nothing, forever, because of one shrug months ago.
+
+        Identity is by thread, which is what the candidate stored. Disjoint
+        thread sets mean none of the conversations that prompted the first
+        question is prompting this one.
         """
         try:
-            from .interests import Interest, topic_slug
+            from .interests import Interest, InterestStatus, Origin, topic_slug
 
             slug = topic_slug(topic)
             for memory in (getattr(store, "list_memories", list)() or []):
                 existing = Interest.from_persona_memory(memory)
-                if existing is not None and existing.slug == slug:
-                    return True
+                if existing is None or existing.slug != slug:
+                    continue
+                if (
+                    existing.origin is Origin.INFERRED
+                    and existing.status is InterestStatus.LAPSED
+                ):
+                    seen = set(existing.evidence.get("threads") or [])
+                    if seen and not (seen & set(thread_ids)):
+                        return False
+                return True
+            # Nothing matching. This is the only path that may write.
+            return False
         except Exception:
+            # Unreadable is not a licence to write. A store that cannot be
+            # searched cannot rule out a retraction, and proposing into that
+            # uncertainty is the one error this method must not make.
             logger.debug("could not check for an existing interest", exc_info=True)
-        return False
+            return True
 
     def _write_candidate(
         self, store: Any, topic: str, days: int, thread_ids: List[str], now: float
@@ -302,6 +332,35 @@ class Consolidator:
     @staticmethod
     def _persona_id(store: Any) -> str:
         return str(getattr(store, "persona_id", "") or "halbert")
+
+    # -- MEM-04 --------------------------------------------------------
+
+    #: At most one sweep a day. The clocks it applies are 30 and 90 days;
+    #: running it on every idle tick would scan the store hundreds of times
+    #: to change nothing.
+    SWEEP_INTERVAL_SECONDS = 24 * 3600
+
+    def sweep_interests(self, *, now: Optional[float] = None) -> int:
+        """Retire interests that ran out of evidence. Never raises.
+
+        Runs beside the candidate rule rather than on its own scheduler job:
+        proposing and retiring are the two halves of one mechanism, and
+        keeping them in one place is what stops a later reader finding the
+        rule that creates candidates and not the one that clears them.
+        """
+        ts = time.time() if now is None else now
+        last = getattr(self, "_last_sweep", None)
+        if last is not None and (ts - last) < self.SWEEP_INTERVAL_SECONDS:
+            return 0
+        self._last_sweep = ts
+        try:
+            from .interest_sweep import sweep_interests as _sweep
+
+            report = _sweep(self._memory_store(), None, now=ts)
+            return int(report.get("lapsed", 0)) + int(report.get("expired", 0))
+        except Exception:
+            logger.warning("the interest sweep failed", exc_info=True)
+            return 0
 
     def _consolidate_domain(
         self, domain: str, threads: List[Dict[str, Any]], now: float

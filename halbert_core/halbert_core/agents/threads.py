@@ -683,6 +683,12 @@ class ThreadManager:
                 self._consolidator.propose_interests(now=now)
             except Exception as e:
                 logger.warning(f"interest candidates failed (non-fatal): {e}")
+            # MEM-04: retire what ran out of evidence. Self-rate-limited to
+            # once a day, so this costs a timestamp comparison per tick.
+            try:
+                self._consolidator.sweep_interests(now=now)
+            except Exception as e:
+                logger.warning(f"interest sweep failed (non-fatal): {e}")
         return [row["thread_id"] for row in closed]
 
     # ------------------------------------------------------------------
