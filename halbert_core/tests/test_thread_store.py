@@ -1343,6 +1343,38 @@ class TestGetOrOpenThread:
         assert t["created"] is True and t["thread_id"] == "n2"
         assert store.current_open_thread()["thread_id"] == "n2"
 
+    def test_parent_thread_id_and_edge_kind_are_stamped_on_creation(self, store):
+        # own-bug: _open_new_thread recorded provenance only in metadata
+        # (previous_thread_id), never in the structural columns move_leaf
+        # and the session-tree design read -- every thread stayed
+        # parent_thread_id NULL, edge_kind 'root' regardless of how it
+        # was really opened.
+        store.get_or_open_thread("n1", "First subject", created_at=10.0)
+        store.update_thread("n1", status="paused", paused_at=15.0)
+        t = store.get_or_open_thread(
+            "n2", "Second subject", created_at=20.0,
+            parent_thread_id="n1", edge_kind="continuation",
+        )
+        assert t["parent_thread_id"] == "n1"
+        assert t["edge_kind"] == "continuation"
+
+    def test_no_parent_keeps_the_root_default(self, store):
+        t = store.get_or_open_thread("n1", "First subject", created_at=10.0)
+        assert t.get("parent_thread_id") is None
+        assert t.get("edge_kind") == "root"
+
+    def test_joining_an_existing_open_thread_ignores_the_proposed_edge(self, store):
+        # Mirrors test_joins_the_open_thread_and_writes_nothing: a
+        # concurrent body's proposed edge/parent are never stamped onto
+        # another body's thread.
+        store.get_or_open_thread("n1", "First subject", created_at=10.0)
+        joined = store.get_or_open_thread(
+            "n2", "Second subject", created_at=20.0,
+            parent_thread_id="somewhere-else", edge_kind="branch",
+        )
+        assert joined["thread_id"] == "n1"
+        assert joined.get("edge_kind") == "root"
+
     def test_concurrent_callers_get_one_thread_not_two(self, tmp_path):
         """The race P3d sanctioned and P3c closes: many threads, one store,
         all get-or-open at once -- one row created, every caller handed the

@@ -1981,6 +1981,7 @@ class SqliteConversationStore:
         title_source: str = "provisional",
         created_at: Optional[float] = None,
         parent_thread_id: Optional[str] = None,
+        edge_kind: str = "root",
         metadata: Optional[dict] = None,
     ) -> Optional[Dict[str, Any]]:
         """The atomic get-or-open (P3c, founder ruling D-5): find the open
@@ -2029,10 +2030,11 @@ class SqliteConversationStore:
                         self._conn.execute(
                             """INSERT INTO conversations
                                (id, user_id, title, created_at, updated_at, metadata,
-                                status, title_source, parent_thread_id)
-                               VALUES (?, NULL, ?, ?, ?, ?, 'open', ?, ?)""",
+                                status, title_source, parent_thread_id, edge_kind)
+                               VALUES (?, NULL, ?, ?, ?, ?, 'open', ?, ?, ?)""",
                             (thread_id, title, ts, ts, json.dumps(metadata or {}),
-                             title_source, parent_thread_id),
+                             title_source, parent_thread_id,
+                             edge_kind if parent_thread_id else "root"),
                         )
                         row = self._conn.execute(
                             _THREAD_SELECT + " WHERE c.id = ?", (thread_id,)

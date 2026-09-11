@@ -132,6 +132,26 @@ class TestBeginEndTurn:
         assert turn2.history[0]["role"] == "system" and "kept for one turn only" in turn2.history[0]["content"]
         assert turn2.history[1]["content"] == "add a samba share for the media folder"
 
+    def test_auto_topic_switch_stamps_the_structural_edge(self, tm):
+        # own-bug: _open_new_thread recorded provenance only in metadata
+        # (previous_thread_id) -- the structural parent_thread_id/edge_kind
+        # columns move_leaf and the session-tree design read stayed NULL
+        # and 'root' regardless of how the thread was really opened.
+        t1 = _turn(tm, "add a samba share for the media folder")
+        tm.clock.advance(3 * 3600)
+        turn2 = tm.begin_turn("check the disk space on /var",
+                              analyze_message("check the disk space on /var"), "s2")
+        new = tm.store.get_thread(turn2.thread_id)
+        assert new["parent_thread_id"] == t1.thread_id
+        assert new["edge_kind"] == "continuation"
+
+    def test_explicit_new_thread_stamps_a_branch_edge(self, tm):
+        t1 = _turn(tm, "add a samba share for the media folder")
+        new_id = tm.new_thread("Something else", "model switched", from_thread_id=t1.thread_id)
+        new = tm.store.get_thread(new_id)
+        assert new["parent_thread_id"] == t1.thread_id
+        assert new["edge_kind"] == "branch"
+
     def test_strong_recall_of_closed_thread_injects_receipt(self, tm):
         t1 = _turn(tm, "add a samba share for the media folder", assistant="Added [media] at /srv/media.")
         tm.clock.advance(3 * 3600)
@@ -1130,9 +1150,16 @@ class TestMergeBack:
         certs = _turn(tm, "rotate the tls certs on the reverse proxy")
         disk_id = tm.new_thread("Disk space", "x", from_thread_id=certs.thread_id)
         _turn(tm, "check the disk space on /var")
+        # A row that no longer knows where it came from: the structural
+        # parent_thread_id column is now the source of truth
+        # (_predecessor_id trusts it first), so simulating "unrelated"
+        # means clearing that column too, not just the legacy metadata key
+        # a migrated row would be missing.
         meta = dict(tm.store.get_thread(disk_id)["metadata"])
-        meta.pop("previous_thread_id", None)  # a row that no longer knows where it came from
+        meta.pop("previous_thread_id", None)
         tm.store.update_thread(disk_id, metadata=meta)
+        tm.store._conn.execute(
+            "UPDATE conversations SET parent_thread_id = NULL WHERE id = ?", (disk_id,))
         assert tm.merge_back(disk_id) is None
         assert tm.store.get_thread(disk_id)["status"] == "open"
         assert len(tm.store.list_messages(disk_id)) == 2

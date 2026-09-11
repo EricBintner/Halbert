@@ -646,7 +646,7 @@ class ThreadManager:
             )
         return self._open_new_thread(
             provisional_title(title or ""), "model", now,
-            from_thread_id=previous_id, reason=reason,
+            from_thread_id=previous_id, reason=reason, edge_kind="branch",
         )
 
     def tick(self) -> List[str]:
@@ -763,7 +763,7 @@ class ThreadManager:
     # Internals
     # ------------------------------------------------------------------
 
-    def _open_new_thread(self, title: str, title_source: str, now: float, *, from_thread_id: Optional[str], reason: str) -> str:
+    def _open_new_thread(self, title: str, title_source: str, now: float, *, from_thread_id: Optional[str], reason: str, edge_kind: str = "continuation") -> str:
         """Open the next leaf thread -- or join the one a concurrent body
         opened first (P3c, founder ruling D-5).
 
@@ -785,6 +785,7 @@ class ThreadManager:
             self._pause_thread(from_thread_id, now, successor=new_id)
         thread = self.store.get_or_open_thread(
             new_id, title, title_source=title_source, created_at=now,
+            parent_thread_id=from_thread_id, edge_kind=edge_kind,
             metadata={"reason": reason, "previous_thread_id": from_thread_id},
         )
         if thread is None:
@@ -829,9 +830,21 @@ class ThreadManager:
 
     @staticmethod
     def _predecessor_id(thread: Dict[str, Any]) -> Optional[str]:
-        """The thread this one was opened from (``_open_new_thread`` records it)."""
+        """The thread this one was opened from.
+
+        own-bug: this used to prefer the legacy ``metadata.previous_thread_id``
+        pointer over the structural ``parent_thread_id`` column, back when
+        ``_open_new_thread`` only ever wrote the metadata copy. Now that
+        creation always stamps the column too, the column is the one this
+        prefers -- metadata is the fallback, for a row from before that fix
+        (a migrated row, or one from a store outage that never wrote the
+        column).
+        """
+        parent = thread.get("parent_thread_id")
+        if parent:
+            return parent
         meta = thread.get("metadata") or {}
-        return meta.get("previous_thread_id") or thread.get("parent_thread_id") or None
+        return meta.get("previous_thread_id") or None
 
     def _paused_predecessor(self, thread: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """The paused thread ``thread`` was opened *from*, or ``None``.
@@ -1063,7 +1076,8 @@ class ThreadManager:
         if t is None:
             return ""
         messages = self.store.list_messages(thread_id)
-        receipt = build_receipt(t, messages)
+        unresolved = self.store.unresolved_request(thread_id)
+        receipt = build_receipt(t, messages, unresolved_request=unresolved)
         if t.get("ephemeral"):
             return receipt
         # R2-N2: extract open loops from the last assistant message and
