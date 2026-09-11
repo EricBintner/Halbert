@@ -59,6 +59,11 @@ PENDING_NOTES_MAX = 8
 RECALL_SNIPPETS = 5
 RECALL_MAX = 3
 
+#: A16-G5: the persisted fact that a turn ended without an answer -- never
+#: shown as if the assistant said it, but a real row so replay does not
+#: read as two consecutive user turns.
+INTERRUPTED_TURN_MARKER = "[turn interrupted before an answer]"
+
 # ── topic windows ────────────────────────────────────────────────
 # `topic_domains` / `entities_json` are what `thread_signals.decide` compares
 # the next message against, and a domain shift needs *zero* overlap with
@@ -452,6 +457,18 @@ class ThreadManager:
                 blocks=list(blocks or []),
                 terminal_block_ids=list(terminal_block_ids or []),
                 diff_proposals=list(diff_proposals or []),
+                timestamp=now,
+            )
+        elif status == "interrupted":
+            # A16-G5: a crash mid-turn (mark_interrupted, or state_machine's
+            # own outer finally) wrote no assistant row at all, leaving a
+            # bare user row with no persisted fact that anything was cut
+            # short -- replay showed two consecutive user rows. A deliberate
+            # stop ("cancelled") is not this: the user already knows they
+            # stopped it, so only a genuine interruption gets the marker.
+            self.store.append_message(
+                thread_id, "assistant", INTERRUPTED_TURN_MARKER, origin="assistant",
+                turn_id=turn.turn_id, session_id=turn.session_id, status=status,
                 timestamp=now,
             )
         self._anchor_blocks(

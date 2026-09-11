@@ -176,6 +176,33 @@ class TestBeginEndTurn:
         assert tm.mark_interrupted() == 1
         assert tm.store.list_messages(tm.current()["thread_id"])[0]["status"] == "interrupted"
 
+    def test_interrupted_turn_leaves_a_persisted_marker_row(self, tm):
+        # A16-G5: end_turn wrote an assistant row only when it had text,
+        # blocks, diffs or terminal ids -- an interrupted turn has none of
+        # those, so it left a bare user row with no persisted fact that
+        # anything was cut short. Replay showed two consecutive user rows.
+        text = "what's the garage keypad code"
+        turn = tm.begin_turn(text, analyze_message(text), "s")
+        tm.end_turn(turn, assistant_text="", blocks=[], terminal_block_ids=[],
+                    diff_proposals=[], status="interrupted")
+        rows = tm.store.list_messages(turn.thread_id)
+        assert len(rows) == 2
+        assert rows[0]["status"] == "interrupted"
+        assert rows[1]["role"] == "assistant" and rows[1]["status"] == "interrupted"
+        assert rows[1]["content"] == "[turn interrupted before an answer]"
+
+    def test_cancelled_turn_gets_no_marker(self, tm):
+        # A deliberate stop is not an unexplained cut -- the user already
+        # knows they cancelled it, so no marker row is owed (and the
+        # pinned override test above already asserts exactly one row for
+        # a cancelled turn).
+        text = "add a samba share"
+        turn = tm.begin_turn(text, analyze_message(text), "s")
+        tm.end_turn(turn, assistant_text="", blocks=[], terminal_block_ids=[],
+                    diff_proposals=[], status="cancelled")
+        rows = tm.store.list_messages(turn.thread_id)
+        assert len(rows) == 1
+
 
 class TestTopicWindow:
     """`topic_domains`/`entities_json` describe the recent turns, not the thread's life."""
