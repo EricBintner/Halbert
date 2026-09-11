@@ -270,3 +270,49 @@ def test_region_scoping_sentinel_proves_head_and_tail_survive_verbatim(tmp_path)
 
     assert thread.messages[0].content == before_head
     assert thread.messages[29].content == before_tail
+
+
+def test_recovery_arm_is_in_the_default_matrix():
+    # A02-G3: Halbert's real production answer to consolidation loss is
+    # retrieval over the destroyed region, not another consolidation policy
+    # -- the matrix must carry it as a comparison point, not just the
+    # summarize-or-truncate policies.
+    from halbert_core.continuity.state_store import StateStore
+
+    arms = eval_consolidation.default_arms(StateStore(db_path=":memory:"))
+    assert "RECOVERY" in {a.name for a in arms}
+
+
+def test_recovery_arm_recalls_via_search_not_a_kept_transcript(tmp_path):
+    # RECOVERY answers by searching the region's own content per question,
+    # the same way the live system falls back to receipt search for a fact
+    # compacted out of context -- it should recall as well as keeping the
+    # whole region (nothing is actually discarded, only made indirect), but
+    # unlike NO_CONSOLIDATION it keeps ~nothing in the live context budget.
+    arm = eval_consolidation.Arm(
+        name="RECOVERY", policy=eval_consolidation.recovery_policy())
+    report = _matrix(tmp_path, seeds=tuple(range(1, 10)), turns=40,
+                      region=(0, 20), arms=[
+                          eval_consolidation.Arm(
+                              name="NO_CONSOLIDATION",
+                              policy=eval_consolidation.verbatim_policy()),
+                          arm,
+                      ])
+    agg = {a.arm: a for a in report.aggregates()}
+    assert agg["RECOVERY"].recall == agg["NO_CONSOLIDATION"].recall == 1.0
+    assert agg["RECOVERY"].mean_retained_tokens < agg["NO_CONSOLIDATION"].mean_retained_tokens
+
+
+def test_recovery_answer_refuses_when_nothing_matches(tmp_path):
+    # A question with no matching content in the region must refuse with
+    # the same forced NOT IN CONTEXT option every other answerer uses, not
+    # an empty string or a crash. The query terms must not appear anywhere
+    # in the corpus vocabulary -- the FTS search is OR-of-terms, so a query
+    # sharing even one common word with an unrelated planted fact would
+    # spuriously "match" and defeat the point of this test.
+    thread = corpus.synthetic_thread(seed=7, turns=40)
+    region = thread.messages[0:20]
+    policy = eval_consolidation.recovery_policy()
+    retained = policy(thread, region)
+    assert retained.answer_fn("zzqxnonexistentzzqx yywfabricatedyywf") \
+        .strip().upper().startswith("NOT IN CONTEXT")

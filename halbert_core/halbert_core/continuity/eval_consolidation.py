@@ -42,14 +42,14 @@ from .corpus import (
     planted_facts,
     synthetic_thread,
 )
-from .recall_eval import context_answerer, question_bank, run_exam
+from .recall_eval import ReceiptIndex, context_answerer, question_bank, run_exam
 from .state_store import StateStore
 
 __all__ = [
     "Retained", "PolicyFailed", "validate_summary", "Arm", "ArmRow",
     "ArmAggregate", "MatrixReport", "verbatim_policy", "truncate_oldest_policy",
-    "durable_facts_policy", "llm_summary_policy", "default_arms", "run_matrix",
-    "approx_tokens", "main",
+    "durable_facts_policy", "llm_summary_policy", "recovery_policy",
+    "default_arms", "run_matrix", "approx_tokens", "main",
 ]
 
 #: Fixed "now" so the scorecard is reproducible; nothing here touches the
@@ -68,9 +68,18 @@ LLM_GATE = "closed"
 
 @dataclass
 class Retained:
-    """What a policy kept of the region, as answerable text."""
+    """What a policy kept of the region, as answerable text.
+
+    ``answer_fn`` (A02-G3) is the escape hatch for a policy whose answering
+    is not "hand the whole retained text to a closed-book reader" — RECOVERY
+    answers per question via retrieval instead. When set, the runner asks
+    it directly instead of building :func:`.recall_eval.context_answerer`
+    from ``text``; ``text``/its token count still describe what actually
+    stays in the live context (RECOVERY's own is near-empty on purpose).
+    """
 
     text: str
+    answer_fn: Optional[Callable[[str], str]] = None
 
 
 class PolicyFailed(Exception):
@@ -171,6 +180,37 @@ def llm_summary_policy(summarizer: Optional[Callable[[str], Mapping]]):
     return policy
 
 
+def recovery_policy():
+    """A02-G3: retrieval over the destroyed region — Halbert's real
+    production answer to consolidation loss, not another consolidation
+    policy. Rather than keeping a consolidated transcript in the live
+    context, RECOVERY indexes each region message as a searchable receipt
+    (:class:`.recall_eval.ReceiptIndex`, the same FTS the retrieval-decay
+    eval uses) and answers each question by searching it — the same
+    fallback the live system takes for a fact compacted out of context.
+    ``Retained.text`` is deliberately near-empty: nothing is kept in the
+    live context budget, only the ability to search for it.
+    """
+
+    def policy(thread: EvalThread, region: Sequence[EvalMessage]) -> Retained:
+        index = ReceiptIndex()
+        contents: Dict[str, str] = {}
+        for i, msg in enumerate(region):
+            key = f"{thread.thread_id}:{i}"
+            contents[key] = msg.content
+            index.add(key, msg.content)
+
+        def answer_fn(question: str) -> str:
+            hits = index.search(question, limit=1)
+            if not hits:
+                return "NOT IN CONTEXT"
+            return contents.get(hits[0], "NOT IN CONTEXT")
+
+        return Retained(text="", answer_fn=answer_fn)
+
+    return policy
+
+
 @dataclass
 class Arm:
     """One policy in the matrix. ``policy(thread, region)`` receives ONLY the
@@ -202,6 +242,11 @@ def default_arms(state_store: StateStore) -> List[Arm]:
             name="TRUNCATE_OLDEST",
             label="cheap baseline — keep the newest 10 turns of the region",
             policy=truncate_oldest_policy(keep_turns=10),
+        ),
+        Arm(
+            name="RECOVERY",
+            label="production answer — retrieval over the destroyed region",
+            policy=recovery_policy(),
         ),
         Arm(
             name="LLM_SUMMARY",
@@ -601,7 +646,7 @@ def _run_arm(arm: Arm, thread: EvalThread,
                           region_tokens=region_tokens, attempts=attempt,
                           failure=f"{type(exc).__name__}: {exc}", retryable=False)
 
-        exam = run_exam(bank, context_answerer(retained.text))
+        exam = run_exam(bank, retained.answer_fn or context_answerer(retained.text))
         s = exam.summary()
         n = int(s["n"])
         return ArmRow(
