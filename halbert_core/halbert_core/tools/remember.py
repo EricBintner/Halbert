@@ -196,10 +196,15 @@ async def remember(args: Dict[str, Any]) -> str:
         return _refusal(str(e))
 
     try:
-        _write_interest(interest)
+        memory_id = _write_interest(interest)
     except Exception as e:  # pragma: no cover - defensive
         logger.warning("remember: the write failed", exc_info=True)
         return f"Not recorded: the memory store could not be written ({type(e).__name__})."
+    if not memory_id:
+        # No store configured, or the store declined. Echoing "Recorded" here
+        # would be the exact dishonesty this tool exists to avoid: the person
+        # would believe a thing was kept, and nothing was.
+        return _refusal("there is no memory store to record it in.")
 
     # The echo is the confirmation, and the person's first chance to correct
     # it. Verbatim: a paraphrased echo cannot be checked against what was

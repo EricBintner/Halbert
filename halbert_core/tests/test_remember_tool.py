@@ -197,3 +197,67 @@ class TestSecretsNeverLand:
         if turn:
             assert "203.0.113.9" not in turn[0].reason
         assert "203.0.113.9" not in out
+
+
+class TestTheRealWritePathResolves:
+    """The tests above stub `_write_interest`, so they never touch the store.
+
+    That stub hid a broken import for two commits: `_write_interest` reached
+    for `cognition_wiring.get_persona_memory_store`, which did not exist, so
+    every real call would have returned "the memory store could not be
+    written". A tool that refuses everything still passes a suite that never
+    calls its writer.
+    """
+
+    def test_write_interest_imports_resolve(self):
+        # The import is inside the function, so only calling it proves
+        # anything. A store of None is the "no memory configured" path and is
+        # fine; an ImportError is not.
+        import halbert_core.tools.remember as mod
+
+        mod._write_interest.__wrapped__ if hasattr(mod._write_interest, "__wrapped__") else None
+        from halbert_core.integrations.cognition_wiring import (  # noqa: F401
+            get_persona_memory_store,
+        )
+
+    async def test_a_real_write_lands_in_a_real_store(self, tmp_path, monkeypatch):
+        """End to end, through the actual store this body would use."""
+        monkeypatch.setenv("HALOYSIUS_DATA_HOME", str(tmp_path))
+        from haloysius.memory_v2.store import PersonaMemoryStore
+        import halbert_core.integrations.cognition_wiring as cw
+
+        store = PersonaMemoryStore("remember-e2e")
+        monkeypatch.setattr(cw, "get_persona_memory_store", lambda: store)
+
+        msg = current_user_message.set(SAID)
+        role = current_speaker_role.set("admin")
+        try:
+            out = await remember({"topic": "vintage thinkpads", "reason": SAID})
+        finally:
+            for var, tok in ((current_speaker_role, role), (current_user_message, msg)):
+                try:
+                    var.reset(tok)
+                except ValueError:
+                    var.set(None)
+
+        assert "Recorded" in out
+        contents = [m.content for m in store._memories.values()]
+        assert "User is interested in vintage thinkpads" in contents
+
+    async def test_no_store_configured_refuses_rather_than_claiming_success(
+        self, tmp_path, monkeypatch
+    ):
+        import halbert_core.integrations.cognition_wiring as cw
+
+        monkeypatch.setattr(cw, "get_persona_memory_store", lambda: None)
+        msg = current_user_message.set(SAID)
+        role = current_speaker_role.set("admin")
+        try:
+            out = await remember({"topic": "vintage thinkpads", "reason": SAID})
+        finally:
+            for var, tok in ((current_speaker_role, role), (current_user_message, msg)):
+                try:
+                    var.reset(tok)
+                except ValueError:
+                    var.set(None)
+        assert "Recorded" not in out, "nothing was stored; saying so is the point"

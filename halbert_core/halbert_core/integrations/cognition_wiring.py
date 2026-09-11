@@ -216,6 +216,39 @@ def get_cognition():
     return _cognition
 
 
+_persona_memory_store = None
+_persona_memory_store_failed = False
+
+
+def get_persona_memory_store():
+    """The persona memory store this body writes user facts through, or None.
+
+    Public because ``tools/remember`` and the interest recall path need it and
+    must not reach for ``PersonaMemoryStore`` directly: under Singular Entity
+    ``_create_memory_store`` returns a ``PeerMemoryBackend`` proxying to the
+    canonical host, and a body-local store would write a fact the rest of the
+    entity never sees.
+
+    Cached per process, and absent rather than fatal on failure -- the same
+    posture ``get_timeline_store`` takes. A turn that cannot reach memory
+    should lose the write, not the answer.
+    """
+    global _persona_memory_store, _persona_memory_store_failed
+    if _persona_memory_store is None and not _persona_memory_store_failed:
+        try:
+            _persona_memory_store = _create_memory_store()
+        except Exception as e:
+            _persona_memory_store_failed = True
+            logger.error(
+                f"Persona memory store unavailable ({type(e).__name__}: {e}); "
+                f"facts about the person cannot be recorded or recalled"
+            )
+            return None
+        if _persona_memory_store is None:
+            _persona_memory_store_failed = True
+    return _persona_memory_store
+
+
 def _create_memory_adapter():
     """Create a HaloysiusMemoryAdapter backed by a PersonaMemoryStore.
 
@@ -477,7 +510,7 @@ def get_state_ledger():
     must not depend on a store that observes it, so a ledger that cannot be
     opened is absent rather than fatal, logged once at ERROR.
     """
-    global _state_ledger, _state_ledger_failed
+    global _state_ledger, _state_ledger_failed, _persona_memory_store, _persona_memory_store_failed
     if _state_ledger is None and not _state_ledger_failed:
         try:
             from .state_trackers import _default_ledger
@@ -658,4 +691,6 @@ def shutdown():
     _timeline_store_failed = False
     _state_ledger = None
     _state_ledger_failed = False
+    _persona_memory_store = None
+    _persona_memory_store_failed = False
     logger.info("Cognition wiring shut down")
