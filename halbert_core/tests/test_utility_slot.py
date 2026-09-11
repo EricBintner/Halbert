@@ -177,6 +177,94 @@ class TestCatalogRung:
         assert source == AuxSource.CHAT
 
 
+class TestCatalogProbeCache:
+    """G2: prefer_fast can be exercised many times a minute (every side-task
+    dispatch); the catalog probe should not re-dial the same endpoint on
+    every call, and a dead endpoint should not be re-probed on every miss
+    either — but a revived endpoint must not be shut out for long."""
+
+    def _anchor_file(self, models_config_dir):
+        _configured(models_config_dir, chat_model=("e_local", "family-a:32b"),
+                    utility_model=None)
+
+    def test_a_repeated_probe_within_ttl_hits_the_cache(self, models_config_dir, monkeypatch):
+        self._anchor_file(models_config_dir)
+        aux.reset_catalog_cache()
+        calls = []
+
+        def _catalog(url, provider, api_key=""):
+            calls.append(1)
+            return [{"name": "family-a:3b", "details": {"parameter_size": "3B"}}]
+
+        monkeypatch.setattr(aux, "_fetch_catalog", _catalog)
+        aux._resolve_aux(prefer_fast=True)
+        aux._resolve_aux(prefer_fast=True)
+        assert len(calls) == 1
+
+    def test_a_failed_probe_is_negatively_cached(self, models_config_dir, monkeypatch):
+        self._anchor_file(models_config_dir)
+        aux.reset_catalog_cache()
+        calls = []
+
+        def _boom(url, provider, api_key=""):
+            calls.append(1)
+            raise OSError("endpoint down")
+
+        monkeypatch.setattr(aux, "_fetch_catalog", _boom)
+        aux._resolve_aux(prefer_fast=True)
+        aux._resolve_aux(prefer_fast=True)
+        assert len(calls) == 1
+
+    def test_cache_reset_forces_a_fresh_probe(self, models_config_dir, monkeypatch):
+        self._anchor_file(models_config_dir)
+        aux.reset_catalog_cache()
+        calls = []
+
+        def _catalog(url, provider, api_key=""):
+            calls.append(1)
+            return [{"name": "family-a:3b", "details": {"parameter_size": "3B"}}]
+
+        monkeypatch.setattr(aux, "_fetch_catalog", _catalog)
+        aux._resolve_aux(prefer_fast=True)
+        aux.reset_catalog_cache()
+        aux._resolve_aux(prefer_fast=True)
+        assert len(calls) == 2
+
+    def test_the_cache_expires_after_its_ttl(self, models_config_dir, monkeypatch):
+        self._anchor_file(models_config_dir)
+        aux.reset_catalog_cache()
+        calls = []
+
+        def _catalog(url, provider, api_key=""):
+            calls.append(1)
+            return [{"name": "family-a:3b", "details": {"parameter_size": "3B"}}]
+
+        monkeypatch.setattr(aux, "_fetch_catalog", _catalog)
+        clock = [0.0]
+        monkeypatch.setattr(aux, "_monotonic", lambda: clock[0])
+        aux._resolve_aux(prefer_fast=True)
+        clock[0] += aux._CATALOG_CACHE_TTL_S + 1
+        aux._resolve_aux(prefer_fast=True)
+        assert len(calls) == 2
+
+    def test_a_negative_cache_entry_expires_before_the_positive_ttl(self, models_config_dir, monkeypatch):
+        self._anchor_file(models_config_dir)
+        aux.reset_catalog_cache()
+        calls = []
+
+        def _boom(url, provider, api_key=""):
+            calls.append(1)
+            raise OSError("endpoint down")
+
+        monkeypatch.setattr(aux, "_fetch_catalog", _boom)
+        clock = [0.0]
+        monkeypatch.setattr(aux, "_monotonic", lambda: clock[0])
+        aux._resolve_aux(prefer_fast=True)
+        clock[0] += aux._CATALOG_NEGATIVE_TTL_S + 1
+        aux._resolve_aux(prefer_fast=True)
+        assert len(calls) == 2
+
+
 class TestTaskProvenanceLogging:
     """own-bug: task is documented as 'names the log line' but nothing ever
     logged it — only failure paths logged, at DEBUG."""

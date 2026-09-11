@@ -53,6 +53,7 @@ from __future__ import annotations
 import logging
 import re
 from enum import Enum
+from time import monotonic as _monotonic
 from typing import Any, Dict, List, Optional, Tuple
 
 import yaml
@@ -89,6 +90,42 @@ _GENERIC_MODELS_PATH_PROVIDERS = frozenset(
 
 _CATALOG_TIMEOUT = 2.0
 _MIN_FAMILY_TOKEN = 3
+
+# G2: prefer_fast can fire on every side-task dispatch, sometimes many times
+# a minute. A short cache keyed by (url, provider) avoids re-dialing the
+# same endpoint on every call; a shorter TTL on a failed probe (a dead
+# endpoint, a timeout) keeps a revived endpoint from being shut out for
+# long, while still sparing it a fresh probe on every miss.
+_CATALOG_CACHE_TTL_S = 60.0
+_CATALOG_NEGATIVE_TTL_S = 15.0
+_catalog_cache: Dict[Tuple[str, str], Tuple[float, List[Dict[str, Any]]]] = {}
+
+
+def reset_catalog_cache() -> None:
+    """Drop every cached catalog probe result (tests; a config/endpoint change)."""
+    _catalog_cache.clear()
+
+
+def _cached_fetch_catalog(url: str, provider: str, api_key: str = "") -> List[Dict[str, Any]]:
+    """``_fetch_catalog``, memoized per (url, provider) with a negative cache.
+
+    An exception from the underlying probe is cached too (so a dead endpoint
+    isn't re-dialed on every call) and then re-raised, unchanged, so callers
+    keep seeing the same fail-soft contract as an uncached probe.
+    """
+    key = (url, provider)
+    now = _monotonic()
+    cached = _catalog_cache.get(key)
+    if cached is not None and now < cached[0]:
+        return cached[1]
+    try:
+        entries = _fetch_catalog(url, provider, api_key)
+    except Exception:
+        _catalog_cache[key] = (now + _CATALOG_NEGATIVE_TTL_S, [])
+        raise
+    ttl = _CATALOG_CACHE_TTL_S if entries else _CATALOG_NEGATIVE_TTL_S
+    _catalog_cache[key] = (now + ttl, entries)
+    return entries
 
 
 # ── Ladder ────────────────────────────────────────────────────────
@@ -209,7 +246,7 @@ def _catalog_pick(anchor: ResolvedModel, require_local: bool = False) -> Optiona
     endpoint's catalog can list both.
     """
     try:
-        entries = _fetch_catalog(anchor.url, anchor.provider, anchor.api_key)
+        entries = _cached_fetch_catalog(anchor.url, anchor.provider, anchor.api_key)
     except Exception as e:
         logger.debug("utility ladder: catalog probe of %s failed (%s)", anchor.url, e)
         return None
