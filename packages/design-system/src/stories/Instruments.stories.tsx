@@ -100,13 +100,14 @@ export const TactileMeterSizes: StoryObj = {
 /* ----------------------------------------------------------- SegmentedBar -- */
 
 const btrfsSegments: SegmentItem[] = [
-  { id: 'data', label: 'File Data', value: 480, tone: 'nominal', detail: 'RAID1' },
-  { id: 'meta', label: 'Metadata & Journal', value: 24, tone: 'warning', pattern: 'hatched', detail: 'DUP' },
-  { id: 'snap', label: 'CoW Snapshots', value: 96, tone: 'neutral' },
+  { id: 'data', label: 'File Data', value: 480, tone: 'data-blue', detail: 'RAID1' },
+  { id: 'meta', label: 'Metadata & Journal', value: 36, tone: 'data-purple', pattern: 'hatched', detail: 'DUP' },
+  { id: 'snap', label: 'CoW Snapshots', value: 96, tone: 'data-teal' },
+  { id: 'sys',  label: 'System Reserve', value: 28, tone: 'data-amber' },
 ]
 
 export const SegmentedBarStorageBtrfs: StoryObj = {
-  name: 'SegmentedBar / Btrfs Pool Allocation',
+  name: 'SegmentedBar / Btrfs Pool Allocation (Categorical Palette)',
   render: () => (
     <Container>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
@@ -132,9 +133,10 @@ export const SegmentedBarStorageBtrfs: StoryObj = {
 }
 
 const bcachefsTierSegments: SegmentItem[] = [
-  { id: 'fg', label: 'Foreground NVMe Cache', value: 320, tone: 'telemetry', detail: 'fast write tier' },
-  { id: 'data', label: 'Rotational HDD Data', value: 2400, tone: 'nominal', detail: 'cold tier' },
-  { id: 'meta', label: 'Replicated Metadata', value: 80, tone: 'warning', pattern: 'hatched' },
+  { id: 'fg', label: 'Foreground NVMe Cache', value: 320, tone: 'data-amber', detail: 'fast write tier' },
+  { id: 'data', label: 'Rotational HDD Data', value: 2400, tone: 'data-blue', detail: 'cold tier' },
+  { id: 'meta', label: 'Replicated Metadata', value: 80, tone: 'data-purple', pattern: 'hatched' },
+  { id: 'snap', label: 'Historical Snapshots', value: 300, tone: 'data-teal' },
 ]
 
 export const SegmentedBarTieredStorage: StoryObj = {
@@ -211,13 +213,84 @@ export const TwoTierVignelliStorageCard: StoryObj = {
         </div>
         <SegmentedBar
           segments={[
-            { id: 'user', label: 'User Data', value: 1800, tone: 'nominal' },
-            { id: 'cache', label: 'Foreground Cache', value: 420, tone: 'telemetry' },
-            { id: 'meta', label: 'Metadata', value: 80, tone: 'warning', pattern: 'hatched' },
+            { id: 'user', label: 'User Data', value: 1800, tone: 'data-blue' },
+            { id: 'cache', label: 'Foreground Cache', value: 420, tone: 'data-amber' },
+            { id: 'meta', label: 'Metadata', value: 80, tone: 'data-purple', pattern: 'hatched' },
           ]}
           total={5000}
           unit="GB"
         />
+      </div>
+    </Container>
+  ),
+}
+
+/* --------------------------------- Categorical Data Visualization Palette -- */
+
+const allSeriesSegments: SegmentItem[] = [
+  { id: 's1', label: 'Cobalt / Blue', value: 24, tone: 'data-blue', detail: 'Series 1' },
+  { id: 's2', label: 'Teal / Copper', value: 20, tone: 'data-teal', detail: 'Series 2' },
+  { id: 's3', label: 'Emerald / Green', value: 18, tone: 'data-green', detail: 'Series 3' },
+  { id: 's4', label: 'Amber / Marigold', value: 15, tone: 'data-amber', detail: 'Series 4' },
+  { id: 's5', label: 'Iris / Amethyst', value: 13, tone: 'data-purple', detail: 'Series 5' },
+  { id: 's6', label: 'Vermilion / Focal', value: 10, tone: 'data-orange', detail: 'Series 6' },
+]
+
+export const CategoricalDataPaletteShowcase: StoryObj = {
+  name: 'Palette / Categorical Data Series Showcase',
+  render: () => (
+    <Container width={720}>
+      <div>
+        <h4 style={{ margin: 0, fontSize: 14, fontFamily: 'var(--font-sans)', color: 'var(--color-ink)' }}>
+          Olivetti / Vignelli Categorical Data Palette
+        </h4>
+        <p style={{ margin: '4px 0 12px', fontSize: 12, color: 'var(--color-ink-secondary)' }}>
+          Six distinct chromatic series with wide hue separation and stepped luminance. Designed for multi-category disk topologies, memory allocations, and cluster metrics without muddiness or isoluminance clash.
+        </p>
+      </div>
+
+      <div style={{ padding: 'var(--space-3)', backgroundColor: 'var(--color-surface-subtle)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--color-border)' }}>
+        <p style={{ margin: '0 0 8px', fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--color-ink-tertiary)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+          MULTI-SERIES ALLOCATION METER
+        </p>
+        <SegmentedBar
+          segments={allSeriesSegments}
+          total={100}
+          unit="%"
+          showLegend
+          showFreeHeadroom={false}
+          size="md"
+        />
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 'var(--space-2)', marginTop: 'var(--space-2)' }}>
+        {[
+          { token: '--color-data-blue', name: 'Cobalt / Blue', desc: 'Primary data series · Vignelli Subway Blue', bg: 'var(--color-data-blue)' },
+          { token: '--color-data-teal', name: 'Copper / Teal', desc: 'Secondary series · Oceanic Copper-Oxide', bg: 'var(--color-data-teal)' },
+          { token: '--color-data-green', name: 'Emerald / Green', desc: 'Tertiary series · Crisp Botanical Leaf', bg: 'var(--color-data-green)' },
+          { token: '--color-data-amber', name: 'Amber / Marigold', desc: 'Quaternary series · Warm Goldenrod', bg: 'var(--color-data-amber)' },
+          { token: '--color-data-purple', name: 'Iris / Amethyst', desc: 'Quinary series · Mid-Century Violet', bg: 'var(--color-data-purple)' },
+          { token: '--color-data-orange', name: 'Vermilion / Focal', desc: 'Focal series · Signature Olivetti Orange', bg: 'var(--color-data-orange)' },
+        ].map((item) => (
+          <div
+            key={item.token}
+            style={{
+              padding: '8px 10px',
+              borderRadius: 'var(--radius-sm)',
+              border: '1px solid var(--color-border)',
+              backgroundColor: 'var(--color-surface)',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 10,
+            }}
+          >
+            <div style={{ width: 24, height: 24, borderRadius: 'var(--radius-sm)', backgroundColor: item.bg, flexShrink: 0, border: '1px solid rgba(0,0,0,0.1)' }} />
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-ink)' }}>{item.name}</div>
+              <div style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--color-ink-tertiary)' }}>{item.token}</div>
+            </div>
+          </div>
+        ))}
       </div>
     </Container>
   ),

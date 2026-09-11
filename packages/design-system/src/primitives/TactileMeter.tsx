@@ -4,6 +4,22 @@ import * as React from 'react'
 import { cx, useId } from '../lib'
 import type { StatusTone } from './StatusBadge'
 
+export type TactileMeterTone =
+  | StatusTone
+  | 'auto'
+  | 'data-1'
+  | 'data-2'
+  | 'data-3'
+  | 'data-4'
+  | 'data-5'
+  | 'data-6'
+  | 'data-blue'
+  | 'data-teal'
+  | 'data-green'
+  | 'data-amber'
+  | 'data-purple'
+  | 'data-orange'
+
 export interface TactileMeterProps extends React.HTMLAttributes<HTMLDivElement> {
   /** Fill percentage (0-100). Clamped automatically. */
   value: number
@@ -22,9 +38,9 @@ export interface TactileMeterProps extends React.HTMLAttributes<HTMLDivElement> 
   /**
    * Semantic tone for the gauge fill:
    * - 'auto': automatically selects nominal (<75%), warning (75-89%), or critical (>=90%)
-   * - StatusTone: explicitly forces a specific tone
+   * - StatusTone or data tone: explicitly forces a specific tone
    */
-  tone?: StatusTone | 'auto'
+  tone?: TactileMeterTone
   /** Track height variant (default: 'md'). */
   size?: 'sm' | 'md' | 'lg'
   /**
@@ -66,7 +82,7 @@ export const TactileMeter = React.forwardRef<HTMLDivElement, TactileMeterProps>(
   const clamped = Math.max(0, Math.min(100, isNaN(value) ? 0 : value))
 
   // Determine tone
-  const resolvedTone: StatusTone = React.useMemo(() => {
+  const resolvedTone: Exclude<TactileMeterTone, 'auto'> = React.useMemo(() => {
     if (tone !== 'auto') return tone
     if (clamped >= 90) return 'critical'
     if (clamped >= 75) return 'warning'

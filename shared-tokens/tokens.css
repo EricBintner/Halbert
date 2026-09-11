@@ -88,10 +88,18 @@
   --vermilion-900: #9C3212;
 
   /* Mid-century diagnostic pigments. The -500s are the dark-theme lifts. */
-  --botanical-600:  #2D7A56;  --botanical-500:  #38996C;  --botanical-50:  #EEF6F2;
-  --ochre-700:      #955B15;  --ochre-600:      #C2761B;  --ochre-50:      #FDF8F0;
-  --terracotta-600: #C83E2D;  --terracotta-500: #D96455;  --terracotta-50: #FDF2F0;
-  --blueprint-600:  #386C8A;  --blueprint-500:  #4B8FB6;  --blueprint-50:  #F0F6F9;
+  --botanical-600:  #1E7E50;  --botanical-500:  #38AF78;  --botanical-50:  #EEF6F2;
+  --ochre-700:      #A85A05;  --ochre-600:      #EBA02D;  --ochre-50:      #FDF8F0;
+  --terracotta-600: #C32337;  --terracotta-500: #EB5569;  --terracotta-50: #FDF2F0;
+  --blueprint-600:  #1E5FAF;  --blueprint-500:  #5AA0F0;  --blueprint-50:  #F0F6F9;
+
+  /* Categorical data visualization pigments (Vignelli / Olivetti multi-series) */
+  --cobalt-600:     #1E5FAF;  --cobalt-400:     #5AA0F0;
+  --copper-teal-600:#0F7D8C;  --copper-teal-400:#32B9C8;
+  --emerald-600:    #1E7E50;  --emerald-400:    #38AF78;
+  --marigold-600:   #C8730F;  --marigold-400:   #EBA02D;
+  --amethyst-600:   #6941AF;  --amethyst-400:   #A57DF5;
+  --coral-600:      #D34E24;  --coral-400:      #E8683C;
 
   /* Recessed dark chips. A translucent wash over `surface` in dark mode lands
    * LIGHTER than canvas and drops its tone under 4.5:1, so a dark chip is an
@@ -145,10 +153,26 @@
 
   /* Pill borders. Previously spelled `${fg}55` by string concatenation in
    * ui.jsx; named here so a hairline is a token and not a substring trick. */
-  --hb-status-nominal-line:   rgba(45, 122, 86, 0.33);
-  --hb-status-warning-line:   rgba(149, 91, 21, 0.33);
-  --hb-status-critical-line:  rgba(200, 62, 45, 0.33);
-  --hb-status-telemetry-line: rgba(56, 108, 138, 0.33);
+  --hb-status-nominal-line:   rgba(30, 126, 80, 0.33);
+  --hb-status-warning-line:   rgba(168, 90, 5, 0.33);
+  --hb-status-critical-line:  rgba(195, 35, 55, 0.33);
+  --hb-status-telemetry-line: rgba(30, 95, 175, 0.33);
+
+  /* Categorical Data Visualization — 6 distinct chromatic series + neutral */
+  --hb-data-1: var(--cobalt-600);
+  --hb-data-2: var(--copper-teal-600);
+  --hb-data-3: var(--emerald-600);
+  --hb-data-4: var(--marigold-600);
+  --hb-data-5: var(--amethyst-600);
+  --hb-data-6: var(--coral-600);
+  --hb-data-neutral: var(--graphite-700);
+
+  --hb-data-blue:   var(--hb-data-1);
+  --hb-data-teal:   var(--hb-data-2);
+  --hb-data-green:  var(--hb-data-3);
+  --hb-data-amber:  var(--hb-data-4);
+  --hb-data-purple: var(--hb-data-5);
+  --hb-data-orange: var(--hb-data-6);
 
   --hb-shadow-subtle:  0 2px 8px -2px rgba(28, 25, 23, 0.08);
   --hb-shadow-plate:   0 12px 32px -16px rgba(28, 25, 23, 0.35);
@@ -193,6 +217,21 @@
   --color-status-telemetry:      var(--hb-status-telemetry);
   --color-status-telemetry-bg:   var(--hb-status-telemetry-bg);
   --color-status-telemetry-line: var(--hb-status-telemetry-line);
+
+  --color-data-1: var(--hb-data-1);
+  --color-data-2: var(--hb-data-2);
+  --color-data-3: var(--hb-data-3);
+  --color-data-4: var(--hb-data-4);
+  --color-data-5: var(--hb-data-5);
+  --color-data-6: var(--hb-data-6);
+  --color-data-neutral: var(--hb-data-neutral);
+
+  --color-data-blue:   var(--hb-data-blue);
+  --color-data-teal:   var(--hb-data-teal);
+  --color-data-green:  var(--hb-data-green);
+  --color-data-amber:  var(--hb-data-amber);
+  --color-data-purple: var(--hb-data-purple);
+  --color-data-orange: var(--hb-data-orange);
 
   --shadow-subtle:  var(--hb-shadow-subtle);
   --shadow-plate:   var(--hb-shadow-plate);
@@ -295,10 +334,26 @@
   --hb-status-telemetry:    var(--blueprint-500);
   --hb-status-telemetry-bg: var(--chip-telemetry);
 
-  --hb-status-nominal-line:   rgba(56, 153, 108, 0.40);
-  --hb-status-warning-line:   rgba(194, 118, 27, 0.40);
-  --hb-status-critical-line:  rgba(217, 100, 85, 0.40);
-  --hb-status-telemetry-line: rgba(75, 143, 182, 0.40);
+  --hb-status-nominal-line:   rgba(56, 175, 120, 0.40);
+  --hb-status-warning-line:   rgba(235, 160, 45, 0.40);
+  --hb-status-critical-line:  rgba(235, 85, 105, 0.40);
+  --hb-status-telemetry-line: rgba(90, 160, 240, 0.40);
+
+  /* Categorical Data Visualization — 6 distinct chromatic series + neutral */
+  --hb-data-1: var(--cobalt-400);
+  --hb-data-2: var(--copper-teal-400);
+  --hb-data-3: var(--emerald-400);
+  --hb-data-4: var(--marigold-400);
+  --hb-data-5: var(--amethyst-400);
+  --hb-data-6: var(--coral-400);
+  --hb-data-neutral: var(--graphite-400);
+
+  --hb-data-blue:   var(--hb-data-1);
+  --hb-data-teal:   var(--hb-data-2);
+  --hb-data-green:  var(--hb-data-3);
+  --hb-data-amber:  var(--hb-data-4);
+  --hb-data-purple: var(--hb-data-5);
+  --hb-data-orange: var(--hb-data-6);
 
   --hb-shadow-subtle:  0 2px 8px -2px rgba(0, 0, 0, 0.50);
   --hb-shadow-plate:   0 12px 32px -16px rgba(0, 0, 0, 0.75);
@@ -342,10 +397,26 @@
     --hb-status-telemetry:    var(--blueprint-500);
     --hb-status-telemetry-bg: var(--chip-telemetry);
 
-    --hb-status-nominal-line:   rgba(56, 153, 108, 0.40);
-    --hb-status-warning-line:   rgba(194, 118, 27, 0.40);
-    --hb-status-critical-line:  rgba(217, 100, 85, 0.40);
-    --hb-status-telemetry-line: rgba(75, 143, 182, 0.40);
+    --hb-status-nominal-line:   rgba(56, 175, 120, 0.40);
+    --hb-status-warning-line:   rgba(235, 160, 45, 0.40);
+    --hb-status-critical-line:  rgba(235, 85, 105, 0.40);
+    --hb-status-telemetry-line: rgba(90, 160, 240, 0.40);
+
+    /* Categorical Data Visualization — 6 distinct chromatic series + neutral */
+    --hb-data-1: var(--cobalt-400);
+    --hb-data-2: var(--copper-teal-400);
+    --hb-data-3: var(--emerald-400);
+    --hb-data-4: var(--marigold-400);
+    --hb-data-5: var(--amethyst-400);
+    --hb-data-6: var(--coral-400);
+    --hb-data-neutral: var(--graphite-400);
+
+    --hb-data-blue:   var(--hb-data-1);
+    --hb-data-teal:   var(--hb-data-2);
+    --hb-data-green:  var(--hb-data-3);
+    --hb-data-amber:  var(--hb-data-4);
+    --hb-data-purple: var(--hb-data-5);
+    --hb-data-orange: var(--hb-data-6);
 
     --hb-shadow-subtle:  0 2px 8px -2px rgba(0, 0, 0, 0.50);
     --hb-shadow-plate:   0 12px 32px -16px rgba(0, 0, 0, 0.75);

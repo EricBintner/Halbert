@@ -61,6 +61,22 @@
   --color-status-telemetry-bg: var(--hb-status-telemetry-bg);
   --color-status-telemetry-line: var(--hb-status-telemetry-line);
 
+  /* Categorical Data Visualization */
+  --color-data-1: var(--hb-data-1);
+  --color-data-2: var(--hb-data-2);
+  --color-data-3: var(--hb-data-3);
+  --color-data-4: var(--hb-data-4);
+  --color-data-5: var(--hb-data-5);
+  --color-data-6: var(--hb-data-6);
+  --color-data-neutral: var(--hb-data-neutral);
+
+  --color-data-blue:   var(--hb-data-blue);
+  --color-data-teal:   var(--hb-data-teal);
+  --color-data-green:  var(--hb-data-green);
+  --color-data-amber:  var(--hb-data-amber);
+  --color-data-purple: var(--hb-data-purple);
+  --color-data-orange: var(--hb-data-orange);
+
   /* Structure — `border-line`, `rounded-lg`, `shadow-plate` */
   --color-line: var(--hb-line);
   --color-line-subtle: var(--hb-line-subtle);

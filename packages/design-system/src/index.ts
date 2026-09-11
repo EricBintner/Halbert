@@ -33,9 +33,9 @@ export type { ModuleLoadErrorProps } from './primitives/ModuleLoadError'
 export { Collapsible, CollapsibleGroup } from './primitives/Collapsible'
 export type { CollapsibleProps, CollapsibleGroupProps } from './primitives/Collapsible'
 export { TactileMeter } from './primitives/TactileMeter'
-export type { TactileMeterProps } from './primitives/TactileMeter'
+export type { TactileMeterProps, TactileMeterTone } from './primitives/TactileMeter'
 export { SegmentedBar } from './primitives/SegmentedBar'
-export type { SegmentedBarProps, SegmentItem } from './primitives/SegmentedBar'
+export type { SegmentedBarProps, SegmentItem, SegmentTone } from './primitives/SegmentedBar'
 
 // Surfaces
 export { AppWindow } from './surfaces/AppWindow'

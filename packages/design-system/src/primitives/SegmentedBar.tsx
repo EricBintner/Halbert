@@ -4,12 +4,28 @@ import * as React from 'react'
 import { cx, useId } from '../lib'
 import type { StatusTone } from './StatusBadge'
 
+export type SegmentTone =
+  | StatusTone
+  | 'data-1'
+  | 'data-2'
+  | 'data-3'
+  | 'data-4'
+  | 'data-5'
+  | 'data-6'
+  | 'data-blue'
+  | 'data-teal'
+  | 'data-green'
+  | 'data-amber'
+  | 'data-purple'
+  | 'data-orange'
+  | 'data-neutral'
+
 export interface SegmentItem {
   id: string
   label: string
   value: number
-  /** Semantic tone for this slice. */
-  tone?: StatusTone
+  /** Tone for this slice: status ('nominal', 'warning', etc.) or data series ('data-blue', 'data-1', etc.). */
+  tone?: SegmentTone
   /** Visual pattern: 'solid' or 'hatched' (diagonal mechanical stripes for metadata/overhead). */
   pattern?: 'solid' | 'hatched'
   /** Optional secondary detail (e.g. "RAID1", "Q4_K_M"). */
