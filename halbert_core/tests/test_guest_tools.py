@@ -158,6 +158,34 @@ class TestGuestToolAllowlist:
         # And neither ever reaches the mode-scoped set by some later edit.
         assert not (set(pair) & gt.HALBERT_MODE_ONLY_TOOLS)
 
+    @pytest.mark.asyncio
+    async def test_the_catalog_gate_is_what_stops_a_fronting_guest_writing(self):
+        """The case the member floor does NOT cover, and the reason both gates exist.
+
+        There are two different situations, and each gate covers the one the
+        other misses:
+
+        - A guest **person** speaks (a voice turn with an identified speaker
+          whose role is `guest`). `remember`'s member floor refuses inside
+          the tool. The catalog gate does nothing, because no guest persona
+          is fronting.
+        - A guest **persona** fronts (Halbert wearing someone else's face on
+          the dashboard). Here the speaker is still the admin who is typing
+          — `execute()` defaults text turns to `admin`, since they are
+          already authenticated — so the member floor passes cleanly. Only
+          the catalog gate refuses.
+
+        The second is the one worth pinning: a fronting guest inherits a
+        history holding Halbert's own earlier calls, and a model imitates
+        calls it was not offered.
+        """
+        executor = _every_agent_tool()
+        _front()
+        for tool in ("remember", "what_i_remember"):
+            result = await executor.execute(tool, {"topic": "x", "reason": "y"})
+            assert not result.success, tool
+            assert "not available while" in (result.error or ""), (tool, result.error)
+
     def test_the_write_plane_never_enters_the_allowlist(self):
         """Design §6: the hash-chained audit log receives user words only
         through the write plane, so a guest turn never reaches it as long as
