@@ -698,35 +698,35 @@ function FilesystemUsageRow({
         : 'telemetry'
 
   return (
-    <div className="space-y-1.5 py-1">
+    <div className="space-y-2 py-1.5 sm:py-2">
       {/* Tier 1: Identity & Tabular Metrics */}
-      <div className="flex items-center justify-between gap-2 text-xs">
-        <div className="flex items-center gap-1.5 min-w-0">
-          <Folder className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+      <div className="flex items-center justify-between gap-3 text-xs sm:text-sm">
+        <div className="flex items-center gap-2 min-w-0">
+          <Folder className="h-4 w-4 text-muted-foreground shrink-0" />
           <EditableName
             id={`fs-${fs.mountpoint}`}
             defaultName={shortName}
             customNames={customNames}
             onRename={onRename}
-            className="text-sm font-medium text-foreground truncate"
+            className="text-sm sm:text-[15px] font-medium text-foreground truncate"
           />
-          <span className="text-muted-foreground font-mono text-xs truncate">
+          <span className="text-muted-foreground font-mono text-xs sm:text-[13px] truncate">
             {fs.mountpoint}
           </span>
           {profileDetail && (
-            <span className="text-muted-foreground text-[11px] truncate">
+            <span className="text-muted-foreground text-xs truncate">
               • {profileDetail}
             </span>
           )}
         </div>
 
-        <div className="flex items-center gap-2 shrink-0 font-mono text-xs tabular-nums">
+        <div className="flex items-center gap-2.5 shrink-0 font-mono text-xs sm:text-[13px] tabular-nums">
           <span className="text-muted-foreground">
             {fs.used} / {fs.size}
           </span>
           <Badge
             className={cn(
-              "text-[10px] w-12 justify-center py-0 h-5 leading-none",
+              "text-xs px-2 py-0.5 justify-center h-5 leading-none font-mono",
               fs.severity === 'critical' ? 'bg-error text-white' : 'bg-muted text-foreground',
             )}
           >
@@ -739,7 +739,7 @@ function FilesystemUsageRow({
       <TactileMeter
         value={fs.percent}
         tone={tone}
-        size="sm"
+        size="md"
         aria-label={`${shortName} (${fs.mountpoint}) capacity`}
       />
     </div>
@@ -952,7 +952,7 @@ function DiskGroupSection({ group, allDisks }: { group: DiskGroup; allDisks: Sto
     <div className="rounded-lg border bg-card text-card-foreground shadow-sm">
       {/* Header row - sticky when expanded, -top-8 to offset main padding, py-3 to match sidebar height */}
       <div className={cn(
-        "px-4 py-3 rounded-t-lg",
+        "px-4 sm:px-6 py-3.5 sm:py-4 rounded-t-lg",
         isOpen && "sticky -top-8 z-10 bg-card"
       )}>
         <div className="flex items-center justify-between">
@@ -1020,7 +1020,7 @@ function DiskGroupSection({ group, allDisks }: { group: DiskGroup; allDisks: Sto
       </div>
       
       {/* Usage bars - Two-Tier Vignelli layout for absolute alignment */}
-      <div className="px-4 pb-3 space-y-2.5">
+      <div className="px-4 sm:px-6 pb-4 sm:pb-5 space-y-3 sm:space-y-4">
         {group.filesystems.map((fs, idx) => {
           let profileDetail: React.ReactNode = null
           if (idx === 0) {
