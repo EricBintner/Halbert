@@ -27,6 +27,7 @@ from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, HTTPException, Query
 
+from ...attunement.reactions import note
 from ...findings.proposals import ProposalStore
 from ...findings.store import FindingStore, Finding, FindingStatus
 
@@ -147,6 +148,10 @@ def propose_fix(finding_id: str):
             status_code=422,
             detail="No automatic fix is available for this finding",
         )
+    # A-HB-26's positive arm: asking for the fix is acting on the finding,
+    # and it is the evidence a silence can never produce. Founder ruling
+    # (2026-09-10): acted on or replied counts; merely opening does not.
+    note("engaged", finding_id)
     proposal = ps.get(proposal_id)
     return {
         "status": "ok",

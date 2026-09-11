@@ -31,6 +31,7 @@ from ..findings.detectors.permissions_hygiene import PermissionsHygieneDetector
 from ..findings.detectors.acoustic_anomaly import AcousticAnomalyDetector
 from ..config.being_config import BeingConfig, load_being_config
 from ..autonomy.guardrails import GuardrailEnforcer
+from ..attunement.shadow import default_recorder
 from .events import ProactiveEvent, get_event_bus
 from .gate import ProactiveGate
 from .reflexes import ReflexMatcher
@@ -76,6 +77,11 @@ class DetectorRunner:
             being_config=self.config,
             guardrail_enforcer=self.guardrails,
             finding_store=self.findings,
+            # A-HB-25 / plan §4.6 stage 1: every decision this sweep takes
+            # is written down, and the engine's opinion is computed beside
+            # it and acted on by nothing. None when the log cannot start,
+            # which leaves the sweep exactly as it was.
+            recorder=default_recorder(self.config),
         )
         # F3: living reflexes evaluated on each sweep (None -> no-op)
         self.reflex_matcher = reflex_matcher

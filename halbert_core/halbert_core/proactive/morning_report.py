@@ -218,9 +218,12 @@ class MorningReportGenerator:
         try:
             from .gate import ProactiveGate
 
+            from ..attunement.shadow import default_recorder
+
             return ProactiveGate(
                 being_config=self.config,
                 guardrail_enforcer=None,
+                recorder=default_recorder(self.config),
             )
         except Exception as e:
             logger.warning(f"Could not construct default ProactiveGate: {e}")

@@ -253,6 +253,71 @@ class AttunementStore:
             )
             return True
 
+    def latest_attempt_for_context(
+        self, context_key: Optional[str], *, persona_id: str,
+        subject_id: Optional[str] = None,
+    ) -> Optional[str]:
+        """The newest attempt recorded against ``context_key``, or None.
+
+        This is the join that lets a dismissal or a snooze find the attempt
+        it is a reaction to: the recorder stashes the finding id in
+        ``context_key``, and the findings surfaces know only the finding id.
+
+        A blank key matches nothing. Most rows carry no context key at all
+        — a morning report is not about a finding — so a blank lookup that
+        matched would attach a real person's reaction to an unrelated
+        attempt, which is worse than recording no reaction.
+
+        ``json_extract`` is SQLite's own and does the filtering in one
+        indexed scan; the Python fallback covers a build without JSON1
+        rather than letting the reaction quietly not happen.
+        """
+        if not context_key:
+            return None
+        where = "persona_id=?"
+        args: List[Any] = [persona_id]
+        if subject_id is not None:
+            where += " AND subject_id=?"
+            args.append(subject_id)
+        order = " ORDER BY ts DESC, rowid DESC LIMIT 1"
+        try:
+            with self._read() as conn:
+                row = conn.execute(
+                    f"SELECT attempt_id FROM outcomes WHERE {where} "
+                    f"AND json_extract(payload, '$.context_key')=?{order}",
+                    (*args, context_key),
+                ).fetchone()
+            return row["attempt_id"] if row else None
+        except sqlite3.OperationalError as exc:  # pragma: no cover - no JSON1
+            logger.debug("attunement: json_extract unavailable (%s); scanning", exc)
+
+        for entry in self.list_outcomes_raw(persona_id, subject_id, limit=2000):
+            if entry.get("context_key") == context_key:
+                return entry.get("attempt_id")
+        return None
+
+    def unanswered_attempts(
+        self, persona_id: str, *, before_ts: str, subject_id: Optional[str] = None,
+        limit: int = 500,
+    ) -> List[Dict[str, Any]]:
+        """Attempts older than ``before_ts`` that carry no reaction yet."""
+        sql = "SELECT payload FROM outcomes WHERE persona_id=? AND reaction IS NULL AND ts < ?"
+        args: List[Any] = [persona_id, before_ts]
+        if subject_id is not None:
+            sql += " AND subject_id=?"
+            args.append(subject_id)
+        sql += " ORDER BY ts DESC, rowid DESC LIMIT ?"
+        args.append(int(limit))
+        with self._read() as conn:
+            rows = conn.execute(sql, args).fetchall()
+        out: List[Dict[str, Any]] = []
+        for row in rows:
+            try:
+                out.append(json.loads(row["payload"]))
+            except (ValueError, TypeError):  # pragma: no cover
+                continue
+        return out
+
     def list_outcomes_raw(self, persona_id: str, subject_id: Optional[str] = None,
                           limit: int = 500) -> List[Dict[str, Any]]:
         """Attempts, newest first."""

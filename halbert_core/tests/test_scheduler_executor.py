@@ -201,6 +201,9 @@ def test_dashboard_proactive_jobs_register(executor):
         load_config=lambda: BeingConfig(morning_report={"enabled": True, "time": "07:45"}),
     )
     assert outcome == {
+        # A-HB-26: labels proactive attempts nobody answered and trims the
+        # outcome ledger. Hourly.
+        "attunement_sweep": "scheduled",
         "detector_sweep": "scheduled",
         "morning_report": "scheduled",
         # CD-5's 90-day event-ledger retention. The exact-dict assertion is
@@ -209,7 +212,8 @@ def test_dashboard_proactive_jobs_register(executor):
     }
     scheduled = {j["id"]: j for j in executor.get_scheduled_jobs()}
     assert set(scheduled) == {
-        "detector_sweep", "morning_report", "timeline_retention",
+        "attunement_sweep", "detector_sweep", "morning_report",
+        "timeline_retention",
     }
     assert "hour='7'" in scheduled["morning_report"]["trigger"]
     assert "minute='45'" in scheduled["morning_report"]["trigger"]
@@ -238,14 +242,16 @@ def test_dashboard_proactive_jobs_disabled_report_is_skipped(executor):
         executor, load_config=lambda: BeingConfig(morning_report={"enabled": False}),
     )
     assert outcome == {
+        "attunement_sweep": "scheduled",
         "detector_sweep": "scheduled",
         "morning_report": "disabled",
         "timeline_retention": "scheduled",
     }
     # Retention is not the report: turning the morning report off must not
-    # stop the ledger being pruned.
+    # stop the ledger being pruned. Nor the attunement sweep — an attempt
+    # nobody answered is evidence whether or not the report is on.
     assert {j["id"] for j in executor.get_scheduled_jobs()} == {
-        "detector_sweep", "timeline_retention",
+        "attunement_sweep", "detector_sweep", "timeline_retention",
     }
 
 

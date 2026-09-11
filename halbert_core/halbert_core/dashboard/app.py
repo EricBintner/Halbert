@@ -282,6 +282,40 @@ def register_proactive_jobs(
     except Exception as e:
         logger.warning(f"Failed to schedule detector sweep: {e}")
 
+    # A-HB-26: IGNORED is a sweep, not an event. Nothing notifies us that a
+    # person did not answer, so the one negative arm that costs them nothing
+    # to produce has to be looked for. Hourly against a four-hour window:
+    # past that the person has plausibly not been at the machine at all, and
+    # "away" is not "ignored". The same job trims the ledger to its
+    # retention horizon, which nothing else does on a host that stays up.
+    try:
+        def _sweep_attunement() -> None:
+            from ..attunement.reactions import default_reactions
+
+            recorder = default_reactions()
+            if recorder is None:
+                logger.debug("Attunement sweep: no ledger, nothing to label")
+                return
+            labelled = recorder.sweep_ignored()
+            trimmed = recorder.store.trim_outcomes()
+            logger.info(
+                "Attunement sweep: %s attempt(s) unanswered, %s row(s) trimmed",
+                labelled, trimmed,
+            )
+
+        executor.schedule_cron_job(
+            job_id='attunement_sweep',
+            task_func=_sweep_attunement,
+            cron_expr={'minute': 37},
+            description='Label unanswered proactive attempts; trim the outcome ledger',
+        )
+        outcome['attunement_sweep'] = 'scheduled'
+        # Deliberately not in catchup_specs: the window it looks back over
+        # is four hours and it runs every one, so the first run after a boot
+        # already covers everything a missed slot would have.
+    except Exception as e:
+        logger.warning(f"Failed to schedule the attunement sweep: {e}")
+
     # CD-5 kept 90 days of event-ledger retention. TimelineStore prunes when
     # it is constructed, which covers every daemon start -- this covers the
     # machine that stays up for months, which is the one that actually grows.
@@ -1294,10 +1328,12 @@ def create_app(enable_cors: bool = True) -> FastAPI:
                             from ..proactive.gate import ProactiveGate
                             from ..autonomy.guardrails import GuardrailEnforcer
                             from ..findings.store import FindingStore
+                            from ..attunement.shadow import default_recorder
                             gate = ProactiveGate(
                                 being_config=being_config,
                                 guardrail_enforcer=GuardrailEnforcer(),
                                 finding_store=FindingStore(),
+                                recorder=default_recorder(being_config),
                             )
                             watcher = VisualWatcher(
                                 being_config=being_config,

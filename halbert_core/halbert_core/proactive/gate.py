@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, time, timezone
-from typing import Tuple
+from typing import List, Tuple
 
 from ..config.being_config import BeingConfig
 from ..autonomy.guardrails import GuardrailEnforcer
@@ -74,24 +74,49 @@ class ProactiveGate:
     def should_notify(self, event: ProactiveEvent) -> Tuple[bool, str]:
         """Check if an event should be shown to the user.
 
-        Thin wrapper over :meth:`_decide` so that every suppression path is
+        Thin wrapper over :meth:`_evaluate` so that every suppression path is
         recorded from one place rather than at each return site — a new
         suppression reason cannot be added without it appearing in the log.
         """
-        allowed, reason = self._decide(event)
+        fired = self._evaluate(event)
+        allowed = not fired
+        reason = fired[0][1] if fired else ""
         if self.recorder is not None:
             try:
-                self.recorder.record(event, allowed=allowed, reason=reason)
+                self.recorder.record(
+                    event,
+                    allowed=allowed,
+                    reason=reason,
+                    reason_keys=[key for key, _ in fired],
+                )
             except Exception as exc:  # a log must never break what it observes
                 logger.warning("proactive gate: could not record decision: %s", exc)
         return allowed, reason
 
     def _decide(self, event: ProactiveEvent) -> Tuple[bool, str]:
-        """Decide whether an event should be shown to the user.
+        """The gate's verdict: ``(True, "")`` or ``(False, first_reason)``.
 
-        Returns:
-            (True, "") if the event should be shown.
-            (False, reason) if the event should be suppressed.
+        Kept as the single-answer view over :meth:`_evaluate` for callers
+        that want the verdict without the composition.
+        """
+        fired = self._evaluate(event)
+        return (not fired), (fired[0][1] if fired else "")
+
+    def _evaluate(self, event: ProactiveEvent) -> List[Tuple[str, str]]:
+        """Every mechanism that would eat this event, in check order.
+
+        Returns ``(stable_key, prose)`` pairs — empty when the event passes.
+
+        **Why every mechanism and not the first.** Eleven of them can eat a
+        proactive event and each is silent by construction, so a log that
+        names only the first gate to fire cannot distinguish a warning lost
+        to an interaction of two from a warning lost to one (plan P1). The
+        verdict and the prose are still taken from the first pair, so this
+        composition is invisible to every caller of ``should_notify``.
+
+        The keys are the durable half: ``OutcomeEntry`` is "enums, ids,
+        numbers and timestamps only — never text", so the prose stays in
+        this process and only the key reaches the ledger.
 
         Phase 2.5: the quiet-hours check delegates to the engine's
         ``should_speak_proactively()`` when the modality engine is
@@ -99,6 +124,7 @@ class ProactiveGate:
         life-safety bypass (B2). Falls back to the local quiet-hours
         check when the engine is not installed.
         """
+        fired: List[Tuple[str, str]] = []
         # A guest persona is wearing the machine's face (design §12 Q3).
         # Halbert keeps observing and keeps writing findings — the store
         # already holds this one, the gate only decides whether it pushes —
@@ -106,7 +132,7 @@ class ProactiveGate:
         # is on. Checked first: who is speaking dominates the dial.
         guest_reason = self._guest_suppresses(event)
         if guest_reason:
-            return False, guest_reason
+            fired.append(("guest:fronting", guest_reason))
 
         # 1. Check proactivity dial — a per-category override wins over the
         #    global dial when one exists for this event's category.
@@ -122,7 +148,10 @@ class ProactiveGate:
         )
 
         if event_severity < min_severity and not user_requested:
-            return False, f"proactivity dial is '{dial}' (requires severity >= {min_severity})"
+            fired.append((
+                f"dial:{dial}",
+                f"proactivity dial is '{dial}' (requires severity >= {min_severity})",
+            ))
 
         # 2. Check quiet hours — delegate to the engine's
         #    should_speak_proactively() when available (applies
@@ -132,13 +161,14 @@ class ProactiveGate:
         #    "critical" — see _is_wake_worthy_acoustic().
         if event.severity != "critical" and not self._is_wake_worthy_acoustic(event):
             quiet_active = self._check_quiet_hours_engine(event)
+            quiet_prose = "quiet hours active (non-critical suppressed)"
             if quiet_active is not None:
                 # Engine returned a definitive answer.
                 if not quiet_active:
-                    return False, "quiet hours active (non-critical suppressed)"
+                    fired.append(("quiet_hours", quiet_prose))
             elif self.config.quiet_hours and self._in_quiet_hours():
                 # Fallback: local quiet-hours check.
-                return False, "quiet hours active (non-critical suppressed)"
+                fired.append(("quiet_hours", quiet_prose))
 
         # 3. Check guardrails (safe mode suppresses non-critical)
         if (
@@ -146,7 +176,9 @@ class ProactiveGate:
             and self.guardrails.safe_mode_active
             and event.severity != "critical"
         ):
-            return False, "safe mode active (non-critical suppressed)"
+            fired.append((
+                "incident:safe_mode", "safe mode active (non-critical suppressed)"
+            ))
 
         # 4. Check snooze and dismissal for finding-linked events
         if event.finding_id and self.findings:
@@ -157,13 +189,18 @@ class ProactiveGate:
                     # an expired snooze lets the event through again.
                     snoozed_until = parse_timestamp(finding.snoozed_until)
                     if snoozed_until and datetime.now(timezone.utc) < snoozed_until:
-                        return False, f"finding snoozed until {finding.snoozed_until}"
+                        fired.append((
+                            "standing:defer_topic:snoozed",
+                            f"finding snoozed until {finding.snoozed_until}",
+                        ))
 
                 if finding.status == FindingStatus.DISMISSED.value:
-                    return False, f"finding dismissed: {finding.dismissed_reason}"
+                    fired.append((
+                        "standing:defer_topic:dismissed",
+                        f"finding dismissed: {finding.dismissed_reason}",
+                    ))
 
-        # 5. All checks passed
-        return True, ""
+        return fired
 
     def _guest_suppresses(self, event: ProactiveEvent) -> str:
         """Why this event must not interrupt while a guest persona fronts.

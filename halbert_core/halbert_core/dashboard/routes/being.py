@@ -23,6 +23,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from ...proactive.events import get_event_bus, is_user_facing, ProactiveEvent
+from ...attunement.reactions import note
 from ...findings.store import FindingStore
 
 logger = logging.getLogger("halbert.dashboard.being")
@@ -168,6 +169,9 @@ async def snooze_event(event_id: str, req: SnoozeRequest = SnoozeRequest()):
         finding_id = _resolve_finding_id(event_id, store)
         if not store.snooze(finding_id, req.days):
             raise HTTPException(status_code=500, detail="Failed to snooze")
+        # A-HB-26: label the attempt this is a reaction to. "Not now" and
+        # "no" are different evidence and the ledger keeps them apart.
+        note("not_now", finding_id)
         return store.get(finding_id).snoozed_until
 
     snoozed_until = await asyncio.to_thread(_do_snooze)
@@ -187,6 +191,7 @@ async def dismiss_event(event_id: str, req: DismissRequest = DismissRequest()):
         finding_id = _resolve_finding_id(event_id, store)
         if not store.dismiss(finding_id, req.reason):
             raise HTTPException(status_code=500, detail="Failed to dismiss")
+        note("dismissed", finding_id)
 
     await asyncio.to_thread(_do_dismiss)
     return {"status": "ok", "dismissed": True}

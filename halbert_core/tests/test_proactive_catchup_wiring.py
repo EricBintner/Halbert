@@ -355,6 +355,7 @@ def test_register_proactive_jobs_catches_up_a_missed_retention_slot(tmp_path, mo
         catchup_now=future,
     )
     assert outcome == {
+        "attunement_sweep": "scheduled",
         "detector_sweep": "scheduled",
         "morning_report": "scheduled",
         "timeline_retention": "scheduled",
@@ -380,6 +381,6 @@ def test_register_proactive_jobs_on_a_fresh_install_serves_nothing(tmp_path, mon
     )
     assert outcome["morning_report"] == "disabled"
     assert {j["id"] for j in ex.get_scheduled_jobs()} == {
-        "detector_sweep", "timeline_retention",
+        "attunement_sweep", "detector_sweep", "timeline_retention",
     }
     ex.stop(wait=False)
