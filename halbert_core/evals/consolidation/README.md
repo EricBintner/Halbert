@@ -36,6 +36,14 @@ harness's own numbers.
    - `CONSOLIDATOR_DETERMINISTIC` — the current deterministic Consolidator,
      run over the real store path; what survives of the region is the
      durable facts it records.
+   - `CONSOLIDATOR_DETERMINISTIC+RECOVERY` — **what production actually
+     does**, and the row to read. Production never destroys the region: the
+     Consolidator only *adds* durable facts, the raw turns stay in the
+     store, and `recall_gate` reaches them by FTS. So this arm answers from
+     the durable facts *plus* a keyword query over the region, per question,
+     with no model anywhere. Without it the scorecard reported a loss that
+     does not happen — and would have had an LLM arm opened on a comparison
+     against 0.000 that never included the option it competes with.
    - `TRUNCATE_OLDEST` — keep the newest 10 turns of the region and drop the
      rest. The cheap baseline any LLM arm must beat.
    - `LLM_SUMMARY` — defined in the matrix, `SKIPPED-GATE-CLOSED` in every
@@ -43,7 +51,11 @@ harness's own numbers.
 5. **Answering** — closed-book against each arm's retained text, with a
    forced `NOT IN CONTEXT — <best guess>` option. The default answerer is
    programmatic (`recall_eval.context_answerer`) — no model calls, no
-   network, so the harness smoke-tests in CI.
+   network, so the harness smoke-tests in CI. An arm may name its own
+   answerer (`Arm.answerer`) when what it retains cannot be one fixed text:
+   retrieval is per *question*, and a policy is handed none. The region it
+   is given is the same slice the policy saw, which is what the
+   region-scoping sentinel pins.
 6. **Judging** — programmatic first (`recall_eval.judge_score`): exact match
    2, hedged gold-substring 1, else 0. An LLM judge exists only as a
    flag-off hook for free-text variance and must route through the
