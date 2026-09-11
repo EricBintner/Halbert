@@ -149,89 +149,35 @@ def _store():
 
 
 def _promote(store: Any, memory: Any, candidate: Any, said: str) -> str:
-    """Candidate to confirmed, with the person's sentence as the reason."""
-    from datetime import datetime, timezone
+    """Delegate to the one promotion, with the person's sentence as reason.
 
-    from ..continuity.interests import Interest, InterestStatus, Origin
+    ``continuity.confirm`` owns the write because the Settings list confirms
+    the same candidates through the same transition. Two promotions would
+    drift, and a candidate confirmed by voice behaving differently from one
+    confirmed by button is exactly the difference nobody thinks to check.
+    """
+    from ..continuity.confirm import confirm_candidate
     from ..ingestion.redaction import redact_text
-
-    stamp = datetime.now(timezone.utc).isoformat()
-    evidence = dict(candidate.evidence or {})
-    # The arithmetic that prompted the question is kept, not overwritten: it
-    # is why the machine asked, and "how did you know to ask?" is a question
-    # the person is entitled to an answer to.
-    evidence["proposed_reason"] = candidate.reason
-    confirmed = Interest(
-        topic=candidate.topic,
-        origin=Origin.INFERRED_CONFIRMED,
-        status=InterestStatus.ACTIVE,
-        reason=redact_text(" ".join(said.split()), prose=True),
-        actor="user",
-        speaker_role=(_role() or ""),
-        body_id=candidate.body_id,
-        evidence=evidence,
-        first_seen_at=candidate.first_seen_at,
-        last_evidenced_at=candidate.last_evidenced_at or stamp,
-        last_confirmed_at=stamp,
-    )
-    memory_id = getattr(memory, "id", "")
-    try:
-        # Mutate the row in place rather than smart_add-ing a replacement.
-        # The candidate and the confirmation have the same id AND the same
-        # content, so `smart_add` treats the second as a duplicate and
-        # MERGES it -- returning success while leaving the status
-        # `candidate`. The tool said "Recorded" and nothing changed, which
-        # is the exact failure this workstream keeps having to catch.
-        meta = dict(getattr(memory, "metadata", None) or {})
-        meta.update(confirmed._metadata())
-        memory.metadata = meta
-        tags = list(getattr(memory, "tags", None) or [])
-        if Origin.INFERRED.value in tags:
-            tags[tags.index(Origin.INFERRED.value)] = Origin.INFERRED_CONFIRMED.value
-            memory.tags = tags
-        save = getattr(store, "_save_to_disk", None)
-        if save is None:
-            return _refusal("this store cannot record a confirmation.")
-        save()
-        # The engine's own confirmation path, which is what a person saying
-        # yes actually is: it raises validation_count and the derived
-        # confidence with it, rather than this module inventing a number.
-        confirm = getattr(store, "confirm_memory", None)
-        if confirm is not None:
-            confirm(memory_id)
-        _mirror(confirmed, memory_id)
-    except Exception:
-        logger.warning("could not promote the candidate", exc_info=True)
-        return _refusal("the memory store could not be written.")
-    return f'Recorded: "{confirmed.content}"'
-
-
-def _role() -> Optional[str]:
     from .executor import current_speaker_role
 
-    return current_speaker_role.get(None)
+    report = confirm_candidate(
+        candidate,
+        getattr(memory, "id", ""),
+        reason=redact_text(" ".join(said.split()), prose=True),
+        speaker_role=(current_speaker_role.get(None) or ""),
+        memory_store=store,
+        observation_store=_observations(),
+    )
+    if not report.get("complete"):
+        why = "; ".join(report.get("errors") or []) or "the store could not be written"
+        return _refusal(f"{why}.")
+    return f'Recorded: "{report.get("content", "")}"'
 
 
-def _mirror(interest: Any, memory_id: str) -> None:
-    """The observation row a confirmed interest is entitled to.
-
-    A candidate has none -- ``should_mirror`` is False for it -- so this is
-    the moment the index gains the row, and it is the moment a person said
-    yes. Absent rather than fatal: losing the index costs search quality,
-    not the fact.
-    """
-    if not interest.should_mirror or not memory_id:
-        return
+def _observations():
     try:
         from ..integrations.cognition_wiring import get_observation_store
-
-        store = get_observation_store()
-        if store is None:
-            return
-        store.save(
-            category=interest.observation_category,
-            content=interest.content,
-            source_memory_id=memory_id,
-        )
+        return get_observation_store()
     except Exception:
-        logger.warning("could not mirror the confirmed interest", exc_info=True)
+        logger.warning("no observation index for a confirmation", exc_info=True)
+        return None

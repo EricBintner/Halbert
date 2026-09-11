@@ -28,7 +28,12 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger("halbert.continuity.about_you")
 
-__all__ = ["describe_learning", "list_remembered", "remembered_lines"]
+__all__ = [
+    "describe_learning",
+    "list_remembered",
+    "list_candidates",
+    "remembered_lines",
+]
 
 
 def describe_learning(interest: Any) -> str:
@@ -115,6 +120,49 @@ def list_remembered(
         return rows
     except Exception:
         logger.warning("could not list what is remembered", exc_info=True)
+        return []
+
+
+def list_candidates(memory_store: Any) -> List[Dict[str, Any]]:
+    """Things noticed but not remembered -- a different claim, said apart.
+
+    ``list_remembered`` excludes these on purpose: presenting an unconfirmed
+    guess as "something I remember about you" claims more than the system is
+    entitled to. But the confirmation path has two doors -- the one aside, and
+    this list -- and a candidate nobody can find is a candidate that only ever
+    expires.
+
+    So they are returned separately, for a section that says what they are:
+    noticed, not remembered, and nothing is being done with them. Each row
+    carries the arithmetic that produced it, because "why do you think that?"
+    has an exact answer here and the person should get it.
+
+    Never raises.
+    """
+    if memory_store is None:
+        return []
+    try:
+        from .interests import Interest, InterestStatus
+
+        rows: List[Dict[str, Any]] = []
+        for memory in (getattr(memory_store, "list_memories", list)() or []):
+            interest = Interest.from_persona_memory(memory)
+            if interest is None or interest.status is not InterestStatus.CANDIDATE:
+                continue
+            evidence = dict(interest.evidence or {})
+            rows.append({
+                "memory_id": getattr(memory, "id", ""),
+                "topic": interest.topic,
+                "noticed": interest.reason,
+                "days": int(evidence.get("days") or 0),
+                "conversations": len(evidence.get("threads") or []),
+                "when": _when(interest),
+                "asked": bool(evidence.get("aside_offered_at")),
+            })
+        rows.sort(key=lambda r: (-r["days"], r["topic"]))
+        return rows
+    except Exception:
+        logger.warning("could not list what was noticed", exc_info=True)
         return []
 
 

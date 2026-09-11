@@ -458,6 +458,74 @@ async def about_you(
     }
 
 
+@router.get("/about-you/noticed")
+async def about_you_noticed() -> Dict[str, Any]:
+    """Things noticed but not remembered, and not being used.
+
+    A separate endpoint from the remembered list because it is a separate
+    claim. The confirmation path has two doors -- the one conversational
+    aside, and this -- and a candidate nobody can find is a candidate that
+    only ever expires.
+    """
+    from ...continuity.about_you import list_candidates
+
+    memory_store, _ = _about_you_stores()
+    items = list_candidates(memory_store)
+    return {
+        "status": "ok" if memory_store is not None else "unavailable",
+        "items": items,
+        "count": len(items),
+    }
+
+
+@router.post("/about-you/{memory_id}/remember-this")
+async def about_you_remember_this(memory_id: str) -> Dict[str, Any]:
+    """Yes, from the list rather than from the conversation.
+
+    The same promotion the tool performs, with the difference that matters
+    for ``MEM-06``: the reason is a button in a surface that says what it
+    does, which is a self-naming rule rather than a human utterance. Both
+    are reasons MEM-06 accepts; a sentence a model composed is not.
+    """
+    from ...continuity.confirm import confirm_candidate
+
+    memory_store, observation_store = _about_you_stores()
+    interest = _load_interest(memory_store, memory_id)
+    if interest is None:
+        return _unreached("confirm", f"memory {memory_id!r} was not found")
+
+    return confirm_candidate(
+        interest, memory_id,
+        reason="confirmed in Settings under 'What I remember about you'",
+        memory_store=memory_store,
+        observation_store=observation_store,
+    )
+
+
+@router.post("/about-you/{memory_id}/not-interested")
+async def about_you_not_interested(memory_id: str) -> Dict[str, Any]:
+    """No. The candidate stops waiting; nothing records the refusal.
+
+    It is retired the way a lapse retires one -- status only, reversible --
+    rather than erased, so the arithmetic cannot immediately re-propose it
+    off the same threads.
+    """
+    from ...continuity.forget_interest import stop_using_interest
+    from ...continuity.provenance import current_turn
+
+    memory_store, observation_store = _about_you_stores()
+    interest = _load_interest(memory_store, memory_id)
+    if interest is None:
+        return _unreached("decline", f"memory {memory_id!r} was not found")
+
+    return stop_using_interest(
+        interest, memory_id,
+        turn=(current_turn.get() or "settings"),
+        memory_store=memory_store,
+        observation_store=observation_store,
+    )
+
+
 @router.post("/about-you/{memory_id}/stop-using")
 async def about_you_stop_using(memory_id: str) -> Dict[str, Any]:
     """Keep it, stop using it. Reversible, and listed under "Show forgotten"."""

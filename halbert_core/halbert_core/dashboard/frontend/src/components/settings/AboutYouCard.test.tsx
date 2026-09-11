@@ -33,6 +33,27 @@ function ok(items: unknown[], status = 'ok') {
   return { ok: true, json: async () => ({ status, items, count: items.length, limits: LIMITS }) }
 }
 
+const NOTICED = {
+  memory_id: 'interest_samba',
+  topic: 'samba',
+  noticed: 'appeared on 4 days in 30 across 5 threads',
+  days: 4,
+  conversations: 5,
+  when: '2026-09-10',
+  asked: true,
+}
+
+/** Route GETs by path: the card reads two lists, and they are different
+ *  claims that must not be mixed up by the test either. */
+function twoLists(remembered: unknown[], noticedItems: unknown[]) {
+  return (url: string, init?: RequestInit) => {
+    if (init?.method === 'POST') return Promise.resolve(report())
+    return Promise.resolve(
+      String(url).includes('/noticed') ? ok(noticedItems) : ok(remembered),
+    )
+  }
+}
+
 function report(extra: Record<string, unknown> = {}) {
   return {
     ok: true,
@@ -43,7 +64,11 @@ function report(extra: Record<string, unknown> = {}) {
 let fetchMock: ReturnType<typeof vi.fn>
 
 beforeEach(() => {
-  fetchMock = vi.fn().mockResolvedValue(ok([STATED]))
+  // Routed by path from the start: the card reads two lists, and a mock
+  // that answers both with the same rows renders every remembered item
+  // twice — which broke two tests here before it could break a person's
+  // screen.
+  fetchMock = vi.fn().mockImplementation(twoLists([STATED], []))
   vi.stubGlobal('fetch', fetchMock)
 })
 
@@ -216,5 +241,85 @@ describe('show forgotten', () => {
         expect.objectContaining({ method: 'POST' }),
       )
     })
+  })
+})
+
+
+describe('noticed, not remembered', () => {
+  it('is not mixed into the remembered list', async () => {
+    // A guess nobody confirmed is a different claim from something the
+    // person told us, and the card must never present it as the same one.
+    fetchMock.mockImplementation(twoLists([], [NOTICED]))
+    render(<AboutYouCard />)
+    expect(await screen.findByText('Noticed, not remembered')).toBeInTheDocument()
+    expect(screen.getByText(/Nothing is recorded about you/)).toBeInTheDocument()
+  })
+
+  it('says nothing is being done with them', async () => {
+    fetchMock.mockImplementation(twoLists([], [NOTICED]))
+    render(<AboutYouCard />)
+    expect(await screen.findByText(/Nothing is being done with these/)).toBeInTheDocument()
+  })
+
+  it('shows the arithmetic that produced it', async () => {
+    fetchMock.mockImplementation(twoLists([], [NOTICED]))
+    render(<AboutYouCard />)
+    expect(
+      await screen.findByText('appeared on 4 days in 30 across 5 threads'),
+    ).toBeInTheDocument()
+  })
+
+  it('offers both answers', async () => {
+    fetchMock.mockImplementation(twoLists([], [NOTICED]))
+    render(<AboutYouCard />)
+    expect(await screen.findByRole('button', { name: 'Remember this' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Not interested' })).toBeInTheDocument()
+  })
+
+  it('yes posts to remember-this, with no confirm dialog', async () => {
+    // Saying yes to a question is not a destructive act, so it does not
+    // get the ceremony that forgetting does.
+    fetchMock.mockImplementation(twoLists([], [NOTICED]))
+    render(<AboutYouCard />)
+    await userEvent.click(await screen.findByRole('button', { name: 'Remember this' }))
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining('/interest_samba/remember-this'),
+        expect.objectContaining({ method: 'POST' }),
+      )
+    })
+  })
+
+  it('no posts to not-interested', async () => {
+    fetchMock.mockImplementation(twoLists([], [NOTICED]))
+    render(<AboutYouCard />)
+    await userEvent.click(await screen.findByRole('button', { name: 'Not interested' }))
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining('/interest_samba/not-interested'),
+        expect.objectContaining({ method: 'POST' }),
+      )
+    })
+  })
+
+  it('the section is absent when there is nothing noticed', async () => {
+    // Never an empty "we are watching for patterns" panel. Absent is the
+    // honest rendering of nothing noticed.
+    fetchMock.mockImplementation(twoLists([STATED], []))
+    render(<AboutYouCard />)
+    await screen.findByText('vintage thinkpads')
+    expect(screen.queryByText('Noticed, not remembered')).toBeNull()
+  })
+
+  it('a failing noticed list does not hide what is remembered', async () => {
+    // One is a guess, the other is what the person told us.
+    fetchMock.mockImplementation((url: string) =>
+      String(url).includes('/noticed')
+        ? Promise.reject(new Error('offline'))
+        : Promise.resolve(ok([STATED])),
+    )
+    render(<AboutYouCard />)
+    expect(await screen.findByText('vintage thinkpads')).toBeInTheDocument()
+    expect(screen.queryByText('Noticed, not remembered')).toBeNull()
   })
 })

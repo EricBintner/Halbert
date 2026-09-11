@@ -57,6 +57,19 @@ interface AboutYouResponse {
 
 const BASE = apiUrl('/api/memory/about-you')
 
+/** Something noticed by arithmetic and confirmed by nobody. A different
+ *  claim from a remembered thing, so it is shown apart and labelled. */
+export interface NoticedItem {
+  memory_id: string
+  topic: string
+  /** "appeared on 4 days in 30 across 5 threads" — the arithmetic itself. */
+  noticed: string
+  days: number
+  conversations: number
+  when: string
+  asked: boolean
+}
+
 /** A row, and its two verbs. */
 function Row({
   item,
@@ -120,6 +133,7 @@ export function AboutYouCard() {
   const [readError, setReadError] = useState('')
   const [actionError, setActionError] = useState('')
   const [confirming, setConfirming] = useState<RememberedItem | null>(null)
+  const [noticed, setNoticed] = useState<NoticedItem[]>([])
   /** What the last erase actually reached. Shown, not assumed. */
   const [report, setReport] = useState('')
 
@@ -132,6 +146,15 @@ export function AboutYouCard() {
       const body: AboutYouResponse = await res.json()
       setItems(body.items || [])
       setLimits(body.limits || '')
+      try {
+        const nres = await fetch(`${BASE}/noticed`)
+        const nbody = await nres.json()
+        setNoticed(nbody.items || [])
+      } catch {
+        // The noticed list failing must not take the remembered one with
+        // it: one is a guess, the other is what the person told us.
+        setNoticed([])
+      }
       // A store that cannot be read is not an empty store, and must never
       // be shown as one: "nothing is recorded about you" is a claim.
       if (body.status !== 'ok') {
@@ -223,6 +246,53 @@ export function AboutYouCard() {
             ))}
           </ul>
         )}
+
+        {/* Noticed, not remembered. Said apart because it is a different
+            claim, and shown at all because the confirmation path has two
+            doors — the one conversational aside, and this. A candidate
+            nobody can find is a candidate that only ever expires. */}
+        {noticed.length > 0 ? (
+          <div className="mt-5 pt-4 border-t border-border">
+            <div className="text-sm font-medium">Noticed, not remembered</div>
+            <p className="text-xs text-muted-foreground mt-1">
+              Subjects that keep coming up. Nothing is being done with these.
+              I only use them if you say so.
+            </p>
+            <ul className="mt-2">
+              {noticed.map((item) => (
+                <li
+                  key={item.memory_id}
+                  className="flex items-start justify-between gap-4 py-3 border-b border-border last:border-b-0"
+                >
+                  <div className="min-w-0">
+                    <div className="text-sm">{item.topic}</div>
+                    <div className="text-xs text-muted-foreground mt-0.5">
+                      {item.noticed}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      disabled={busy}
+                      onClick={() => void act(item.memory_id, 'remember-this')}
+                    >
+                      Remember this
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      disabled={busy}
+                      onClick={() => void act(item.memory_id, 'not-interested')}
+                    >
+                      Not interested
+                    </Button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
 
         <div className="flex items-center justify-between mt-4">
           <button
