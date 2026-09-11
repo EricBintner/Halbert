@@ -49,7 +49,9 @@ export interface SegmentedBarProps extends React.HTMLAttributes<HTMLDivElement> 
   /** Label for unallocated headroom (default: "Free Headroom"). */
   freeHeadroomLabel?: string
   /** Height size variant (default: 'md'). */
-  size?: 'sm' | 'md'
+  size?: 'sm' | 'md' | 'lg' | 'xl' | 'thick'
+  /** Whether to render labels directly inside the colored segments (best with lg/xl/thick). */
+  showInSegmentLabels?: boolean
   /** Sensor or resource offline state. */
   offline?: boolean
 }
@@ -69,6 +71,7 @@ export const SegmentedBar = React.forwardRef<HTMLDivElement, SegmentedBarProps>(
     showFreeHeadroom = true,
     freeHeadroomLabel = 'Free Headroom',
     size = 'md',
+    showInSegmentLabels = false,
     offline = false,
     className,
     id,
@@ -130,9 +133,28 @@ export const SegmentedBar = React.forwardRef<HTMLDivElement, SegmentedBarProps>(
                   )}
                   style={{ width: `${pct}%` }}
                   title={`${seg.label}: ${segVal.toFixed(1)} ${unit} (${pct.toFixed(1)}%)`}
-                />
+                >
+                  {showInSegmentLabels && pct >= 8 && (
+                    <span className="hb-segmented-bar__segment-label" aria-hidden="true">
+                      <span className="hb-segmented-bar__segment-name">{seg.label}</span>
+                      <span className="hb-segmented-bar__segment-val">{segVal.toFixed(1)} {unit}</span>
+                    </span>
+                  )}
+                </div>
               )
             })}
+            {showInSegmentLabels && hasFree && ((freeValue / effectiveTotal) * 100) >= 8 && (
+              <div
+                className="hb-segmented-bar__segment hb-segmented-bar__segment--free"
+                style={{ width: `${(freeValue / effectiveTotal) * 100}%` }}
+                title={`${freeHeadroomLabel}: ${freeValue.toFixed(1)} ${unit} (${((freeValue / effectiveTotal) * 100).toFixed(1)}%)`}
+              >
+                <span className="hb-segmented-bar__segment-label hb-segmented-bar__segment-label--free" aria-hidden="true">
+                  <span className="hb-segmented-bar__segment-name">{freeHeadroomLabel}</span>
+                  <span className="hb-segmented-bar__segment-val">{freeValue.toFixed(1)} {unit}</span>
+                </span>
+              </div>
+            )}
           </>
         ) : (
           <div className="hb-segmented-bar__offline-strip">

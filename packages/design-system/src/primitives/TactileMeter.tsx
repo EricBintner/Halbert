@@ -51,7 +51,7 @@ export interface TactileMeterProps extends React.HTMLAttributes<HTMLDivElement> 
    */
   tone?: TactileMeterTone
   /** Track height variant (default: 'md'). */
-  size?: 'sm' | 'md' | 'lg'
+  size?: 'sm' | 'md' | 'lg' | 'xl' | 'thick' | 'hero'
   /**
    * Sensor offline or unmeasurable state. Renders an honest degraded state
    * rather than a plausible-looking zero — Computational Honesty Gate.
@@ -72,6 +72,10 @@ export interface TactileMeterProps extends React.HTMLAttributes<HTMLDivElement> 
    * By default, a pure meter track with no label or sub will NOT render an empty header.
    */
   showReadout?: boolean
+  /** Text or element rendered directly inside the left of the physical meter track. */
+  inBarLeft?: React.ReactNode
+  /** Text or element rendered directly inside the right of the physical meter track. */
+  inBarRight?: React.ReactNode
 }
 
 /**
@@ -98,6 +102,8 @@ export const TactileMeter = React.forwardRef<HTMLDivElement, TactileMeterProps>(
     labelWidth,
     statusBadge,
     showReadout = false,
+    inBarLeft,
+    inBarRight,
     className,
     style,
     id,
@@ -193,6 +199,14 @@ export const TactileMeter = React.forwardRef<HTMLDivElement, TactileMeterProps>(
             />
           )
         })}
+
+        {/* In-Bar Overlay Content */}
+        {(inBarLeft || inBarRight) && !offline && (
+          <div className="hb-tactile-meter__in-bar" aria-hidden="true">
+            {inBarLeft && <div className="hb-tactile-meter__in-bar-left">{inBarLeft}</div>}
+            {inBarRight && <div className="hb-tactile-meter__in-bar-right">{inBarRight}</div>}
+          </div>
+        )}
 
         {offline && (
           <div className="hb-tactile-meter__offline-strip" aria-hidden="true">

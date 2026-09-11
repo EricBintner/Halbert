@@ -699,6 +699,7 @@ function FilesystemUsageRow({
 
   return (
     <DataGridRow
+      variant="in-bar"
       className="py-1.5 sm:py-2"
       icon={<Folder className="h-4 w-4 text-muted-foreground shrink-0" />}
       title={
@@ -710,9 +711,7 @@ function FilesystemUsageRow({
           className="text-sm sm:text-[15px] font-medium text-foreground truncate"
         />
       }
-      path={fs.mountpoint}
       detail={profileDetail ? `• ${profileDetail}` : undefined}
-      metrics={`${fs.used} / ${fs.size}`}
       status={
         <span
           className={cn(
@@ -731,12 +730,12 @@ function FilesystemUsageRow({
         <TactileMeter
           value={fs.percent}
           tone={tone}
-          size="md"
+          size="thick"
+          inBarLeft={fs.mountpoint}
+          inBarRight={`${fs.used} / ${fs.size} · ${fs.percent}%`}
           aria-label={`${shortName} (${fs.mountpoint}) capacity`}
         />
       }
-      titleWidth={220}
-      pathWidth={180}
     />
   )
 }

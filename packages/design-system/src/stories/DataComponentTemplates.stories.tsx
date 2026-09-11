@@ -573,3 +573,426 @@ export const HardwareSensorsTemplate: StoryObj = {
     </CardContainer>
   ),
 }
+
+/* ------------------------------------------------------------- 6. Thick Bar Scenarios -- */
+
+/* Scenario A: Integrated Avionics Track (Recommended) */
+export const ScenarioA_IntegratedAvionics: StoryObj = {
+  name: 'Scenario A: Integrated Avionics (Recommended)',
+  render: () => (
+    <CardContainer
+      title="Scenario A: Integrated Avionics Track (Recommended)"
+      subtitle="28px thick track · Machine path (left) & metrics (right) integrated directly inside gauge · Zero upper cramping"
+      status={<StatusIndicator tone="nominal" label="RECOMMENDED" />}
+    >
+      <DataGridRow
+        variant="in-bar"
+        title="Primary System Root"
+        detail="Subvolume ID 256 · Compression: zstd:3 · RAID1"
+        status={<MetricStatus value="● HEALTHY" tone="nominal" />}
+        meter={
+          <TactileMeter
+            value={28.4}
+            tone="telemetry"
+            size="thick"
+            inBarLeft="/ · btrfs"
+            inBarRight="142.0 GB / 500.0 GB · 28.4%"
+            ticks={[25, 50, 75, 90]}
+          />
+        }
+      />
+
+      <DataGridRow
+        variant="in-bar"
+        title="Application & Container Storage"
+        detail="Subvolume ID 257 · Docker Root & Overlay2 Pool"
+        status={<MetricStatus value="● HEALTHY" tone="nominal" />}
+        meter={
+          <TactileMeter
+            value={38.7}
+            tone="telemetry"
+            size="thick"
+            inBarLeft="/var/lib/docker · btrfs"
+            inBarRight="77.4 GB / 200.0 GB · 38.7%"
+            ticks={[25, 50, 75, 90]}
+          />
+        }
+      />
+
+      <DataGridRow
+        variant="in-bar"
+        title="Local LLM Model Weights & Artifacts"
+        detail="Subvolume ID 258 · Direct I/O Cache · High Throughput"
+        status={<MetricStatus value="▲ WARN" tone="warning" />}
+        meter={
+          <TactileMeter
+            value={82.0}
+            tone="warning"
+            size="thick"
+            inBarLeft="/models · btrfs"
+            inBarRight="1.64 TB / 2.00 TB · 82.0%"
+            ticks={[25, 50, 75, 90]}
+          />
+        }
+      />
+
+      <DataGridRow
+        variant="in-bar"
+        title="Scratch NVMe High-Speed Swap Pool"
+        detail="Subvolume ID 259 · Critical Capacity Ceiling Reached"
+        status={<MetricStatus value="■ CRIT" tone="critical" />}
+        meter={
+          <TactileMeter
+            value={95.8}
+            tone="critical"
+            size="thick"
+            inBarLeft="/scratch · btrfs"
+            inBarRight="958.0 GB / 1.00 TB · 95.8%"
+            ticks={[25, 50, 75, 90]}
+          />
+        }
+      />
+    </CardContainer>
+  ),
+}
+
+/* Scenario B: Dual-Deck Master Bench */
+export const ScenarioB_DualDeckMasterBench: StoryObj = {
+  name: 'Scenario B: Dual-Deck Master Bench',
+  render: () => (
+    <CardContainer
+      title="Scenario B: Dual-Deck Master Bench"
+      subtitle="24px track · Upper deck has title & metrics · In-bar overlay shows device spec & free headroom target"
+      status={<StatusIndicator tone="telemetry" label="ALTERNATIVE" />}
+    >
+      <DataGridRow
+        variant="dual-deck"
+        title="System RAM Working Set"
+        metrics="24.8 GB / 64.0 GB"
+        status={<MetricStatus value="38.7%" tone="nominal" />}
+        meter={
+          <TactileMeter
+            value={38.7}
+            tone="telemetry"
+            size="xl"
+            inBarLeft="mem · DDR5-5600 EXPO"
+            inBarRight="39.2 GB Free Headroom"
+            ticks={[25, 50, 75, 90]}
+          />
+        }
+        path="ZRAM active · 14.2 GB buffers"
+        detail="Memory Controller: Dual Channel (128-bit) · ECC Nominal"
+      />
+
+      <DataGridRow
+        variant="dual-deck"
+        title="NVMe Dirty Writeback Buffer"
+        metrics="1.2 GB / 4.0 GB"
+        status={<MetricStatus value="30.0%" tone="nominal" />}
+        meter={
+          <TactileMeter
+            value={30.0}
+            tone="data-amber"
+            size="xl"
+            inBarLeft="pci0000:00/nvme0n1"
+            inBarRight="2.8 GB Buffer Room"
+            ticks={[25, 50, 75, 90]}
+          />
+        }
+        path="PCIe 4.0 x4 · Flush in progress"
+        detail="Device: Samsung 990 PRO · Queue Depth: 32"
+      />
+
+      <DataGridRow
+        variant="dual-deck"
+        title="CPU Package Thermal Ceiling"
+        metrics="78.5°C / 95.0°C"
+        status={<MetricStatus value="82.6% WARN" tone="warning" />}
+        meter={
+          <TactileMeter
+            value={82.6}
+            tone="warning"
+            size="xl"
+            inBarLeft="hwmon0/k10temp/Tctl"
+            inBarRight="16.5°C Delta to Throttle"
+            ticks={[25, 50, 75, 90]}
+          />
+        }
+        path="Die Peak: 81.2°C · Ambient: 22°C"
+        detail="Cooler: Arctic Liquid Freezer III 360 · Pump: 100%"
+      />
+    </CardContainer>
+  ),
+}
+
+/* Scenario C: Cockpit Master HUD */
+export const ScenarioC_CockpitMasterHUD: StoryObj = {
+  name: 'Scenario C: Cockpit Master HUD',
+  render: () => (
+    <CardContainer
+      title="Scenario C: Cockpit Master HUD"
+      subtitle="32px chunky cassette track · Volume title & status unified inside gauge · Monospace specs below"
+      status={<StatusIndicator tone="telemetry" label="ALTERNATIVE" />}
+    >
+      <DataGridRow
+        variant="in-bar"
+        title="Primary System Root"
+        meter={
+          <TactileMeter
+            value={28.4}
+            tone="telemetry"
+            size="hero"
+            inBarLeft={
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ color: 'var(--color-ink-tertiary)' }}>[ROOT]</span>
+                <strong>Primary System Root</strong>
+                <span style={{ opacity: 0.7 }}>(/)</span>
+              </span>
+            }
+            inBarRight="142.0 GB / 500.0 GB · 28.4% NOMINAL"
+            ticks={[25, 50, 75, 90]}
+          />
+        }
+        subdeck="dev: /dev/nvme0n1p2 · fs: btrfs · subvol: 256 · comp: zstd:3 · scrub: PASSED (3d ago)"
+      />
+
+      <DataGridRow
+        variant="in-bar"
+        title="Docker Container Volumes"
+        meter={
+          <TactileMeter
+            value={38.7}
+            tone="telemetry"
+            size="hero"
+            inBarLeft={
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ color: 'var(--color-ink-tertiary)' }}>[DOCK]</span>
+                <strong>Container Volumes</strong>
+                <span style={{ opacity: 0.7 }}>(/var/lib/docker)</span>
+              </span>
+            }
+            inBarRight="77.4 GB / 200.0 GB · 38.7% NOMINAL"
+            ticks={[25, 50, 75, 90]}
+          />
+        }
+        subdeck="dev: /dev/nvme0n1p3 · fs: btrfs · subvol: 257 · overlay2 backend · 24 running containers"
+      />
+
+      <DataGridRow
+        variant="in-bar"
+        title="Scratch Swap Pool"
+        meter={
+          <TactileMeter
+            value={95.8}
+            tone="critical"
+            size="hero"
+            inBarLeft={
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ color: 'var(--color-status-critical)' }}>[WARN]</span>
+                <strong>Scratch Swap Pool</strong>
+                <span style={{ opacity: 0.7 }}>(/scratch)</span>
+              </span>
+            }
+            inBarRight="958.0 GB / 1.00 TB · 95.8% CRITICAL"
+            ticks={[25, 50, 75, 90]}
+          />
+        }
+        subdeck="dev: /dev/nvme1n1p1 · fs: btrfs · subvol: 259 · automatic vacuum triggered"
+      />
+    </CardContainer>
+  ),
+}
+
+/* Scenario D: Multi-Category In-Segment Micro-Chips */
+export const ScenarioD_SegmentedInBarLabels: StoryObj = {
+  name: 'Scenario D: Segmented Multi-Category (For Dataviz)',
+  render: () => (
+    <CardContainer
+      title="Scenario D: Segmented Multi-Category In-Bar Labels"
+      subtitle="32px segmented track · Micro-labels embedded inside slices · Eliminates legend cross-referencing"
+      status={<StatusIndicator tone="nominal" label="DATAVIZ BEST PRACTICE" />}
+    >
+      <div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8 }}>
+          <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--color-ink)' }}>
+            NVIDIA RTX 4090 — 24 GB VRAM Allocation
+          </span>
+          <span style={{ fontSize: 12, fontFamily: 'var(--font-mono)', color: 'var(--color-ink-secondary)' }}>
+            19.9 GB Allocated / 4.1 GB Free (82.9%)
+          </span>
+        </div>
+        <SegmentedBar
+          segments={vramSegments}
+          total={24.0}
+          unit="GB"
+          size="thick"
+          showInSegmentLabels
+          showLegend
+          showFreeHeadroom
+        />
+      </div>
+
+      <div style={{ height: 1, backgroundColor: 'var(--color-border)', margin: 'var(--space-4) 0' }} />
+
+      <div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8 }}>
+          <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--color-ink)' }}>
+            Storage Pool Allocation Topology (btrfs data pool)
+          </span>
+          <span style={{ fontSize: 12, fontFamily: 'var(--font-mono)', color: 'var(--color-ink-secondary)' }}>
+            356.0 GB Used / 144.0 GB Free (71.2%)
+          </span>
+        </div>
+        <SegmentedBar
+          segments={[
+            { id: 'data', label: 'Active User Data', value: 280.0, tone: 'data-blue', detail: 'Single device' },
+            { id: 'meta', label: 'Filesystem Metadata', value: 48.0, tone: 'data-teal', detail: 'DUP profile' },
+            { id: 'snaps', label: 'Read-Only Snapshots', value: 28.0, tone: 'data-purple', detail: '14 subvolume snaps' },
+          ]}
+          total={500.0}
+          unit="GB"
+          size="thick"
+          showInSegmentLabels
+          showLegend
+          showFreeHeadroom
+        />
+      </div>
+    </CardContainer>
+  ),
+}
+
+/* Responsive Adaptive Simulation */
+export const ResponsiveAdaptiveSimulation: StoryObj = {
+  name: 'Responsive / Adaptive Width Simulation',
+  render: () => (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 32 }}>
+      <div>
+        <h3 style={{ margin: '0 0 8px 0', fontSize: 15, fontWeight: 600, color: 'var(--color-ink)' }}>
+          Desktop Viewport (920px Card Width)
+        </h3>
+        <CardContainer
+          title="Storage Subvolumes (Desktop 920px)"
+          subtitle="Full width: generous breathing room between human title, path, and numerical telemetry"
+          status={<StatusIndicator tone="nominal" label="DESKTOP" />}
+          width={920}
+        >
+          <DataGridRow
+            variant="in-bar"
+            title="Primary System Root"
+            detail="Subvolume ID 256 · Compression: zstd:3"
+            status={<MetricStatus value="● HEALTHY" tone="nominal" />}
+            meter={
+              <TactileMeter
+                value={28.4}
+                tone="telemetry"
+                size="thick"
+                inBarLeft="/ · btrfs"
+                inBarRight="142.0 GB / 500.0 GB · 28.4%"
+              />
+            }
+          />
+          <DataGridRow
+            variant="in-bar"
+            title="Local LLM Model Weights & Artifacts"
+            detail="Subvolume ID 258 · Direct I/O Cache"
+            status={<MetricStatus value="▲ WARN" tone="warning" />}
+            meter={
+              <TactileMeter
+                value={82.0}
+                tone="warning"
+                size="thick"
+                inBarLeft="/models · btrfs"
+                inBarRight="1.64 TB / 2.00 TB · 82.0%"
+              />
+            }
+          />
+        </CardContainer>
+      </div>
+
+      <div>
+        <h3 style={{ margin: '0 0 8px 0', fontSize: 15, fontWeight: 600, color: 'var(--color-ink)' }}>
+          Tablet / Medium Viewport (640px Card Width)
+        </h3>
+        <CardContainer
+          title="Storage Subvolumes (Tablet 640px)"
+          subtitle="Subtle adaptability: zero wrapping, Title stays pristine, in-bar chips preserve alignment"
+          status={<StatusIndicator tone="nominal" label="TABLET" />}
+          width={640}
+        >
+          <DataGridRow
+            variant="in-bar"
+            title="Primary System Root"
+            detail="Subvolume ID 256"
+            status={<MetricStatus value="● HEALTHY" tone="nominal" />}
+            meter={
+              <TactileMeter
+                value={28.4}
+                tone="telemetry"
+                size="thick"
+                inBarLeft="/ · btrfs"
+                inBarRight="142.0 GB / 500.0 GB · 28.4%"
+              />
+            }
+          />
+          <DataGridRow
+            variant="in-bar"
+            title="Local LLM Model Weights"
+            detail="Subvolume ID 258"
+            status={<MetricStatus value="▲ WARN" tone="warning" />}
+            meter={
+              <TactileMeter
+                value={82.0}
+                tone="warning"
+                size="thick"
+                inBarLeft="/models · btrfs"
+                inBarRight="1.64 TB / 2.00 TB · 82.0%"
+              />
+            }
+          />
+        </CardContainer>
+      </div>
+
+      <div>
+        <h3 style={{ margin: '0 0 8px 0', fontSize: 15, fontWeight: 600, color: 'var(--color-ink)' }}>
+          Mobile Viewport (400px Card Width)
+        </h3>
+        <CardContainer
+          title="Storage Subvolumes (Mobile 400px)"
+          subtitle="Graceful compaction: in-bar left path truncates with ellipsis, numbers remain visible"
+          status={<StatusIndicator tone="nominal" label="MOBILE" />}
+          width={400}
+        >
+          <DataGridRow
+            variant="in-bar"
+            title="Primary Root"
+            status={<MetricStatus value="● OK" tone="nominal" />}
+            meter={
+              <TactileMeter
+                value={28.4}
+                tone="telemetry"
+                size="thick"
+                inBarLeft="/"
+                inBarRight="142 GB (28.4%)"
+              />
+            }
+          />
+          <DataGridRow
+            variant="in-bar"
+            title="LLM Models"
+            status={<MetricStatus value="▲ WARN" tone="warning" />}
+            meter={
+              <TactileMeter
+                value={82.0}
+                tone="warning"
+                size="thick"
+                inBarLeft="/models"
+                inBarRight="1.64 TB (82.0%)"
+              />
+            }
+          />
+        </CardContainer>
+      </div>
+    </div>
+  ),
+}
+

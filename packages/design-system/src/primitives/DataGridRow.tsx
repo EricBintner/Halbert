@@ -32,6 +32,17 @@ export interface DataGridRowProps extends Omit<React.HTMLAttributes<HTMLDivEleme
   metricsWidth?: number | string
   /** Allotted width for the Status column on desktop (default: 72px). */
   statusWidth?: number | string
+  /**
+   * Layout presentation variant:
+   * - 'standard': 5-column rigid unigrid line above full-width meter (default).
+   * - 'in-bar': Spacious avionics layout. Top deck has Title/Details (left) and Status (right),
+   *   meter track carries Path (inBarLeft) and Metrics (inBarRight).
+   * - 'dual-deck': Top deck has Title (left) and Metrics/Status (right),
+   *   lower sub-deck has Path and Details.
+   */
+  variant?: 'standard' | 'in-bar' | 'dual-deck'
+  /** Optional tertiary metadata or technical flags rendered below the meter. */
+  subdeck?: React.ReactNode
 }
 
 /**
@@ -57,12 +68,82 @@ export const DataGridRow = React.forwardRef<HTMLDivElement, DataGridRowProps>(fu
     pathWidth = 180,
     metricsWidth = 180,
     statusWidth = 72,
+    variant = 'standard',
+    subdeck,
     className,
     style,
     ...props
   },
   ref,
 ) {
+  if (variant === 'in-bar') {
+    return (
+      <div
+        ref={ref}
+        className={cx('hb-data-row', 'hb-data-row--in-bar', className)}
+        style={style}
+        {...props}
+      >
+        {/* Upper Deck: Title + Detail on left, Status on right */}
+        <div className="hb-data-row__in-bar-header">
+          <div className="hb-data-row__title-cell">
+            {icon && <span className="hb-data-row__icon">{icon}</span>}
+            <span className="hb-data-row__title">{title}</span>
+            {detail && <span className="hb-data-row__detail-inline">· {detail}</span>}
+          </div>
+          <div className="hb-data-row__status-cell">
+            {status}
+          </div>
+        </div>
+
+        {/* Tier 2: 100% Full-Width Calibrated Instrument Track */}
+        {meter && <div className="hb-data-row__meter-cell">{meter}</div>}
+
+        {/* Optional Subdeck */}
+        {subdeck && <div className="hb-data-row__subdeck">{subdeck}</div>}
+      </div>
+    )
+  }
+
+  if (variant === 'dual-deck') {
+    return (
+      <div
+        ref={ref}
+        className={cx('hb-data-row', 'hb-data-row--dual-deck', className)}
+        style={style}
+        {...props}
+      >
+        {/* Upper Deck: Title on left, Metrics + Status on right */}
+        <div className="hb-data-row__dual-deck-header">
+          <div className="hb-data-row__title-cell">
+            {icon && <span className="hb-data-row__icon">{icon}</span>}
+            <span className="hb-data-row__title">{title}</span>
+          </div>
+          <div className="hb-data-row__readout-group">
+            {metrics && <span className="hb-data-row__metrics">{metrics}</span>}
+            {status && <span className="hb-data-row__status-cell">{status}</span>}
+          </div>
+        </div>
+
+        {/* Tier 2: 100% Full-Width Calibrated Instrument Track */}
+        {meter && <div className="hb-data-row__meter-cell">{meter}</div>}
+
+        {/* Lower Sub-deck: Path on left, Detail on right */}
+        {(path || detail || subdeck) && (
+          <div className="hb-data-row__dual-deck-footer">
+            <div className="hb-data-row__path-cell">
+              {path && <span className="hb-data-row__path">{path}</span>}
+            </div>
+            <div className="hb-data-row__detail-cell">
+              {detail && <span className="hb-data-row__detail">{detail}</span>}
+              {subdeck}
+            </div>
+          </div>
+        )}
+      </div>
+    )
+  }
+
   const customGridStyles: React.CSSProperties = {
     ...style,
     ['--data-row-title-width' as string]: typeof titleWidth === 'number' ? `${titleWidth}px` : titleWidth,

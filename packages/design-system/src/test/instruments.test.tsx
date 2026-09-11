@@ -215,4 +215,90 @@ describe('TactileMeter Grid Alignment', () => {
     expect(screen.getByTestId('crit-badge')).toBeInTheDocument()
     expect(container.querySelector('.hb-tactile-meter__status')).toBeInTheDocument()
   })
+
+  it('renders inBarLeft and inBarRight overlays inside meter track', () => {
+    const { container } = render(
+      <TactileMeter
+        value={45.0}
+        size="thick"
+        inBarLeft={<span data-testid="in-bar-path">/ · btrfs</span>}
+        inBarRight={<span data-testid="in-bar-metrics">142 GB / 500 GB</span>}
+      />
+    )
+
+    expect(container.querySelector('.hb-tactile-meter--thick')).toBeInTheDocument()
+    expect(screen.getByTestId('in-bar-path')).toBeInTheDocument()
+    expect(screen.getByTestId('in-bar-metrics')).toBeInTheDocument()
+    expect(container.querySelector('.hb-tactile-meter__in-bar')).toBeInTheDocument()
+  })
 })
+
+describe('DataGridRow Variants', () => {
+  it('renders variant="in-bar" with spacious two-tier layout', () => {
+    const { container } = render(
+      <DataGridRow
+        variant="in-bar"
+        title="Root Volume"
+        detail="Subvol 256 · zstd:3"
+        status={<span data-testid="status-indicator">● HEALTHY</span>}
+        meter={
+          <TactileMeter
+            value={28.4}
+            size="thick"
+            inBarLeft="/ · btrfs"
+            inBarRight="142 GB / 500 GB"
+          />
+        }
+      />
+    )
+
+    expect(container.querySelector('.hb-data-row--in-bar')).toBeInTheDocument()
+    expect(screen.getByText('Root Volume')).toBeInTheDocument()
+    expect(screen.getByText('· Subvol 256 · zstd:3')).toBeInTheDocument()
+    expect(screen.getByTestId('status-indicator')).toBeInTheDocument()
+    expect(screen.getByText('/ · btrfs')).toBeInTheDocument()
+    expect(screen.getByText('142 GB / 500 GB')).toBeInTheDocument()
+  })
+
+  it('renders variant="dual-deck" with lower subdeck', () => {
+    const { container } = render(
+      <DataGridRow
+        variant="dual-deck"
+        title="System RAM"
+        metrics="24.8 GB / 64.0 GB"
+        status={<span>38.7%</span>}
+        path="mem · DDR5"
+        detail="Dual Channel"
+      />
+    )
+
+    expect(container.querySelector('.hb-data-row--dual-deck')).toBeInTheDocument()
+    expect(screen.getByText('System RAM')).toBeInTheDocument()
+    expect(screen.getByText('24.8 GB / 64.0 GB')).toBeInTheDocument()
+    expect(screen.getByText('mem · DDR5')).toBeInTheDocument()
+    expect(screen.getByText('Dual Channel')).toBeInTheDocument()
+  })
+})
+
+describe('SegmentedBar In-Segment Labels', () => {
+  it('renders labels directly inside colored segments on thick tracks', () => {
+    const segments = [
+      { id: 'data', label: 'User Data', value: 300, tone: 'data-blue' as const },
+      { id: 'meta', label: 'Metadata', value: 50, tone: 'data-teal' as const },
+    ]
+
+    const { container } = render(
+      <SegmentedBar
+        segments={segments}
+        total={500}
+        size="thick"
+        showInSegmentLabels
+      />
+    )
+
+    expect(container.querySelector('.hb-segmented-bar--thick')).toBeInTheDocument()
+    const inSegmentLabels = container.querySelectorAll('.hb-segmented-bar__segment-label')
+    expect(inSegmentLabels.length).toBeGreaterThanOrEqual(2)
+  })
+})
+
