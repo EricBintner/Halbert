@@ -91,6 +91,10 @@ _GENERIC_MODELS_PATH_PROVIDERS = frozenset(
 _CATALOG_TIMEOUT = 2.0
 _MIN_FAMILY_TOKEN = 3
 
+# A14-G5: a candidate below this size is never a viable chat-quality
+# utility model, however cheap -- a generic floor, not a named model.
+_MIN_UTILITY_PARAMS_B = 0.5
+
 # G2: prefer_fast can fire on every side-task dispatch, sometimes many times
 # a minute. A short cache keyed by (url, provider) avoids re-dialing the
 # same endpoint on every call; a shorter TTL on a failed probe (a dead
@@ -243,7 +247,10 @@ def _catalog_pick(anchor: ResolvedModel, require_local: bool = False) -> Optiona
     the ladder falls through; it is never an error. ``require_local`` drops a
     ``:cloud``-tagged (or otherwise non-local) entry from consideration
     entirely, so the next-smallest local sibling can still win — the same
-    endpoint's catalog can list both.
+    endpoint's catalog can list both. A candidate below ``_MIN_UTILITY_PARAMS_B``
+    is never picked, however cheap (A14-G5). A tie in size is broken by name,
+    not by whichever order the catalog happened to list them in — the same
+    ranking on every call, regardless of provider listing order.
     """
     try:
         entries = _cached_fetch_catalog(anchor.url, anchor.provider, anchor.api_key)
@@ -257,7 +264,7 @@ def _catalog_pick(anchor: ResolvedModel, require_local: bool = False) -> Optiona
     if anchor_b is None:
         return None  # no size signal for the anchor: nothing can be called smaller
     best_name: Optional[str] = None
-    best_b = anchor_b
+    best_b: Optional[float] = None
     for entry in entries or []:
         if not isinstance(entry, dict):
             continue
@@ -270,9 +277,10 @@ def _catalog_pick(anchor: ResolvedModel, require_local: bool = False) -> Optiona
         if require_local and not is_local_model(name, anchor.url, anchor.provider):
             continue
         b = _params_b(entry)
-        if b is None or b >= best_b:
+        if b is None or b < _MIN_UTILITY_PARAMS_B or b >= anchor_b:
             continue
-        best_name, best_b = name, b
+        if best_b is None or b < best_b or (b == best_b and name < best_name):
+            best_name, best_b = name, b
     if best_name is None:
         return None
     return ResolvedModel(

@@ -177,6 +177,53 @@ class TestCatalogRung:
         assert source == AuxSource.CHAT
 
 
+class TestCatalogTieBreakAndFloor:
+    """A14-G5: no size floor, and the smallest-sibling tie order was
+    whatever the catalog happened to list first -- not pinned to anything
+    about the candidates themselves."""
+
+    def _anchor_file(self, models_config_dir):
+        _configured(models_config_dir, chat_model=("e_local", "family-a:32b"),
+                    utility_model=None)
+
+    def test_a_size_tie_is_broken_by_name_regardless_of_catalog_order(
+        self, models_config_dir, monkeypatch
+    ):
+        self._anchor_file(models_config_dir)
+        tied = [
+            {"name": "family-a-z:3b", "details": {"parameter_size": "3B"}},
+            {"name": "family-a-x:3b", "details": {"parameter_size": "3B"}},
+        ]
+        monkeypatch.setattr(aux, "_fetch_catalog", lambda *a, **k: tied)
+        resolved, _ = aux._resolve_aux(prefer_fast=True)
+        assert resolved.model == "family-a-x:3b"
+
+        monkeypatch.setattr(aux, "_fetch_catalog", lambda *a, **k: list(reversed(tied)))
+        resolved, _ = aux._resolve_aux(prefer_fast=True)
+        assert resolved.model == "family-a-x:3b"
+
+    def test_a_sub_floor_candidate_is_never_picked(self, models_config_dir, monkeypatch):
+        self._anchor_file(models_config_dir)
+        monkeypatch.setattr(aux, "_fetch_catalog", lambda *a, **k: [
+            {"name": "family-a:0.1b", "details": {"parameter_size": "0.1B"}},
+        ])
+        resolved, source = aux._resolve_aux(prefer_fast=True)
+        assert source == AuxSource.CHAT
+        assert resolved.model == "family-a:32b"
+
+    def test_an_at_floor_candidate_still_wins_over_a_sub_floor_one(
+        self, models_config_dir, monkeypatch
+    ):
+        self._anchor_file(models_config_dir)
+        monkeypatch.setattr(aux, "_fetch_catalog", lambda *a, **k: [
+            {"name": "family-a:0.1b", "details": {"parameter_size": "0.1B"}},
+            {"name": "family-a:1b", "details": {"parameter_size": "1B"}},
+        ])
+        resolved, source = aux._resolve_aux(prefer_fast=True)
+        assert source == AuxSource.CATALOG
+        assert resolved.model == "family-a:1b"
+
+
 class TestCatalogProbeCache:
     """G2: prefer_fast can be exercised many times a minute (every side-task
     dispatch); the catalog probe should not re-dial the same endpoint on
