@@ -178,6 +178,16 @@ class StateContext:
     
     # Output
     response_chunks: List[str] = field(default_factory=list)
+
+    # Model reasoning (thinking) surfaced alongside the response (Phase 2).
+    # The text stream carries it tagged ('thinking', text) so the state machine
+    # routes it to StreamEvent.thinking rather than response_chunk; it is a
+    # streaming affordance, not part of the committed answer, and is not
+    # persisted (see the chat-UI design note).
+    thinking_chunks: List[str] = field(default_factory=list)
+    # monotonic() stamp of the first thinking chunk, for the "Thought for
+    # {elapsed}" duration emitted on thinking_complete.
+    thinking_started_at: Optional[float] = None
     
     # Phase D: Persona cognition (Haloysius cognitive state)
     persona_cognition: Optional[Any] = None  # PersonaCognition instance

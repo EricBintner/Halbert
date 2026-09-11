@@ -1252,9 +1252,16 @@ class LLMClientAdapter:
 
         model, endpoint, provider = turn.model, turn.endpoint, turn.provider
 
-        # State for filtering <think> blocks
-        in_think_block = False
-        buffer = ""
+        # Reasoning (thinking) is surfaced, not discarded. The provider sends
+        # it in a structured field (delta.reasoning_content / message.thinking /
+        # thinking_delta); the tag filter below only covers the rarer case of a
+        # relay emitting  thinking/ response inside the response text itself.
+        # Deltas are yielded as (kind, text) so the state machine routes each
+        # to StreamEvent.thinking or StreamEvent.response_chunk. The parser
+        # handles the tag variants and implicit-thinking-mode the old
+        # hand-rolled  thinking/ response loop missed.
+        from ...utils.reasoning import StreamingReasoningParser
+        reasoning_parser = StreamingReasoningParser()
         reported = False
 
         try:
@@ -1407,8 +1414,13 @@ class LLMClientAdapter:
                         if not line_text:
                             continue
                         
-                        # Parse SSE or JSON response
+                        # Parse SSE or JSON response. ``content`` is the
+                        # response text; ``reasoning`` is the model's thinking,
+                        # which the provider carries in a structured field
+                        # rather than inside the text (delta.reasoning_content /
+                        # message.thinking / thinking_delta).
                         content = ""
+                        reasoning = ""
                         if wire == "openai":
                             # OpenAI SSE format: data: {...}
                             if line_text.startswith("data: "):
@@ -1420,6 +1432,9 @@ class LLMClientAdapter:
                                     data = json.loads(data_str)
                                     delta = data.get("choices", [{}])[0].get("delta", {})
                                     content = delta.get("content", "")
+                                    # DeepSeek/Kimi reasoning arrives in a
+                                    # dedicated field, not in ``content``.
+                                    reasoning = delta.get("reasoning_content") or delta.get("reasoning") or ""
                                 except:
                                     continue
                         elif wire == "anthropic":
@@ -1434,84 +1449,79 @@ class LLMClientAdapter:
                                 continue
                             event_type = data.get("type")
                             if event_type == "content_block_delta":
-                                content = (data.get("delta") or {}).get("text", "")
+                                delta = data.get("delta") or {}
+                                delta_type = delta.get("type")
+                                if delta_type == "thinking_delta":
+                                    reasoning = delta.get("thinking", "")
+                                else:
+                                    content = delta.get("text", "")
                             elif event_type == "message_stop":
                                 break
                             elif event_type == "error":
                                 msg = (data.get("error") or {}).get("message", "unknown")
                                 logger.error(f"Anthropic stream error: {msg}")
-                                yield f"Error: {msg}"
+                                yield ("response", f"Error: {msg}")
                                 return
                         else:
                             # Ollama JSON format
                             try:
                                 import json
                                 data = json.loads(line_text)
-                                content = data.get("message", {}).get("content", "")
+                                message = data.get("message", {})
+                                content = message.get("content", "")
+                                # Ollama reasoning models carry the thought in
+                                # message.thinking, not in content.
+                                reasoning = message.get("thinking", "")
                                 if data.get("done"):
                                     break
                             except:
                                 continue
-                        
+
+                        # Structured reasoning field takes priority — surface
+                        # it as thinking without touching the tag parser.
+                        if reasoning:
+                            yield ("thinking", reasoning)
+
                         if not content:
                             continue
-                        
+
                         # DEBUG: Log all chunks to trace newlines
                         logger.debug(f"LLM raw chunk: {repr(content)}")
-                        
-                        # Filter <think> blocks in real-time
-                        buffer += content
-                        
-                        # Check for think block boundaries
-                        while True:
-                            if not in_think_block:
-                                # Look for <think> start
-                                think_start = buffer.find("<think>")
-                                if think_start != -1:
-                                    # Yield content before <think>
-                                    if think_start > 0:
-                                        yield buffer[:think_start]
-                                    buffer = buffer[think_start + 7:]  # Skip <think>
-                                    in_think_block = True
-                                else:
-                                    # No <think> found - yield safe content
-                                    # Keep last 7 chars in case "<think>" spans chunks
-                                    if len(buffer) > 7:
-                                        to_yield = buffer[:-7]
-                                        logger.debug(f"Yielding chunk: {repr(to_yield)}")
-                                        yield to_yield
-                                        buffer = buffer[-7:]
-                                    break
-                            else:
-                                # Inside think block - look for </think>
-                                think_end = buffer.find("</think>")
-                                if think_end != -1:
-                                    buffer = buffer[think_end + 8:]  # Skip </think>
-                                    in_think_block = False
-                                else:
-                                    # Still in think block - discard and keep searching
-                                    if len(buffer) > 8:
-                                        buffer = buffer[-8:]  # Keep last 8 for </think>
-                                    break
-                        
-                # Yield any remaining buffer (if not in think block)
-                if buffer and not in_think_block:
-                    # Final check for incomplete <think> tag
-                    if "<think" not in buffer:
-                        yield buffer
-                
+
+                        # Route the response text through the reasoning parser:
+                        # any  thinking/ response a relay embedded in the text
+                        # is split off as thinking, the rest is the response.
+                        thinking_delta, response_delta, _in_thinking = reasoning_parser.process_token(content)
+                        if thinking_delta:
+                            yield ("thinking", thinking_delta)
+                        if response_delta:
+                            yield ("response", response_delta)
+
+                # Flush the parser's residual buffer at stream end. finalize()
+                # returns the ACCUMULATED totals (which we have already streamed
+                # chunk-by-chunk), so emitting those would double-send; the only
+                # unstreamed text left is the tail it held back for tag-span
+                # detection, sitting in ``buffer``.
+                residual = reasoning_parser.buffer
+                if residual:
+                    if reasoning_parser.in_thinking:
+                        yield ("thinking", residual)
+                    else:
+                        yield ("response", residual)
+                reasoning_parser.finalize()  # drain internal state (result unused)
+
         except _ModelUnreachable:
             raise
         except asyncio.TimeoutError:
             logger.error("LLM streaming timed out")
             if not reported:
                 raise _ModelUnreachable("the request timed out")
-            yield "\n\n[Response timed out]"
+            yield ("response", "\n\n[Response timed out]")
         except Exception as e:
             logger.error(f"LLM streaming failed: {e}")
             if not reported:
                 raise _ModelUnreachable(str(e) or type(e).__name__) from e
-            yield f"\n\n[Error: {e}]"
+            yield ("response", f"\n\n[Error: {e}]")
 
 
 class LLMResponse:

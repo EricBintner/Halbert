@@ -332,6 +332,21 @@ class StreamEvent:
             session_id=session_id,
             data={"content": content}
         )
+
+    @classmethod
+    def thinking_complete(cls, session_id: str, duration_ms: int) -> 'StreamEvent':
+        """Thinking/reasoning has ended; carry its elapsed duration.
+
+        Emitted once when the model's reasoning stream closes, so the frontend
+        can collapse the panel from "Thinking..." to "Thought for {elapsed}".
+        Duration is only known at the end, so it travels on its own event
+        rather than overloading the per-chunk ``thinking`` content event.
+        """
+        return cls(
+            type="thinking_complete",
+            session_id=session_id,
+            data={"duration_ms": duration_ms}
+        )
     
     @classmethod
     def error(cls, session_id: str, message: str, recoverable: bool = True) -> 'StreamEvent':

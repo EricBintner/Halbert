@@ -4733,7 +4733,8 @@ class AgentStateMachine:
         if hasattr(self.llm, 'stream'):
             logger.info(f"Starting LLM stream for session {self.ctx.session_id}")
             chunk_count = 0
-            async for chunk in self._model_stream(self.llm.stream(
+            thinking_open = False
+            async for item in self._model_stream(self.llm.stream(
                 messages=built,
                 intake_result=self.ctx.intake if self.ctx else None,
                 images=self.ctx.images if self.ctx else None,
@@ -4744,16 +4745,40 @@ class AgentStateMachine:
                 # The question, not the hint that rides in front of it (D1).
                 routing_prompt=self.ctx.user_query if self.ctx else "",
             )):
+                # The stream carries ('thinking', text) | ('response', text)
+                # tuples; the peer/non-streaming paths yield bare strings, so
+                # treat those as response for back-compat.
+                kind, chunk = item if isinstance(item, tuple) else ('response', item)
                 if selected and not announced:
                     announced = True
                     yield StreamEvent.model_selected(
                         self.ctx.session_id, **selected[-1]
                     )
+                if kind == 'thinking':
+                    if not thinking_open:
+                        thinking_open = True
+                        self.ctx.thinking_started_at = time.monotonic()
+                    self._touch_activity("responding: thinking chunk")
+                    self.ctx.thinking_chunks.append(chunk)
+                    yield StreamEvent.thinking(self.ctx.session_id, chunk)
+                    continue
+                # A response chunk after thinking closes the thinking span:
+                # emit the duration once so the panel can collapse.
+                if thinking_open:
+                    thinking_open = False
+                    if self.ctx.thinking_started_at is not None:
+                        duration_ms = int((time.monotonic() - self.ctx.thinking_started_at) * 1000)
+                        yield StreamEvent.thinking_complete(self.ctx.session_id, duration_ms)
                 chunk_count += 1
                 self._touch_activity("responding: stream chunk")
                 logger.debug(f"Chunk {chunk_count}: {repr(chunk[:50])}...")
                 self.ctx.response_chunks.append(chunk)
                 yield StreamEvent.response_chunk(self.ctx.session_id, chunk)
+            # The stream ended while still thinking — close the span so the
+            # panel does not hang in "Thinking...".
+            if thinking_open and self.ctx.thinking_started_at is not None:
+                duration_ms = int((time.monotonic() - self.ctx.thinking_started_at) * 1000)
+                yield StreamEvent.thinking_complete(self.ctx.session_id, duration_ms)
             logger.info(f"LLM stream complete: {chunk_count} chunks")
         else:
             # Non-streaming fallback
