@@ -23,6 +23,8 @@ from halbert_core.persona import sibling
 from halbert_core.persona.guest import GuestHome
 from halbert_core.persona.guest_tools import (
     GUEST_ALLOWED_TOOLS,
+    HALBERT_MODE_ONLY_TOOLS,
+    guest_allowed_tools,
     GUEST_DENIED_TOOLS,
     GUEST_ONLY_TOOLS,
     HANDBACK_TOOL_NAME,
@@ -104,10 +106,24 @@ class TestGuestToolAllowlist:
             assert tool in GUEST_ALLOWED_TOOLS, tool
 
     def test_the_guest_reads_what_it_wrote_and_nothing_of_halberts(self):
-        """D3 / I6: no read of Halbert's memory in v1."""
-        assert "recall_memory" in GUEST_DENIED_TOOLS
-        assert "recall_thread" in GUEST_DENIED_TOOLS
-        assert "resume_thread" in GUEST_DENIED_TOOLS
+        """D3 / I6, as ruled 2026-09-10: no read of Halbert's memory in
+        PRIVATE mode. In normal mode the guest writes to Halbert's
+        conversation store, so the read is I6-symmetric and permitted.
+        (This assertion was written "in v1" against both modes.)"""
+        from unittest import mock
+        from halbert_core.persona import guest_tools as gt
+
+        halberts_memory = ("recall_memory", "recall_thread", "resume_thread")
+        with mock.patch.object(gt, "_private_mode_for_tools", return_value=True):
+            private = gt.guest_allowed_tools()
+        with mock.patch.object(gt, "_private_mode_for_tools", return_value=False):
+            normal = gt.guest_allowed_tools()
+        for name in halberts_memory:
+            assert name not in private, name
+            assert name in normal, name
+        # Either way the guest keeps its own memory, and private is never wider.
+        assert RECALL_GUEST_MEMORY_TOOL_NAME in private
+        assert private < normal
 
     def test_the_write_plane_never_enters_the_allowlist(self):
         """Design §6: the hash-chained audit log receives user words only
@@ -124,8 +140,19 @@ class TestGuestToolAllowlist:
             assert schema["name"] == name
 
     def test_filter_keeps_order_and_drops_the_rest(self):
+        from unittest import mock
+        from halbert_core.persona import guest_tools as gt
+
         tools = ["run_command", "ha_get_entity_state", "read_file", "recall_memory", "capture_webcam"]
-        assert filter_tools_for_guest(tools) == ["ha_get_entity_state", "capture_webcam"]
+        # Private mode: Halbert's memory drops with the host tools.
+        with mock.patch.object(gt, "_private_mode_for_tools", return_value=True):
+            assert gt.filter_tools_for_guest(tools) == ["ha_get_entity_state", "capture_webcam"]
+        # Normal mode: the host tools still drop, recall_memory is kept, and
+        # the order given is preserved either way.
+        with mock.patch.object(gt, "_private_mode_for_tools", return_value=False):
+            assert gt.filter_tools_for_guest(tools) == [
+                "ha_get_entity_state", "recall_memory", "capture_webcam",
+            ]
         assert filter_tools_for_guest([]) == []
 
     def test_every_allowlisted_tool_is_a_real_agent_tool(self):
@@ -139,7 +166,9 @@ class TestGuestToolAllowlist:
         """A new agent tool is denied by default, but the decision must be
         written down: it goes on one list or the other."""
         registered = set(_every_agent_tool().tools)
-        unclassified = registered - GUEST_ALLOWED_TOOLS - GUEST_DENIED_TOOLS
+        unclassified = (
+            registered - GUEST_ALLOWED_TOOLS - HALBERT_MODE_ONLY_TOOLS - GUEST_DENIED_TOOLS
+        )
         assert not unclassified, f"neither allowed nor denied for a guest: {sorted(unclassified)}"
 
     def test_handback_schema_is_a_function_tool(self):
@@ -182,7 +211,7 @@ class TestSchemasWhileAGuestFronts:
         assert "run_command" not in names
         assert "capture_webcam" in names
         assert RECALL_GUEST_MEMORY_TOOL_NAME in names
-        assert set(names) <= GUEST_ALLOWED_TOOLS
+        assert set(names) <= guest_allowed_tools()
 
     def test_the_handback_tool_is_offered_only_while_a_guest_fronts(self):
         executor = _stub_executor([])
@@ -397,7 +426,7 @@ class TestTheMcpBridgeTools:
         _front()
         offered = {s["function"]["name"] for s in executor.get_schemas()}
         assert "mcp__fs__read_file" not in offered
-        assert set(offered) <= GUEST_ALLOWED_TOOLS
+        assert set(offered) <= guest_allowed_tools()
 
     @pytest.mark.asyncio
     async def test_a_guest_naming_one_anyway_is_refused(self):

@@ -26,6 +26,7 @@ import pytest
 from halbert_core.persona import guest
 from halbert_core.persona.guest_tools import (
     GUEST_ALLOWED_TOOLS,
+    guest_allowed_tools,
     RECALL_GUEST_MEMORY_TOOL_NAME,
 )
 from halbert_core.tools import execute_code as execute_code_mod
@@ -128,7 +129,7 @@ class TestStubSetDerivation:
         executor.register("capture_webcam", fake_look, {"name": "capture_webcam", "parameters": {}})
         _front()
         stub, allow = execute_code_mod.derive_script_tool_sets(executor)
-        assert stub <= GUEST_ALLOWED_TOOLS
+        assert stub <= guest_allowed_tools()
         assert "capture_webcam" in stub
         assert RECALL_GUEST_MEMORY_TOOL_NAME in stub
         assert "write_file" not in stub and "read_file" not in stub

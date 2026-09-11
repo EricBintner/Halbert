@@ -207,8 +207,10 @@ def derive_script_tool_sets(executor) -> Tuple[FrozenSet[str], FrozenSet[str]]:
 
 def _guest_allowed() -> FrozenSet[str]:
     try:
-        from ..persona.guest_tools import GUEST_ALLOWED_TOOLS
-        return GUEST_ALLOWED_TOOLS
+        # Mode-aware: private mode must not leak Halbert's memory through
+        # the script pipeline's view of the allowlist.
+        from ..persona.guest_tools import guest_allowed_tools
+        return guest_allowed_tools()
     except Exception:
         return frozenset()
 

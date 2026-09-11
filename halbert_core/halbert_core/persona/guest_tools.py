@@ -158,6 +158,62 @@ GUEST_ALLOWED_TOOLS: FrozenSet[str] = frozenset({
     HANDBACK_TOOL_NAME,
 })
 
+# Tools a guest may reach ONLY in Halbert (normal) mode.
+#
+# Founder ruling 2026-09-10: the main Halbert shares its memory with a
+# fronting guest, and *only private mode is the fully isolated memory* --
+# private still controls the house, it just cannot read Halbert's memory.
+#
+# I6 ("the guest may not read what it may not write") permits this rather
+# than forbidding it, once applied per-mode. ``route_write`` already sends
+# ``conversation.message`` to HALBERT in normal mode and to the guest's home
+# in private mode, so in normal mode the guest *writes* to Halbert's
+# conversation store and the read is symmetric. In private mode that write
+# moves away, and the read closes with it. The one-way valve I6 exists to
+# stop is never open.
+#
+# ``cognition.tick`` is untouched: GUEST in every mode under R2, so
+# Halbert's psyche never learns a guest's evenings. Sharing a conversation
+# is not merging a psyche.
+HALBERT_MODE_ONLY_TOOLS: FrozenSet[str] = frozenset({
+    "recall_memory",
+    "recall_thread",
+    "resume_thread",
+})
+
+
+def _private_mode_for_tools() -> bool:
+    """Is private mode on? **Unknown counts as private.**
+
+    Deliberately not ``continuity.ownership._private_mode``, which answers
+    ``False`` when it cannot tell. For a *write* that is the safe direction:
+    the row lands in Halbert's own store, which the user can see and erase.
+    For a *read gate* it is exactly backwards -- ``False`` is the wider set,
+    so an unreadable source registry would hand a guest Halbert's memory
+    during what the user believes is private mode.
+
+    This is P3's discipline ("a writer nobody classified fails closed")
+    applied to reads.
+    """
+    try:
+        from .private_sources import active
+
+        return bool(active())
+    except Exception as e:
+        logger.warning(
+            "Private-mode signal unreadable (%s); treating this turn as "
+            "private and withholding Halbert's memory from the guest.", e,
+        )
+        return True
+
+
+def guest_allowed_tools() -> FrozenSet[str]:
+    """The tools a guest may reach *right now*, given the mode."""
+    if _private_mode_for_tools():
+        return GUEST_ALLOWED_TOOLS
+    return GUEST_ALLOWED_TOOLS | HALBERT_MODE_ONLY_TOOLS
+
+
 GUEST_DENIED_TOOLS: FrozenSet[str] = frozenset({
     # The host
     "run_command",
@@ -180,10 +236,6 @@ GUEST_DENIED_TOOLS: FrozenSet[str] = frozenset({
     "list_windows",
     # Writes to the NVR
     "frigate_review_event",
-    # Halbert's memory — the guest reads what it wrote, nothing else (D3)
-    "recall_memory",
-    "recall_thread",
-    "resume_thread",
     # The world
     "web_search",
     # Becoming someone else. A guest that could call this would walk out of
@@ -220,8 +272,8 @@ GUEST_DENIED_TOOLS: FrozenSet[str] = frozenset({
 
 
 def is_tool_allowed_for_guest(tool_name: str) -> bool:
-    """The authoritative check: not on the allowlist means denied."""
-    return tool_name in GUEST_ALLOWED_TOOLS
+    """The authoritative check: not on the mode's allowlist means denied."""
+    return tool_name in guest_allowed_tools()
 
 
 def filter_tools_for_guest(tool_names: List[str]) -> List[str]:
@@ -236,6 +288,18 @@ def filter_tools_for_guest(tool_names: List[str]) -> List[str]:
 
 
 def _self_check() -> None:
+    conditional_overlap = HALBERT_MODE_ONLY_TOOLS & GUEST_DENIED_TOOLS
+    if conditional_overlap:
+        raise RuntimeError(
+            "HALBERT_MODE_ONLY_TOOLS and GUEST_DENIED_TOOLS overlap: "
+            f"{conditional_overlap}. A tool cannot be both conditionally "
+            "allowed and denied."
+        )
+    if not HALBERT_MODE_ONLY_TOOLS.isdisjoint(GUEST_ALLOWED_TOOLS):
+        raise RuntimeError(
+            "HALBERT_MODE_ONLY_TOOLS overlaps the always-allowed set; a tool "
+            "gated on normal mode must not also be unconditionally allowed."
+        )
     overlap = GUEST_ALLOWED_TOOLS & GUEST_DENIED_TOOLS
     if overlap:
         raise RuntimeError(
