@@ -220,6 +220,38 @@ _persona_memory_store = None
 _persona_memory_store_failed = False
 
 
+_observation_store = None
+_observation_store_failed = False
+
+
+def get_observation_store():
+    """The body-local observation index, or None.
+
+    Deliberately **not** proxied, unlike ``get_persona_memory_store``. The
+    memory is the record and travels with the entity under Singular Entity;
+    the observation row is an *index* over what this body can search, and a
+    peer's index is not this body's. That asymmetry is the reason the design
+    calls one the record and the other the index.
+
+    Absent rather than fatal: losing the index costs search quality, not the
+    fact itself.
+    """
+    global _observation_store, _observation_store_failed
+    if _observation_store is None and not _observation_store_failed:
+        try:
+            from haloysius.memory_v2.observation_store import ObservationStore
+
+            _observation_store = ObservationStore(_get_persona_id())
+        except Exception as e:
+            _observation_store_failed = True
+            logger.error(
+                f"Observation index unavailable ({type(e).__name__}: {e}); "
+                f"interests will be recorded but not indexed"
+            )
+            return None
+    return _observation_store
+
+
 def get_persona_memory_store():
     """The persona memory store this body writes user facts through, or None.
 
@@ -233,7 +265,7 @@ def get_persona_memory_store():
     posture ``get_timeline_store`` takes. A turn that cannot reach memory
     should lose the write, not the answer.
     """
-    global _persona_memory_store, _persona_memory_store_failed
+    global _persona_memory_store, _persona_memory_store_failed, _observation_store, _observation_store_failed
     if _persona_memory_store is None and not _persona_memory_store_failed:
         try:
             _persona_memory_store = _create_memory_store()
@@ -693,4 +725,6 @@ def shutdown():
     _state_ledger_failed = False
     _persona_memory_store = None
     _persona_memory_store_failed = False
+    _observation_store = None
+    _observation_store_failed = False
     logger.info("Cognition wiring shut down")

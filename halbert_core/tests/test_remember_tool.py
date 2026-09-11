@@ -261,3 +261,120 @@ class TestTheRealWritePathResolves:
                 except ValueError:
                     var.set(None)
         assert "Recorded" not in out, "nothing was stored; saying so is the point"
+
+
+class TestTheMirrorIsActuallyWritten:
+    """`RQ-1`: an interest is a PersonaMemory *mirrored* as an ObservationStore
+    `preference` row. The mirror was never written.
+
+    `should_mirror` existed and was referenced only in docstrings, so the
+    property that governs the mirror governed nothing: `forget_interest` was
+    deleting rows that had never been created, `stop_using_interest` was
+    marking nothing stale, and the index recall is supposed to be built from
+    never saw an interest at all.
+    """
+
+    @pytest.fixture
+    def real_stores(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HALOYSIUS_DATA_HOME", str(tmp_path))
+        from haloysius.memory_v2.observation_store import ObservationStore
+        from haloysius.memory_v2.store import PersonaMemoryStore
+        import halbert_core.integrations.cognition_wiring as cw
+
+        mem = PersonaMemoryStore("mirror-test")
+        obs = ObservationStore("mirror-test")
+        monkeypatch.setattr(cw, "get_persona_memory_store", lambda: mem)
+        monkeypatch.setattr(cw, "get_observation_store", lambda: obs, raising=False)
+        return mem, obs
+
+    async def _say(self, topic, said):
+        msg = current_user_message.set(said)
+        role = current_speaker_role.set("admin")
+        try:
+            return await remember({"topic": topic, "reason": said})
+        finally:
+            for var, tok in ((current_speaker_role, role), (current_user_message, msg)):
+                try:
+                    var.reset(tok)
+                except ValueError:
+                    var.set(None)
+
+    async def test_a_stated_interest_writes_its_mirror(self, real_stores):
+        mem, obs = real_stores
+        await self._say("vintage thinkpads", SAID)
+        rows = obs.search("vintage thinkpads", include_stale=True)
+        assert rows, "the mirror row is the index; nothing was written to it"
+
+    async def test_the_mirror_is_filed_as_a_preference_not_a_fact(self, real_stores):
+        # The keyword classifier files "interested in" as `fact`; the category
+        # is set explicitly so an interest does not become a fact in the index.
+        mem, obs = real_stores
+        await self._say("vintage thinkpads", SAID)
+        rows = obs.search("vintage thinkpads", include_stale=True)
+        assert rows[0].category == "preference"
+
+    async def test_the_mirror_carries_the_source_memory_id(self, real_stores):
+        # Without it, forget cannot find the row it is supposed to erase.
+        mem, obs = real_stores
+        await self._say("vintage thinkpads", SAID)
+        rows = obs.search("vintage thinkpads", include_stale=True)
+        assert rows[0].source_memory_id
+        assert rows[0].source_memory_id in mem._memories
+
+    async def test_forget_now_actually_reaches_the_mirror(self, real_stores):
+        from halbert_core.continuity.forget_interest import forget_interest
+        from halbert_core.continuity.interests import Interest
+
+        mem, obs = real_stores
+        await self._say("vintage thinkpads", SAID)
+        memory_id = next(iter(mem._memories))
+        interest = Interest.from_persona_memory(mem.get(memory_id))
+        report = forget_interest(interest, memory_id,
+                                 memory_store=mem, observation_store=obs)
+        assert report["observations"] == 1, (
+            "forget reported success over a mirror that never existed"
+        )
+
+    async def test_a_failed_mirror_does_not_lose_the_record(self, real_stores, monkeypatch):
+        # The memory is the record and the mirror is the index. Losing the
+        # index is recoverable; refusing the write because the index failed
+        # would lose what the person said.
+        mem, obs = real_stores
+        monkeypatch.setattr(obs, "save", lambda **k: (_ for _ in ()).throw(OSError("x")))
+        out = await self._say("vintage thinkpads", SAID)
+        assert "Recorded" in out
+        assert mem._memories
+
+    async def test_a_candidate_is_never_mirrored(self, real_stores):
+        """The candidate rule, at the index.
+
+        `remember` only ever writes stated interests, so nothing reaches this
+        path with a candidate today -- the Consolidator will, and it is
+        unbuilt. Asserted directly on `_mirror_interest` rather than through
+        the tool, because a guard that only holds for inputs nobody sends is
+        not a guard; this is the one that will still be here when the
+        candidate writer arrives.
+        """
+        from halbert_core.continuity.interests import (
+            Interest, InterestStatus, Origin,
+        )
+        from halbert_core.tools.remember import _mirror_interest
+
+        mem, obs = real_stores
+        candidate = Interest(topic="samba tuning", origin=Origin.INFERRED,
+                             status=InterestStatus.CANDIDATE,
+                             reason="appeared on 4 days in 30")
+        _mirror_interest(candidate, "some-memory-id")
+        assert obs.search("samba", include_stale=True) == [], (
+            "an unconfirmed inference reached the index recall reads"
+        )
+
+    async def test_an_active_interest_is_mirrored_through_the_same_helper(self, real_stores):
+        from halbert_core.continuity.interests import Interest, Origin
+        from halbert_core.tools.remember import _mirror_interest
+
+        mem, obs = real_stores
+        active = Interest(topic="sailing", origin=Origin.STATED,
+                          reason="remember that I like sailing", actor="user")
+        _mirror_interest(active, "some-memory-id")
+        assert obs.search("sailing", include_stale=True)

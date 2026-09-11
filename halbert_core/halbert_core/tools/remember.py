@@ -119,7 +119,38 @@ def _write_interest(interest: Any) -> Optional[str]:
     _op, _reason, memory_id = store.smart_add(
         interest.to_persona_memory(getattr(store, "persona_id", "halbert"))
     )
+    if memory_id:
+        _mirror_interest(interest, memory_id)
     return memory_id
+
+
+def _mirror_interest(interest: Any, memory_id: str) -> None:
+    """Write the observation row that indexes this interest (``RQ-1``).
+
+    Gated on ``should_mirror``, which is the candidate rule: an inferred
+    interest nobody has confirmed must not reach the index recall reads.
+
+    Never raises and never blocks the write above it. The memory is the
+    record and this is the index -- losing the index costs search quality and
+    is rebuildable; refusing the record because the index failed would lose
+    what the person actually said.
+    """
+    if not getattr(interest, "should_mirror", False):
+        return
+    try:
+        from ..integrations.cognition_wiring import get_observation_store
+
+        obs = get_observation_store()
+        if obs is None:
+            return
+        obs.save(
+            category=interest.observation_category,
+            content=interest.content,
+            source_memory_id=memory_id,
+        )
+    except Exception:
+        logger.warning("could not index the interest; the record stands",
+                       exc_info=True)
 
 
 async def remember(args: Dict[str, Any]) -> str:
