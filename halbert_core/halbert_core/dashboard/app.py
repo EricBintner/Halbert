@@ -555,6 +555,24 @@ def _run_boot_catchup(
         if job_id not in prior_records:
             # Never registered before (fresh install): nothing was missed.
             continue
+        # A15-G4/A06-G10: a schedule edit re-anchors without firing. The
+        # prior boot's record already carries str(cron_expr) as `schedule`
+        # (schedule_cron_job's own Job() construction) — comparing it
+        # against this boot's cron_expr is enough to tell "the operator
+        # changed this job's timing" from "a slot genuinely passed while
+        # the machine was off". A slot only "missed" because of the edit
+        # itself is not a missed run; blank on either side (a record from
+        # before this field was populated) fails soft to "assume
+        # unchanged", never to "assume edited".
+        prior_schedule = getattr(prior_records[job_id], "schedule", "") or ""
+        this_schedule = str(spec["cron_expr"])
+        if prior_schedule and prior_schedule != this_schedule:
+            logger.info(
+                f"Boot catch-up: {job_id} schedule changed since the last "
+                f"boot ({prior_schedule!r} -> {this_schedule!r}); "
+                f"re-anchoring without firing"
+            )
+            continue
         # A15-G3: recovery and catch-up can otherwise arm the same job at
         # boot. The audit's own proposed guard (checking
         # _boot_recovery_pending here) is broken -- registration drains

@@ -60,8 +60,13 @@ def _spec(job_id, task=lambda: None, cron=None):
     return {"task": task, "cron_expr": dict(cron or CRONS[job_id])}
 
 
-def _prior(job_id, *, ran_at=None, never_ran=False, **job_kwargs):
-    job = Job(id=job_id, task="t", schedule="cron", **job_kwargs)
+def _prior(job_id, *, ran_at=None, never_ran=False, cron=None, **job_kwargs):
+    # Defaults to the SAME schedule this boot registers (CRONS[job_id]):
+    # "nothing about the schedule changed, only time passed" is the common
+    # case every test but the schedule-change ones itself wants. Pass
+    # `cron=` to simulate a prior boot's now-superseded schedule.
+    schedule = str(cron if cron is not None else CRONS.get(job_id, {}))
+    job = Job(id=job_id, task="t", schedule=schedule, **job_kwargs)
     if never_ran:
         return job
     job.completed_at = (
@@ -135,6 +140,53 @@ def test_morning_report_catches_up_only_within_twelve_hours(tmp_path):
     )
     assert result == {"morning_report": "stale_skipped"}
     assert stale.one_time == []
+
+
+# ---------------------------------------------------------------------------
+# A15-G4/A06-G10: a schedule edit re-anchors without firing -- a slot that
+# only exists because the cron expression changed since the last boot is
+# not a missed run.
+# ---------------------------------------------------------------------------
+
+def test_an_edited_schedule_does_not_catch_up_its_new_slot(tmp_path):
+    # Last boot ran detector_sweep on a completely different cadence
+    # (once a day at 20:00); this boot edits it to */6h. The 06:12 slot
+    # this boot's schedule implies "missed" never existed under the old
+    # schedule -- it must re-anchor silently, not fire a catch-up.
+    ex = _FakeExecutor()
+    specs = {"detector_sweep": _spec("detector_sweep")}  # this boot: */6h
+    prior = {"detector_sweep": _prior("detector_sweep", cron={"hour": 20, "minute": 0})}
+
+    result = _run(ex, specs, prior, gate=_ungated(tmp_path))
+
+    assert result.get("detector_sweep") != "caught_up"
+    assert ex.one_time == []
+
+
+def test_an_unchanged_schedule_still_catches_up(tmp_path):
+    # The common case, pinned against a regression in the guard itself:
+    # no edit at all still catches up exactly as before.
+    ex = _FakeExecutor()
+    specs = {"detector_sweep": _spec("detector_sweep")}
+    prior = {"detector_sweep": _prior("detector_sweep")}  # same schedule by default
+
+    result = _run(ex, specs, prior, gate=_ungated(tmp_path))
+
+    assert result == {"detector_sweep": "caught_up"}
+
+
+def test_a_prior_record_with_no_schedule_at_all_still_catches_up(tmp_path):
+    # A record from before this field was populated (or any other reason
+    # it is blank) must fail soft to "assume unchanged", not "assume
+    # edited" -- the guard is a refinement, not a new way to lose catch-up.
+    ex = _FakeExecutor()
+    specs = {"detector_sweep": _spec("detector_sweep")}
+    prior = {"detector_sweep": _prior("detector_sweep", never_ran=True)}
+    prior["detector_sweep"].schedule = ""
+
+    result = _run(ex, specs, prior, gate=_ungated(tmp_path))
+
+    assert result == {"detector_sweep": "caught_up"}
 
 
 # ---------------------------------------------------------------------------
@@ -284,7 +336,7 @@ def test_overflow_is_staggered_sixty_seconds(tmp_path):
         jid: _spec(jid, cron=fast)
         for jid in ("detector_sweep", "timeline_retention", "morning_report")
     }
-    prior = {jid: _prior(jid) for jid in specs}
+    prior = {jid: _prior(jid, cron=fast) for jid in specs}
     boot = datetime(2026, 9, 7, 9, 7, tzinfo=timezone.utc)
 
     result = _run(ex, specs, prior, now=boot, gate=_ungated(tmp_path))
@@ -426,7 +478,11 @@ def test_register_proactive_jobs_catches_up_a_missed_retention_slot(tmp_path, mo
         Job(
             id="timeline_retention",
             task="_prune_timeline",
-            schedule="cron",
+            # The real cron_expr string register_proactive_jobs registers
+            # below, unchanged since this "previous boot" — the A15-G4
+            # schedule-change guard must not mistake a matching schedule
+            # for an edited one.
+            schedule=str({"hour": 4, "minute": 37}),
             state="completed",
             completed_at=(datetime.now(timezone.utc) - timedelta(days=2)).isoformat(),
         )
