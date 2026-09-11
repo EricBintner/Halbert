@@ -2265,63 +2265,80 @@ class SqliteConversationStore:
             return False
         ts = float(now) if now is not None else time.time()
         try:
-            with self._lock, self._conn:
-                old = self._conn.execute(
-                    "SELECT status, title FROM conversations WHERE id = ?",
-                    (old_thread_id,),
-                ).fetchone()
-                new = self._conn.execute(
-                    "SELECT status, parent_thread_id, title FROM conversations "
-                    "WHERE id = ?",
-                    (new_thread_id,),
-                ).fetchone()
-                if old is None or new is None:
-                    logger.info(
-                        "move_leaf %s -> %s: no such thread(s)", old_thread_id, new_thread_id
-                    )
-                    return False
-                if old["status"] != "open":
-                    logger.info(
-                        "move_leaf %s -> %s: %r is not the open leaf (status=%r)",
-                        old_thread_id, new_thread_id, old_thread_id, old["status"],
-                    )
-                    return False
-                if new["status"] == "merged":
-                    # merged_into is a terminal supersession edge (design
-                    # §1.2): a merged row never becomes the leaf again.
-                    logger.info(
-                        "move_leaf %s -> %s: target is merged", old_thread_id, new_thread_id
-                    )
-                    return False
-                self._conn.execute(
-                    "UPDATE conversations SET status = 'paused', paused_at = ?, "
-                    "updated_at = ? WHERE id = ?",
-                    (ts, ts, old_thread_id),
-                )
-                if new["parent_thread_id"] is None:
+            with self._lock:
+                # own-bug: this used to be a deferred transaction
+                # ("with self._lock, self._conn:"), unlike its sibling
+                # get_or_open_thread, which deliberately claims the write
+                # lock before reading -- a deferred read-then-write can
+                # return SQLITE_BUSY on the lock upgrade under WAL instead
+                # of waiting out busy_timeout, so two store instances on
+                # one file could report a genuinely benign topic switch as
+                # failed.
+                self._conn.execute("BEGIN IMMEDIATE")
+                try:
+                    old = self._conn.execute(
+                        "SELECT status, title FROM conversations WHERE id = ?",
+                        (old_thread_id,),
+                    ).fetchone()
+                    new = self._conn.execute(
+                        "SELECT status, parent_thread_id, title FROM conversations "
+                        "WHERE id = ?",
+                        (new_thread_id,),
+                    ).fetchone()
+                    if old is None or new is None:
+                        logger.info(
+                            "move_leaf %s -> %s: no such thread(s)", old_thread_id, new_thread_id
+                        )
+                        self._conn.rollback()
+                        return False
+                    if old["status"] != "open":
+                        logger.info(
+                            "move_leaf %s -> %s: %r is not the open leaf (status=%r)",
+                            old_thread_id, new_thread_id, old_thread_id, old["status"],
+                        )
+                        self._conn.rollback()
+                        return False
+                    if new["status"] == "merged":
+                        # merged_into is a terminal supersession edge (design
+                        # §1.2): a merged row never becomes the leaf again.
+                        logger.info(
+                            "move_leaf %s -> %s: target is merged", old_thread_id, new_thread_id
+                        )
+                        self._conn.rollback()
+                        return False
                     self._conn.execute(
-                        """UPDATE conversations
-                           SET status = 'open', paused_at = NULL, turns_since_pause = 0,
-                               updated_at = ?, parent_thread_id = ?, edge_kind = ?
-                           WHERE id = ?""",
-                        (ts, old_thread_id, edge_kind, new_thread_id),
+                        "UPDATE conversations SET status = 'paused', paused_at = ?, "
+                        "updated_at = ? WHERE id = ?",
+                        (ts, ts, old_thread_id),
                     )
-                else:
-                    self._conn.execute(
-                        """UPDATE conversations
-                           SET status = 'open', paused_at = NULL, turns_since_pause = 0,
-                               updated_at = ?
-                           WHERE id = ?""",
-                        (ts, new_thread_id),
+                    if new["parent_thread_id"] is None:
+                        self._conn.execute(
+                            """UPDATE conversations
+                               SET status = 'open', paused_at = NULL, turns_since_pause = 0,
+                                   updated_at = ?, parent_thread_id = ?, edge_kind = ?
+                               WHERE id = ?""",
+                            (ts, old_thread_id, edge_kind, new_thread_id),
+                        )
+                    else:
+                        self._conn.execute(
+                            """UPDATE conversations
+                               SET status = 'open', paused_at = NULL, turns_since_pause = 0,
+                                   updated_at = ?
+                               WHERE id = ?""",
+                            (ts, new_thread_id),
+                        )
+                    # Design §2.3, and the reason the docstring above named
+                    # T2: the divider rows ride the SAME transaction as the
+                    # status swap. A leaf that moved with no divider, and a
+                    # divider with no move, are both records that lie.
+                    self._mint_branch_summaries(
+                        old_thread_id, new_thread_id,
+                        old["title"], new["title"], ts,
                     )
-                # Design §2.3, and the reason the docstring above named T2:
-                # the divider rows ride the SAME transaction as the status
-                # swap. A leaf that moved with no divider, and a divider
-                # with no move, are both records that lie.
-                self._mint_branch_summaries(
-                    old_thread_id, new_thread_id,
-                    old["title"], new["title"], ts,
-                )
+                    self._conn.commit()
+                except Exception:
+                    self._conn.rollback()
+                    raise
             return True
         except Exception as e:
             logger.warning(
