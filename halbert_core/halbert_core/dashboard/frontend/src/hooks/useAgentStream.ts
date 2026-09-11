@@ -435,6 +435,21 @@ export function applyTerminalEvent(event: StreamEvent): void {
         (event.block_id as string) ?? '',
       );
       break;
+    // Phase 4: a background task detached / a port was sniffed in its output.
+    // These arrive on the task's own session (bg-<id>), which is the terminal
+    // id, so the chip and the announce render on the same tile as the output.
+    case 'task_started':
+      terminalSessionStore.markTaskStarted(terminalId, (event.block_id as string) ?? '');
+      break;
+    case 'port_discovered':
+      if (typeof event.port === 'number') {
+        terminalSessionStore.addPort(
+          terminalId,
+          event.port,
+          (event.host as string) ?? 'localhost',
+        );
+      }
+      break;
   }
 }
 
@@ -557,7 +572,9 @@ export function useAgentStream(options: UseAgentStreamOptions = {}): UseAgentStr
       event.type === 'terminal_complete' ||
       event.type === 'terminal_block' ||
       event.type === 'terminal_block_promote' ||
-      event.type === 'terminal_needs_input'
+      event.type === 'terminal_needs_input' ||
+      event.type === 'task_started' ||
+      event.type === 'port_discovered'
     ) {
       applyTerminalEvent(event);
     }

@@ -19,8 +19,8 @@ from typing import Dict, Any, Optional, Callable, List, TYPE_CHECKING
 
 from .safety import ToolSafetyFramework, RiskLevel, SafetyCheckResult, THREAD_META_TOOLS
 from ..streaming.terminal_bridge import (
-    current_agent_session, publish_terminal_event, terminal_stream_wanted,
-    terminal_pool_wanted,
+    current_agent_session, get_terminal_event_bus, publish_terminal_event,
+    terminal_stream_wanted, terminal_pool_wanted,
 )
 
 if TYPE_CHECKING:
@@ -890,7 +890,7 @@ class ToolExecutor:
         command = args["command"]
         timeout = args.get("timeout", self.DEFAULT_TIMEOUT)
         cwd = args.get("cwd")
-        # background is accepted but ignored (Plan C).
+        background = bool(args.get("background"))
 
         # Expand user paths
         if cwd:
@@ -900,6 +900,16 @@ class ToolExecutor:
 
         streaming = terminal_stream_wanted()
         pool_wanted = terminal_pool_wanted()
+
+        # Phase 4: background=true detaches. A fire-and-forget server does not
+        # want a PTY (it keeps a bash session alive the server never uses), so
+        # this spawns a detached subprocess rather than routing through the
+        # pool, and returns immediately instead of blocking the turn. The
+        # task's output rides its own terminal session (bg-<id>) because the
+        # turn's event bus unsubscribes when this tool returns; the task
+        # outlives the turn. See RESEARCH-PHASE-4-USER-VALUE-2026-09-11.md.
+        if background:
+            return await self._run_command_background(command, cwd)
 
         # Plan B: try the pool first (only when streaming + pool enabled)
         if pool_wanted:
@@ -1022,6 +1032,126 @@ class ToolExecutor:
                     "exit_code": proc.returncode if proc.returncode is not None else -1,
                 })
             raise
+
+    async def _run_command_background(self, command: str, cwd: Optional[str]) -> str:
+        """Detach a command so the turn does not block on it (Phase 4).
+
+        A fire-and-forget server does not want a PTY — the pool keeps a bash
+        session alive the server never uses — so this spawns a detached
+        subprocess, returns immediately, and lets the task outlive the turn.
+
+        Events ride the *current turn's* stream, keyed by a distinct terminal
+        id (``bg-<id>``): the frontend only ever subscribes to the turn's SSE,
+        and its terminal-session store holds sessions independently of the
+        turn, so the tile survives after the turn ends. ``task_started``
+        announces the detach; port sniffing turns a scheme-less ``host:port``
+        line into ``port_discovered``. A server that prints a full
+        ``http://...`` URL is already clickable via WebLinksAddon, so no chip
+        is emitted for it.
+        """
+        import re
+
+        turn_session = current_agent_session.get()
+        # The terminal id this task's tile is keyed by, distinct from any
+        # foreground command's id so the two never share a tile.
+        terminal_id = f"bg-{uuid.uuid4()}"
+        block_id = str(uuid.uuid4())
+
+        # Detached: own process group, stdin dropped, out/err captured. The
+        # child is not awaited by the tool call — the pump task below owns it.
+        proc = await asyncio.create_subprocess_shell(
+            command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=cwd,
+            start_new_session=True,
+            stdin=asyncio.subprocess.DEVNULL,
+        )
+
+        bus = get_terminal_event_bus()
+
+        # Announce the detach, then open the task's tile on the turn's stream.
+        bus.publish(turn_session, {
+            "kind": "task_started",
+            "task_id": terminal_id,
+            "thread_id": None,
+            "title": command,
+            "block_id": block_id,
+        })
+        bus.publish(turn_session, {
+            "kind": "spawn",
+            "terminal_session_id": terminal_id,
+            "command": command,
+            "pid": proc.pid,
+            "cwd": cwd,
+            "sandboxed": False,
+            "attach": "sse",
+            "block_id": block_id,
+            "owner": "agent",
+        })
+
+        port_re = re.compile(r"(localhost|127\.0\.0\.1|0\.0\.0\.0|::1):(\d{1,5})")
+        seen_ports: set = set()
+        started_at = time.monotonic()
+
+        async def pump_and_watch() -> None:
+            """Drain the child's pipes, stream output, and sniff for ports.
+
+            This task owns the child to exit: it is the only place the proc is
+            awaited, so a leak here would be an unreaped process. Never raises —
+            a fire-and-forget task nobody awaits must not surface an exception
+            only at interpreter shutdown.
+            """
+            async def pump(stream) -> None:
+                while True:
+                    chunk = await stream.read(4096)
+                    if not chunk:
+                        return
+                    text = chunk.decode("utf-8", errors="replace")
+                    bus.publish(turn_session, {
+                        "kind": "output",
+                        "terminal_session_id": terminal_id,
+                        "data": text,
+                    })
+                    # Sniff for a scheme-less host:port the server printed. A
+                    # full http:// URL is already clickable via WebLinksAddon,
+                    # so only chip the bare ``host:port`` form.
+                    if "http" not in text:
+                        for host, port_s in port_re.findall(text):
+                            key = (host, int(port_s))
+                            if key in seen_ports:
+                                continue
+                            seen_ports.add(key)
+                            bus.publish(turn_session, {
+                                "kind": "port_discovered",
+                                "terminal_session_id": terminal_id,
+                                "port": int(port_s),
+                                "host": host,
+                                "block_id": block_id,
+                            })
+
+            try:
+                await asyncio.gather(pump(proc.stdout), pump(proc.stderr))
+                returncode = await proc.wait()
+            except Exception as e:  # pragma: no cover - defensive
+                logger.warning(f"background task pump failed: {e}")
+                returncode = -1
+            duration = time.monotonic() - started_at
+            bus.publish(turn_session, {
+                "kind": "complete",
+                "terminal_session_id": terminal_id,
+                "exit_code": returncode,
+                "block_id": block_id,
+                "duration": duration,
+            })
+
+        asyncio.ensure_future(pump_and_watch())
+
+        return (
+            f"Started in the background (pid {proc.pid}).\n"
+            f"It will keep running after this turn; its output streams to a "
+            f"terminal tile and you'll be told when it stops."
+        )
 
     @staticmethod
     def _format_block_result(result: Dict) -> str:

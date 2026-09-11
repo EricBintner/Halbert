@@ -4073,6 +4073,24 @@ class AgentStateMachine:
                 promote=(kind == "block_promote"),
                 execution_id=execution_id,
             )
+        if kind == "task_started":
+            return StreamEvent.task_started(
+                session_id,
+                task_id=str(payload.get("task_id", "")),
+                thread_id=payload.get("thread_id"),
+                title=str(payload.get("title", "")),
+                block_id=str(payload.get("block_id", "")),
+            )
+        if kind == "port_discovered":
+            port = payload.get("port")
+            if port is None:
+                return None
+            return StreamEvent.port_discovered(
+                session_id,
+                port=int(port),
+                host=str(payload.get("host", "localhost")),
+                block_id=str(payload.get("block_id", "")),
+            )
         return None
 
     def _note_terminal_payload(

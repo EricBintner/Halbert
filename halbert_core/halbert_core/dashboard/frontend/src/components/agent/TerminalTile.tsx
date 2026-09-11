@@ -19,7 +19,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
-import { Pin, PinOff, Square, Copy, Check } from 'lucide-react';
+import { Pin, PinOff, Square, Copy, Check, ExternalLink } from 'lucide-react';
 import '@xterm/xterm/css/xterm.css';
 import { useTerminalSessions, type TerminalSession } from '../../hooks/useTerminalSessions';
 import { xtermTheme, terminalFontReady } from '../../lib/xtermTheme';
@@ -365,6 +365,23 @@ export function TerminalTile({ session, onTerminated, blockId, blockOutput, bloc
             agent
           </span>
         )}
+
+        {/* Ports sniffed in this server's output (Phase 4). Only scheme-less
+            host:port lines get a chip — a full http:// URL is already
+            clickable via WebLinksAddon. Click stages the open as a user
+            gesture (a new tab); nothing is auto-executed. */}
+        {(session.ports ?? []).map((p) => (
+          <button
+            key={`${p.host}:${p.port}`}
+            type="button"
+            onClick={() => window.open(`http://${p.host}:${p.port}`, '_blank', 'noopener,noreferrer')}
+            title={`Open http://${p.host}:${p.port} in a browser tab`}
+            className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-status-telemetry-bg text-status-telemetry border border-status-telemetry-line hover:bg-status-telemetry-bg/70"
+          >
+            <ExternalLink className="h-3 w-3" />
+            <span className="font-mono">:{p.port}</span>
+          </button>
+        ))}
 
         {/* Quick actions */}
         <div className="flex items-center gap-1 ml-1">

@@ -728,6 +728,60 @@ class StreamEvent:
             },
         )
 
+    @classmethod
+    def task_started(
+        cls,
+        session_id: str,
+        *,
+        task_id: str,
+        thread_id: Optional[str] = None,
+        title: str,
+        block_id: str,
+    ) -> 'StreamEvent':
+        """A background task began (Phase 4): announce "started in the
+        background" so the user is told at the moment it detaches, not only
+        when the task card appears on the next render.
+
+        Symmetric twin of ``task_completed``. ``thread_id`` is optional: a
+        detached background task has no owning thread yet.
+        """
+        return cls(
+            type="task_started",
+            session_id=session_id,
+            data={
+                "task_id": task_id,
+                "thread_id": thread_id,
+                "title": title,
+                "block_id": block_id,
+            },
+        )
+
+    @classmethod
+    def port_discovered(
+        cls,
+        session_id: str,
+        *,
+        port: int,
+        host: str,
+        block_id: str,
+    ) -> 'StreamEvent':
+        """A listening port was sniffed in a block's output (Phase 4).
+
+        Only emitted for scheme-less output (``127.0.0.1:8765``); a server
+        that prints a full ``http://...`` URL is already clickable via
+        xterm's WebLinksAddon and needs no chip. The chip stages
+        ``open http://host:port`` into the composer — never executed.
+        """
+        return cls(
+            type="port_discovered",
+            session_id=session_id,
+            data={
+                "port": port,
+                "host": host,
+                "block_id": block_id,
+            },
+        )
+
     # -------------------------------------------------------------------------
     # Thread events (Plan A: continuous conversation, spec §4/§6/§12)
     # -------------------------------------------------------------------------

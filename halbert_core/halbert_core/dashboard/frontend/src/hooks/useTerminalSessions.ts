@@ -69,6 +69,8 @@ export interface TerminalSession {
   blockId?: string;
   /** Owner label for the block this session hosts. */
   owner?: string;
+  /** Ports sniffed in this session's output (Phase 4 port_discovered). */
+  ports?: Array<{ port: number; host: string }>;
 }
 
 /** What the agent stream knows about a session it did not open locally. */
@@ -151,6 +153,7 @@ class TerminalSessionStore {
       transport: 'ws',
       cwd: opts.cwd,
       blocks: [],
+      ports: [],
     };
     this.sessions.set(id, session);
     this.connect(id);
@@ -253,6 +256,33 @@ class TerminalSessionStore {
     }
   }
 
+  /**
+   * Record a sniffed port on a session (Phase 4 port_discovered). Deduped so
+   * a server that re-prints its banner does not add a second chip.
+   */
+  addPort(id: string, port: number, host: string): void {
+    const s = this.sessions.get(id);
+    if (!s) return;
+    s.ports ??= [];
+    if (s.ports.some((p) => p.port === port && p.host === host)) return;
+    s.ports.push({ port, host });
+    this.emit();
+  }
+
+  /**
+   * Mark a block's task started (task_started): a background task detached.
+   * Idempotent on block_id so a replayed event cannot double-announce.
+   */
+  markTaskStarted(id: string, blockId: string): void {
+    const s = this.sessions.get(id);
+    if (!s) return;
+    const b = s.blocks.find((bl) => bl.block_id === blockId);
+    if (b && b.status !== 'running') {
+      b.status = 'running';
+      this.emit();
+    }
+  }
+
   private makeSession(
     id: string,
     info: AdoptInfo,
@@ -275,6 +305,7 @@ class TerminalSessionStore {
       blocks: [],
       blockId: info.blockId,
       owner: info.owner,
+      ports: [],
     };
   }
 
