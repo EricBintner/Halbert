@@ -25,12 +25,13 @@ commits is the number the LLM arms will have to beat.
 
 from __future__ import annotations
 
+import copy
 import sys
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, List, Optional, Sequence, Tuple, Union
+from typing import Callable, Dict, List, Optional, Sequence, Tuple, Union
 
 from .consolidation import Consolidator
 from .corpus import (
@@ -224,13 +225,20 @@ class ArmRow:
     arm: str
     thread_id: str
     bank_digest: str
-    status: str                 # OK | FAILED-RETRYABLE | SKIPPED-GATE-CLOSED
+    status: str                 # OK | FAILED | FAILED-RETRYABLE | NO-QUESTIONS | SKIPPED-GATE-CLOSED
     n_questions: Optional[int] = None
     correct: Optional[int] = None
     partial: Optional[int] = None
     wrong: Optional[int] = None
     recall: Optional[float] = None       # None when nothing was scored
     retained_tokens: Optional[int] = None
+    region_tokens: Optional[int] = None
+    #: one dict per question ({question, gold, answer, score}) — which
+    #: planted fact an arm lost is otherwise unrecoverable from the row.
+    verdicts: List[dict] = field(default_factory=list)
+    #: how many times the policy ran before this row's status was decided
+    #: (>1 only for a retried FAILED-RETRYABLE summary).
+    attempts: int = 1
     failure: Optional[str] = None
     retryable: bool = False
 
@@ -241,6 +249,8 @@ class ArmRow:
             "n_questions": self.n_questions, "correct": self.correct,
             "partial": self.partial, "wrong": self.wrong,
             "recall": self.recall, "retained_tokens": self.retained_tokens,
+            "region_tokens": self.region_tokens, "verdicts": self.verdicts,
+            "attempts": self.attempts,
             "failure": self.failure, "retryable": self.retryable,
         }
 
@@ -260,6 +270,7 @@ class ArmAggregate:
     wrong: int
     recall: Optional[float]
     mean_retained_tokens: Optional[float]
+    mean_region_tokens: Optional[float]
 
 
 @dataclass
@@ -283,8 +294,12 @@ class MatrixReport:
             rows = [r for r in self.rows if r.arm == arm_name]
             if all(r.status == "SKIPPED-GATE-CLOSED" for r in rows):
                 status = "SKIPPED-GATE-CLOSED"
+            elif any(r.status == "FAILED" for r in rows):
+                status = "FAILED"
             elif any(r.status == "FAILED-RETRYABLE" for r in rows):
                 status = "FAILED-RETRYABLE"
+            elif all(r.status == "NO-QUESTIONS" for r in rows):
+                status = "NO-QUESTIONS"
             else:
                 status = "OK"
             scored = [r for r in rows if r.status == "OK"]
@@ -294,6 +309,8 @@ class MatrixReport:
             wrong = sum(r.wrong or 0 for r in scored)
             tokens = [r.retained_tokens for r in scored
                       if r.retained_tokens is not None]
+            region_tokens = [r.region_tokens for r in scored
+                              if r.region_tokens is not None]
             out.append(ArmAggregate(
                 arm=arm_name,
                 label=labels.get(arm_name, ""),
@@ -308,6 +325,8 @@ class MatrixReport:
                        if questions else None,
                 mean_retained_tokens=(sum(tokens) / len(tokens))
                                        if tokens else None,
+                mean_region_tokens=(sum(region_tokens) / len(region_tokens))
+                                     if region_tokens else None,
             ))
         return out
 
@@ -350,16 +369,20 @@ class MatrixReport:
         lines.append("## Arms")
         lines.append("")
         lines.append("| arm | status | questions | correct | partial | wrong "
-                      "| recall | retained tokens (mean) |")
-        lines.append("|---|---|---:|---:|---:|---:|---:|---:|")
+                      "| recall | retained tokens (mean) | kept % |")
+        lines.append("|---|---|---:|---:|---:|---:|---:|---:|---:|")
         for a in aggs:
             name = f"{a.arm} (ceiling)" if a.ceiling else a.arm
-            lines.append(
-                f"| {name} | {a.status} | {a.questions} | {a.correct} | "
-                f"{a.partial} | {a.wrong} | "
-                f"{a.recall:.3f} | {a.mean_retained_tokens:.0f} |"
-                if a.status == "OK" else
-                f"| {name} | {a.status} | — | — | — | — | — | — |")
+            if a.status == "OK":
+                kept = (100.0 * a.mean_retained_tokens / a.mean_region_tokens
+                        if a.mean_region_tokens else None)
+                kept_cell = f"{kept:.0f}%" if kept is not None else "—"
+                lines.append(
+                    f"| {name} | {a.status} | {a.questions} | {a.correct} | "
+                    f"{a.partial} | {a.wrong} | "
+                    f"{a.recall:.3f} | {a.mean_retained_tokens:.0f} | {kept_cell} |")
+            else:
+                lines.append(f"| {name} | {a.status} | — | — | — | — | — | — | — |")
         lines.append("")
         lines.append("## Findings")
         lines.append("")
@@ -493,6 +516,18 @@ def run_matrix(
             for i, s in enumerate(seeds)
         ]
     threads = list(threads)
+    lengths = {len(t.messages) for t in threads}
+    if len(lengths) > 1:
+        # own-bug: the default region and the reported turn count are both
+        # derived from threads[0] only; mixed lengths would silently size
+        # the region for the first thread and misreport the header for
+        # every other one.
+        raise ValueError(
+            f"run_matrix: threads have differing turn counts {sorted(lengths)} "
+            "— the region and the scorecard's turn count are derived from "
+            "threads[0] and would misreport every other length; pass "
+            "same-length threads, or call run_matrix separately per length."
+        )
     if region is None:
         region = (0, max(1, len(threads[0].messages) // 2))
 
@@ -530,27 +565,62 @@ def run_matrix(
     )
 
 
+#: A truncated summary is retried this many times (Hermes: a one-shot
+#: larger-budget fallback before giving up) — the policy itself decides how
+#: to use each attempt; the runner only counts them.
+MAX_POLICY_ATTEMPTS = 2
+
+
 def _run_arm(arm: Arm, thread: EvalThread,
              region_messages: Sequence[EvalMessage],
              bank, digest: str) -> ArmRow:
     if arm.gate == "closed":
         return ArmRow(arm=arm.name, thread_id=thread.thread_id,
                       bank_digest=digest, status="SKIPPED-GATE-CLOSED")
-    try:
-        retained = arm.policy(thread, region_messages)
-    except PolicyFailed as e:
-        return ArmRow(arm=arm.name, thread_id=thread.thread_id,
-                      bank_digest=digest, status="FAILED-RETRYABLE",
-                      failure=e.reason, retryable=e.retryable)
-    exam = run_exam(bank, context_answerer(retained.text))
-    s = exam.summary()
-    return ArmRow(
-        arm=arm.name, thread_id=thread.thread_id, bank_digest=digest,
-        status="OK", n_questions=int(s["n"]), correct=int(s["correct"]),
-        partial=int(s["partial"]), wrong=int(s["wrong"]),
-        recall=float(s["recall"]) if s["n"] else None,
-        retained_tokens=approx_tokens(retained.text),
-    )
+
+    region_tokens = approx_tokens(_region_text(region_messages))
+    last_failure: Optional[PolicyFailed] = None
+    for attempt in range(1, MAX_POLICY_ATTEMPTS + 1):
+        # A fresh deep copy per attempt: a policy that mutates its region
+        # argument must not corrupt this thread's region for a later arm
+        # (or a retry of this same arm).
+        region_copy = copy.deepcopy(list(region_messages))
+        try:
+            retained = arm.policy(thread, region_copy)
+        except PolicyFailed as e:
+            last_failure = e
+            if not e.retryable or attempt == MAX_POLICY_ATTEMPTS:
+                return ArmRow(arm=arm.name, thread_id=thread.thread_id,
+                              bank_digest=digest, status="FAILED-RETRYABLE",
+                              region_tokens=region_tokens, attempts=attempt,
+                              failure=e.reason, retryable=e.retryable)
+            continue
+        except Exception as exc:  # noqa: BLE001 - a raising policy is a failed row, not a crashed matrix
+            return ArmRow(arm=arm.name, thread_id=thread.thread_id,
+                          bank_digest=digest, status="FAILED",
+                          region_tokens=region_tokens, attempts=attempt,
+                          failure=f"{type(exc).__name__}: {exc}", retryable=False)
+
+        exam = run_exam(bank, context_answerer(retained.text))
+        s = exam.summary()
+        n = int(s["n"])
+        return ArmRow(
+            arm=arm.name, thread_id=thread.thread_id, bank_digest=digest,
+            status="OK" if n else "NO-QUESTIONS",
+            n_questions=n, correct=int(s["correct"]),
+            partial=int(s["partial"]), wrong=int(s["wrong"]),
+            recall=float(s["recall"]) if n else None,
+            retained_tokens=approx_tokens(retained.text),
+            region_tokens=region_tokens,
+            verdicts=[v.as_dict() for v in exam.verdicts],
+            attempts=attempt,
+        )
+
+    assert last_failure is not None  # loop always returns or sets this
+    return ArmRow(arm=arm.name, thread_id=thread.thread_id,
+                  bank_digest=digest, status="FAILED-RETRYABLE",
+                  region_tokens=region_tokens, attempts=MAX_POLICY_ATTEMPTS,
+                  failure=last_failure.reason, retryable=last_failure.retryable)
 
 
 # ---------------------------------------------------------------------------
