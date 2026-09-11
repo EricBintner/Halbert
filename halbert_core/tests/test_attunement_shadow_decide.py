@@ -204,3 +204,17 @@ def test_the_daily_cap_is_a_runaway_guard_not_a_ration():
     from halbert_core.attunement.context import halbert_config
 
     assert halbert_config().attachment.max_proactive_per_day == 24
+
+
+def test_a_null_margin_survives_the_round_trip_to_the_engines_dataclass(store):
+    """The whole point of None-not-0.0 is that a Phase C reader can filter on
+    it. That only works if it arrives intact."""
+    cfg = _config(proactivity="quiet")
+    ProactiveGate(
+        cfg, recorder=SuppressionRecorder(store=store)
+    ).should_notify(_event(severity="info"))
+
+    entry = store.list_outcomes("halbert")[0]
+    assert entry.margin is None
+    assert entry.outcome is engine.EngagementOutcome.SILENT
+    assert entry.reasons == ("dial:quiet",)

@@ -53,6 +53,19 @@ def test_legacy_reasons_map_to_stable_keys(prose, expected):
     assert reason_key_for(prose) == expected
 
 
+def test_the_guest_reason_has_a_key_rather_than_a_name_bearing_slug():
+    """The prose carries the guest's chosen name. Without a pattern it fell
+    through to `unmapped:<slug>` and put that name in a durable row that is
+    meant to hold "enums, ids, numbers and timestamps only — never text"."""
+    key = reason_key_for(
+        "a guest persona is fronting (Aurelius) — "
+        "Halbert does not interrupt in someone else's voice"
+    )
+
+    assert key == "guest:fronting"
+    assert "aurelius" not in key.lower()
+
+
 def test_an_unrecognised_reason_is_keyed_not_dropped():
     key = reason_key_for("something new nobody mapped")
     assert key.startswith("unmapped:")

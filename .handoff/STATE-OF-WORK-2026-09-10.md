@@ -24,6 +24,7 @@ once.
 | **MCP package preflight (FD-10)** | Built by a concurrent session, reviewed, adversarially passed, founder-ratified. Merged `c9e70623`. |
 | **WAL-reset correction** | The audit's mechanism was wrong (a data race, not a crash bug); severity downgraded to INFO; predicate corrected to exact patched versions. `87b6418e`. |
 | **Six SKILL.md descriptions** | FD-20 answered — written rather than trimmed; over-limit set now empty. `4defc08c`. |
+| **Attunement Phase C prerequisites** | Haloysius' 2026-09-10 handoff §2.1 and §2.2, both landed. Shadow mode calls `decide()` and records both verdicts on one row; dismiss / snooze / "propose fix" label the attempt; the ignored sweep runs hourly. `feat/attunement-phase-c-prereqs`. Suite 8626 passed, 0 failed. |
 
 ## 2. Ready to build — nothing blocking
 
@@ -68,6 +69,23 @@ ordered, first two are deletions:
 4. Approve the merge-type declaration (`LWW` / `SET` / `ASK`, default `SET`).
 5. Approve building the disagreement meter before any provenance column.
 
+**Attunement, two rows** (Haloysius handoff §4.1 and §4.2, plus one of ours):
+1. `ATN-1` — Halbert's attachment ceilings. The engine's are a companion's and
+   it invites a consumer to set its own; ours are shipped as
+   `max_proactive_per_day=24` (a runaway guard, not a ration — the dial is the
+   volume policy) and `new_relationship_*=0` (a machine-minder's first week is
+   when it has the most to say). **Built on the default; ratify or overrule.**
+2. `ATN-2` — the engine's daily cap is the only gate that does not yield to
+   `Utterance.authority`, while `new_relationship_sessions` in the same struct
+   does. Pinned engine-side as a conformance vector, so either way is a
+   decision. Reaches us only if Halbert ever emits rulings — a guest persona
+   citing the machine's rules is the shape that would.
+3. `ATN-3` — F1's threshold: how much evidence before Halbert *suggests* a dial
+   change, and is a suggestion itself an interruption that has to pass the gate
+   it is about? The engine will not answer this; it is a judgment about our
+   surface. Not blocking: Phase C's reader is buildable without it, and the
+   adjuster must not ship until both arms have real rows either way.
+
 **Twelve `pending` rows in `DECISIONS.md`** dated 2026-09-09 — the founder
 defaults the opus batch proceeded on under §7's "work proceeds on the default
 unless overruled". Several are posture decisions worth overruling.
@@ -84,6 +102,19 @@ credits).
   first consumer of the nomination phase, and its existing meaning of
   "contradiction" collides with the frozen vocabulary. Recorded in the engine
   spec §7; no work scheduled.
+- **A built mechanism with no caller is invisible to every test that mocks
+  it.** `SuppressionRecorder` and `update_reaction` both shipped, were both
+  tested, and neither had a production caller for four days — the suppression
+  log was writing nothing and nobody could tell from the suite. The tests that
+  now pin the wiring (`test_attunement_recorder_wiring.py`) are the cheap
+  guard; whether other recently-landed seams have the same shape is not
+  checked.
+- **`./wt_pytest.py` run bare picks the wrong interpreter.** The shebang is
+  `/usr/bin/env python3`, which on this machine resolves to
+  `~/.local/bin/python3` — pytest without `pytest-asyncio`, so the wrapper's
+  own `--asyncio-mode=auto` is rejected as an unrecognised argument. It reads
+  as a broken wrapper and is a PATH fact. `arch -arm64 .venv/bin/python
+  ./wt_pytest.py <args>` works; `CLAUDE.md` documents the bare form.
 - **Two stale `uv` installs and six interpreter sources** on this machine. The
   runtime packet must pin the uv version, not only `.python-version` and
   `uv.lock`.
