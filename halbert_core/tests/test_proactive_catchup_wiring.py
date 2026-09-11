@@ -56,8 +56,8 @@ class _FakeExecutor:
         self.one_time.append({"job_id": job_id, "task": task_func, "run_at": run_at, **kwargs})
 
 
-def _spec(job_id, task=lambda: None, cron=None):
-    return {"task": task, "cron_expr": dict(cron or CRONS[job_id])}
+def _spec(job_id, task=lambda: None, cron=None, one_shot=False):
+    return {"task": task, "cron_expr": dict(cron or CRONS[job_id]), "one_shot": one_shot}
 
 
 def _prior(job_id, *, ran_at=None, never_ran=False, cron=None, **job_kwargs):
@@ -527,3 +527,28 @@ def test_register_proactive_jobs_on_a_fresh_install_serves_nothing(tmp_path, mon
         "detector_sweep", "timeline_retention",
     }
     ex.stop(wait=False)
+
+
+# ---------------------------------------------------------------------------
+# A15-G9: RETIRE (beyond grace, one-shot) writes its diagnostic instead of
+# silently discarding the job. No production proactive job is one-shot
+# today (one_shot defaults to False, unchanged) -- this proves the branch
+# does the right thing on the day something routes a one-shot spec through
+# this same catch-up path, instead of it being dead code that LOOKS wired.
+# ---------------------------------------------------------------------------
+
+def test_a_retired_one_shot_job_writes_a_diagnostic_file(tmp_path, monkeypatch):
+    monkeypatch.setenv("HALBERT_DATA_DIR", str(tmp_path / "data"))
+    ex = _FakeExecutor()
+    specs = {"detector_sweep": _spec("detector_sweep", one_shot=True)}
+    # Two days late, one-shot: ONE_SHOT_GRACE_S (120s) is long past.
+    prior = {"detector_sweep": _prior("detector_sweep")}
+    boot = datetime(2026, 9, 9, 15, 0, tzinfo=timezone.utc)
+
+    result = _run(ex, specs, prior, now=boot, gate=_ungated(tmp_path))
+
+    assert result.get("detector_sweep") == "retired"
+    assert ex.one_time == []
+    diagnostics = list((tmp_path / "data" / "scheduler").glob("*retire*"))
+    assert diagnostics, "no retirement diagnostic file was written"
+    assert "detector_sweep" in diagnostics[0].read_text(encoding="utf-8")

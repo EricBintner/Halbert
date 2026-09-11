@@ -560,7 +560,7 @@ def _run_boot_catchup(
         from apscheduler.triggers.cron import CronTrigger
     except ImportError:
         return result
-    from ..scheduler.catchup import CatchupAction, decide_catchup
+    from ..scheduler.catchup import CatchupAction, decide_catchup, write_retirement_diagnostic
     from ..scheduler.monitor_hash import MonitorDecision, MonitorHashGate
     from ..utils.paths import data_subdir
 
@@ -644,7 +644,11 @@ def _run_boot_catchup(
             "id": job_id,
             "due_at": due,
             "period_s": _PROACTIVE_PERIOD_S.get(job_id),
-            "one_shot": False,
+            # No registered proactive job is one-shot today (all three are
+            # cron jobs); passed through, not hardcoded, so a caller CAN
+            # route a one-shot spec through this same catch-up path and
+            # reach RETIRE below rather than that branch being unreachable.
+            "one_shot": bool(spec.get("one_shot", False)),
             "task": spec["task"],
         })
 
@@ -742,6 +746,16 @@ def _run_boot_catchup(
         elif entry.action is CatchupAction.ADVANCE_ONLY:
             result.setdefault(job["id"], "advanced")
         elif entry.action is CatchupAction.RETIRE:
+            # A15-G9: the one-shot is deliberately never fired late; this
+            # file is the only record of why, for a human (or the morning
+            # report) to find later.
+            try:
+                write_retirement_diagnostic(data_subdir("scheduler"), entry)
+            except OSError as e:
+                logger.warning(
+                    f"Boot catch-up: could not write retirement diagnostic "
+                    f"for {job['id']} (non-fatal): {e}"
+                )
             result.setdefault(job["id"], "retired")
     for entry in plan.deferred:
         job = entry.job
