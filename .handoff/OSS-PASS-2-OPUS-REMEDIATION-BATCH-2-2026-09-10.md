@@ -217,3 +217,103 @@ tree was checked out to prove it rather than assumed. Commits are
 pathspec-scoped, no attribution trailers. The sonnet branch was merged into
 this branch rather than to `main`, so `main` is untouched and there is one
 branch to review.
+
+---
+
+# Addendum — the parallel R-12, and what comparing them found
+
+A sonnet session implemented R-12 Phase A **and both wirings** independently,
+in parallel with this branch, on `fix/remediation-sonnet-batch-1`
+(`27df496a`…`8afc5dfb`, rebased onto `fdafafcb`). Two complete
+implementations of the same packet now exist. That is a coordination failure
+worth recording rather than smoothing over — but the duplicate work turned
+out to be worth something, because running each implementation against the
+other's tests is a sharper instrument than either suite alone.
+
+The R-15/R-13 half of that branch is byte-identical to what this one merged
+(clean rebase, new SHAs only), so there is no divergence there.
+
+## What the comparison found
+
+**My 18 R-12 tests against their implementation: 16 pass.**
+**Their R-12 tests against mine: the four real differences below.**
+
+### One real defect here, now fixed (`19daaa84`)
+
+`unresolved_request` keyed on `origin = 'human'` alone — and `origin`
+**defaults to `'human'`** for any caller that does not name it, so an
+assistant row appended without one, the A16-G5 marker included, came back as
+the question the machine had been asked. Production was safe (`end_turn`
+names it), but the predicate was wrong. Their six store-level cases are
+adopted verbatim; the fourth is the one that caught it.
+
+### One test of mine that passed for the wrong reason, now tightened
+
+`test_a_return_mints_a_return_row` asserted only "some branch row exists on
+the thread returned to", which the *departure* row from the earlier switch
+already satisfies. It was not a test of the return at all. It now asserts
+the side and forces a real reopen past the grace window — inside it,
+`resume_thread` takes `merge_back` and there is no crossing to record.
+
+### Two things theirs did better, now taken (`19daaa84`, `1b40c0c2`)
+
+- **`_predecessor_id` prefers the typed column**, metadata as fallback. The
+  old order had to be that way because nothing wrote the column; now that
+  every creation stamps it, the column is the better record.
+- **`branch` vs `continuation`.** Design §1.1 carries both words. A model
+  declaring a new subject has branched; a conversation drifting into one by
+  itself, and a return, are continuations. I had been stamping `branch` on
+  everything, which throws away the distinction the column exists for.
+- Also taken: `get_or_open_thread(edge_kind=…)` so the degraded path opens a
+  thread that knows its origin, and the peer store now speaks `move_leaf`
+  and `unresolved_request`.
+
+### Three things this branch has that theirs lacks
+
+- **A topic switch mints no divider in theirs.** Only the reopen does. That
+  is half of design §2.3 missing — and the opus batch commit that built the
+  minting is literally *"a topic switch leaves two sentences behind, minted
+  once"* (`b017e65e`). Verified by test, not by reading.
+- **The retracted divider.** A merge says the split was spurious; theirs
+  leaves the divider announcing it. (Theirs has less need of it, having
+  minted fewer.)
+- **The `create_thread` log** that reports a one-leaf-index violation as
+  "thread already exists", sending the reader after a duplicate id that does
+  not exist.
+
+## Three rulings this needs
+
+**1. Which implementation.** Recommend this branch: it now carries
+everything theirs had that was better, plus the three above. But it is a
+recommendation, not a fact — read the two `_reopen_thread`s side by side
+before taking it.
+
+**2. The rotation threshold.** Mine gates at `HISTORY_ROWS * 3` rows before
+even asking `plan_rotation`; theirs calls it every turn and lets its guards
+decide, which with `keep_recent=10` rotates roughly six turns into a
+conversation. My argument is that rotation sets `visible_in_timeline = 0`,
+and the timeline and FTS search both filter on it — so an early rotation
+hides turns the user has just had. `recent_messages` does *not* filter it,
+so the model's replayed history is unaffected either way. A tuning constant,
+but a user-visible one.
+
+**3. `move_leaf` and `BEGIN IMMEDIATE`.** Theirs changed it; I did not,
+because the audit **refuted** that bug and the packet's STOP conditions say
+a refuted item must not be silently re-opened. The refuter measured the
+stated mechanism and found it does not occur (legacy isolation mode opens no
+transaction for a SELECT). **But there is an independent justification the
+commit does not state**: the two SELECTs run in autocommit, so between
+reading `old.status == 'open'` and the UPDATE another connection can change
+it. Narrow — `move_leaf` runs under `ThreadManager._lock`, so only two store
+instances on one file can reach it — and real. Worth doing for that reason,
+under that reason, rather than under the refuted one.
+
+**And one smaller call: the cancelled-turn marker.** Mine writes the A16-G5
+marker for any non-`complete` status; theirs carves out `cancelled` on the
+grounds that "the user already knows they cancelled it". Note what
+`cancelled` actually means here — `state_machine.py:1028` writes it for a
+**superseded** turn, not a user cancellation (the stop button writes
+`interrupted`). And the harm G5 describes is not that the user is confused;
+it is that the *model* reads two consecutive user rows and re-stages the
+first. A superseded turn produces exactly that shape. I think the marker
+belongs there, but it is one row of transcript either way.
