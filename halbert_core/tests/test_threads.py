@@ -191,6 +191,37 @@ class TestBeginEndTurn:
         assert tm.resume_thread("nope", from_thread_id=t1.thread_id) is False
         assert tm.resume_thread(t1.thread_id, from_thread_id=t2.thread_id) is False  # already open
 
+    def test_resume_resolves_the_real_open_leaf_not_a_stale_belief(self, tm):
+        # own-bug: resume_thread/_reopen_thread trusted the caller's
+        # from_thread_id; a stale belief (e.g. a synthesized thread id from
+        # a store-outage turn) made the pause a silent no-op while the real
+        # open leaf stayed open, and the target's own status='open' write
+        # then hit idx_one_open_leaf and surfaced as "could not resume" a
+        # thread that was perfectly resumable. new_thread already resolves
+        # against current_open_thread() for the same reason (A6b);
+        # _reopen_thread now does too.
+        t1 = _turn(tm, "swap the failing nvme in the zfs pool")
+        tm.clock.advance(3 * 3600)
+        t2 = _turn(tm, "add a samba share for the media folder")
+        tm.clock.advance(GRACE_MINUTES * 60)  # past the grace window: plain reopen (merge cases: TestMergeBack)
+        assert tm.resume_thread(t1.thread_id, from_thread_id="stale-nonexistent-id") is True
+        assert tm.current()["thread_id"] == t1.thread_id
+        assert tm.store.get_thread(t2.thread_id)["status"] == "paused"
+
+    def test_reopen_routes_through_move_leaf_and_mints_branch_summaries(self, tm):
+        # A16-G7 (design §2.3), wired: a reopen is a leaf move, and a leaf
+        # move that crosses away from a thread with turns mints a departure
+        # row there and a return row in the thread coming back into focus.
+        t1 = _turn(tm, "swap the failing nvme in the zfs pool")
+        tm.clock.advance(3 * 3600)
+        t2 = _turn(tm, "add a samba share for the media folder")
+        tm.clock.advance(GRACE_MINUTES * 60)  # past the grace window: plain reopen (merge cases: TestMergeBack)
+        assert tm.resume_thread(t1.thread_id, from_thread_id=t2.thread_id) is True
+        departed = [m for m in tm.store.list_messages(t2.thread_id) if m.get("origin") == "branch"]
+        returned = [m for m in tm.store.list_messages(t1.thread_id) if m.get("origin") == "branch"]
+        assert departed and departed[0]["metadata"]["side"] == "departed"
+        assert returned and returned[0]["metadata"]["side"] == "returned"
+
     def test_mark_interrupted(self, tm):
         tm.begin_turn("add a samba share", analyze_message("add a samba share"), "s")
         assert tm.mark_interrupted() == 1
@@ -1104,7 +1135,10 @@ class TestMergeBack:
         assert tm.resume_thread(t1.thread_id, from_thread_id=new_id) is True
         paused = tm.store.get_thread(new_id)
         assert paused["status"] == "paused" and paused["metadata"]["successor"] == t1.thread_id
-        assert len(tm.store.list_messages(t1.thread_id)) == 2 and len(tm.store.list_messages(new_id)) == 2
+        # +1 each: the reopen is a leaf move (design §2.3) and both threads
+        # have turns, so it mints a departure row in new_id and a return
+        # row in t1.
+        assert len(tm.store.list_messages(t1.thread_id)) == 3 and len(tm.store.list_messages(new_id)) == 3
         assert tm.current()["thread_id"] == t1.thread_id
 
     def test_auto_reopen_on_strong_match_never_merges(self, tm):
@@ -1115,7 +1149,9 @@ class TestMergeBack:
         turn = tm.begin_turn(text, analyze_message(text), "s3")
         assert turn.decision.action == "reopen" and turn.thread_id == t1.thread_id
         assert tm.store.get_thread(new_id)["status"] == "paused"
-        assert len(tm.store.list_messages(new_id)) == 2
+        # +1: the auto-reopen crossing away from new_id mints a departure
+        # row there (design §2.3).
+        assert len(tm.store.list_messages(new_id)) == 3
 
     def test_merge_back_holds_the_manager_lock(self, tm):
         """A6c review finding 1: ``merge_back`` moves two threads between
@@ -1160,6 +1196,7 @@ class TestMergeBack:
         tm.store.update_thread(disk_id, metadata=meta)
         tm.store._conn.execute(
             "UPDATE conversations SET parent_thread_id = NULL WHERE id = ?", (disk_id,))
+        tm.store._conn.commit()
         assert tm.merge_back(disk_id) is None
         assert tm.store.get_thread(disk_id)["status"] == "open"
         assert len(tm.store.list_messages(disk_id)) == 2
@@ -1167,7 +1204,9 @@ class TestMergeBack:
         # ...and the model naming that same paused thread reopens it, never merges
         assert tm.resume_thread(certs.thread_id, from_thread_id=disk_id) is True
         assert tm.store.get_thread(disk_id)["status"] == "paused"
-        assert len(tm.store.list_messages(disk_id)) == 2
+        # +1: the reopen crossing away from disk_id mints a departure row
+        # there (design §2.3).
+        assert len(tm.store.list_messages(disk_id)) == 3
 
     def test_merge_back_requires_the_predecessor_to_point_back(self, tm):
         """A6c review finding 3: the predecessor must still name this thread as
@@ -1204,8 +1243,11 @@ class TestMergeBack:
         paused = tm.store.get_thread(new_id)
         assert paused["status"] == "paused" and paused["metadata"]["successor"] == t1.thread_id
         assert tm.current()["thread_id"] == t1.thread_id
-        assert len(tm.store.list_messages(t1.thread_id)) == 2
-        assert len(tm.store.list_messages(new_id)) == 2
+        # +1 each: the degraded-to-reopen crossing mints a departure row in
+        # new_id and a return row in t1 (design §2.3), same as any other
+        # reopen through move_leaf.
+        assert len(tm.store.list_messages(t1.thread_id)) == 3
+        assert len(tm.store.list_messages(new_id)) == 3
 
 
 class TestRetractionNotes:

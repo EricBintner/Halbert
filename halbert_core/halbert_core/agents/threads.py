@@ -815,18 +815,59 @@ class ThreadManager:
         self._refresh_receipt(thread_id)
 
     def _reopen_thread(self, target: Dict[str, Any], from_thread_id: Optional[str], now: float) -> bool:
-        """Plain reopen: ``target`` becomes open and ``from_thread_id`` is paused beside it."""
+        """Plain reopen: ``target`` becomes open and the real open leaf is
+        paused beside it.
+
+        own-bug: this used to trust the caller's ``from_thread_id`` belief
+        the way a direct ``_pause_thread(from_thread_id, ...)`` call would —
+        a stale id (e.g. a synthesized thread id from a store-outage turn)
+        made the pause a silent no-op while the real open leaf stayed open,
+        and the target's own ``status='open'`` write then hit
+        ``idx_one_open_leaf`` and surfaced as "could not resume" a thread
+        that was perfectly resumable. Resolved against
+        ``current_open_thread()`` instead, mirroring ``new_thread``'s
+        existing fix (A6b) — ``from_thread_id`` stays a parameter for
+        callers that still pass it, but only as a mismatch to warn about,
+        never a decision.
+
+        Routes the leaf move itself through ``store.move_leaf`` (design
+        §1.2): one transaction for the status swap, the structural edge,
+        and the branch-summary minting (§2.3), instead of the separate
+        pause/update calls this used to make.
+        """
         thread_id = target["thread_id"]
         if target.get("status") != "paused":
             return False
-        if from_thread_id and from_thread_id != thread_id:
-            self._pause_thread(from_thread_id, now, successor=thread_id)
+        open_thread = self.store.current_open_thread()
+        real_from = open_thread["thread_id"] if open_thread else None
+        if from_thread_id and from_thread_id != real_from:
+            logger.warning(
+                f"_reopen_thread names {from_thread_id} as the open thread but "
+                f"{real_from!r} is open; pausing that one instead"
+            )
+        if real_from:
+            if not self.store.move_leaf(real_from, thread_id, "continuation", now=now):
+                return False
+            from_thread = self.store.get_thread(real_from) or {}
+            meta = dict(from_thread.get("metadata") or {})
+            meta["successor"] = thread_id
+            fields: Dict[str, Any] = {"metadata": meta}
+            fields.update(self._refined_title_fields(from_thread))
+            self.store.update_thread(real_from, **fields)
+            self._refresh_receipt(real_from)
+        else:
+            # Nothing open to leave -- open the target directly; there is
+            # no departure to record.
+            if not self.store.update_thread(
+                thread_id, status="open", paused_at=None, stale=False,
+                turns_since_pause=0, updated_at=now,
+            ):
+                return False
         meta = dict(target.get("metadata") or {})
         meta.pop("successor", None)
-        return self.store.update_thread(
-            thread_id, status="open", paused_at=None, stale=False,
-            turns_since_pause=0, metadata=meta, updated_at=now,
-        )
+        ok = self.store.update_thread(thread_id, metadata=meta, stale=False)
+        self._refresh_receipt(thread_id)
+        return ok
 
     @staticmethod
     def _predecessor_id(thread: Dict[str, Any]) -> Optional[str]:
