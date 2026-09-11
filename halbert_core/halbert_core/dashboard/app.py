@@ -12,6 +12,7 @@ import logging
 import json
 import os
 import threading
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, List, Optional
 from pathlib import Path
@@ -891,6 +892,30 @@ def _tick_thread_manager() -> list:
 _TICK_JOIN_TIMEOUT_S = 30.0
 
 
+def _ticker_marker_path(name: str) -> str:
+    from ..utils.paths import data_subdir
+
+    return os.path.join(data_subdir("scheduler"), name)
+
+
+def _write_ticker_marker(name: str, payload: dict) -> None:
+    """One on-disk liveness marker (A06-G11/A15-G5), best-effort like
+    Hermes's own ``_write_marker`` — a write failure (disk full,
+    permissions) must not break the ticker it exists to report on."""
+    with open(_ticker_marker_path(name), "w", encoding="utf-8") as f:
+        json.dump(payload, f)
+
+
+def read_ticker_marker(name: str) -> Optional[dict]:
+    """The last-written liveness marker, or ``None`` when it was never
+    written (fresh install) or is unreadable."""
+    try:
+        with open(_ticker_marker_path(name), "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
+
+
 async def run_thread_tick_loop(
     interval_s: float,
     *,
@@ -918,11 +943,26 @@ async def run_thread_tick_loop(
     cancelling this coroutine only stops AWAITING the executor thread the
     tick runs in; the thread itself keeps running to completion, orphaned,
     unless something explicitly joins it.
+
+    Three on-disk liveness markers (A06-G11/A15-G5) distinguish "the ticker
+    thread is dead" from "nothing was due": ``ticker_heartbeat`` advances
+    every beat regardless of outcome; ``ticker_last_success`` only on a
+    clean tick; ``ticker_last_error`` holds the last failure's text. Each
+    write is best-effort — a failure (or a test replacing the writer
+    outright) must never propagate into the loop it is reporting on.
     """
+
+    def _mark(name: str, payload: dict) -> None:
+        try:
+            _write_ticker_marker(name, payload)
+        except Exception:
+            pass
+
     beats = 0
     while max_beats is None or beats < max_beats:
         await asyncio.sleep(interval_s)
         beats += 1
+        _mark("ticker_heartbeat", {"epoch": time.time()})
         if turn_busy():
             continue
         done = threading.Event()
@@ -939,6 +979,7 @@ async def run_thread_tick_loop(
             closed = await asyncio.to_thread(_tick_and_signal)
             if closed:
                 logger.info(f"Idle tick closed {len(closed)} thread(s)")
+            _mark("ticker_last_success", {"epoch": time.time()})
         except asyncio.CancelledError:
             # Deliberately NOT cleared here: cancellation reaches this
             # coroutine well before the executor thread actually finishes
@@ -949,6 +990,7 @@ async def run_thread_tick_loop(
             raise
         except BaseException as e:
             logger.warning(f"Thread tick failed (non-fatal): {e}")
+            _mark("ticker_last_error", {"epoch": time.time(), "error": str(e)})
         if inflight is not None:
             inflight["done"] = None
     return beats

@@ -113,6 +113,84 @@ class _NonExceptionFailure(BaseException):
     exactly this reason (A15-G6)."""
 
 
+class TestLivenessMarkers:
+    """A06-G11/A15-G5: no way to tell 'ticker thread dead' from 'nothing
+    due' -- three on-disk markers under the scheduler data dir, updated by
+    the loop itself: heartbeat (every beat, proves the loop is alive at
+    all), last-success (only a clean tick), last-error (the text of the
+    last failure). Ages surfaced on a health/jobs surface is a follow-on
+    task; this covers the markers actually existing and being correct."""
+
+    def test_heartbeat_advances_every_beat_even_when_busy(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HALBERT_DATA_DIR", str(tmp_path))
+        asyncio.run(dashboard_app.run_thread_tick_loop(
+            0.01, tick=lambda: [], turn_busy=lambda: True, max_beats=2,
+        ))
+        marker = dashboard_app.read_ticker_marker("ticker_heartbeat")
+        assert marker is not None and marker["epoch"] > 0
+
+    def test_a_clean_tick_advances_success_and_leaves_no_error(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HALBERT_DATA_DIR", str(tmp_path))
+        asyncio.run(dashboard_app.run_thread_tick_loop(
+            0.01, tick=lambda: [], turn_busy=lambda: False, max_beats=1,
+        ))
+        success = dashboard_app.read_ticker_marker("ticker_last_success")
+        error = dashboard_app.read_ticker_marker("ticker_last_error")
+        assert success is not None and success["epoch"] > 0
+        assert error is None
+
+    def test_a_raising_tick_advances_heartbeat_not_success_and_records_the_error(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.setenv("HALBERT_DATA_DIR", str(tmp_path))
+
+        def tick():
+            raise RuntimeError("store locked")
+
+        asyncio.run(dashboard_app.run_thread_tick_loop(
+            0.01, tick=tick, turn_busy=lambda: False, max_beats=1,
+        ))
+        heartbeat = dashboard_app.read_ticker_marker("ticker_heartbeat")
+        success = dashboard_app.read_ticker_marker("ticker_last_success")
+        error = dashboard_app.read_ticker_marker("ticker_last_error")
+        assert heartbeat is not None and heartbeat["epoch"] > 0
+        assert success is None
+        assert error is not None and "store locked" in error["error"]
+
+    def test_a_later_success_does_not_erase_an_earlier_error_marker(self, tmp_path, monkeypatch):
+        # The point of keeping both: an operator (or a health check) can
+        # see "it failed at T1" even after it recovers at T2.
+        monkeypatch.setenv("HALBERT_DATA_DIR", str(tmp_path))
+        calls = []
+
+        def tick():
+            calls.append(1)
+            if len(calls) == 1:
+                raise RuntimeError("first tick failed")
+            return []
+
+        asyncio.run(dashboard_app.run_thread_tick_loop(
+            0.01, tick=tick, turn_busy=lambda: False, max_beats=2,
+        ))
+        success = dashboard_app.read_ticker_marker("ticker_last_success")
+        error = dashboard_app.read_ticker_marker("ticker_last_error")
+        assert success is not None
+        assert error is not None and "first tick failed" in error["error"]
+
+    def test_reading_a_marker_that_was_never_written_is_none(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HALBERT_DATA_DIR", str(tmp_path))
+        assert dashboard_app.read_ticker_marker("ticker_heartbeat") is None
+
+    def test_a_marker_write_failure_never_raises_into_the_loop(self, tmp_path, monkeypatch):
+        # Best-effort (Hermes's own framing): a write failure here must
+        # not break the ticker it exists to report on.
+        monkeypatch.setattr(dashboard_app, "_write_ticker_marker", lambda *a, **k: 1 / 0)
+        beats = asyncio.run(dashboard_app.run_thread_tick_loop(
+            0.01, tick=lambda: [], turn_busy=lambda: False, max_beats=2,
+        ))
+        assert beats == 2
+
+
 def test_a_base_exception_does_not_silently_end_the_loop():
     calls = []
 
