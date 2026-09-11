@@ -120,8 +120,35 @@ def _write_interest(interest: Any) -> Optional[str]:
         interest.to_persona_memory(getattr(store, "persona_id", "halbert"))
     )
     if memory_id:
+        _revive_if_retired(store, memory_id)
         _mirror_interest(interest, memory_id)
     return memory_id
+
+
+def _revive_if_retired(store: Any, memory_id: str) -> None:
+    """Saying it out loud again brings it back (RECALL-v1 §7).
+
+    ``smart_add`` dedups a restatement against the existing row, so a topic
+    the person previously stopped using keeps its retired status and is still
+    never used -- while the tool replies "Recorded". That is the same lie as
+    claiming success with no store behind it.
+
+    Only this path revives, and that is the whole rule: a *human* re-mention
+    brings an interest back, a *system* re-save does not. A consolidation pass
+    re-deriving the claim goes straight to the store and never reaches here,
+    which is what the engine's tombstone protects on the index side.
+    """
+    try:
+        from ..continuity.forget_interest import resume_interest
+        from ..continuity.interests import Interest, InterestStatus
+
+        getter = getattr(store, "get", None)
+        existing = Interest.from_persona_memory(getter(memory_id)) if getter else None
+        if existing is None or existing.status is InterestStatus.ACTIVE:
+            return
+        resume_interest(existing, memory_id, memory_store=store)
+    except Exception:
+        logger.warning("could not revive a restated interest", exc_info=True)
 
 
 def _mirror_interest(interest: Any, memory_id: str) -> None:

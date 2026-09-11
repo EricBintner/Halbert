@@ -378,3 +378,47 @@ class TestTheMirrorIsActuallyWritten:
                           reason="remember that I like sailing", actor="user")
         _mirror_interest(active, "some-memory-id")
         assert obs.search("sailing", include_stale=True)
+
+    async def test_restating_a_stopped_interest_revives_it(self, real_stores):
+        """RECALL-v1 §7: a later *human* re-mention revives; a system re-save
+        does not.
+
+        Without this the tool lies. `smart_add` dedups the restatement against
+        the existing row, so the status stays `forget_requested`, the person is
+        told "Recorded", and the interest is still never used. Saying it out
+        loud again is the clearest possible signal that they want it back.
+        """
+        from halbert_core.continuity.forget_interest import stop_using_interest
+        from halbert_core.continuity.interests import Interest, InterestStatus
+
+        mem, obs = real_stores
+        await self._say("vintage thinkpads", SAID)
+        memory_id = next(iter(mem._memories))
+        interest = Interest.from_persona_memory(mem.get(memory_id))
+        stop_using_interest(interest, memory_id, turn="t1",
+                            memory_store=mem, observation_store=obs)
+        assert Interest.from_persona_memory(mem.get(memory_id)).status is \
+            InterestStatus.FORGET_REQUESTED
+
+        await self._say("vintage thinkpads", SAID)
+        assert Interest.from_persona_memory(mem.get(memory_id)).status is \
+            InterestStatus.ACTIVE, "they said it again; it should be back"
+
+    async def test_a_system_resave_does_not_revive(self, real_stores):
+        # The other half of the same rule. Only the explicit writer revives;
+        # a consolidation pass re-deriving the claim must not undo the
+        # person's request, which is what the engine's tombstone protects.
+        from halbert_core.continuity.forget_interest import stop_using_interest
+        from halbert_core.continuity.interests import Interest, InterestStatus
+
+        mem, obs = real_stores
+        await self._say("vintage thinkpads", SAID)
+        memory_id = next(iter(mem._memories))
+        interest = Interest.from_persona_memory(mem.get(memory_id))
+        stop_using_interest(interest, memory_id, turn="t1",
+                            memory_store=mem, observation_store=obs)
+
+        # A background re-derivation: straight to the store, not through the tool.
+        mem.smart_add(interest.to_persona_memory("mirror-test"))
+        assert Interest.from_persona_memory(mem.get(memory_id)).status is \
+            InterestStatus.FORGET_REQUESTED
