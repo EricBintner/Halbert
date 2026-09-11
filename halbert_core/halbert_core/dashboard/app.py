@@ -455,8 +455,37 @@ def _detector_sweep_probe():
         except OSError:
             ok = False
 
+    def _surface_digest_only(path: str) -> None:
+        """Same change-detection as ``_surface``, without ever writing a
+        filename to the probe text (A15 own-bug 5, FD-12). The gate stores
+        this text verbatim in monitor_hashes.json, so ``~/.ssh``'s own
+        listing must never reach it — only a digest that still moves on
+        any name/size/mode/mtime change."""
+        nonlocal ok
+        try:
+            if not os.path.isdir(path):
+                lines.append(f"{path}: absent")
+                return
+            parts = []
+            for name in sorted(os.listdir(path)):
+                p = os.path.join(path, name)
+                try:
+                    st = os.stat(p)
+                    parts.append(
+                        f"{name} size={st.st_size} mode={oct(st.st_mode & 0o777)} "
+                        f"mtime={int(st.st_mtime)}"
+                    )
+                except OSError as e:
+                    parts.append(f"{name} stat-error={e.errno}")
+            digest = hashlib.sha256(
+                "\n".join(parts).encode("utf-8", errors="replace")
+            ).hexdigest()
+            lines.append(f"{path}: sha256={digest} (digest-only, permissions hygiene)")
+        except OSError:
+            ok = False
+
     _surface("/etc/systemd/system", recursive=True)  # drop-in conflicts
-    _surface(os.path.join(os.path.expanduser("~"), ".ssh"), recursive=False)  # permissions hygiene
+    _surface_digest_only(os.path.join(os.path.expanduser("~"), ".ssh"))
     try:
         if os.path.isfile("/etc/fstab"):
             with open("/etc/fstab", "rb") as f:
