@@ -1163,6 +1163,7 @@ class AgentStateMachine:
         # The Eyes rows are read once per turn (A4); this is where a turn
         # starts, so it is where the previous turn's cache stops being true.
         self._reset_world_observations()
+        self._reset_interest_block()
         tm = self.ctx.thread_manager
         if tm is None:
             return
@@ -2655,6 +2656,120 @@ class AgentStateMachine:
             self._world_obs_cache = []
             return []
 
+    #: Event type for an interest injection. It is an event -- it happened,
+    #: at a time, on a thread -- so it lives in the event ledger, which is
+    #: what makes the once-a-day rule survive a restart and gives the
+    #: `memory_recalled` chip a row to cite.
+    INTEREST_RECALL_EVENT = "interest_recalled"
+
+    def _reset_interest_block(self) -> None:
+        self._interest_cache = None
+
+    def _interest_block(self) -> str:
+        """The one remembered interest this turn may carry (RECALL-v1).
+
+        Computed once per turn and cached: ``_build_messages`` runs at both
+        LLM call sites, and a second selection could differ -- a model that
+        planned with a fact and answered without it has no way to notice.
+
+        Never raises. A recall that fails costs the turn its colour, not its
+        answer.
+        """
+        cached = getattr(self, "_interest_cache", None)
+        if cached is not None:
+            return cached
+        block = ""
+        try:
+            from ..continuity.interests import Interest
+            from ..continuity.recall_interest import (
+                RECALL_COOLDOWN_SECONDS,
+                render_interest_block,
+                select_interest,
+            )
+            from ..integrations.cognition_wiring import (
+                get_persona_memory_store,
+                get_timeline_store,
+            )
+
+            store = get_persona_memory_store()
+            intake = getattr(self.ctx, "intake", None)
+            if store is None or intake is None:
+                self._interest_cache = ""
+                return ""
+
+            rows = [
+                i for i in (
+                    Interest.from_persona_memory(m)
+                    for m in (getattr(store, "list_memories", list)() or [])
+                ) if i is not None
+            ]
+            if not rows:
+                self._interest_cache = ""
+                return ""
+
+            thread_id = getattr(self.ctx, "thread_id", "") or ""
+            timeline = get_timeline_store()
+            last_at = None
+            if timeline is not None and thread_id:
+                prior = timeline.query(
+                    event_type=self.INTEREST_RECALL_EVENT,
+                    entity_id=thread_id,
+                    since=time.time() - RECALL_COOLDOWN_SECONDS,
+                    limit=1,
+                )
+                if prior:
+                    last_at = prior[0].get("timestamp")
+
+            dial = "balanced"
+            try:
+                from ..config.being_config import load_being_config
+                dial = getattr(load_being_config(), "proactivity", "balanced") or "balanced"
+            except Exception:
+                pass
+
+            chosen = select_interest(
+                rows, intake, thread_id=thread_id, dial=dial,
+                last_injection_at=last_at,
+            )
+            if chosen is None:
+                self._interest_cache = ""
+                return ""
+
+            block = render_interest_block(chosen)
+            self._record_interest_recall(chosen, thread_id, timeline)
+        except Exception:
+            logger.warning("interest recall failed; continuing without it",
+                           exc_info=True)
+            block = ""
+        self._interest_cache = block
+        return block
+
+    def _record_interest_recall(self, interest, thread_id: str, timeline) -> None:
+        """Log the injection, so it is citable and countable.
+
+        Recorded whether or not the model ends up using it: the person is
+        entitled to know the fact was put in front of it, and a chip that only
+        appears when the model happened to mention something is not
+        visibility.
+        """
+        if timeline is None or not thread_id:
+            return
+        try:
+            from ..continuity.timeline import TimelineEvent
+
+            timeline.record(TimelineEvent(
+                timestamp=time.time(),
+                event_type=self.INTEREST_RECALL_EVENT,
+                source="recall",
+                entity_id=thread_id,
+                title=f"Recalled: {interest.topic}",
+                data={"topic": interest.topic,
+                      "origin": getattr(interest.origin, "value", ""),
+                      "reason": interest.reason},
+            ))
+        except Exception:
+            logger.debug("could not record the interest recall", exc_info=True)
+
     def _composed_prompt_block(self) -> str:
         """The active skills' expertise text, or "" when none matched.
 
@@ -2788,7 +2903,13 @@ class AgentStateMachine:
         # everything below it volatile.
         catalog = self._catalog_block()
         head = self._stable_head(identity, catalog, skills_block)
-        content = f"{head}\n\n{prompt}" if head else prompt
+        # RECALL-v1: its own dated block, BELOW the cache boundary. It is a
+        # per-turn selection -- a different interest, or none, on the next
+        # turn -- so putting it in the stable head would invalidate the
+        # cached prefix on every turn to save nothing.
+        interest_block = self._interest_block()
+        below = "\n\n".join(p for p in (interest_block, prompt) if p)
+        content = f"{head}\n\n{below}" if head else below
         messages: List[Dict[str, Any]] = [{"role": "system", "content": content}]
         if self.ctx.thread_receipt_block:
             messages[0]["content"] += "\n\n" + self.ctx.thread_receipt_block
