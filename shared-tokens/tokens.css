@@ -93,11 +93,14 @@
   --terracotta-600: #C32337;  --terracotta-500: #EB5569;  --terracotta-50: #FDF2F0;
   --blueprint-600:  #1E5FAF;  --blueprint-500:  #5AA0F0;  --blueprint-50:  #F0F6F9;
 
-  /* Categorical data visualization pigments (Restrained cool palette) */
-  --cobalt-600:     #1E5FAF;  --cobalt-400:     #5AA0F0;
-  --copper-teal-600:#0F7D8C;  --copper-teal-400:#32B9C8;
-  --amethyst-600:   #6941AF;  --amethyst-400:   #A57DF5;
-  --coral-600:      #D34E24;  --coral-400:      #E8683C;
+  /* Categorical data visualization pigments (Vibrant, high-separation palette) */
+  --cobalt-600:     #1D6FD8;  --cobalt-400:     #5EA2F8;
+  --marigold-600:   #CB6C04;  --marigold-400:   #FBBF24;
+  --cyan-teal-600:  #0891B2;  --cyan-teal-400:  #22D3EE;
+  --amethyst-600:   #7C3AED;  --amethyst-400:   #A78BFA;
+  --emerald-600:    #059669;  --emerald-400:    #34D399;
+  --coral-600:      #EA580C;  --coral-400:      #FB923C;
+  --slate-600:      #78716C;  --slate-400:      #A8A29E;
 
   /* Recessed dark chips. A translucent wash over `surface` in dark mode lands
    * LIGHTER than canvas and drops its tone under 4.5:1, so a dark chip is an
@@ -156,17 +159,21 @@
   --hb-status-critical-line:  rgba(195, 35, 55, 0.33);
   --hb-status-telemetry-line: rgba(30, 95, 175, 0.33);
 
-  /* Categorical Data Visualization — Restrained 4-Series Cool Palette */
+  /* Categorical Data Visualization — 6 Distinct Series + Slate Neutral */
   --hb-data-blue:    var(--cobalt-600);
-  --hb-data-teal:    var(--copper-teal-600);
+  --hb-data-amber:   var(--marigold-600);
+  --hb-data-teal:    var(--cyan-teal-600);
   --hb-data-purple:  var(--amethyst-600);
+  --hb-data-green:   var(--emerald-600);
   --hb-data-orange:  var(--coral-600);
-  --hb-data-neutral: var(--graphite-700);
+  --hb-data-neutral: var(--slate-600);
 
   --hb-data-1: var(--hb-data-blue);
-  --hb-data-2: var(--hb-data-teal);
-  --hb-data-3: var(--hb-data-purple);
-  --hb-data-4: var(--hb-data-orange);
+  --hb-data-2: var(--hb-data-amber);
+  --hb-data-3: var(--hb-data-teal);
+  --hb-data-4: var(--hb-data-purple);
+  --hb-data-5: var(--hb-data-green);
+  --hb-data-6: var(--hb-data-orange);
 
   --hb-shadow-subtle:  0 2px 8px -2px rgba(28, 25, 23, 0.08);
   --hb-shadow-plate:   0 12px 32px -16px rgba(28, 25, 23, 0.35);
@@ -213,8 +220,10 @@
   --color-status-telemetry-line: var(--hb-status-telemetry-line);
 
   --color-data-blue:    var(--hb-data-blue);
+  --color-data-amber:   var(--hb-data-amber);
   --color-data-teal:    var(--hb-data-teal);
   --color-data-purple:  var(--hb-data-purple);
+  --color-data-green:   var(--hb-data-green);
   --color-data-orange:  var(--hb-data-orange);
   --color-data-neutral: var(--hb-data-neutral);
 
@@ -222,6 +231,8 @@
   --color-data-2: var(--hb-data-2);
   --color-data-3: var(--hb-data-3);
   --color-data-4: var(--hb-data-4);
+  --color-data-5: var(--hb-data-5);
+  --color-data-6: var(--hb-data-6);
 
   --shadow-subtle:  var(--hb-shadow-subtle);
   --shadow-plate:   var(--hb-shadow-plate);
@@ -329,17 +340,21 @@
   --hb-status-critical-line:  rgba(235, 85, 105, 0.40);
   --hb-status-telemetry-line: rgba(90, 160, 240, 0.40);
 
-  /* Categorical Data Visualization — Restrained 4-Series Cool Palette */
+  /* Categorical Data Visualization — 6 Distinct Series + Slate Neutral */
   --hb-data-blue:    var(--cobalt-400);
-  --hb-data-teal:    var(--copper-teal-400);
+  --hb-data-amber:   var(--marigold-400);
+  --hb-data-teal:    var(--cyan-teal-400);
   --hb-data-purple:  var(--amethyst-400);
+  --hb-data-green:   var(--emerald-400);
   --hb-data-orange:  var(--coral-400);
-  --hb-data-neutral: var(--graphite-400);
+  --hb-data-neutral: var(--slate-400);
 
   --hb-data-1: var(--hb-data-blue);
-  --hb-data-2: var(--hb-data-teal);
-  --hb-data-3: var(--hb-data-purple);
-  --hb-data-4: var(--hb-data-orange);
+  --hb-data-2: var(--hb-data-amber);
+  --hb-data-3: var(--hb-data-teal);
+  --hb-data-4: var(--hb-data-purple);
+  --hb-data-5: var(--hb-data-green);
+  --hb-data-6: var(--hb-data-orange);
 
   --hb-shadow-subtle:  0 2px 8px -2px rgba(0, 0, 0, 0.50);
   --hb-shadow-plate:   0 12px 32px -16px rgba(0, 0, 0, 0.75);
@@ -388,17 +403,21 @@
     --hb-status-critical-line:  rgba(235, 85, 105, 0.40);
     --hb-status-telemetry-line: rgba(90, 160, 240, 0.40);
 
-    /* Categorical Data Visualization — Restrained 4-Series Cool Palette */
+    /* Categorical Data Visualization — 6 Distinct Series + Slate Neutral */
     --hb-data-blue:    var(--cobalt-400);
-    --hb-data-teal:    var(--copper-teal-400);
+    --hb-data-amber:   var(--marigold-400);
+    --hb-data-teal:    var(--cyan-teal-400);
     --hb-data-purple:  var(--amethyst-400);
+    --hb-data-green:   var(--emerald-400);
     --hb-data-orange:  var(--coral-400);
-    --hb-data-neutral: var(--graphite-400);
+    --hb-data-neutral: var(--slate-400);
 
     --hb-data-1: var(--hb-data-blue);
-    --hb-data-2: var(--hb-data-teal);
-    --hb-data-3: var(--hb-data-purple);
-    --hb-data-4: var(--hb-data-orange);
+    --hb-data-2: var(--hb-data-amber);
+    --hb-data-3: var(--hb-data-teal);
+    --hb-data-4: var(--hb-data-purple);
+    --hb-data-5: var(--hb-data-green);
+    --hb-data-6: var(--hb-data-orange);
 
     --hb-shadow-subtle:  0 2px 8px -2px rgba(0, 0, 0, 0.50);
     --hb-shadow-plate:   0 12px 32px -16px rgba(0, 0, 0, 0.75);

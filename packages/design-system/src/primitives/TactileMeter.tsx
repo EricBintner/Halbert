@@ -4,12 +4,25 @@ import * as React from 'react'
 import { cx, useId } from '../lib'
 
 export type TactileMeterTone =
-  | 'neutral'
+  | 'auto'
+  | 'telemetry'
+  | 'nominal'
+  | 'warning'
   | 'critical'
+  | 'neutral'
+  | 'data-1'
+  | 'data-2'
+  | 'data-3'
+  | 'data-4'
+  | 'data-5'
+  | 'data-6'
   | 'data-blue'
+  | 'data-amber'
   | 'data-teal'
   | 'data-purple'
+  | 'data-green'
   | 'data-orange'
+  | 'data-neutral'
 
 export interface TactileMeterProps extends React.HTMLAttributes<HTMLDivElement> {
   /** Fill percentage (0-100). Clamped automatically. */
@@ -28,9 +41,13 @@ export interface TactileMeterProps extends React.HTMLAttributes<HTMLDivElement> 
   showTicks?: boolean
   /**
    * Tone for the gauge fill:
-   * - 'neutral' (default): calm precision graphite ink (Tufte baseline)
-   * - 'critical': alarm crimson (active fault or critical capacity)
-   * - categorical data series: 'data-blue', 'data-teal', 'data-purple', 'data-orange'
+   * - 'telemetry' (default): vibrant blueprint cobalt
+   * - 'auto': auto-threshold alert: nominal (<75%), warning (75-89%), critical (>=90%)
+   * - 'critical': alarm crimson (hardware / capacity fault)
+   * - 'warning': warm goldenrod amber
+   * - 'nominal': fresh botanical emerald
+   * - 'neutral': calm slate graphite
+   * - categorical data series: 'data-blue', 'data-amber', 'data-teal', etc.
    */
   tone?: TactileMeterTone
   /** Track height variant (default: 'md'). */
@@ -60,7 +77,7 @@ export const TactileMeter = React.forwardRef<HTMLDivElement, TactileMeterProps>(
     unit = '%',
     ticks = [25, 50, 75, 90],
     showTicks = true,
-    tone = 'neutral',
+    tone = 'telemetry',
     size = 'md',
     offline = false,
     className,
@@ -73,8 +90,13 @@ export const TactileMeter = React.forwardRef<HTMLDivElement, TactileMeterProps>(
   const labelId = label ? `${meterId}-label` : undefined
   const clamped = Math.max(0, Math.min(100, isNaN(value) ? 0 : value))
 
-  // In elite dataviz, single meters default to neutral ink; only critical faults tint red
-  const resolvedTone: TactileMeterTone = tone
+  // Determine tone
+  const resolvedTone = React.useMemo(() => {
+    if (tone !== 'auto') return tone
+    if (clamped >= 90) return 'critical'
+    if (clamped >= 75) return 'warning'
+    return 'telemetry'
+  }, [tone, clamped])
 
   const formattedValue = valueLabel ?? (offline ? '[Sensor offline]' : `${clamped.toFixed(1)}${unit}`)
 

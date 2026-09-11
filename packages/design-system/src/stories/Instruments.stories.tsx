@@ -41,20 +41,22 @@ const Container = ({ children, width = 540 }: { children: React.ReactNode; width
 /* ----------------------------------------------------------- TactileMeter -- */
 
 export const TactileMeterStates: StoryObj = {
-  name: 'TactileMeter / Operational Thresholds (Calm Graphite Default)',
+  name: 'TactileMeter / Operational Thresholds',
   render: () => (
     <Container>
       <TactileMeter
         label="System Drive"
         sub="/ · ext4 (nvme0n1p2)"
         value={34.2}
-        valueLabel="34.2 GB / 100.0 GB (34.2%) · Calm ink"
+        tone="telemetry"
+        valueLabel="34.2 GB / 100.0 GB (34.2%) · Telemetry"
       />
 
       <TactileMeter
-        label="Backup Volume (High Normal Load)"
+        label="Backup Volume"
         sub="/mnt/backup · zfs"
         value={78.5}
+        tone="telemetry"
         valueLabel="785 GB / 1.0 TB (78.5%) · 215 GB free"
       />
 
@@ -228,11 +230,12 @@ export const TwoTierVignelliStorageCard: StoryObj = {
 /* --------------------------------- Categorical Data Visualization Palette -- */
 
 const allSeriesSegments: SegmentItem[] = [
-  { id: 's1', label: 'Cobalt / Blue', value: 38, tone: 'data-blue', detail: 'Series 1 · Primary Data' },
-  { id: 's2', label: 'Oceanic / Teal', value: 24, tone: 'data-teal', detail: 'Series 2 · Secondary / Snapshots' },
-  { id: 's3', label: 'Amethyst / Purple', value: 16, tone: 'data-purple', pattern: 'hatched', detail: 'Series 3 · Metadata / Journal' },
-  { id: 's4', label: 'Vermilion / Orange', value: 12, tone: 'data-orange', detail: 'Series 4 · Active Cache / Focal' },
-  { id: 's5', label: 'Graphite / Neutral', value: 10, tone: 'data-neutral', detail: 'Base · Reserved / Overhead' },
+  { id: 's1', label: 'Cobalt / Blue', value: 28, tone: 'data-blue', detail: 'Series 1 · Primary Data' },
+  { id: 's2', label: 'Marigold / Gold', value: 20, tone: 'data-amber', detail: 'Series 2 · Active Cache' },
+  { id: 's3', label: 'Cyan / Teal', value: 18, tone: 'data-teal', detail: 'Series 3 · Secondary Pools' },
+  { id: 's4', label: 'Amethyst / Purple', value: 14, tone: 'data-purple', pattern: 'hatched', detail: 'Series 4 · Metadata / Journal' },
+  { id: 's5', label: 'Emerald / Green', value: 12, tone: 'data-green', detail: 'Series 5 · Snapshots' },
+  { id: 's6', label: 'Coral / Orange', value: 8, tone: 'data-orange', detail: 'Series 6 · Focal Tier' },
 ]
 
 export const CategoricalDataPaletteShowcase: StoryObj = {
@@ -241,10 +244,10 @@ export const CategoricalDataPaletteShowcase: StoryObj = {
     <Container width={720}>
       <div>
         <h4 style={{ margin: 0, fontSize: 14, fontFamily: 'var(--font-sans)', color: 'var(--color-ink)' }}>
-          Disciplined Categorical Data Palette
+          High-Separation Categorical Data Palette
         </h4>
         <p style={{ margin: '4px 0 12px', fontSize: 12, color: 'var(--color-ink-secondary)' }}>
-          Research-grounded 4-tone cool qualitative palette + neutral graphite, following Tufte and Brewer principles. Eliminates muddy hues, pseudo-semantic traffic lights, and isoluminance collisions.
+          Six vivid, high-separation chromatic hues + slate neutral across the full 360° color spectrum. Zero muddy tones, zero brown, zero isoluminance collisions.
         </p>
       </div>
 
@@ -264,11 +267,13 @@ export const CategoricalDataPaletteShowcase: StoryObj = {
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 'var(--space-2)', marginTop: 'var(--space-2)' }}>
         {[
-          { token: '--color-data-blue', name: 'Cobalt / Blue', desc: 'Series 1 · Primary Payload & Filesystem Data', bg: 'var(--color-data-blue)' },
-          { token: '--color-data-teal', name: 'Oceanic / Teal', desc: 'Series 2 · Secondary Pools & Snapshots', bg: 'var(--color-data-teal)' },
-          { token: '--color-data-purple', name: 'Amethyst / Purple', desc: 'Series 3 · Metadata, Journals & Indexes', bg: 'var(--color-data-purple)' },
-          { token: '--color-data-orange', name: 'Vermilion / Orange', desc: 'Series 4 · Active NVMe Cache & Focal Tier', bg: 'var(--color-data-orange)' },
-          { token: '--color-data-neutral', name: 'Graphite / Neutral', desc: 'Base · Reserved Capacity & System Overhead', bg: 'var(--color-data-neutral)' },
+          { token: '--color-data-blue', name: 'Cobalt / Blue', desc: 'Series 1 · Primary Payload & Main Storage', bg: 'var(--color-data-blue)' },
+          { token: '--color-data-amber', name: 'Marigold / Gold', desc: 'Series 2 · Active Write Cache & Throughput', bg: 'var(--color-data-amber)' },
+          { token: '--color-data-teal', name: 'Cyan / Teal', desc: 'Series 3 · Secondary Pools & Data Volumes', bg: 'var(--color-data-teal)' },
+          { token: '--color-data-purple', name: 'Amethyst / Purple', desc: 'Series 4 · Metadata, Journals & Indexes', bg: 'var(--color-data-purple)' },
+          { token: '--color-data-green', name: 'Emerald / Green', desc: 'Series 5 · Historical Snapshots & Backups', bg: 'var(--color-data-green)' },
+          { token: '--color-data-orange', name: 'Coral / Orange', desc: 'Series 6 · Focal Tier & Ephemeral Buffers', bg: 'var(--color-data-orange)' },
+          { token: '--color-data-neutral', name: 'Slate / Graphite', desc: 'Base · Reserved Capacity & System Overhead', bg: 'var(--color-data-neutral)' },
         ].map((item) => (
           <div
             key={item.token}

@@ -690,7 +690,12 @@ function FilesystemUsageRow({
   const shortName = getShortName(fs.mountpoint)
   const { customNames, onRename } = useContext(CustomNamesContext)
   
-  const tone: TactileMeterTone = fs.severity === 'critical' ? 'critical' : 'neutral'
+  const tone: TactileMeterTone = 
+    fs.severity === 'critical' 
+      ? 'critical' 
+      : fs.severity === 'warning' 
+        ? 'warning' 
+        : 'telemetry'
 
   return (
     <div className="space-y-1.5 py-1">

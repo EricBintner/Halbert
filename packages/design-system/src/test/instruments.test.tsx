@@ -33,14 +33,28 @@ describe('TactileMeter', () => {
     expect(screen.getByText('0.0%')).toBeInTheDocument()
   })
 
-  it('defaults to calm neutral graphite tone (avoiding pseudo-meaning traffic lights)', () => {
+  it('defaults to vibrant telemetry blue tone', () => {
     const { container } = render(<TactileMeter value={50} />)
-    expect(container.querySelector('.hb-tactile-meter--neutral')).toBeInTheDocument()
+    expect(container.querySelector('.hb-tactile-meter--telemetry')).toBeInTheDocument()
   })
 
-  it('allows explicit tone overrides (critical fault, data series)', () => {
+  it('resolves auto tones: telemetry (<75), warning (75-89), critical (>=90)', () => {
+    const { container, rerender } = render(<TactileMeter value={50} tone="auto" />)
+    expect(container.querySelector('.hb-tactile-meter--telemetry')).toBeInTheDocument()
+
+    rerender(<TactileMeter value={80} tone="auto" />)
+    expect(container.querySelector('.hb-tactile-meter--warning')).toBeInTheDocument()
+
+    rerender(<TactileMeter value={95} tone="auto" />)
+    expect(container.querySelector('.hb-tactile-meter--critical')).toBeInTheDocument()
+  })
+
+  it('allows explicit tone overrides (critical fault, neutral, data series)', () => {
     const { container, rerender } = render(<TactileMeter value={30} tone="critical" />)
     expect(container.querySelector('.hb-tactile-meter--critical')).toBeInTheDocument()
+
+    rerender(<TactileMeter value={30} tone="neutral" />)
+    expect(container.querySelector('.hb-tactile-meter--neutral')).toBeInTheDocument()
 
     rerender(<TactileMeter value={30} tone="data-blue" />)
     expect(container.querySelector('.hb-tactile-meter--data-blue')).toBeInTheDocument()

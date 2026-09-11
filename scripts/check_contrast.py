@@ -198,6 +198,8 @@ CHECKS: list[tuple[str, tuple[str, ...], float, str]] = [
     ("--color-data-2", ACCENT_SURFACES, AA_NON_TEXT, "data-2 (non-text 3:1)"),
     ("--color-data-3", ACCENT_SURFACES, AA_NON_TEXT, "data-3 (non-text 3:1)"),
     ("--color-data-4", ACCENT_SURFACES, AA_NON_TEXT, "data-4 (non-text 3:1)"),
+    ("--color-data-5", ACCENT_SURFACES, AA_NON_TEXT, "data-5 (non-text 3:1)"),
+    ("--color-data-6", ACCENT_SURFACES, AA_NON_TEXT, "data-6 (non-text 3:1)"),
 
     # The focus ring is the one boundary WCAG 1.4.11 / 2.4.13 genuinely
     # requires to stand alone. Decorative hairlines are NOT checked: a plate
