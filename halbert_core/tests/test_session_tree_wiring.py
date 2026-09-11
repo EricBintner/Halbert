@@ -32,6 +32,7 @@ from datetime import datetime
 import pytest
 
 from halbert_core.agents.conversation_sqlite import SqliteConversationStore
+from halbert_core.agents.thread_signals import GRACE_MINUTES
 from halbert_core.agents.threads import ThreadManager
 from halbert_core.intake.signals import analyze_message
 
@@ -262,25 +263,44 @@ class TestTheLeafMovesThroughMoveLeaf:
     """A topic switch mints the branch summaries, because it goes through
     the one transaction that mints them."""
 
-    def _branch_rows(self, store, thread_id):
-        return [
+    def _branch_rows(self, store, thread_id, side=None):
+        rows = [
             m for m in store.list_messages(thread_id)
             if (m.get("origin") or "") == "branch"
         ]
+        if side is not None:
+            rows = [m for m in rows
+                    if (m.get("metadata") or {}).get("side") == side]
+        return rows
 
     def test_a_switch_mints_a_departure_row(self, store, mgr):
         first = _root(mgr)
         mgr.new_thread("Disks", "topic switch", from_thread_id=first)
-        assert self._branch_rows(store, first), (
+        assert self._branch_rows(store, first, side="departed"), (
             "the thread that was left was never told it was left"
         )
 
-    def test_a_return_mints_a_return_row(self, store, mgr):
+    def test_a_return_mints_a_return_row(self, store, mgr, clock):
+        """The other half of the crossing, and it has to be asserted as such.
+
+        Asserting merely "some branch row exists on the thread returned to"
+        passes on the DEPARTURE row the switch already left there, which is
+        not a test of the return at all. And the resume has to happen
+        outside the grace window, or ``resume_thread`` takes ``merge_back``
+        and there is no crossing to record — the split was retracted, not
+        returned from.
+        """
         first = _root(mgr)
         second = mgr.new_thread("Disks", "topic switch", from_thread_id=first)
         _turn(mgr, "how full is the array", assistant="Eighty percent.")
-        mgr.resume_thread(first, from_thread_id=second)
-        assert self._branch_rows(store, first), "no return row on the thread returned to"
+        clock.advance(GRACE_MINUTES * 60 + 60)
+        assert mgr.resume_thread(first, from_thread_id=second) is True
+        assert self._branch_rows(store, first, side="returned"), (
+            "no return row on the thread returned to"
+        )
+        assert self._branch_rows(store, second, side="departed"), (
+            "the thread being left again was not told so"
+        )
 
     def test_a_thread_nobody_spoke_in_is_not_told_it_was_left(self, store, mgr):
         """One of ``move_leaf``'s two deliberate silences.

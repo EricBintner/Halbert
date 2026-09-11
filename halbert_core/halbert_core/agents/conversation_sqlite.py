@@ -1994,6 +1994,7 @@ class SqliteConversationStore:
         title_source: str = "provisional",
         created_at: Optional[float] = None,
         parent_thread_id: Optional[str] = None,
+        edge_kind: str = "root",
         metadata: Optional[dict] = None,
     ) -> Optional[Dict[str, Any]]:
         """The atomic get-or-open (P3c, founder ruling D-5): find the open
@@ -2042,10 +2043,14 @@ class SqliteConversationStore:
                         self._conn.execute(
                             """INSERT INTO conversations
                                (id, user_id, title, created_at, updated_at, metadata,
-                                status, title_source, parent_thread_id)
-                               VALUES (?, NULL, ?, ?, ?, ?, 'open', ?, ?)""",
+                                status, title_source, parent_thread_id, edge_kind)
+                               VALUES (?, NULL, ?, ?, ?, ?, 'open', ?, ?, ?)""",
                             (thread_id, title, ts, ts, json.dumps(metadata or {}),
-                             title_source, parent_thread_id),
+                             title_source, parent_thread_id,
+                             # A thread with no parent is a root whatever the
+                             # caller proposed; an edge always records a
+                             # departure, and a root has nothing to depart.
+                             edge_kind if parent_thread_id else "root"),
                         )
                         row = self._conn.execute(
                             _THREAD_SELECT + " WHERE c.id = ?", (thread_id,)
@@ -2651,7 +2656,14 @@ class SqliteConversationStore:
         try:
             row = self._conn.execute(
                     "SELECT m.content FROM messages m "
-                    "WHERE m.conversation_id = ? AND m.origin = 'human' "
+                    # ``role`` AND ``origin``, not origin alone. The column
+                    # defaults to 'human' for any caller that does not name
+                    # it, so an assistant row appended without one -- the
+                    # A16-G5 marker among them -- came back as the question
+                    # the machine had been asked. The receipt builder already
+                    # keys on both; this reads the same way it does.
+                    "WHERE m.conversation_id = ? AND m.role = 'user' "
+                    "  AND m.origin = 'human' "
                     "  AND m.turn_id IS NOT NULL "
                     "  AND NOT EXISTS ("
                     "    SELECT 1 FROM messages a "

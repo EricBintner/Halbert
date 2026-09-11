@@ -831,6 +831,13 @@ class ThreadManager:
             self._pause_thread(from_thread_id, now, successor=new_id)
         thread = self.store.get_or_open_thread(
             new_id, title, title_source=title_source, created_at=now,
+            # The degraded path stamps the column too, so a thread opened
+            # when ``move_leaf`` was unavailable is not a root that claims
+            # to have no origin. It carries no divider -- there was no
+            # transaction to mint one in -- and that is the honest
+            # difference between the two paths.
+            parent_thread_id=from_thread_id,
+            edge_kind=EDGE_BRANCH if from_thread_id else "root",
             metadata={"reason": reason, "previous_thread_id": from_thread_id},
         )
         if thread is None:
@@ -971,9 +978,21 @@ class ThreadManager:
 
     @staticmethod
     def _predecessor_id(thread: Dict[str, Any]) -> Optional[str]:
-        """The thread this one was opened from (``_open_new_thread`` records it)."""
+        """The thread this one was opened from.
+
+        The structural column first, the legacy ``metadata`` pointer as the
+        fallback. The order used to be the other way round, and it had to
+        be: nothing wrote the column. Now that every creation stamps it,
+        the column is the better record of the same fact -- typed,
+        indexable, and the one the §2.1 path projection walks -- and
+        metadata is what a row from before this fix carries (a migrated
+        row, or one whose switch took the degraded path).
+        """
+        parent = thread.get("parent_thread_id")
+        if parent:
+            return parent
         meta = thread.get("metadata") or {}
-        return meta.get("previous_thread_id") or thread.get("parent_thread_id") or None
+        return meta.get("previous_thread_id") or None
 
     def _paused_predecessor(self, thread: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """The paused thread ``thread`` was opened *from*, or ``None``.
@@ -1208,13 +1227,7 @@ class ThreadManager:
         # A16-G2: the ask that outlived its row. Read through the store's
         # own extractor rather than re-derived here, so the receipt line and
         # the compaction boundary can never disagree about what was open.
-        unresolved = ""
-        reader = getattr(self.store, "unresolved_request", None)
-        if callable(reader):
-            try:
-                unresolved = reader(thread_id) or ""
-            except Exception as e:
-                logger.debug(f"unresolved_request unavailable: {e}")
+        unresolved = self.store.unresolved_request(thread_id)
         receipt = build_receipt(t, messages, unresolved_request=unresolved)
         if t.get("ephemeral"):
             return receipt

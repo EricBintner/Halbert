@@ -560,6 +560,56 @@ class TestMarkInProgressInterrupted:
         assert store.mark_in_progress_interrupted() == 0
 
 
+class TestUnresolvedRequest:
+    """A16-G2 (design §4.3): the last human ask a thread has not answered,
+    deterministic and zero model calls -- the last role='user' row whose
+    turn carries no status='complete' assistant row.
+
+    A store-level suite because that is where the predicate lives, and
+    because the fourth case is the one that caught a real defect: an
+    extractor keyed on ``origin`` alone returned the A16-G5 marker row as
+    the question the machine had been asked. ``origin`` defaults to 'human'
+    for any caller that does not name it, so role has to be in the
+    predicate too."""
+
+    def test_no_messages_is_not_unresolved(self, store):
+        store.create("t1")
+        assert store.unresolved_request("t1") == ""
+
+    def test_an_answered_turn_is_not_unresolved(self, store):
+        store.create("t1")
+        store.append_message("t1", "user", "add a samba share", origin="human", turn_id="turn-1")
+        store.append_message("t1", "assistant", "done", turn_id="turn-1", status="complete")
+        assert store.unresolved_request("t1") == ""
+
+    def test_a_turn_with_no_reply_at_all_is_unresolved(self, store):
+        store.create("t1")
+        store.append_message("t1", "user", "what's the garage code", origin="human", turn_id="turn-1")
+        assert store.unresolved_request("t1") == "what's the garage code"
+
+    def test_a_reply_that_never_completed_still_counts_as_unresolved(self, store):
+        # A crash mid-turn: the marker row (A16-G5) or a plain in-progress
+        # row both carry a non-'complete' status.
+        store.create("t1")
+        store.append_message("t1", "user", "what's the garage code", origin="human", turn_id="turn-1")
+        store.append_message("t1", "assistant", "[turn interrupted before an answer]",
+                             turn_id="turn-1", status="interrupted")
+        assert store.unresolved_request("t1") == "what's the garage code"
+
+    def test_only_the_most_recent_unresolved_turn_is_reported(self, store):
+        store.create("t1")
+        store.append_message("t1", "user", "first ask", origin="human", turn_id="turn-1")
+        # turn-1 never answered, but turn-2 is the most recent ask.
+        store.append_message("t1", "user", "second ask", origin="human", turn_id="turn-2")
+        assert store.unresolved_request("t1") == "second ask"
+
+    def test_a_prior_unresolved_turn_is_forgotten_once_answered(self, store):
+        store.create("t1")
+        store.append_message("t1", "user", "first ask", origin="human", turn_id="turn-1")
+        store.append_message("t1", "assistant", "answered late", turn_id="turn-1", status="complete")
+        assert store.unresolved_request("t1") == ""
+
+
 class TestSearchPunctuation:
     def test_dotted_and_apostrophe_queries_do_not_abort(self, store):
         store.create("t1")

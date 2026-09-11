@@ -69,7 +69,8 @@ PEER_CONVERSATION_METHODS = frozenset({
     "append_message", "update_message", "mark_in_progress_interrupted",
     "redact_message",
     "create_thread", "update_thread", "get_thread", "list_threads",
-    "current_open_thread", "get_or_open_thread",
+    "current_open_thread", "get_or_open_thread", "move_leaf",
+    "unresolved_request",
     "list_messages", "recent_messages", "last_turn_id", "pending_notes",
     "list_turns",
     "upsert_receipt", "search_receipts", "search_snippets",
@@ -348,6 +349,24 @@ class PeerConversationStore:
             "metadata": metadata,
         })
 
+    def move_leaf(
+        self, old_thread_id: str, new_thread_id: str, edge_kind: str,
+        *, now: Optional[float] = None,
+    ) -> bool:
+        """One wire call for the server-side atomic leaf move (design §1.2).
+
+        One call for the same reason ``get_or_open_thread`` is one: the
+        status swap, the edge stamp and the branch-summary minting are a
+        single transaction on the server, and splitting them across the
+        wire would put a window back where the design closed one.
+        """
+        return self._invoke(
+            "move_leaf", [old_thread_id, new_thread_id, edge_kind], {"now": now})
+
+    def unresolved_request(self, thread_id: str) -> str:
+        """One wire call for the server-side deterministic extractor (§4.3)."""
+        return self._invoke("unresolved_request", [thread_id], {}) or ""
+
     def get_or_open_thread(
         self,
         thread_id: str,
@@ -356,6 +375,7 @@ class PeerConversationStore:
         title_source: str = "provisional",
         created_at: Optional[float] = None,
         parent_thread_id: Optional[str] = None,
+        edge_kind: str = "root",
         metadata: Optional[dict] = None,
     ) -> Optional[Dict[str, Any]]:
         """One wire call for the server-side atomic get-or-open (P3c).
@@ -368,7 +388,8 @@ class PeerConversationStore:
         """
         return self._invoke("get_or_open_thread", [thread_id, title], {
             "title_source": title_source, "created_at": created_at,
-            "parent_thread_id": parent_thread_id, "metadata": metadata,
+            "parent_thread_id": parent_thread_id, "edge_kind": edge_kind,
+            "metadata": metadata,
         })
 
     def update_thread(self, thread_id: str, **fields: Any) -> bool:
