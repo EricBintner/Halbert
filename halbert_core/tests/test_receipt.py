@@ -81,6 +81,19 @@ class TestBuildReceipt:
     def test_first_sentence_never_splits_on_bare_dot(self):
         assert first_sentence("Edited smb.conf and fstab. Done.") == "Edited smb.conf and fstab."
 
+    def test_unresolved_request_renders_before_open_loop(self):
+        # A16-G2: design §4.3's carryforward line, rendered so the fact
+        # survives a window before the compact_boundaries column does.
+        r = build_receipt(_thread(), _messages(), unresolved_request="what's the garage code")
+        lines = r.splitlines()
+        assert lines[-2] == "Unresolved request: what's the garage code"
+        assert lines[-1] == "Open loop: Next, verify guest access is off once the config reloads."
+
+    def test_no_unresolved_request_omits_the_line(self):
+        r = build_receipt(_thread(), _messages())
+        assert "Unresolved request" not in r
+        assert r.splitlines()[-1].startswith("Open loop")
+
 
 class TestTitles:
     def test_provisional(self):

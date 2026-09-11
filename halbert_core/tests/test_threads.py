@@ -191,6 +191,16 @@ class TestBeginEndTurn:
         assert rows[1]["role"] == "assistant" and rows[1]["status"] == "interrupted"
         assert rows[1]["content"] == "[turn interrupted before an answer]"
 
+    def test_receipt_carries_the_unresolved_request(self, tm):
+        # A16-G2: the receipt is what survives a compaction window today,
+        # before compact_boundaries.unresolved_request (T3) lands.
+        text = "what's the garage keypad code"
+        turn = tm.begin_turn(text, analyze_message(text), "s")
+        tm.end_turn(turn, assistant_text="", blocks=[], terminal_block_ids=[],
+                    diff_proposals=[], status="interrupted")
+        receipt = tm.store.get_thread(turn.thread_id)["receipt"]
+        assert f"Unresolved request: {text}" in receipt
+
     def test_cancelled_turn_gets_no_marker(self, tm):
         # A deliberate stop is not an unexplained cut -- the user already
         # knows they cancelled it, so no marker row is owed (and the

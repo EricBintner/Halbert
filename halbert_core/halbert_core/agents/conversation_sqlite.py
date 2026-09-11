@@ -2569,19 +2569,25 @@ class SqliteConversationStore:
                         f"WHERE id IN ({marks})",
                         list(plan.covered_message_ids),
                     )
+                # A16-G2 (design §4.3): computed inside the same lock, on
+                # the pre-hide state -- the covered turns are about to be
+                # hidden from the timeline, not deleted, so the query still
+                # sees them either way, but there is no reason to read
+                # after the write when the answer does not depend on it.
+                unresolved = self.unresolved_request(plan.thread_id)
                 boundary_id = self._conn.execute(
                     "INSERT INTO compact_boundaries "
                     "(thread_id, trigger, pre_tokens, post_tokens, "
                     " preserved_message_ids, summary_message_id, created_at, "
                     " coverage_end_id, generation, unresolved_request, "
                     " trigger_detail) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?)",
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         plan.thread_id, plan.trigger,
                         plan.pre_chars, plan.post_chars,
                         json.dumps(list(plan.preserved_message_ids)),
                         summary_id, time.time(), plan.coverage_end_id,
-                        plan.generation, plan.trigger_detail,
+                        plan.generation, unresolved, plan.trigger_detail,
                     ),
                 ).lastrowid
             logger.info(
@@ -2614,6 +2620,44 @@ class SqliteConversationStore:
         except Exception as e:
             logger.warning("last_compact_boundary failed: %s", e)
             return None
+
+    def unresolved_request(self, thread_id: str) -> str:
+        """Design §4.3: the last human ask this thread has not answered.
+
+        Deterministic-first, zero model calls: the last ``role='user'``,
+        ``origin='human'`` row whose turn (grouped by ``turn_id``) carries
+        no ``role='assistant'`` row with ``status='complete'``. A crash
+        mid-turn, a turn still in flight, or one that ended with only the
+        A16-G5 interrupted marker (a non-'complete' status) all leave
+        exactly this shape; a turn the assistant actually finished does
+        not, however that answer read.
+        """
+        if self._conn is None:
+            return ""
+        try:
+            with self._lock:
+                row = self._conn.execute(
+                    """
+                    SELECT content FROM messages m
+                    WHERE m.conversation_id = ? AND m.role = 'user'
+                      AND COALESCE(m.origin, 'human') = 'human'
+                      AND m.turn_id IS NOT NULL
+                      AND NOT EXISTS (
+                        SELECT 1 FROM messages a
+                        WHERE a.conversation_id = m.conversation_id
+                          AND a.turn_id = m.turn_id
+                          AND a.role = 'assistant'
+                          AND a.status = 'complete'
+                      )
+                    ORDER BY m.id DESC
+                    LIMIT 1
+                    """,
+                    (thread_id,),
+                ).fetchone()
+            return str(row["content"]) if row is not None else ""
+        except Exception as e:
+            logger.warning("unresolved_request failed: %s", e)
+            return ""
 
     def set_context_included(self, message_id: int, included: bool) -> bool:
         """Record whether a message was in the context a turn actually saw.

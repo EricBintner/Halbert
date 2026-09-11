@@ -188,6 +188,7 @@ def build_receipt(
     messages: List[Dict[str, Any]],
     *,
     max_chars: int = 1500,
+    unresolved_request: str = "",
 ) -> str:
     """Render the nine-line receipt for ``thread`` from its stored ``messages``.
 
@@ -246,8 +247,16 @@ def build_receipt(
         f"Last said{last_said_date}: {last_said or 'none'}",
         f"Commands: {commands}",
         f"Files written: {files}",
-        f"{OPEN_LOOP_LABEL} {open_loop}",
     ]
+    # A16-G2 (design §4.3): the deterministic carryforward line -- the last
+    # ask a crash or an in-flight turn left unanswered. Omitted rather than
+    # rendered as "none": most threads have nothing unresolved, and every
+    # other line above always renders, so absence here already means "none"
+    # without spending a line saying so. Placed before Open loop, which the
+    # truncation branch below assumes is always the last line.
+    if unresolved_request:
+        lines.append(f"Unresolved request: {_clip(unresolved_request, 160)}")
+    lines.append(f"{OPEN_LOOP_LABEL} {open_loop}")
     text = "\n".join(lines)
     if len(text) <= max_chars:
         return text
