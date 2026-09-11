@@ -625,3 +625,87 @@ def test_a_retired_one_shot_job_writes_a_diagnostic_file(tmp_path, monkeypatch):
     diagnostics = list((tmp_path / "data" / "scheduler").glob("*retire*"))
     assert diagnostics, "no retirement diagnostic file was written"
     assert "detector_sweep" in diagnostics[0].read_text(encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
+# A06-G7: the monitor gate suppressed only a boot catch-up replay before
+# this fix -- the REGULAR cron fire ran detector_sweep every cadence
+# regardless of whether its probed source had changed at all.
+# ---------------------------------------------------------------------------
+
+def test_the_regular_fire_is_suppressed_when_the_source_is_unchanged(tmp_path, monkeypatch):
+    monkeypatch.setenv("HALBERT_DATA_DIR", str(tmp_path / "data"))
+    calls = []
+    gated = dashboard_app._gate_regular_fire(
+        "detector_sweep", lambda: calls.append(1), probe=lambda: (True, "same output"),
+    )
+
+    first = gated()   # baseline established
+    second = gated()  # unchanged since baseline
+
+    assert calls == []
+    assert first == {"status": "suppressed", "reason": "monitor_source_unchanged"}
+    assert second == {"status": "suppressed", "reason": "monitor_source_unchanged"}
+
+
+def test_the_regular_fire_runs_when_the_source_changes(tmp_path, monkeypatch):
+    monkeypatch.setenv("HALBERT_DATA_DIR", str(tmp_path / "data"))
+    calls = []
+    probes = iter(["v1", "v2"])
+    gated = dashboard_app._gate_regular_fire(
+        "detector_sweep", lambda: calls.append(1) or "ran",
+        probe=lambda: (True, next(probes)),
+    )
+
+    gated()          # baseline
+    result = gated()  # changed -> runs
+
+    assert calls == [1]
+    assert result == "ran"
+
+
+def test_the_regular_fire_runs_when_the_gate_is_unavailable(tmp_path, monkeypatch):
+    # A directory HALBERT_DATA_DIR cannot create (e.g. a file sits where
+    # the dir should be) must fail open to running the task, never silently
+    # never-run it.
+    blocked = tmp_path / "not_a_dir"
+    blocked.write_text("x")
+    monkeypatch.setenv("HALBERT_DATA_DIR", str(blocked))
+    calls = []
+    gated = dashboard_app._gate_regular_fire(
+        "detector_sweep", lambda: calls.append(1) or "ran", probe=lambda: (True, "v"),
+    )
+
+    result = gated()
+
+    assert calls == [1]
+    assert result == "ran"
+
+
+def test_register_proactive_jobs_wires_the_regular_fire_through_the_gate(tmp_path, monkeypatch):
+    # register_proactive_jobs must pass a GATED task_func to
+    # schedule_cron_job for detector_sweep's regular fire, distinct from
+    # the unwrapped one it keeps for catch-up's own already-gated path.
+    from halbert_core.config.being_config import BeingConfig
+
+    monkeypatch.setenv("HALBERT_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setattr(dashboard_app, "_detector_sweep_probe", lambda: (True, "unchanged"))
+
+    scheduled = {}
+
+    class _RecordingExecutor(_FakeExecutor):
+        timezone = "UTC"
+
+        def schedule_cron_job(self, *, job_id, task_func, **kwargs):
+            scheduled[job_id] = task_func
+
+    ex = _RecordingExecutor()
+    dashboard_app.register_proactive_jobs(
+        ex, load_config=lambda: BeingConfig(morning_report={"enabled": False}),
+    )
+
+    sweep_task_func = scheduled["detector_sweep"]
+    first = sweep_task_func()   # baseline established
+    second = sweep_task_func()  # unchanged since baseline
+    assert first == {"status": "suppressed", "reason": "monitor_source_unchanged"}
+    assert second == {"status": "suppressed", "reason": "monitor_source_unchanged"}

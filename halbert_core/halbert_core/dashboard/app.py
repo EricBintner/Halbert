@@ -268,9 +268,15 @@ def register_proactive_jobs(
     try:
         sweep_task = create_autonomous_task('detector_sweep')
         sweep_func = lambda: sweep_task.execute({})  # noqa: E731
+        # A06-G7: the regular cron fire gets its own gate check here; boot
+        # catch-up (below) already gates its own one-time run via
+        # _monitor_allows before ever scheduling it, so catchup_specs keeps
+        # the UNWRAPPED sweep_func — gating it too would double-evaluate
+        # the probe moments apart and suppress the catch-up run against
+        # the baseline its own first evaluation just persisted.
         executor.schedule_cron_job(
             job_id='detector_sweep',
-            task_func=sweep_func,
+            task_func=_gate_regular_fire('detector_sweep', sweep_func),
             cron_expr={'hour': '*/6', 'minute': 12},
             description='Detector sweep (drop-ins, fstab, permissions)',
             period_s=_PROACTIVE_PERIOD_S['detector_sweep'],
@@ -526,6 +532,68 @@ def _last_due_slot(trigger, now: datetime, *, horizon_s: float = 7 * 86400.0,
     return last_due_slot(trigger, now, horizon_s=horizon_s, max_steps=max_steps)
 
 
+def _monitor_gate_allows(gate, job_id: str, probe: Optional[Callable], *, context: str) -> bool:
+    """Named-job-set-only monitor gate: detector_sweep-class check-on-X jobs
+    are suppressed when their source is unchanged; everything else
+    (morning_report, timeline_retention) runs unconditionally.
+
+    Shared by boot catch-up and the regular cron fire (A06-G7) — before
+    this fix the gate suppressed only a boot catch-up replay, so the
+    REGULAR fire ran detector_sweep every cadence regardless of whether
+    its probed source had changed at all since the last evaluation.
+    """
+    from ..scheduler.monitor_hash import MonitorDecision
+
+    if gate is None or probe is None or not gate.is_gated(job_id):
+        return True
+    try:
+        outcome = gate.evaluate(job_id, probe())
+    except Exception as e:
+        logger.warning(f"{context}: monitor probe for {job_id} failed ({e}); running anyway")
+        return True
+    if outcome.decision is MonitorDecision.SUPPRESS:
+        logger.info(f"{context}: {job_id} suppressed (source unchanged)")
+        return False
+    if outcome.decision is MonitorDecision.BASELINE:
+        logger.info(f"{context}: {job_id} monitor baseline established; run suppressed")
+        return False
+    if outcome.decision is MonitorDecision.SOURCE_ERROR:
+        logger.warning(
+            f"{context}: monitor source for {job_id} errored; "
+            f"running anyway (a source failure is never a 'change')"
+        )
+        return True
+    if outcome.diff:
+        logger.info(f"{context}: {job_id} source changed:\n{outcome.diff}")
+    return True
+
+
+def _gate_regular_fire(job_id: str, task_func: Callable[[], Any],
+                       probe: Optional[Callable] = None) -> Callable[[], Any]:
+    """Wrap a proactive job's task so its REGULAR cron fire (not just a
+    boot catch-up replay) consults the monitor-hash gate too (A06-G7),
+    sharing the same on-disk baseline both paths already read and write."""
+    if probe is None:
+        probe = _detector_sweep_probe
+
+    def wrapped():
+        from ..scheduler.monitor_hash import MonitorHashGate
+        from ..utils.paths import data_subdir
+
+        try:
+            gate = MonitorHashGate(
+                os.path.join(data_subdir("scheduler"), "monitor_hashes.json")
+            )
+        except Exception as e:
+            logger.warning(f"Monitor gate for {job_id} unavailable ({e}); running anyway")
+            return task_func()
+        if not _monitor_gate_allows(gate, job_id, probe, context="Scheduled fire"):
+            return {"status": "suppressed", "reason": "monitor_source_unchanged"}
+        return task_func()
+
+    return wrapped
+
+
 def _run_boot_catchup(
     executor,
     specs: Dict[str, Dict[str, Any]],
@@ -688,39 +756,7 @@ def _run_boot_catchup(
             gate = None
 
     def _monitor_allows(job_id: str) -> bool:
-        """Named-job-set-only monitor gate: detector_sweep-class check-on-X
-        jobs are suppressed when their source is unchanged; everything else
-        (morning_report, timeline_retention) runs unconditionally."""
-        if gate is None or not gate.is_gated(job_id):
-            return True
-        try:
-            outcome = gate.evaluate(job_id, probe())
-        except Exception as e:
-            logger.warning(
-                f"Boot catch-up: monitor probe for {job_id} failed ({e}); "
-                f"running anyway"
-            )
-            return True
-        if outcome.decision is MonitorDecision.SUPPRESS:
-            logger.info(
-                f"Boot catch-up: {job_id} suppressed (source unchanged)"
-            )
-            return False
-        if outcome.decision is MonitorDecision.BASELINE:
-            logger.info(
-                f"Boot catch-up: {job_id} monitor baseline established; "
-                f"catch-up suppressed"
-            )
-            return False
-        if outcome.decision is MonitorDecision.SOURCE_ERROR:
-            logger.warning(
-                f"Boot catch-up: monitor source for {job_id} errored; "
-                f"running anyway (a source failure is never a 'change')"
-            )
-            return True
-        if outcome.diff:
-            logger.info(f"Boot catch-up: {job_id} source changed:\n{outcome.diff}")
-        return True
+        return _monitor_gate_allows(gate, job_id, probe, context="Boot catch-up")
 
     def _schedule_one_time(job: Dict[str, Any], run_at: datetime, tag: str) -> None:
         run_id = f"{job['id']}:catchup"
