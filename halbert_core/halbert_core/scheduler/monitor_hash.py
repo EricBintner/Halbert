@@ -64,7 +64,11 @@ def capped_unified_diff(old_text: str, new_text: str, max_bytes: int) -> str:
             tofile="current",
         )
     )
-    encoded = diff.encode("utf-8")
+    # own-bug 7: os.listdir/os.walk hand back a surrogate-escaped str for a
+    # non-UTF-8 filename (Linux; APFS forbids these). errors="replace" keeps
+    # the gate working instead of raising on a probe line neither side of
+    # the diff can hold cleanly.
+    encoded = diff.encode("utf-8", errors="replace")
     if len(encoded) <= max_bytes:
         return diff
     marker = "\n... [diff truncated]"
@@ -168,6 +172,16 @@ class MonitorHashGate:
             # Source failure is an error, never a "change": persist nothing.
             return MonitorOutcome(MonitorDecision.SOURCE_ERROR, job_id)
 
+        # own-bug 7: os.listdir/os.walk hand back a surrogate-escaped str
+        # for a non-UTF-8 filename (Linux only; APFS forbids these). A
+        # strict encode used to raise here, escaping evaluate() entirely —
+        # the hash never persisted, so every later tick hit the identical
+        # crash and catch-up ran ungated forever. Sanitizing once, up
+        # front, keeps the digest, the stored output and the diff all
+        # working from the same encodable text — nothing surrogate-laden
+        # reaches json.dump (whose own strict utf-8 file write would
+        # otherwise raise a step later, trading one crash for another).
+        output_text = output_text.encode("utf-8", errors="replace").decode("utf-8")
         digest = self.hash_fn(output_text.encode("utf-8")).hexdigest()
         previous_hash = self._hashes.get(job_id)
         previous_output = self._outputs.get(job_id)
