@@ -226,27 +226,70 @@ We have no disagreement to carry. Two notes on the suite:
 
 ## 5. §4 — the two open questions
 
-**4.1 (the daily cap and `authority`) is recorded as `ATN-2` in our
-`DECISIONS.md`,** as yours, flagged. Nothing here depends on it: Halbert emits
-no rulings today. We have no view to offer except that the asymmetry reads as
-an oversight rather than a design — `new_relationship_sessions` lives in the
-same struct and does yield — and that if you resolve it toward "the cap yields
-too", the conformance vector is the right place to make that visible.
+**4.1 (the daily cap and `authority`) — we think there is less of an open
+question here than your §4.1 implies, and our first draft of this paragraph was
+wrong about it.** We said the asymmetry read as an oversight. It does not: your
+own `Utterance` docstring states the rule as intended design — authority
+"bypasses the consent-shaped gates only (standing requests, the invitation
+floor, the new-relationship mute) and is still subject to the dial including
+OFF, the daily cap, receptivity and the inequality." We inferred intent from
+the branch without reading the type, which was careless of us.
+
+Checking it also turns up one factual correction. The cap is **not** "the only
+gate that does not yield" — the dial does not yield either, in both OFF and
+QUIET. Measured, one ruling against each gate in turn:
+
+| Gate | Ruling through? |
+| :--- | :--- |
+| `dial:off` | no — `silent`, carries the `authority` claim only |
+| `dial:quiet` | no — `hold` |
+| `attachment:daily_cap` | no — `hold` |
+| `attachment:new_relationship` | **yes** — `authority:overrode:…` |
+| standing requests, invitation floor | **yes** |
+
+So the line your code actually draws is coherent and we would keep it:
+**gates shaped by the subject's consent yield to a role the subject consented
+to in advance; limits shaped by the holder's capacity do not.** The cap sits
+with the dial and receptivity, on the right side of it.
+
+Our recommendation is therefore **no change**, and the decisive argument is
+what the alternative costs: if the cap yielded to `authority`, `authority`
+becomes an unbounded bypass of the one ceiling attachment safety has — a
+consumer need only declare its utterances rulings. A ceiling a caller can lift
+by asserting a flag is not a ceiling. The right answer to "a moderator's fourth
+ruling of the day is held" is that the moderator's consumer sets its own
+`max_proactive_per_day`, exactly as we just did; a moderator app running on a
+companion's 3 is misconfigured, not mis-designed. The audit story survives
+either way, since the `daily_cap` branch already appends `auth` to its reasons.
 
 **4.2 (F1's threshold) is `ATN-3`, ours, open.** Not blocking: your own hold —
 no adaptation while only one arm is observed — is now satisfiable, and the
 reader is buildable either way.
 
-We do have a first answer to the half you called a good question, offered as
-argument rather than as a decision. *Is a suggestion itself an interruption
-that has to pass the gate it is about?* Our reading is **yes, and it should be
-`AVAILABLE` rather than `SPEAK`** — a dial suggestion is never time-sensitive,
-it is exactly the class of thing a person should find rather than be handed,
-and a system that interrupts you to propose interrupting you less has refuted
-itself in the act. Which makes it a finding on a PULL surface with an AMBIENT
-nudge, and the gate it must pass is the one governing the nudge. If that is
-right it also disposes of the threshold question's sharp edge: a suggestion
-that costs nothing to miss can afford a low evidence bar.
+We do have an answer to the half you called a good question, and your own code
+supplies it. *Is a suggestion itself an interruption that has to pass the gate
+it is about?* **It does not have to, because it should not be on that kind of
+surface** — `_decide_inner` returns `SPEAK, ("channel:pull",)` before any gate
+is consulted, so a suggestion routed to a pull surface never meets the gate it
+is about.
+
+That is the substantive answer and not a trick. If the suggestion rides the
+dial it proposes to change, the system suppresses its own correction *exactly
+when the dial is most wrong* — the quieter you have made it, the less able it
+is to say it has gone too quiet. Silent and self-reinforcing. So: a **finding**
+(PULL, always delivered, carrying the four whys) plus a **bell badge**
+(AMBIENT, which at a quiet dial gives `SPEAK_MINIMAL, ambient:no_escalation`,
+so the badge still updates). Never PUSH, never voice, never auto-open.
+
+On the threshold half we have a recommendation rather than a decision, and one
+result worth passing on because it bears on your P2. Testing a category against
+a *constant* rate is wrong; it has to be tested against the person's own
+cross-category rate, or a user who dismisses most things gets told to quieten
+eight categories one at a time instead of being offered the global dial. The
+arithmetic is sharper than we expected — `the-being.md`'s own worked example,
+"dismissed six of the last eight", is p=0.0012 against a 20% baseline, p=0.011
+against 30%, and **p=0.14 against 50%, which is nothing at all.** Our anchor
+document's own example is only a suggestion when the baseline is low.
 
 ### One more, ours, that you should know we took
 
@@ -275,6 +318,58 @@ way the counters want wiring before that ceiling means anything, and that is
 ours to do.
 
 Nothing user-visible turns on any of it while we are in shadow.
+
+---
+
+## 5b. Two findings that are yours, and the second one is urgent for Phase C
+
+Both turned up while grounding the decisions above, and both were measured
+rather than inferred. Full working in
+`.handoff/RESEARCH-ATTUNEMENT-DECISIONS-2026-09-10.md`.
+
+### `ASK_FIRST` is unreachable in the default configuration, by 5.55e-17
+
+The plain case — a warning, no sensor, normal invitation, established
+relationship, default extraversion:
+
+```
+value = 0.60   cost = 1.0 - 0.60 = 0.40
+margin = value - cost = 0.19999999999999996
+ASK_T[warning]        = 0.2
+margin >= ask_t       -> False        shortfall 5.55e-17
+```
+
+It falls through to `HOLD`.
+
+We are telling you first rather than working around it because of what it is
+attached to: **`ASK_FIRST` is A-HB-26's exploration arm.** The whole reason
+§2.1 asked us for a real `margin` is so near-threshold cases can be found and
+explored — and the default no-sensor case lands *exactly* on the threshold and
+misses it to floating point. `warning` is also the dominant severity our
+detectors emit, so as things stand the exploration arm cannot appear in a
+single Halbert row, for a reason that is arithmetic rather than policy.
+
+It hides well, too. While `accepted_interactions < QUIET_PERIOD_N` the
+quiet-period cost puts the margin at −0.05 and the `HOLD` looks principled —
+so fixing that counter, which is what §2 above describes us doing today, is
+precisely what moves the case onto the boundary. A consumer would correct its
+wiring and see no change.
+
+Suggested fix: compare with a tolerance (`margin >= ask_t - 1e-9`), or round
+both before comparing. Worth a conformance vector *at* the boundary, since the
+boundary is the default.
+
+### Every HOLD is a silent drop in a consumer that has not built a held queue
+
+Not your bug — ours — but it generalises, so it is worth a line in the spec.
+Every outcome other than SPEAK / SPEAK_MINIMAL / SILENT is a `HOLD` carrying a
+`resume_on` and a deadline, and a consumer only gets the deferral semantics if
+it calls `ledger.release(...)`. We do not, anywhere. So `dial:quiet`,
+`standing:withdraw`, `receptivity:unavailable` and both `attachment:*` gates
+would become silent drops the moment we left shadow. We are treating the held
+queue as a go-live blocker rather than a feature. A consumer reading the policy
+would not obviously infer that a HOLD it never releases is a SILENT with extra
+steps.
 
 ---
 
@@ -328,7 +423,7 @@ the shape of the data.
 
 ## 7. Where it is
 
-Branch `feat/attunement-phase-c-prereqs`, three commits.
+Branch `feat/attunement-phase-c-prereqs`, four commits.
 
 - `halbert_core/attunement/context.py` — the `AttunementContext` builder (HB-D3)
 - `halbert_core/attunement/shadow.py` — `ShadowDecider`, the two-verdict row, `default_recorder`
@@ -340,4 +435,4 @@ Branch `feat/attunement-phase-c-prereqs`, three commits.
 Tests: `test_attunement_shadow_decide.py`, `test_attunement_reactions.py`,
 `test_attunement_reaction_wiring.py`, `test_attunement_recorder_wiring.py`,
 `test_attunement_conformance.py`, `test_proactive_gate_composition.py`.
-Full suite 8641 passed, 18 skipped, 6 xfailed, 0 failed.
+Full suite 8643 passed, 18 skipped, 6 xfailed, 0 failed.

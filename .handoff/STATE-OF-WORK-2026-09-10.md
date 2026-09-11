@@ -46,6 +46,16 @@ a biometry-gated HMAC. Do this before any re-auth code.
 Phase 0 is **decisions, then vectors** — five contract items must be settled
 first (§5.1–5.4). Buildable now; needs none of the pending memory decisions.
 
+**→ ROADMAP** · **The held queue (attunement F6) — a go-live blocker, not a
+feature.** Every policy outcome other than SPEAK / SPEAK_MINIMAL / SILENT is a
+`HOLD` with a `resume_on` and a deadline, and nothing in `halbert_core/` calls
+`ledger.release(...)`. So leaving §4.6 shadow would silently convert
+`dial:quiet`, `standing:withdraw`, `receptivity:unavailable` and both
+`attachment:*` gates into drops — the exact class of silent suppression the
+log was built to expose. Pinned by a tripwire test
+(`test_nothing_in_halbert_releases_a_held_decision`). Also unblocks a *lower*
+daily cap, since a capped item would then be deferred rather than lost.
+
 **A07-G8, the yield primitive.** Small, in scope, unblocked since R-01 Phase B
 landed. Interrupting during a long foreground command currently parks the
 delivery until the command exits.
@@ -69,18 +79,27 @@ ordered, first two are deletions:
 4. Approve the merge-type declaration (`LWW` / `SET` / `ASK`, default `SET`).
 5. Approve building the disagreement meter before any provenance column.
 
-**Attunement, two rows** (Haloysius handoff §4.1 and §4.2, plus one of ours):
-1. `ATN-1` — Halbert's attachment ceilings. The engine's are a companion's and
+**Attunement, three rows — all researched, two with a recommendation ready to
+close.** Working: `.handoff/RESEARCH-ATTUNEMENT-DECISIONS-2026-09-10.md`. Two
+findings there outrank the rows themselves: **every HOLD is a silent drop in
+Halbert** (nothing calls `ledger.release`, so leaving shadow would turn
+`dial:quiet`, `standing:withdraw`, `receptivity:unavailable` and both
+`attachment:*` gates into drops — a **go-live blocker for §4.6 stage 2**, not a
+feature), and **`ASK_FIRST` is unreachable in the default configuration by
+5.55e-17** — an engine floating-point boundary miss that happens to disable
+A-HB-26's exploration arm, which is the arm Phase C is defined over. Both are
+pinned as tripwire tests.
+1. `ATN-1` — **recommend ratify as-is, with the rationale replaced.** Halbert's attachment ceilings. The engine's are a companion's and
    it invites a consumer to set its own; ours are shipped as
    `max_proactive_per_day=24` (a runaway guard, not a ration — the dial is the
    volume policy) and `new_relationship_*=0` (a machine-minder's first week is
    when it has the most to say). **Built on the default; ratify or overrule.**
-2. `ATN-2` — the engine's daily cap is the only gate that does not yield to
+2. `ATN-2` — **recommend close, no change** (their framing does not survive measurement; it is documented design, and the dial does not yield either). The engine's daily cap does not yield to
    `Utterance.authority`, while `new_relationship_sessions` in the same struct
    does. Pinned engine-side as a conformance vector, so either way is a
    decision. Reaches us only if Halbert ever emits rulings — a guest persona
    citing the machine's rules is the shape that would.
-3. `ATN-3` — F1's threshold: how much evidence before Halbert *suggests* a dial
+3. `ATN-3` — **second half answered, threshold half recommended not ratified.** F1's threshold: how much evidence before Halbert *suggests* a dial
    change, and is a suggestion itself an interruption that has to pass the gate
    it is about? The engine will not answer this; it is a judgment about our
    surface. Not blocking: Phase C's reader is buildable without it, and the

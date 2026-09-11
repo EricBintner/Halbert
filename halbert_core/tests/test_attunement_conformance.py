@@ -58,3 +58,73 @@ def test_halberts_own_ceilings_do_not_break_the_vectors():
 
     assert config is not None
     assert config.attachment.max_proactive_per_day > 0
+
+
+def test_ask_first_is_currently_unreachable_in_our_default_case():
+    """A tripwire on an engine boundary bug, not a preference.
+
+    The plain case — a warning, no sensor, normal invitation, established
+    relationship, default extraversion — computes `value - cost` as
+    0.19999999999999996 against `ASK_T[warning]` of 0.2, and misses by
+    5.55e-17. It falls through to HOLD.
+
+    It matters because `ASK_FIRST` *is* A-HB-26's exploration arm, and
+    `warning` is the severity our detectors overwhelmingly emit: the arm
+    Phase C is defined over cannot appear in a Halbert row at all while this
+    holds. Reported in
+    `.handoff/RESEARCH-ATTUNEMENT-DECISIONS-2026-09-10.md` §0.
+
+    **When this starts failing, the engine has fixed the comparison —
+    delete it, and expect our shadow rows to start carrying `ask_first`.**
+    """
+    from haloysius.attunement.policy import CONSTANTS, decide
+    from haloysius.attunement.types import (
+        AttunementContext,
+        EngagementOutcome,
+        Severity,
+        Utterance,
+    )
+
+    ctx = AttunementContext(
+        persona_id="halbert",
+        now="2026-09-10T12:00:00+00:00",
+        utterance=Utterance(source="finding", severity=Severity.WARNING),
+        sessions_count=10, relationship_age_days=30.0, accepted_interactions=10,
+    )
+    decision = decide(ctx)
+
+    assert decision.outcome is EngagementOutcome.HOLD
+    assert decision.margin < CONSTANTS["ASK_T"][Severity.WARNING]
+    # ...but only just. The gap is arithmetic, not judgment.
+    assert CONSTANTS["ASK_T"][Severity.WARNING] - decision.margin < 1e-12
+
+
+def test_nothing_in_halbert_releases_a_held_decision():
+    """Pins the go-live blocker so it cannot be forgotten quietly.
+
+    Every policy outcome other than SPEAK / SPEAK_MINIMAL / SILENT is a
+    HOLD, and a consumer only gets deferral semantics by calling
+    `ledger.release(...)`. Until something does, leaving shadow would turn
+    `dial:quiet`, `standing:withdraw`, `receptivity:unavailable` and both
+    `attachment:*` gates into silent drops.
+
+    **When this starts failing, the held queue (F6) exists — delete it and
+    revisit ATN-1's cap, which can safely be lower once a capped item is
+    deferred rather than lost.**
+    """
+    import pathlib
+    import subprocess
+
+    root = pathlib.Path(__file__).resolve().parents[1] / "halbert_core"
+    found = subprocess.run(
+        ["grep", "-rn", "--include=*.py", r"\.release(\|ResumeCondition", str(root)],
+        capture_output=True, text=True,
+    ).stdout
+    # Thread/lock releases are not decision releases.
+    hits = [
+        line for line in found.splitlines()
+        if "ResumeCondition" in line or "lock.release" not in line
+    ]
+    hits = [l for l in hits if "ResumeCondition" in l]
+
+    assert hits == [], "something now releases holds:\n" + "\n".join(hits)
