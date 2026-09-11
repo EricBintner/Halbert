@@ -272,6 +272,7 @@ def register_proactive_jobs(
             task_func=sweep_func,
             cron_expr={'hour': '*/6', 'minute': 12},
             description='Detector sweep (drop-ins, fstab, permissions)',
+            period_s=_PROACTIVE_PERIOD_S['detector_sweep'],
         )
         logger.info("Detector sweep scheduled every 6 hours")
         outcome['detector_sweep'] = 'scheduled'
@@ -301,6 +302,7 @@ def register_proactive_jobs(
             task_func=_prune_timeline,
             cron_expr={'hour': 4, 'minute': 37},
             description='Event ledger retention sweep (90 days)',
+            period_s=_PROACTIVE_PERIOD_S['timeline_retention'],
         )
         logger.info("Timeline retention sweep scheduled daily")
         outcome['timeline_retention'] = 'scheduled'
@@ -331,6 +333,7 @@ def register_proactive_jobs(
                 task_func=report_func,
                 cron_expr={'hour': hour, 'minute': minute},
                 description='Daily morning report',
+                period_s=_PROACTIVE_PERIOD_S['morning_report'],
             )
             logger.info(
                 f"Morning report scheduled daily at {hour:02d}:{minute:02d} "

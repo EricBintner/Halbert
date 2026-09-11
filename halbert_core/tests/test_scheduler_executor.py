@@ -97,6 +97,40 @@ def test_schedule_one_time_accepts_a_local_closure(executor):
     assert "once" in {j["id"] for j in executor.get_scheduled_jobs()}
 
 
+class TestCadenceScaledMisfireGrace:
+    """R-03 Phase C (A06-G3): the flat 60s misfire_grace_time was tuned to
+    nothing in particular; a job missed while the process is alive but the
+    machine is briefly busy (not asleep -- that needs boot/wake catch-up,
+    a separate mechanism) should get a grace scaled to its own cadence,
+    the same halved-clamped rule the boot catch-up path already uses."""
+
+    def test_a_period_scales_the_grace(self, executor):
+        executor.start()
+        executor.schedule_cron_job(
+            job_id="morning_report", task_func=lambda: None,
+            cron_expr={"hour": 8, "minute": 0}, period_s=3600.0,
+        )
+        job = executor.scheduler.get_job("morning_report")
+        assert job.misfire_grace_time == 1800  # half of 1h, well inside [120s, 2h]
+
+    def test_a_long_period_clamps_to_the_two_hour_cap(self, executor):
+        executor.start()
+        executor.schedule_cron_job(
+            job_id="detector_sweep", task_func=lambda: None,
+            cron_expr={"hour": "*/6", "minute": 12}, period_s=6 * 3600.0,
+        )
+        job = executor.scheduler.get_job("detector_sweep")
+        assert job.misfire_grace_time == 7200  # half of 6h (10800s) clamps to the 2h cap
+
+    def test_no_period_keeps_todays_default(self, executor):
+        executor.start()
+        executor.schedule_cron_job(
+            job_id="adhoc", task_func=lambda: None, cron_expr={"minute": "*/5"},
+        )
+        job = executor.scheduler.get_job("adhoc")
+        assert job.misfire_grace_time == 60
+
+
 def test_apscheduler_store_is_in_memory(executor, data_dir):
     from apscheduler.jobstores.memory import MemoryJobStore
 

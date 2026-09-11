@@ -42,7 +42,7 @@ except ImportError:
 
 from .job import Job
 from .engine import SchedulerEngine
-from .catchup import last_due_slot
+from .catchup import compute_grace_seconds, last_due_slot
 from .restart_budget import RestartBudget, RestartDecision
 from .run_receipts import RunReceiptStore
 from ..utils.retry import exponential_backoff_retry, STANDARD_TASK_POLICY
@@ -408,11 +408,21 @@ class AutonomousExecutor:
         cron_expr: Dict[str, Any],
         max_retries: int = 3,
         timeout_s: int = 600,
-        description: str = ''
+        description: str = '',
+        period_s: Optional[float] = None,
     ) -> str:
         """
         Schedule a cron job with retry logic.
-        
+
+        ``period_s``, when given (R-03, A06-G3): the job's cadence, used to
+        scale ``misfire_grace_time`` (half the period, clamped [120s, 2h] —
+        ``compute_grace_seconds``, the same rule the boot catch-up path
+        already applies) instead of the flat 60s in ``job_defaults``, which
+        was tuned to nothing in particular. This covers a slot missed while
+        the PROCESS IS ALIVE but briefly busy; a machine that was asleep
+        needs the separate boot/wake catch-up path, not a bigger grace
+        window here.
+
         Args:
             job_id: Unique job identifier
             task_func: Function to execute
@@ -475,12 +485,16 @@ class AutonomousExecutor:
         )
         
         # Schedule with APScheduler
+        add_job_kwargs: Dict[str, Any] = {}
+        if period_s is not None and period_s > 0:
+            add_job_kwargs["misfire_grace_time"] = int(compute_grace_seconds(period_s))
         self.scheduler.add_job(
             func=wrapped_func,
             trigger=CronTrigger(**cron_expr, timezone=self.timezone),
             id=job_id,
             name=description or job_id,
-            replace_existing=True
+            replace_existing=True,
+            **add_job_kwargs,
         )
 
         # Packet 03 B1: a job whose previous boot's run was interrupted
