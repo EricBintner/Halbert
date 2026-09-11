@@ -25,18 +25,28 @@ test ``status == "ok"``, for "the user got it".
 
 Storage is one JSON file (``receipts.json``) in the scheduler data dir,
 matching SchedulerEngine's per-job-file convention, written atomically
-(temp + rename + fsync). Loaded records are validated and a malformed file
-is rejected loudly (Hermes anti-pattern: silent repair passes breed
-hand-edited stores). Deliberately not SQLite — see the packet's A3 and the
-SchedulerEngine convention; the file is small and append-mostly.
+(temp + rename + fsync). Loaded records are individually validated and a
+malformed one is silently dropped (Hermes anti-pattern: a silent REPAIR
+pass that rewrites the file would breed hand-edited stores — dropping one
+bad record on read is not that). A malformed *file* — unparseable JSON, or
+valid JSON of the wrong shape — is a different case: a receipt is a
+pre-execution marker, not durable truth, so losing it must not take the
+whole scheduler down with it (A06-G9). It is contained instead: moved
+aside next to the original path (so it survives for forensics, never
+deleted) and logged loudly, and construction continues with an empty
+store.
 """
 from __future__ import annotations
 
 import json
+import logging
 import os
+import shutil
 import tempfile
 import time
 from typing import Callable, Dict, List, Optional, Union
+
+logger = logging.getLogger("halbert.scheduler.run_receipts")
 
 # Terminal statuses (Hermes jobs.py closed set). "running" and "interrupted"
 # are lifecycle states, not outcomes.
@@ -83,8 +93,14 @@ class RunReceiptStore:
     def _load(self) -> None:
         if not os.path.exists(self.path):
             return
-        with open(self.path, "r", encoding="utf-8") as f:
-            raw = json.load(f)  # malformed file raises: validate-and-reject
+        try:
+            with open(self.path, "r", encoding="utf-8") as f:
+                raw = json.load(f)
+            if not isinstance(raw, dict):
+                raise ValueError(f"expected a JSON object, got {type(raw).__name__}")
+        except (OSError, ValueError) as e:
+            self._quarantine_corrupt_file(e)
+            return
         self._receipts = {
             rid: rec
             for rid, rec in raw.get("receipts", {}).items()
@@ -97,6 +113,27 @@ class RunReceiptStore:
             for key, rec in raw.get("occurrences", {}).items()
             if isinstance(rec, dict)
         }
+
+    def _quarantine_corrupt_file(self, error: Exception) -> None:
+        """A06-G9: move the unreadable file aside and start empty, loudly.
+
+        Never deletes it — a corrupt store is forensic evidence of whatever
+        wrote it, and the scheduler must start regardless."""
+        quarantine_path = f"{self.path}.corrupt-{int(time.time())}"
+        try:
+            shutil.move(self.path, quarantine_path)
+            logger.error(
+                "receipts store %s is corrupt (%s); moved aside to %s and "
+                "starting with an empty store",
+                self.path, error, quarantine_path,
+            )
+        except OSError as move_error:
+            logger.error(
+                "receipts store %s is corrupt (%s) and could not be moved "
+                "aside (%s); starting with an empty store — the corrupt "
+                "file is still on disk at its original path",
+                self.path, error, move_error,
+            )
 
     # -- persistence -----------------------------------------------------
 

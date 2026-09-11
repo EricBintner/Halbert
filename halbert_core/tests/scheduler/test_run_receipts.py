@@ -124,3 +124,45 @@ def test_receipts_survive_reopen(tmp_path):
     reopened = RunReceiptStore(path)
     assert reopened.status(rid) == "blocked_config"
     assert reopened.occurrence_completed("j", 99.0)
+
+
+# -- A06-G9: a corrupt receipts.json is contained, not fatal -----------------
+
+
+def test_a_truncated_file_does_not_crash_construction(tmp_path):
+    path = tmp_path / "receipts.json"
+    path.write_text('{"receipts": {"j:abc123": {"id": "j:abc', encoding="utf-8")
+    store = RunReceiptStore(path)  # must not raise
+    assert store.recover_on_boot() == []
+
+
+def test_a_top_level_list_does_not_crash_construction(tmp_path):
+    path = tmp_path / "receipts.json"
+    path.write_text("[1, 2, 3]", encoding="utf-8")
+    store = RunReceiptStore(path)  # must not raise
+    assert store.recover_on_boot() == []
+
+
+def test_a_corrupt_file_is_moved_aside_not_deleted(tmp_path):
+    path = tmp_path / "receipts.json"
+    original = "not json at all"
+    path.write_text(original, encoding="utf-8")
+    RunReceiptStore(path)
+    # the corrupt file is preserved somewhere under the same directory,
+    # never silently discarded
+    siblings = list(tmp_path.iterdir())
+    quarantined = [p for p in siblings if p != path and p.name.startswith("receipts.json")]
+    assert len(quarantined) == 1
+    assert quarantined[0].read_text(encoding="utf-8") == original
+    # the original path is not left behind holding the corrupt bytes
+    assert not path.exists()
+
+
+def test_a_contained_store_still_writes_new_receipts(tmp_path):
+    path = tmp_path / "receipts.json"
+    path.write_text("{not valid json", encoding="utf-8")
+    store = RunReceiptStore(path)
+    rid = store.mark_started("j", owner_pid=os.getpid())
+    assert store.status(rid) == "running"
+    reopened = RunReceiptStore(path)
+    assert reopened.status(rid) == "running"

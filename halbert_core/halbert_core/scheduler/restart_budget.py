@@ -20,6 +20,12 @@ class RestartDecision(Enum):
     ALLOW = "allow"
     BLOCK = "block"
     COOLDOWN = "cooldown"  # budget is fine, but not enough cycles since the last restart
+    #: A06-G4: a clock rollback holds the budget exactly like BLOCK (it
+    #: must never look fresher than it is), but it is not the same FACT as
+    #: a genuinely exhausted budget — a caller that conflates the two
+    #: escalates a clock artifact (suspend, NTP step) to the same
+    #: human-required persistent safe mode a real crash-loop earns.
+    CLOCK_ROLLBACK = "clock_rollback"
 
 
 class RestartBudget:
@@ -48,8 +54,10 @@ class RestartBudget:
         last = max(restarts)
         if now < last:
             # Clock rolled back (suspend, NTP step, manual change): hold.
-            # Releasing here is how a crash-loop re-arms itself.
-            return RestartDecision.BLOCK
+            # Releasing here is how a crash-loop re-arms itself. Distinct
+            # from BLOCK so a caller does not escalate a clock artifact the
+            # same way it escalates a genuinely exhausted budget.
+            return RestartDecision.CLOCK_ROLLBACK
         recent = [t for t in restarts if now - t <= self.window_s]
         if len(recent) >= self.max_per_hour:
             return RestartDecision.BLOCK

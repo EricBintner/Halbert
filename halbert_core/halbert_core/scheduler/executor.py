@@ -279,14 +279,27 @@ class AutonomousExecutor:
 
     def _load_restart_ledger(self) -> Dict[str, List[float]]:
         """Per-job restart epochs, surviving reboots (crash-loop across
-        boots is the case the budget exists for). Malformed entries are
-        dropped loudly-by-omission; the ledger is bookkeeping, not truth."""
+        boots is the case the budget exists for). A malformed file is
+        logged, not silently dropped (own-bug 6) — the ledger is
+        bookkeeping, not truth, so it starts empty rather than crashing
+        construction, but an operator should be able to see it happened."""
         try:
             with open(self._restart_ledger_path, "r", encoding="utf-8") as f:
                 raw = json.load(f)
-        except (OSError, ValueError):
+        except FileNotFoundError:
+            return {}
+        except (OSError, ValueError) as e:
+            logger.warning(
+                "restart ledger %s is malformed (%s); starting empty",
+                self._restart_ledger_path, e,
+            )
             return {}
         if not isinstance(raw, dict):
+            logger.warning(
+                "restart ledger %s is malformed (expected an object, got %s); "
+                "starting empty",
+                self._restart_ledger_path, type(raw).__name__,
+            )
             return {}
         ledger: Dict[str, List[float]] = {}
         for job_id, stamps in raw.items():
@@ -297,15 +310,23 @@ class AutonomousExecutor:
         return ledger
 
     def _persist_restart_ledger(self) -> None:
-        """Write the ledger, pruning entries outside the budget window."""
+        """Write the ledger, pruning entries outside the budget window.
+
+        own-bug 6: a stamp AHEAD of ``now`` (written under a clock that was
+        later corrected) satisfies ``now - t <= window`` forever, since the
+        difference is negative — it would never prune and would sit in the
+        ledger looking perpetually fresh, permanently eating the budget.
+        Dropped alongside genuinely stale entries, not kept as a special case.
+        """
         now = time.time()
         window = self.restart_budget.window_s
         pruned = {
-            job_id: [t for t in stamps if now - t <= window]
+            job_id: [t for t in stamps if 0 <= now - t <= window]
             for job_id, stamps in self._restart_ledger.items()
         }
         pruned = {job_id: stamps for job_id, stamps in pruned.items() if stamps}
         self._restart_ledger = pruned
+        directory = os.path.dirname(self._restart_ledger_path) or "."
         tmp = f"{self._restart_ledger_path}.{os.getpid()}.tmp"
         try:
             with open(tmp, "w", encoding="utf-8") as f:
@@ -319,6 +340,13 @@ class AutonomousExecutor:
             except OSError:
                 pass
             raise
+        # fsync the directory so the rename itself is durable, not just the
+        # tmp file's content (matches run_receipts.py's RunReceiptStore._flush).
+        dir_fd = os.open(directory, os.O_RDONLY)
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
 
     def _maybe_arm_boot_recovery(
         self,
@@ -347,6 +375,18 @@ class AutonomousExecutor:
         now = time.time()
         restarts = self._restart_ledger.get(job_id, [])
         decision = self.restart_budget.evaluate(restarts, now)
+        if decision is RestartDecision.CLOCK_ROLLBACK:
+            # A06-G4: the clock moved backward (suspend, NTP step) -- this
+            # boot's re-run is held exactly like an exhausted budget would
+            # be, but it is not the same FACT: nothing about the job is
+            # crash-looping, so it must not escalate to a persistent,
+            # human-required safe mode. A future boot with a sane clock
+            # re-evaluates from the same ledger.
+            logger.warning(
+                "restart_budget_held_clock_rollback job_id=%s decision=%s",
+                job_id, decision.value,
+            )
+            return
         if decision is not RestartDecision.ALLOW:
             recent = [
                 t for t in restarts if now - t <= self.restart_budget.window_s
