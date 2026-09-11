@@ -84,6 +84,37 @@ def clamp_proposed_delay(proposed_s: float, min_s: float, max_s: float) -> float
     return max(min_s, min(max_s, proposed_s))
 
 
+# Default tolerance for detect_clock_jump: scheduling jitter (a slow tick,
+# GC pause, busy CPU) routinely runs a few seconds behind; only a gap wider
+# than this is treated as the machine having been asleep.
+CLOCK_JUMP_TOLERANCE_S = 30.0
+
+
+def detect_clock_jump(
+    prev_monotonic: float,
+    prev_wall: datetime,
+    now_monotonic: float,
+    now_wall: datetime,
+    *,
+    tolerance_s: float = CLOCK_JUMP_TOLERANCE_S,
+) -> Optional[timedelta]:
+    """A wall-clock gap the monotonic clock did not see (A06-G3, second half).
+
+    ``misfire_grace_time`` only covers a process that was alive but busy --
+    APScheduler never got to schedule anything while the machine was
+    actually suspended (laptop sleep), so the missed slots need to be
+    detected another way. The wall clock keeps advancing through sleep; the
+    monotonic clock does not. Returns the excess (wall_delta - mono_delta)
+    once it exceeds ``tolerance_s``, else ``None``.
+    """
+    wall_delta = (now_wall - prev_wall).total_seconds()
+    mono_delta = now_monotonic - prev_monotonic
+    gap = wall_delta - mono_delta
+    if gap > tolerance_s:
+        return timedelta(seconds=gap)
+    return None
+
+
 def _grace_for(job: dict, grace_s: Optional[float], one_shot_grace_s: float) -> float:
     if grace_s is not None:  # explicit override beats cadence scaling
         return float(grace_s)
