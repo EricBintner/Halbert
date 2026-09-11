@@ -28,6 +28,14 @@ feature. It is also exactly the failure the suppression log was built to
 expose, which is a good sign the log is pointed at the right thing.
 
 **2. `ASK_FIRST` is unreachable in the default configuration, by 5.55e-17.**
+**— RESOLVED 2026-09-10, same day.** Haloysius reproduced it exactly and fixed
+it in `71f016b` with `THRESHOLD_EPS = 1e-9` applied to all three threshold
+comparisons, not just the one that bit. Their sweep then found the one case was
+**five**, across `SPEAK_T` and `ASK_T` — round decimal weights against round
+thresholds make landing on one the common case, not the rare one. Our tripwire
+is turned over (`test_ask_first_is_reachable_in_our_default_case`). The finding
+is kept below because the reasoning is what found the other four.
+
 Measured, on the plain case — a warning, no sensor, normal invitation,
 established relationship, default extraversion:
 

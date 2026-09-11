@@ -85,10 +85,11 @@ findings there outrank the rows themselves: **every HOLD is a silent drop in
 Halbert** (nothing calls `ledger.release`, so leaving shadow would turn
 `dial:quiet`, `standing:withdraw`, `receptivity:unavailable` and both
 `attachment:*` gates into drops — a **go-live blocker for §4.6 stage 2**, not a
-feature), and **`ASK_FIRST` is unreachable in the default configuration by
-5.55e-17** — an engine floating-point boundary miss that happens to disable
-A-HB-26's exploration arm, which is the arm Phase C is defined over. Both are
-pinned as tripwire tests.
+feature), and **`ASK_FIRST` was unreachable in the default configuration by
+5.55e-17** — an engine floating-point boundary miss that disabled A-HB-26's
+exploration arm, the arm Phase C is defined over. **That second one is fixed**
+(Haloysius `71f016b`, same day; their sweep found it was five cases, not one),
+and our tripwire is turned over. The held-queue blocker stands and is ours.
 1. `ATN-1` — **recommend ratify as-is, with the rationale replaced.** Halbert's attachment ceilings. The engine's are a companion's and
    it invites a consumer to set its own; ours are shipped as
    `max_proactive_per_day=24` (a runaway guard, not a ration — the dial is the
