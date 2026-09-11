@@ -631,7 +631,20 @@ def _run_boot_catchup(
                 logger.debug(f"Boot catch-up: occurrence check for {job_id} failed: {e}")
         last_run = _last_run_of(prior_records[job_id])
         if last_run is not None and last_run >= due:
-            continue  # the slot was served by the previous boot's run
+            # A15-G8: completed_at is set for ANY terminal state (engine.py
+            # update_job_state), so a FAILED attempt looked identical to a
+            # served slot here -- a transient failure (a locked store, say)
+            # meant no catch-up ever fired again for that slot. Only a
+            # genuinely completed run is served unconditionally; a failed
+            # one backs off briefly (so a restart moments later does not
+            # spin into an immediate retry loop) and then replays.
+            last_state = getattr(prior_records[job_id], "state", None)
+            if last_state != "failed":
+                continue
+            period_s = _PROACTIVE_PERIOD_S.get(job_id)
+            backoff_s = min(period_s / 2, 900.0) if period_s else 900.0
+            if (now - last_run).total_seconds() < backoff_s:
+                continue  # still within backoff; not eligible yet
         max_age_s = _PROACTIVE_MAX_AGE_S.get(job_id)
         if max_age_s is not None and (now - due).total_seconds() > max_age_s:
             logger.info(

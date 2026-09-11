@@ -60,13 +60,16 @@ def _spec(job_id, task=lambda: None, cron=None, one_shot=False):
     return {"task": task, "cron_expr": dict(cron or CRONS[job_id]), "one_shot": one_shot}
 
 
-def _prior(job_id, *, ran_at=None, never_ran=False, cron=None, **job_kwargs):
+def _prior(job_id, *, ran_at=None, never_ran=False, cron=None, state="completed",
+           **job_kwargs):
     # Defaults to the SAME schedule this boot registers (CRONS[job_id]):
     # "nothing about the schedule changed, only time passed" is the common
     # case every test but the schedule-change ones itself wants. Pass
-    # `cron=` to simulate a prior boot's now-superseded schedule.
+    # `cron=` to simulate a prior boot's now-superseded schedule. Defaults
+    # to state="completed": "the last run genuinely succeeded" is the
+    # common case every test but the failed-slot ones itself wants (A15-G8).
     schedule = str(cron if cron is not None else CRONS.get(job_id, {}))
-    job = Job(id=job_id, task="t", schedule=schedule, **job_kwargs)
+    job = Job(id=job_id, task="t", schedule=schedule, state=state, **job_kwargs)
     if never_ran:
         return job
     job.completed_at = (
@@ -262,6 +265,76 @@ def test_slot_already_served_is_not_caught_up(tmp_path):
         )
     }
     assert _run(ex, specs, prior, gate=_ungated(tmp_path)) == {}
+    assert ex.one_time == []
+
+
+# ---------------------------------------------------------------------------
+# A15-G8: a failed run is not "served" -- back off briefly (a transient
+# failure should not spin into an immediate retry loop), then replay.
+# Scenario: morning_report's 08:00 run fails because the findings store
+# was locked; the user restarts 20 minutes later; the old logic saw
+# completed_at >= due and skipped, silently, forever -- no report that day.
+# ---------------------------------------------------------------------------
+
+def test_a_failed_run_still_catches_up_after_its_backoff_window(tmp_path):
+    ex = _FakeExecutor()
+    specs = {"morning_report": _spec("morning_report")}
+    # 08:00 slot ran (and failed) at 08:01; boot is 21 minutes later --
+    # morning_report's backoff is min(period/2, 15min) = 15min, elapsed.
+    prior = {
+        "morning_report": _prior(
+            "morning_report",
+            ran_at=datetime(2026, 9, 7, 8, 1, tzinfo=timezone.utc),
+            state="failed",
+        )
+    }
+    boot = datetime(2026, 9, 7, 8, 22, tzinfo=timezone.utc)
+
+    result = _run(ex, specs, prior, now=boot, gate=_ungated(tmp_path))
+
+    assert result == {"morning_report": "caught_up"}
+    assert ex.one_time[0]["job_id"] == "morning_report:catchup"
+
+
+def test_a_failed_run_still_backs_off_within_its_window(tmp_path):
+    ex = _FakeExecutor()
+    specs = {"morning_report": _spec("morning_report")}
+    # Same failure, but the restart happens only 5 minutes later -- still
+    # inside the 15-minute backoff, so no immediate replay yet.
+    prior = {
+        "morning_report": _prior(
+            "morning_report",
+            ran_at=datetime(2026, 9, 7, 8, 1, tzinfo=timezone.utc),
+            state="failed",
+        )
+    }
+    boot = datetime(2026, 9, 7, 8, 6, tzinfo=timezone.utc)
+
+    result = _run(ex, specs, prior, now=boot, gate=_ungated(tmp_path))
+
+    assert result.get("morning_report") != "caught_up"
+    assert ex.one_time == []
+
+
+def test_a_completed_run_is_served_forever_unlike_a_failed_one(tmp_path):
+    # Regression guard: only 'failed' gets the backoff/expiry treatment. A
+    # genuinely completed run stays served long past any backoff window --
+    # the exact boot timing that replays a 'failed' slot above must NOT
+    # replay a 'completed' one.
+    ex = _FakeExecutor()
+    specs = {"morning_report": _spec("morning_report")}
+    prior = {
+        "morning_report": _prior(
+            "morning_report",
+            ran_at=datetime(2026, 9, 7, 8, 1, tzinfo=timezone.utc),
+            state="completed",
+        )
+    }
+    boot = datetime(2026, 9, 7, 8, 22, tzinfo=timezone.utc)  # same timing as the replay test
+
+    result = _run(ex, specs, prior, now=boot, gate=_ungated(tmp_path))
+
+    assert result.get("morning_report") != "caught_up"
     assert ex.one_time == []
 
 
