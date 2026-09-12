@@ -1,0 +1,83 @@
+# PKT-MP-2 — Retry-After + interruptible backoff + write-only breaker fix
+
+Tier: **opus**   Milestone: **M1**   Effort: **M**
+Collision lane: **none (file-disjoint)**   Merge order: **n/a**
+Verified against: halbert `main` @ `fbd725e9` (2026-09-11)
+
+---
+
+## 1. Packet
+
+**MP-2** — Retry-After + interruptible backoff + write-only breaker fix.
+
+## 2. User problem
+
+Provider-failure handling in the live routing path has four measured defects, all confirmed by the deep-eval spot-check (deep-eval-group3-skills-mcp-models.md, Packet MP-2, verdict ACCEPT in FINAL-CRITICAL-DISCOVERY-BACKLOG-2026-09-11.md). (1) Retry-After is clamped to 60 s: model/rate_limiter.py:109 does `wait = min(retry_after, self._max_backoff)` with `max_backoff=60.0` (line 61), so a provider that answers `Retry-After: 3600` gets five retries at 60 s each — every one guaranteed to fail, each burning a billable request. (2) The live retry loop blocks the turn: model/tier_router.py:736 is a bare `time.sleep(wait)` inside `TierRouter.generate()`'s 429/529 loop, so a `/stop` issued during a backoff wait cannot land for up to 60 s — the turn keeps billing on a cloud slot the user already cancelled. (3) Health-axis conflation: tier_router.py:749-750 writes `self._model_health[cache_key] = False` on ANY GenerationError (401 auth-permanent, DNS failure, timeout, and transient 529 alike) and never writes `self._last_health_check` on that path, so the False entry expires against the timestamp of the original successful probe (`_check_model_health` at :424-444 only consults `_last_health_check` written by a real probe) — a model marked down for a billing failure becomes eligible again 10 s later, and a model marked down for a transient 529 stays down past recovery. (4) The circuit breaker in agents/error_recovery.py is WRITE-ONLY: `record_failure()` is called from tier_router.py:735 on every rate-limit retry, but `is_circuit_open()` and `record_success()` (error_recovery.py:214, :220) have zero non-test callers anywhere in the tree — failure counts accumulate and breakers open, but nothing ever reads the open state, so a persistently failing model is never actually taken out of rotation. The registry note summarizes: Retry-After to 600 s; interruptible backoff replacing time.sleep; breaker is write-only and must be wired or retired per the §3.8 one-primitive rule.
+
+## 3. What to build
+
+Three files, in dependency order (taxonomy first — everything else reads its reason):
+
+1. `halbert_core/halbert_core/model/rate_limiter.py` — Honour Retry-After in full up to a 600 s ceiling while capping only the exponential branch. Split `get_wait_time()` (:94-113): when `_parse_retry_after()` returns a value, `wait = min(retry_after, 600.0)` (server-instructed, do NOT clamp to `_max_backoff`); only the no-header exponential branch stays capped at `self._max_backoff`. Make `RetryState.blocked_until` (:44) load-bearing: add `is_blocked(model_id) -> float` (seconds remaining, 0.0 when clear) so the router can skip a blocked candidate at selection time instead of discovering the block after a failed request. `record_retry()` already computes `blocked_until` at :128 — it is currently written and read only by `status()`; this wires it into the routing decision.
+
+2. `halbert_core/halbert_core/model/tier_router.py` — (a) Interruptible backoff: replace the bare `time.sleep(wait)` at :736 with an interruptible wait built on the activity_clock dependency (§3.2 extends `agents/turn_activity.py` with a shared activity-clock interface — this packet consumes it, does not build it): sleep in ≤0.5 s slices, checking the turn's activity/stop signal each slice, so a `/stop` during a 30 s backoff returns within 0.5 s. The same helper is shared with MP-3's C8 (deep-eval: 'MP-3's C7 and MP-2's C8 both touch the same two call sites in llm_client.py and tier_router.py — they should be built in the same packet' — MP-2 owns the helper, MP-3 consumes it). (b) Failure-axis separation in the health mark (:740-750): classify the GenerationError before marking `_model_health` — auth-permanent (401/403) marks the BACKEND down (writes both `_model_health[cache_key]` and `_last_health_check[cache_key]` so the 300 s cache TTL at :431 measures from the mark, not from the last successful probe); transient (429/529/timeout/DNS) does not touch `_model_health` at all — it feeds `rate_limiter.record_retry()` and the breaker only. This is the minimal `FailureScope` axis split the deep-eval names (BackendIdentity + FailureScope: a fallback candidate is skipped only along the axis the failure invalidated). (c) Fallback notice (rider from MP-1, OC14-C22): when the fallback branch at :746-759 re-routes across a locality boundary (local slot down, turn ran on a `:cloud` connection, judged through `is_local_model()` in model/llm_config.py:181 — never a second locality judge), surface a one-line reroute notice naming the slot and locality, never the model: e.g. 'this turn ran on a cloud connection because the local slot was unavailable'. Slot + locality only; no model id on any user-facing surface. (d) Wire the breaker: before each attempt in the retry loop (:692), consult the provider-error breaker for `selection.model.model_id`; when open, skip the candidate at selection time (`select_model` :496-511) instead of attempting and failing. Call `record_success(model_id)` on the success path at :710-713 alongside `rate_limiter.reset()`.
+
+3. `halbert_core/halbert_core/agents/error_recovery.py` — ONE circuit-breaker primitive per the §3.8 rule ('wire the existing one, or retire it and build one shared breaker; do not build a third'). Decision: WIRE the existing breaker (threshold 5, 60 s reset at :107-108, keyed by component) — it already has the right shape. Add the missing read path: `is_circuit_open()` (:220) gets its first production caller in tier_router.py (item 2d), and `record_success()` (:214) gets its caller on the generate() success path. Fix the two latent defects while wiring: move the function-local `import time` (:210, :225) to module level, and key the breaker consistently — `record_failure` is called with `model_id` from tier_router.py:735, so the breaker key IS the model id; document that on the class docstring. Do NOT change the threshold/reset constants in this packet.
+
+Minimum viable order per the deep-eval: taxonomy/axis-split first (2b), then Retry-After + interruptible backoff in one commit (1 + 2a), then breaker wiring (2d + 3), then the reroute notice (2c).
+
+## 4. What NOT to build
+
+Not in this packet: (a) No new circuit-breaker primitive and no per-server MCP breaker — §3.8 assigns the shared-primitive decision to this packet with MCP-C as the second consumer; this packet wires the existing ErrorRecoveryManager breaker for the provider-error axis only and leaves the MCP-C call-site wiring to MCP-C. (b) No idle-gap stream timeout, no aiohttp abort hook, no cross-thread coroutine scheduler — those are MP-3 (llm_client.py/client.py/state_machine.py); this packet builds only the interruptible-wait helper they will share. (c) No cross-process rate-limit guard file and no pre-emptive token-bucket pacing (HM12-C14) — the deep-eval ranks both low priority; the guard file is C2 and rides a later MP packet if it ships at all. (d) No empty-completion/degenerate-output detection (HM01-C10) — deferred per the deep-eval's minimum-viable ordering; MP-5's garbled-output detection depends on the taxonomy but is not built here. (e) No failover handoff briefing and no capability invalidation on observed failure — the E items, deferred past the minimum viable version. (f) No double-gated raw-error surface in the UI — the fallback transition notice here is the slot+locality line only; raw error bodies never render (redaction stays at the response choke point, security/display_transport.py). (g) No changes to execute_with_retry()'s asyncio.sleep loop in error_recovery.py — that path serves the agent loop's non-HTTP retries and its interruption semantics belong to R-01's interrupt algebra, already merged.
+
+## 5. Target files
+- `halbert_core/halbert_core/model/rate_limiter.py`
+- `halbert_core/halbert_core/model/tier_router.py`
+- `halbert_core/halbert_core/agents/error_recovery.py`
+
+## 6. Dependencies
+
+activity_clock
+
+## 7. Effort
+
+**M** — M overall, decomposing as S+S+S+S per the deep-eval's own sizing ('the highest-leverage items — Retry-After fix, interruptible backoff, BackendIdentity — are S each'). Retry-After: one condition split plus a constant in rate_limiter.py (S). Interruptible backoff: one helper on the activity-clock dependency plus one call-site swap in tier_router.py (S; the helper is shared with MP-3 so the cost is paid once). Health-axis split: one classify-and-branch at tier_router.py:740-750 plus writing `_last_health_check` on the mark path (S). Breaker wiring: two new call sites (read in select_model/generate, success on the success path) plus moving two function-local imports (S). The reroute-notice rider is S of UI-adjacent text through the existing fallback branch. What keeps it from being S total: the four edits interact in one hot method (`TierRouter.generate()`'s retry loop, :685-761) and must land in the deep-eval's commit order (taxonomy → Retry-After+backoff → breaker → notice) with tests at each step, and the axis classification must distinguish auth-permanent from transient using GenerationError's status_code/headers without a model-name table — that classification table plus its tests is where the effort sits.
+
+## 8. UX rationale
+
+The only user-facing surface is the reroute notice, and it obeys every standing directive: one line, spoken as the computer in first person, grounded in the measured state ('the local slot did not answer' — a probe result, not a guess), naming the slot and locality, never a model id. Example register: 'My local connection did not answer, so this turn ran on a cloud connection.' It renders inside the one seamless conversation as a quiet system line on the turn it applies to — no modal, no badge, no conversation-list affordance, no emoji, colours from shared-tokens/tokens.css if rendered with any emphasis at all. The interruptible backoff has no visible surface beyond responsiveness: a `/stop` during a rate-limit wait now returns within half a second instead of sitting mute for up to 60 s. The breaker wiring is invisible except as an absence of the current pathology (a dead slot retried five times, each attempt a guaranteed failure and a guaranteed bill). Secure-turn posture tightens silently: an auth-permanent failure on a `:cloud` slot no longer flips the local slot's health entry, so a secure turn is not silently rerouted to cloud by an unrelated cloud-auth failure.
+
+## 9. Acceptance criteria
+
+1. A stubbed provider answering 429 with `Retry-After: 3600` produces a computed wait of exactly 600 s (not 60 s), and `RateLimiter.status()['blocked_remaining']` reflects the un-clamped window; a 429 with no Retry-After still caps exponential backoff at `_max_backoff` (60 s). 2. During a backoff wait, asserting the turn's stop/activity signal wakes the sleeper in ≤0.5 s and abandons the retry loop (no further provider call is made after the stop). 3. A GenerationError with status 401 marks `_model_health[cache_key] = False` AND writes `_last_health_check[cache_key]` at mark time; a GenerationError with status 529 leaves `_model_health` untouched and is visible only through `rate_limiter.status()` and the breaker failure count. 4. After 5 consecutive recorded failures for one model id (`circuit_breaker_threshold`), the next `select_model` pass skips that model without a provider call, and a subsequent success calls `record_success`, resetting the count — `is_circuit_open` and `record_success` each have at least one production call site (verified by grep). 5. A fallback that crosses from a local slot to a `:cloud` slot emits exactly one notice line containing the slot's locality, and the notice text contains no model id (asserted by a test that scans the emitted string against the configured model ids). 6. No new hard dependency; `is_local_model()` remains the only locality judge (no new loopback-URL probe added).
+
+## 10. Verification (measured state, not model judgment)
+
+Baseline first (main is not green): `arch -arm64 .venv/bin/python -m pytest halbert_core/tests -x -q 2>&1 | tail -5` on the merge-base, saved for comparison. Then the packet's measured checks: `arch -arm64 .venv/bin/python -m pytest halbert_core/tests -k "rate_limiter or circuit_breaker or interruptible or health_axis or reroute_notice" -q` — new tests written by this packet must pass, asserting: wait==600.0 for Retry-After: 3600 (fake clock, no real sleep); the interruptible wait returns in <0.5 s wall-clock after the activity stamp fires (monotonic-timestamp assertion, not a mock-call count); `_last_health_check` is written on the 401 mark path and untouched on the 529 path; the open breaker makes `select_model` skip the candidate with zero provider calls (provider mock's call_count == 0). Static checks: `grep -rn "is_circuit_open\|record_success" halbert_core/halbert_core --include="*.py" | grep -v test` shows at least one production caller for each (today: zero); `grep -n "time.sleep" halbert_core/halbert_core/model/tier_router.py` returns nothing after the swap. Exit code 0 on the targeted run with zero NEW failures versus the saved baseline is the bar.
+
+## 11. Exclusions
+
+Excluded with destinations: (1) Idle-gap stream timeout (MP-3 C7), the aiohttp abort hook (MP-3 M3), the stale-streak gate (MP-3 M1), the leak-safe scheduler (MP-3 M5) — all to MP-3; the deep-eval explicitly co-schedules them there, sharing only this packet's interruptible-wait helper. (2) Cross-process rate-limit guard file (MP-2 C2) and token-bucket pacing (HM12-C14) — M5b tail per the deep-eval's minimum-viable ordering ('low priority'); not required for any acceptance line here. (3) Failover handoff briefing and capability-invalidation-on-failure (the E items) — M5b tail; they consume this packet's FailureScope but are not built with it. (4) Empty/degenerate-completion detection (HM01-C10) — to MP-5's garbled-output work, which depends on this packet's taxonomy but owns the detection. (5) MCP per-server breaker call sites — to MCP-C; this packet only makes the shared ErrorRecoveryManager breaker readable, per §3.8's one-primitive rule. (6) Typed `turn_exit_reason` unification with CH-A's cause axis — §3.10 names the shared TurnContext design; this packet supplies only the provider-failure half of the vocabulary and does not refactor state_machine.py's finalize edge (that is SP-3/CH-A scope). (7) The double-gated raw-error fallback surface — dropped per the no-raw-secrets posture; the slot+locality notice is the entire user-visible fallback surface. (8) execute_with_retry()'s internal asyncio.sleep — left as-is; its interruption belongs to R-01's merged interrupt algebra, and touching it here would double-gate the same path.
+
+---
+
+## OSS reference
+
+Greenfield — no direct OSS reference; see the deep-eval.
+
+## Repo traps
+
+- Every Python test run needs the `arch -arm64` prefix: `arch -arm64 .venv/bin/python -m pytest halbert_core/tests`.
+- From a git worktree use `arch -arm64 ./wt_pytest.py halbert_core/tests`, NEVER bare pytest (the editable install pins halbert_core to the MAIN tree).
+- `main` is NOT green. Known-red baseline (2026-09-11): test_agent_model_override.py, test_agent_model_selected_event.py, test_no_model_names_in_user_facing_source.py, test_num_ctx.py (~23 failures). A failure is yours iff absent from this baseline.
+- Work in a git worktree; narrow commits; concurrent sessions edit this repo.
+- NEVER add Co-Authored-By or 'Generated with …' trailers. Subject + body only.
+- No emoji anywhere. Colours only from shared-tokens/tokens.css (run scripts/check_contrast.py).
+- Never name/recommend an AI model on any user-facing surface; connection slots, not model menus.
+- Model locality: is_local_model() (model/llm_config.py:181) is the ONLY judge; :cloud tag is primary.
+- Feature gating: has_capability() (capabilities.py:499); never _is_home_variant.
+- Redaction: ingestion/redaction_registry.py enforced at security/display_transport.py; scrub BEFORE the model.
+- Commands staged from the UI are staged, never executed.
+- No users yet: no migrations/back-compat shims unasked; leave superseded data on disk, unread, never delete.
+- Line references drift: re-anchor by grep before editing; a failed anchor is a rebase signal, not a spec change.
+- Modify only this packet's Target files. .handoff/ is correspondence, not authority (ROADMAP.md + DECISIONS.md are the spine).
