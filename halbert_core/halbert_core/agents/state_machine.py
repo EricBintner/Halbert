@@ -1668,7 +1668,10 @@ class AgentStateMachine:
                     # nothing about *what* was refused, and left the call at
                     # status="pending" so _already_called() could not stop the model
                     # proposing the identical command again.
-                    rejected = self.ctx.tool_calls[-1] if self.ctx.tool_calls else None
+                    rejected = next(
+                        (tc for tc in self.ctx.tool_calls if tc.id == action_id),
+                        None,
+                    )
                     if rejected is not None and rejected.id == action_id:
                         rejected.status = "error"
                         rejected.error = "rejected by user"
@@ -3423,7 +3426,30 @@ class AgentStateMachine:
         
         # Route based on tool calls or CRAG result
         if hasattr(response, 'tool_calls') and response.tool_calls:
-            tool_call = response.tool_calls[0]
+            # SP-3: dispatch EVERY tool call in the response, not just the
+            # first. The pre-fix code read ``response.tool_calls[0]`` and
+            # silently dropped the rest — a local model emitting two calls in
+            # one turn lost the second with nothing reflected to the model.
+            #
+            # Thread-meta calls are still handled inline one at a time (they
+            # mutate context and re-plan immediately, so batching them with
+            # executor calls would interleave side effects with PLANNING
+            # round-trips in a way the meta-tool budget does not expect). A
+            # response whose FIRST call is a meta-tool is handled exactly as
+            # before; any further calls ride the next PLANNING re-entry.
+            #
+            # Executor/read/search calls are staged in order as pending
+            # ToolCalls; the handlers drain them one per loop via
+            # ``_next_pending_tool_call`` (first unsettled), so all run.
+            first = response.tool_calls[0]
+            if first.function.name not in THREAD_META_TOOLS:
+                # Executor/read/search path: stage every call, route to the
+                # first pending one. This is a generator delegation.
+                async for event in self._route_tool_calls(response):
+                    yield event
+                return
+
+            tool_call = first
             tool_name = tool_call.function.name
             tool_args = tool_call.function.arguments
 
@@ -3472,34 +3498,6 @@ class AgentStateMachine:
                 yield await self._transition(AgentState.PLANNING)
                 return
 
-            if self._already_called(tool_name, tool_args):
-                # Same tool, same arguments, already run this turn. Re-running
-                # it cannot teach the model anything new — it just burns a loop
-                # (and repeats the side effect, for tools that have one) until
-                # max_loops ends the turn. Answer with what we have instead.
-                logger.info(f"PLANNING: {tool_name} already ran this turn, not repeating")
-                self.ctx.add_observation(
-                    f"{tool_name} was already run this turn with the same "
-                    "arguments; its result is above."
-                )
-                yield await self._transition(AgentState.REFLECTING)
-                return
-
-            tc = ToolCall(
-                id=str(uuid.uuid4())[:8],
-                name=tool_name,
-                args=tool_args
-            )
-            self.ctx.add_tool_call(tc)
-
-            # Route based on tool type
-            if tool_name in _SEARCH_ROUTED_TOOLS:
-                yield await self._transition(AgentState.SEARCHING)
-            elif tool_name in ["read_file", "read_config", "cat"]:
-                yield await self._transition(AgentState.READING)
-            else:
-                yield await self._transition(AgentState.EXECUTING)
-        
         elif self.ctx.crag_action == CRAGAction.CORRECT:
             yield await self._transition(AgentState.REFLECTING)
 
@@ -3531,6 +3529,95 @@ class AgentStateMachine:
             and tc.status in ("success", "error")
             for tc in self.ctx.tool_calls
         )
+
+    def _next_pending_tool_call(self) -> Optional["ToolCall"]:
+        """The first tool call that has not run yet, or None.
+
+        SP-3: the handlers drain staged calls one per loop. A call is pending
+        while its ``status`` is still the default; once a handler settles it
+        (``success``/``error``) the next pending call becomes the one to run.
+        Reading the *first* pending call — rather than ``tool_calls[-1]`` — is
+        what lets a multi-call response execute all of its calls in order
+        instead of only the most recent.
+        """
+        for tc in self.ctx.tool_calls:
+            if tc.status == "pending":
+                return tc
+        return None
+
+    async def _route_tool_calls(self, response: Any) -> AsyncIterator[StreamEvent]:
+        """Stage every executor/read/search tool call and route to the first.
+
+        SP-3. The model's response may carry several tool calls. Each becomes a
+        pending :class:`ToolCall` on the context (status ``"pending"``), so the
+        full set is reflected in the turn and nothing is silently dropped. The
+        already-called guard applies per call: a call identical to one that
+        already settled this turn is skipped (with an observation), not
+        re-staged. We then transition toward the *first* pending call's state;
+        the handlers drain the rest across subsequent PLANNING re-entries via
+        :meth:`_next_pending_tool_call`.
+
+        A ``requires_confirmation`` result on call N does not drop calls
+        N+1… — they are already staged pending, and resume once confirmation
+        settles (the executor's AWAITING_CONFIRMATION path leaves the pending
+        calls in place for the next loop).
+        """
+        staged: List["ToolCall"] = []
+        skipped: List[str] = []
+        for call in response.tool_calls:
+            name = call.function.name
+            args = call.function.arguments
+            if name in THREAD_META_TOOLS:
+                # Meta-tools are handled inline at the dispatch site, not here;
+                # if one shows up past the first position it rides the next
+                # PLANNING re-entry rather than interleaving with executor side
+                # effects. Stage nothing for it.
+                continue
+            if self._already_called(name, args):
+                logger.info(f"PLANNING: {name} already ran this turn, not repeating")
+                skipped.append(name)
+                continue
+            tc = ToolCall(
+                id=str(uuid.uuid4())[:8],
+                name=name,
+                args=args,
+            )
+            self.ctx.add_tool_call(tc)
+            staged.append(tc)
+
+        if skipped:
+            self.ctx.add_observation(
+                "Already ran this turn with the same arguments (results above): "
+                + ", ".join(skipped)
+                + "."
+            )
+
+        if not staged:
+            # Everything was a duplicate or a meta-tool; nothing new to run.
+            if not skipped:
+                self.ctx.add_observation(
+                    "No executable tool call in that response; answer with what "
+                    "you have."
+                )
+            yield await self._transition(AgentState.REFLECTING)
+            return
+
+        if len(staged) > 1:
+            # Reflect the full batch so the model knows every call was accepted
+            # and will run in order — this is the data-loss fix made visible.
+            self.ctx.add_observation(
+                f"Running {len(staged)} tool calls in order: "
+                + ", ".join(tc.name for tc in staged)
+                + "."
+            )
+
+        first = staged[0]
+        if first.name in _SEARCH_ROUTED_TOOLS:
+            yield await self._transition(AgentState.SEARCHING)
+        elif first.name in ["read_file", "read_config", "cat"]:
+            yield await self._transition(AgentState.READING)
+        else:
+            yield await self._transition(AgentState.EXECUTING)
 
     def _thread_receipts(self) -> List[Dict[str, Any]]:
         """The thread receipts on the retrieved context, oldest first.
@@ -3859,7 +3946,7 @@ class AgentStateMachine:
         logger.info(f"SEARCHING: loop={self.ctx.loop_count}")
         
         # Get pending tool call or use query
-        tool_call = self.ctx.tool_calls[-1] if self.ctx.tool_calls else None
+        tool_call = self._next_pending_tool_call()
 
         # Whatever the model asked to search for, if it said. This used to be
         # read only for "search"/"web_search", so a recall_memory(query=...)
@@ -3950,7 +4037,7 @@ class AgentStateMachine:
         self.ctx.loop_count += 1
         logger.info(f"READING: loop={self.ctx.loop_count}")
         
-        tool_call = self.ctx.tool_calls[-1] if self.ctx.tool_calls else None
+        tool_call = self._next_pending_tool_call()
         
         if not tool_call:
             self.ctx.add_observation("No file specified to read")
@@ -4226,7 +4313,7 @@ class AgentStateMachine:
         self.ctx.loop_count += 1
         logger.info(f"EXECUTING: loop={self.ctx.loop_count}")
         
-        tool_call = self.ctx.tool_calls[-1] if self.ctx.tool_calls else None
+        tool_call = self._next_pending_tool_call()
         
         if not tool_call:
             self.ctx.add_observation("No tool call to execute")
