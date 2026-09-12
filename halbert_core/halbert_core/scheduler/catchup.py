@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from enum import Enum
 from pathlib import Path
 from typing import List, Optional, Tuple
@@ -82,6 +82,37 @@ def compute_grace_seconds(
 def clamp_proposed_delay(proposed_s: float, min_s: float, max_s: float) -> float:
     """The agent proposes its next-run delay; configuration clamps it."""
     return max(min_s, min(max_s, proposed_s))
+
+
+# Default tolerance for detect_clock_jump: scheduling jitter (a slow tick,
+# GC pause, busy CPU) routinely runs a few seconds behind; only a gap wider
+# than this is treated as the machine having been asleep.
+CLOCK_JUMP_TOLERANCE_S = 30.0
+
+
+def detect_clock_jump(
+    prev_monotonic: float,
+    prev_wall: datetime,
+    now_monotonic: float,
+    now_wall: datetime,
+    *,
+    tolerance_s: float = CLOCK_JUMP_TOLERANCE_S,
+) -> Optional[timedelta]:
+    """A wall-clock gap the monotonic clock did not see (A06-G3, second half).
+
+    ``misfire_grace_time`` only covers a process that was alive but busy --
+    APScheduler never got to schedule anything while the machine was
+    actually suspended (laptop sleep), so the missed slots need to be
+    detected another way. The wall clock keeps advancing through sleep; the
+    monotonic clock does not. Returns the excess (wall_delta - mono_delta)
+    once it exceeds ``tolerance_s``, else ``None``.
+    """
+    wall_delta = (now_wall - prev_wall).total_seconds()
+    mono_delta = now_monotonic - prev_monotonic
+    gap = wall_delta - mono_delta
+    if gap > tolerance_s:
+        return timedelta(seconds=gap)
+    return None
 
 
 def _grace_for(job: dict, grace_s: Optional[float], one_shot_grace_s: float) -> float:
@@ -169,6 +200,39 @@ def decide_catchup(
         + tuple(CatchupEntry(j, CatchupAction.NOT_MISSED) for j in not_missed),
         deferred=deferred,
     )
+
+
+def last_due_slot(trigger, now: datetime, *, horizon_s: float = 7 * 86400.0,
+                  max_steps: int = 64) -> Optional[datetime]:
+    """The most recent slot at or before ``now`` for an APScheduler trigger.
+
+    Moved here (R-03, A06-G1/A15-G1/G2) from ``dashboard/app.py`` so both
+    the boot catch-up path and a live cron fire's own occurrence-instant
+    computation (``executor._wrap_task``) share one implementation.
+
+    APScheduler 3.x has no ``get_prev_fire_time``, so binary-search the
+    anchor whose "next slot" is the last one not after ``now``:
+    ``f(anchor) = get_next_fire_time(None, anchor)`` is monotonic, the last
+    due slot is ``f`` evaluated just below the point where ``f`` jumps past
+    ``now``, and the search is bounded regardless of how fast the cron
+    runs (a forward walk from a horizon is not — a 15-minute cron walks
+    672 slots in 7 days). None when no slot lies in the window.
+    """
+    lo = now - timedelta(seconds=horizon_s)
+    hi = now
+    first = trigger.get_next_fire_time(None, lo)
+    if first is None or first > now:
+        return None  # no slot between the horizon and now
+    for _ in range(max_steps):
+        mid = lo + (hi - lo) / 2
+        cand = trigger.get_next_fire_time(None, mid)
+        if cand is not None and cand <= now:
+            lo = mid
+        else:
+            hi = mid
+        if hi - lo <= timedelta(microseconds=1):
+            break
+    return trigger.get_next_fire_time(None, lo)
 
 
 def write_retirement_diagnostic(directory, entry: CatchupEntry) -> Path:

@@ -124,3 +124,93 @@ def test_receipts_survive_reopen(tmp_path):
     reopened = RunReceiptStore(path)
     assert reopened.status(rid) == "blocked_config"
     assert reopened.occurrence_completed("j", 99.0)
+
+
+# -- A06-G9: a corrupt receipts.json is contained, not fatal -----------------
+
+
+def test_a_truncated_file_does_not_crash_construction(tmp_path):
+    path = tmp_path / "receipts.json"
+    path.write_text('{"receipts": {"j:abc123": {"id": "j:abc', encoding="utf-8")
+    store = RunReceiptStore(path)  # must not raise
+    assert store.recover_on_boot() == []
+
+
+def test_a_top_level_list_does_not_crash_construction(tmp_path):
+    path = tmp_path / "receipts.json"
+    path.write_text("[1, 2, 3]", encoding="utf-8")
+    store = RunReceiptStore(path)  # must not raise
+    assert store.recover_on_boot() == []
+
+
+def test_a_corrupt_file_is_moved_aside_not_deleted(tmp_path):
+    path = tmp_path / "receipts.json"
+    original = "not json at all"
+    path.write_text(original, encoding="utf-8")
+    RunReceiptStore(path)
+    # the corrupt file is preserved somewhere under the same directory,
+    # never silently discarded
+    siblings = list(tmp_path.iterdir())
+    quarantined = [p for p in siblings if p != path and p.name.startswith("receipts.json")]
+    assert len(quarantined) == 1
+    assert quarantined[0].read_text(encoding="utf-8") == original
+    # the original path is not left behind holding the corrupt bytes
+    assert not path.exists()
+
+
+def test_a_contained_store_still_writes_new_receipts(tmp_path):
+    path = tmp_path / "receipts.json"
+    path.write_text("{not valid json", encoding="utf-8")
+    store = RunReceiptStore(path)
+    rid = store.mark_started("j", owner_pid=os.getpid())
+    assert store.status(rid) == "running"
+    reopened = RunReceiptStore(path)
+    assert reopened.status(rid) == "running"
+
+
+# ---------------------------------------------------------------------------
+# A06-G5: receipts.json has no retention -- every write rewrites and fsyncs
+# the whole file, unbounded, forever.
+# ---------------------------------------------------------------------------
+
+
+def test_closed_receipts_are_bounded(tmp_path):
+    store = RunReceiptStore(tmp_path / "receipts.json", max_receipts=3)
+    rids = []
+    for i in range(5):
+        rid = store.mark_started(f"j{i}", owner_pid=os.getpid())
+        store.mark_finished(rid, "ok")
+        rids.append(rid)
+
+    remaining = {r for r in rids if r in store._receipts}
+    assert len(remaining) == 3
+    # oldest evicted first
+    assert rids[0] not in remaining and rids[1] not in remaining
+    assert rids[2] in remaining and rids[3] in remaining and rids[4] in remaining
+
+
+def test_a_running_receipt_is_never_pruned_regardless_of_count(tmp_path):
+    store = RunReceiptStore(tmp_path / "receipts.json", max_receipts=2)
+    running_rid = store.mark_started("still-running", owner_pid=os.getpid())
+    for i in range(5):
+        rid = store.mark_started(f"j{i}", owner_pid=os.getpid())
+        store.mark_finished(rid, "ok")
+
+    assert running_rid in store._receipts
+    assert store.status(running_rid) == "running"
+
+
+def test_the_default_retention_matches_hermes(tmp_path):
+    store = RunReceiptStore(tmp_path / "receipts.json")
+    assert store.max_receipts == 1000
+
+
+def test_pruning_survives_reopen(tmp_path):
+    path = tmp_path / "receipts.json"
+    store = RunReceiptStore(path, max_receipts=2)
+    for i in range(4):
+        rid = store.mark_started(f"j{i}", owner_pid=os.getpid())
+        store.mark_finished(rid, "ok")
+
+    reopened = RunReceiptStore(path, max_receipts=2)
+    assert len(reopened._receipts) == 2

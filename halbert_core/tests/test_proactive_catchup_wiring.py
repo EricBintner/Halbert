@@ -26,6 +26,7 @@ pytest.importorskip("fastapi")
 from halbert_core.dashboard import app as dashboard_app  # noqa: E402
 from halbert_core.scheduler.job import Job  # noqa: E402
 from halbert_core.scheduler.monitor_hash import MonitorHashGate  # noqa: E402
+from halbert_core.scheduler.run_receipts import RunReceiptStore  # noqa: E402
 
 T0 = datetime(2026, 9, 7, 15, 0, tzinfo=timezone.utc)
 
@@ -38,23 +39,37 @@ CRONS = {
 
 class _FakeExecutor:
     """Records one-time catch-up scheduling; the catch-up path only needs
-    ``schedule_one_time`` and the timezone name."""
+    ``schedule_one_time`` and the timezone name. ``receipts``, when given,
+    is a real ``RunReceiptStore`` (or any object with ``occurrence_completed``)
+    so a test can exercise the R-03 occurrence guard; the production
+    executor always has one, but the guard is written to fail soft when it
+    is absent, which is what a bare ``_FakeExecutor()`` exercises."""
 
     timezone = "UTC"
 
-    def __init__(self):
+    def __init__(self, receipts=None):
         self.one_time = []
+        if receipts is not None:
+            self.receipts = receipts
 
     def schedule_one_time(self, *, job_id, task_func, run_at, **kwargs):
-        self.one_time.append({"job_id": job_id, "task": task_func, "run_at": run_at})
+        self.one_time.append({"job_id": job_id, "task": task_func, "run_at": run_at, **kwargs})
 
 
-def _spec(job_id, task=lambda: None, cron=None):
-    return {"task": task, "cron_expr": dict(cron or CRONS[job_id])}
+def _spec(job_id, task=lambda: None, cron=None, one_shot=False):
+    return {"task": task, "cron_expr": dict(cron or CRONS[job_id]), "one_shot": one_shot}
 
 
-def _prior(job_id, *, ran_at=None, never_ran=False, **job_kwargs):
-    job = Job(id=job_id, task="t", schedule="cron", **job_kwargs)
+def _prior(job_id, *, ran_at=None, never_ran=False, cron=None, state="completed",
+           **job_kwargs):
+    # Defaults to the SAME schedule this boot registers (CRONS[job_id]):
+    # "nothing about the schedule changed, only time passed" is the common
+    # case every test but the schedule-change ones itself wants. Pass
+    # `cron=` to simulate a prior boot's now-superseded schedule. Defaults
+    # to state="completed": "the last run genuinely succeeded" is the
+    # common case every test but the failed-slot ones itself wants (A15-G8).
+    schedule = str(cron if cron is not None else CRONS.get(job_id, {}))
+    job = Job(id=job_id, task="t", schedule=schedule, state=state, **job_kwargs)
     if never_ran:
         return job
     job.completed_at = (
@@ -130,6 +145,97 @@ def test_morning_report_catches_up_only_within_twelve_hours(tmp_path):
     assert stale.one_time == []
 
 
+# ---------------------------------------------------------------------------
+# A15-G4/A06-G10: a schedule edit re-anchors without firing -- a slot that
+# only exists because the cron expression changed since the last boot is
+# not a missed run.
+# ---------------------------------------------------------------------------
+
+def test_an_edited_schedule_does_not_catch_up_its_new_slot(tmp_path):
+    # Last boot ran detector_sweep on a completely different cadence
+    # (once a day at 20:00); this boot edits it to */6h. The 06:12 slot
+    # this boot's schedule implies "missed" never existed under the old
+    # schedule -- it must re-anchor silently, not fire a catch-up.
+    ex = _FakeExecutor()
+    specs = {"detector_sweep": _spec("detector_sweep")}  # this boot: */6h
+    prior = {"detector_sweep": _prior("detector_sweep", cron={"hour": 20, "minute": 0})}
+
+    result = _run(ex, specs, prior, gate=_ungated(tmp_path))
+
+    assert result.get("detector_sweep") != "caught_up"
+    assert ex.one_time == []
+
+
+def test_an_unchanged_schedule_still_catches_up(tmp_path):
+    # The common case, pinned against a regression in the guard itself:
+    # no edit at all still catches up exactly as before.
+    ex = _FakeExecutor()
+    specs = {"detector_sweep": _spec("detector_sweep")}
+    prior = {"detector_sweep": _prior("detector_sweep")}  # same schedule by default
+
+    result = _run(ex, specs, prior, gate=_ungated(tmp_path))
+
+    assert result == {"detector_sweep": "caught_up"}
+
+
+def test_a_prior_record_with_no_schedule_at_all_still_catches_up(tmp_path):
+    # A record from before this field was populated (or any other reason
+    # it is blank) must fail soft to "assume unchanged", not "assume
+    # edited" -- the guard is a refinement, not a new way to lose catch-up.
+    ex = _FakeExecutor()
+    specs = {"detector_sweep": _spec("detector_sweep")}
+    prior = {"detector_sweep": _prior("detector_sweep", never_ran=True)}
+    prior["detector_sweep"].schedule = ""
+
+    result = _run(ex, specs, prior, gate=_ungated(tmp_path))
+
+    assert result == {"detector_sweep": "caught_up"}
+
+
+# ---------------------------------------------------------------------------
+# A15-G3: a job already armed by boot receipt-recovery is not double-armed
+# by boot catch-up too (the audit's own proposed _boot_recovery_pending
+# guard is broken -- executor.py drains that set during registration,
+# before catch-up ever runs, so checking it here would always see it empty;
+# _boot_recovery_armed is a separate, boot-scoped set that is only ever
+# added to, never drained, during the same boot).
+# ---------------------------------------------------------------------------
+
+def test_a_job_already_armed_by_boot_recovery_is_not_double_armed(tmp_path):
+    ex = _FakeExecutor()
+    ex._boot_recovery_armed = {"detector_sweep"}
+    specs = {
+        "detector_sweep": _spec("detector_sweep"),
+        "timeline_retention": _spec("timeline_retention"),
+    }
+    prior = {
+        "detector_sweep": _prior("detector_sweep"),
+        "timeline_retention": _prior("timeline_retention"),
+    }
+
+    result = _run(ex, specs, prior, gate=_ungated(tmp_path))
+
+    assert result.get("detector_sweep") != "caught_up"
+    assert not any(r["job_id"].startswith("detector_sweep") for r in ex.one_time)
+    # the guard is job-specific, not a blanket suppression of the whole run
+    assert result.get("timeline_retention") == "caught_up"
+    assert any(r["job_id"].startswith("timeline_retention") for r in ex.one_time)
+
+
+def test_the_guard_is_absent_when_no_boot_recovery_armed_anything(tmp_path):
+    # A bare _FakeExecutor (no _boot_recovery_armed attribute at all) must
+    # not be treated as "everything is guarded" -- fail soft to "nothing
+    # is guarded", the same way the occurrence-store check already does.
+    ex = _FakeExecutor()
+    specs = {"detector_sweep": _spec("detector_sweep")}
+    prior = {"detector_sweep": _prior("detector_sweep")}
+    boot = datetime(2026, 9, 7, 7, 0, tzinfo=timezone.utc)
+
+    result = _run(ex, specs, prior, now=boot, gate=_ungated(tmp_path))
+
+    assert result == {"detector_sweep": "caught_up"}
+
+
 def test_idempotent_housekeeping_has_no_age_bound(tmp_path):
     """detector_sweep missed by most of a day still catches up — it is
     idempotent, so a served slot can never hurt."""
@@ -160,6 +266,113 @@ def test_slot_already_served_is_not_caught_up(tmp_path):
     }
     assert _run(ex, specs, prior, gate=_ungated(tmp_path)) == {}
     assert ex.one_time == []
+
+
+# ---------------------------------------------------------------------------
+# A15-G8: a failed run is not "served" -- back off briefly (a transient
+# failure should not spin into an immediate retry loop), then replay.
+# Scenario: morning_report's 08:00 run fails because the findings store
+# was locked; the user restarts 20 minutes later; the old logic saw
+# completed_at >= due and skipped, silently, forever -- no report that day.
+# ---------------------------------------------------------------------------
+
+def test_a_failed_run_still_catches_up_after_its_backoff_window(tmp_path):
+    ex = _FakeExecutor()
+    specs = {"morning_report": _spec("morning_report")}
+    # 08:00 slot ran (and failed) at 08:01; boot is 21 minutes later --
+    # morning_report's backoff is min(period/2, 15min) = 15min, elapsed.
+    prior = {
+        "morning_report": _prior(
+            "morning_report",
+            ran_at=datetime(2026, 9, 7, 8, 1, tzinfo=timezone.utc),
+            state="failed",
+        )
+    }
+    boot = datetime(2026, 9, 7, 8, 22, tzinfo=timezone.utc)
+
+    result = _run(ex, specs, prior, now=boot, gate=_ungated(tmp_path))
+
+    assert result == {"morning_report": "caught_up"}
+    assert ex.one_time[0]["job_id"] == "morning_report:catchup"
+
+
+def test_a_failed_run_still_backs_off_within_its_window(tmp_path):
+    ex = _FakeExecutor()
+    specs = {"morning_report": _spec("morning_report")}
+    # Same failure, but the restart happens only 5 minutes later -- still
+    # inside the 15-minute backoff, so no immediate replay yet.
+    prior = {
+        "morning_report": _prior(
+            "morning_report",
+            ran_at=datetime(2026, 9, 7, 8, 1, tzinfo=timezone.utc),
+            state="failed",
+        )
+    }
+    boot = datetime(2026, 9, 7, 8, 6, tzinfo=timezone.utc)
+
+    result = _run(ex, specs, prior, now=boot, gate=_ungated(tmp_path))
+
+    assert result.get("morning_report") != "caught_up"
+    assert ex.one_time == []
+
+
+def test_a_completed_run_is_served_forever_unlike_a_failed_one(tmp_path):
+    # Regression guard: only 'failed' gets the backoff/expiry treatment. A
+    # genuinely completed run stays served long past any backoff window --
+    # the exact boot timing that replays a 'failed' slot above must NOT
+    # replay a 'completed' one.
+    ex = _FakeExecutor()
+    specs = {"morning_report": _spec("morning_report")}
+    prior = {
+        "morning_report": _prior(
+            "morning_report",
+            ran_at=datetime(2026, 9, 7, 8, 1, tzinfo=timezone.utc),
+            state="completed",
+        )
+    }
+    boot = datetime(2026, 9, 7, 8, 22, tzinfo=timezone.utc)  # same timing as the replay test
+
+    result = _run(ex, specs, prior, now=boot, gate=_ungated(tmp_path))
+
+    assert result.get("morning_report") != "caught_up"
+    assert ex.one_time == []
+
+
+def test_occurrence_already_completed_overrides_a_blanked_job_record(tmp_path):
+    """R-03 (A06-G1/A15-G1/G2, own-bug 1's other half): the occurrence store
+    is authoritative even when the parent job record was blanked by a
+    re-registration — e.g. a slot served by an earlier catch-up run, which
+    credits the PARENT's occurrence rather than its own sibling id."""
+    ex = _FakeExecutor(receipts=RunReceiptStore(tmp_path / "receipts.json"))
+    due = datetime(2026, 9, 7, 4, 37, tzinfo=timezone.utc)
+    ex.receipts.completed_occurrence("timeline_retention", due.isoformat())
+    specs = {"timeline_retention": _spec("timeline_retention")}
+    # never_ran: the job record itself has no last-run facts at all, which
+    # would normally look like an unmissed... i.e. missed, unserved slot.
+    prior = {"timeline_retention": _prior("timeline_retention", never_ran=True)}
+
+    result = _run(ex, specs, prior, gate=_ungated(tmp_path))
+
+    assert result == {}
+    assert ex.one_time == []
+
+
+def test_catchup_credits_the_parent_occurrence_for_the_missed_slot(tmp_path):
+    """The scheduled run must record the ORIGINAL missed slot (due_at)
+    against the PARENT id — not "now" (run_at) and not the ':catchup'
+    sibling id — or the next boot's occurrence check could never match it."""
+    ex = _FakeExecutor(receipts=RunReceiptStore(tmp_path / "receipts.json"))
+    specs = {"timeline_retention": _spec("timeline_retention")}
+    prior = {"timeline_retention": _prior("timeline_retention")}
+
+    result = _run(ex, specs, prior, gate=_ungated(tmp_path))
+
+    assert result == {"timeline_retention": "caught_up"}
+    (run,) = ex.one_time
+    assert run["job_id"] == "timeline_retention:catchup"
+    assert run["occurrence_job_id"] == "timeline_retention"
+    assert run["scheduled_instant"] == datetime(2026, 9, 7, 4, 37, tzinfo=timezone.utc).isoformat()
+    assert run["scheduled_instant"] != run["run_at"].isoformat()
 
 
 def test_fresh_install_catches_up_nothing(tmp_path):
@@ -196,7 +409,7 @@ def test_overflow_is_staggered_sixty_seconds(tmp_path):
         jid: _spec(jid, cron=fast)
         for jid in ("detector_sweep", "timeline_retention", "morning_report")
     }
-    prior = {jid: _prior(jid) for jid in specs}
+    prior = {jid: _prior(jid, cron=fast) for jid in specs}
     boot = datetime(2026, 9, 7, 9, 7, tzinfo=timezone.utc)
 
     result = _run(ex, specs, prior, now=boot, gate=_ungated(tmp_path))
@@ -338,7 +551,11 @@ def test_register_proactive_jobs_catches_up_a_missed_retention_slot(tmp_path, mo
         Job(
             id="timeline_retention",
             task="_prune_timeline",
-            schedule="cron",
+            # The real cron_expr string register_proactive_jobs registers
+            # below, unchanged since this "previous boot" — the A15-G4
+            # schedule-change guard must not mistake a matching schedule
+            # for an edited one.
+            schedule=str({"hour": 4, "minute": 37}),
             state="completed",
             completed_at=(datetime.now(timezone.utc) - timedelta(days=2)).isoformat(),
         )
@@ -384,3 +601,112 @@ def test_register_proactive_jobs_on_a_fresh_install_serves_nothing(tmp_path, mon
         "attunement_sweep", "detector_sweep", "timeline_retention",
     }
     ex.stop(wait=False)
+
+
+# ---------------------------------------------------------------------------
+# A15-G9: RETIRE (beyond grace, one-shot) writes its diagnostic instead of
+# silently discarding the job. No production proactive job is one-shot
+# today (one_shot defaults to False, unchanged) -- this proves the branch
+# does the right thing on the day something routes a one-shot spec through
+# this same catch-up path, instead of it being dead code that LOOKS wired.
+# ---------------------------------------------------------------------------
+
+def test_a_retired_one_shot_job_writes_a_diagnostic_file(tmp_path, monkeypatch):
+    monkeypatch.setenv("HALBERT_DATA_DIR", str(tmp_path / "data"))
+    ex = _FakeExecutor()
+    specs = {"detector_sweep": _spec("detector_sweep", one_shot=True)}
+    # Two days late, one-shot: ONE_SHOT_GRACE_S (120s) is long past.
+    prior = {"detector_sweep": _prior("detector_sweep")}
+    boot = datetime(2026, 9, 9, 15, 0, tzinfo=timezone.utc)
+
+    result = _run(ex, specs, prior, now=boot, gate=_ungated(tmp_path))
+
+    assert result.get("detector_sweep") == "retired"
+    assert ex.one_time == []
+    diagnostics = list((tmp_path / "data" / "scheduler").glob("*retire*"))
+    assert diagnostics, "no retirement diagnostic file was written"
+    assert "detector_sweep" in diagnostics[0].read_text(encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
+# A06-G7: the monitor gate suppressed only a boot catch-up replay before
+# this fix -- the REGULAR cron fire ran detector_sweep every cadence
+# regardless of whether its probed source had changed at all.
+# ---------------------------------------------------------------------------
+
+def test_the_regular_fire_is_suppressed_when_the_source_is_unchanged(tmp_path, monkeypatch):
+    monkeypatch.setenv("HALBERT_DATA_DIR", str(tmp_path / "data"))
+    calls = []
+    gated = dashboard_app._gate_regular_fire(
+        "detector_sweep", lambda: calls.append(1), probe=lambda: (True, "same output"),
+    )
+
+    first = gated()   # baseline established
+    second = gated()  # unchanged since baseline
+
+    assert calls == []
+    assert first == {"status": "suppressed", "reason": "monitor_source_unchanged"}
+    assert second == {"status": "suppressed", "reason": "monitor_source_unchanged"}
+
+
+def test_the_regular_fire_runs_when_the_source_changes(tmp_path, monkeypatch):
+    monkeypatch.setenv("HALBERT_DATA_DIR", str(tmp_path / "data"))
+    calls = []
+    probes = iter(["v1", "v2"])
+    gated = dashboard_app._gate_regular_fire(
+        "detector_sweep", lambda: calls.append(1) or "ran",
+        probe=lambda: (True, next(probes)),
+    )
+
+    gated()          # baseline
+    result = gated()  # changed -> runs
+
+    assert calls == [1]
+    assert result == "ran"
+
+
+def test_the_regular_fire_runs_when_the_gate_is_unavailable(tmp_path, monkeypatch):
+    # A directory HALBERT_DATA_DIR cannot create (e.g. a file sits where
+    # the dir should be) must fail open to running the task, never silently
+    # never-run it.
+    blocked = tmp_path / "not_a_dir"
+    blocked.write_text("x")
+    monkeypatch.setenv("HALBERT_DATA_DIR", str(blocked))
+    calls = []
+    gated = dashboard_app._gate_regular_fire(
+        "detector_sweep", lambda: calls.append(1) or "ran", probe=lambda: (True, "v"),
+    )
+
+    result = gated()
+
+    assert calls == [1]
+    assert result == "ran"
+
+
+def test_register_proactive_jobs_wires_the_regular_fire_through_the_gate(tmp_path, monkeypatch):
+    # register_proactive_jobs must pass a GATED task_func to
+    # schedule_cron_job for detector_sweep's regular fire, distinct from
+    # the unwrapped one it keeps for catch-up's own already-gated path.
+    from halbert_core.config.being_config import BeingConfig
+
+    monkeypatch.setenv("HALBERT_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setattr(dashboard_app, "_detector_sweep_probe", lambda: (True, "unchanged"))
+
+    scheduled = {}
+
+    class _RecordingExecutor(_FakeExecutor):
+        timezone = "UTC"
+
+        def schedule_cron_job(self, *, job_id, task_func, **kwargs):
+            scheduled[job_id] = task_func
+
+    ex = _RecordingExecutor()
+    dashboard_app.register_proactive_jobs(
+        ex, load_config=lambda: BeingConfig(morning_report={"enabled": False}),
+    )
+
+    sweep_task_func = scheduled["detector_sweep"]
+    first = sweep_task_func()   # baseline established
+    second = sweep_task_func()  # unchanged since baseline
+    assert first == {"status": "suppressed", "reason": "monitor_source_unchanged"}
+    assert second == {"status": "suppressed", "reason": "monitor_source_unchanged"}

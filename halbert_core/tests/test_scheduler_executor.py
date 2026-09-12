@@ -97,6 +97,40 @@ def test_schedule_one_time_accepts_a_local_closure(executor):
     assert "once" in {j["id"] for j in executor.get_scheduled_jobs()}
 
 
+class TestCadenceScaledMisfireGrace:
+    """R-03 Phase C (A06-G3): the flat 60s misfire_grace_time was tuned to
+    nothing in particular; a job missed while the process is alive but the
+    machine is briefly busy (not asleep -- that needs boot/wake catch-up,
+    a separate mechanism) should get a grace scaled to its own cadence,
+    the same halved-clamped rule the boot catch-up path already uses."""
+
+    def test_a_period_scales_the_grace(self, executor):
+        executor.start()
+        executor.schedule_cron_job(
+            job_id="morning_report", task_func=lambda: None,
+            cron_expr={"hour": 8, "minute": 0}, period_s=3600.0,
+        )
+        job = executor.scheduler.get_job("morning_report")
+        assert job.misfire_grace_time == 1800  # half of 1h, well inside [120s, 2h]
+
+    def test_a_long_period_clamps_to_the_two_hour_cap(self, executor):
+        executor.start()
+        executor.schedule_cron_job(
+            job_id="detector_sweep", task_func=lambda: None,
+            cron_expr={"hour": "*/6", "minute": 12}, period_s=6 * 3600.0,
+        )
+        job = executor.scheduler.get_job("detector_sweep")
+        assert job.misfire_grace_time == 7200  # half of 6h (10800s) clamps to the 2h cap
+
+    def test_no_period_keeps_todays_default(self, executor):
+        executor.start()
+        executor.schedule_cron_job(
+            job_id="adhoc", task_func=lambda: None, cron_expr={"minute": "*/5"},
+        )
+        job = executor.scheduler.get_job("adhoc")
+        assert job.misfire_grace_time == 60
+
+
 def test_apscheduler_store_is_in_memory(executor, data_dir):
     from apscheduler.jobstores.memory import MemoryJobStore
 
@@ -129,6 +163,177 @@ def test_wrapped_task_runs_off_the_main_thread(executor):
     assert "error" not in outcome, outcome.get("error")
     assert outcome["result"] == "ran"
     assert executor.scheduler_engine.get_job("bg").state == "completed"
+
+
+def _run_wrapped(executor, job_id, task, *, occurrence_job_id=None, scheduled_instant_fn=None):
+    from halbert_core.scheduler.job import Job
+
+    executor.scheduler_engine.add_job(Job(id=job_id, task="t", schedule="x"))
+    wrapped = executor._wrap_task(
+        job_id, task, max_retries=1, timeout_s=5,
+        occurrence_job_id=occurrence_job_id, scheduled_instant_fn=scheduled_instant_fn,
+    )
+    outcome = {}
+
+    def worker():
+        try:
+            outcome["result"] = wrapped()
+        except Exception as e:  # pragma: no cover
+            outcome["error"] = e
+
+    t = threading.Thread(target=worker)
+    t.start()
+    t.join(10)
+    if "error" in outcome:
+        raise outcome["error"]
+    return outcome.get("result")
+
+
+class TestOccurrenceIdempotency:
+    """R-03 (A06-G1/A15-G1/G2): occurrence_completed exists and is now
+    checked before dispatch and populated on completion -- previously the
+    primitive existed with zero production callers."""
+
+    def test_an_already_completed_occurrence_is_never_dispatched(self, executor):
+        calls = []
+        executor.receipts.completed_occurrence("morning_report", "2026-09-07T08:00:00+00:00")
+        result = _run_wrapped(
+            executor, "morning_report", lambda: calls.append(1) or "ran",
+            scheduled_instant_fn=lambda: "2026-09-07T08:00:00+00:00",
+        )
+        assert calls == []
+        assert result is None
+        # Skipped before dispatch: the job record is untouched (still pending),
+        # not marked completed for a run that never happened.
+        assert executor.scheduler_engine.get_job("morning_report").state == "pending"
+
+    def test_a_fresh_instant_runs_and_is_then_recorded_completed(self, executor):
+        instant = "2026-09-07T08:00:00+00:00"
+        result = _run_wrapped(
+            executor, "morning_report", lambda: "ran",
+            scheduled_instant_fn=lambda: instant,
+        )
+        assert result == "ran"
+        assert executor.receipts.occurrence_completed("morning_report", instant) is True
+
+    def test_no_instant_function_never_checks_or_records_an_occurrence(self, executor):
+        """A job with no cadence to compute an instant from (or a one-time
+        job with no scheduled_instant_fn at all) is unaffected — this is an
+        additive check, not a new requirement on every caller."""
+        result = _run_wrapped(executor, "adhoc", lambda: "ran")
+        assert result == "ran"
+
+    def test_occurrence_credits_a_different_id_than_the_execution_id(self, executor):
+        """A catch-up run executes under 'morning_report:catchup' but must
+        credit the PARENT job's occurrence — the same slot served by a
+        regular fire, a catch-up, or a boot recovery must read as served
+        either way (own-bug 1's other half: crediting a sibling id instead
+        of the parent record)."""
+        instant = "2026-09-07T08:00:00+00:00"
+        result = _run_wrapped(
+            executor, "morning_report:catchup", lambda: "caught up",
+            occurrence_job_id="morning_report",
+            scheduled_instant_fn=lambda: instant,
+        )
+        assert result == "caught up"
+        assert executor.receipts.occurrence_completed("morning_report", instant) is True
+        assert executor.receipts.occurrence_completed("morning_report:catchup", instant) is False
+
+
+def _read_receipts_dict(executor):
+    return {rid: dict(rec) for rid, rec in executor.receipts._receipts.items()}
+
+
+class TestResultProtocolAndRejectionReceipts:
+    """R-03 Phase B: own-bug 2 (a timeout retries a still-running task),
+    own-bug 3 / A06-G8 (a task's own {'status': 'error'} return is recorded
+    as a success), own-bug 5 (a guardrail rejection or safe-mode skip
+    leaves no receipt at all)."""
+
+    def test_a_task_returning_status_error_is_recorded_as_failed(self, executor):
+        # A task-level {'status': 'error'} return is now a genuine failure,
+        # the same as the task raising — the retry decorator sees it too
+        # (max_retries=1 here means no retry budget left, so it propagates).
+        with pytest.raises(RuntimeError, match="smtp unreachable"):
+            _run_wrapped(
+                executor, "morning_report",
+                lambda: {"status": "error", "error": "smtp unreachable"},
+            )
+        job = executor.scheduler_engine.get_job("morning_report")
+        assert job.state == "failed"
+        assert "smtp unreachable" in (job.error or "")
+        receipts = _read_receipts_dict(executor)
+        assert any(r["job_id"] == "morning_report" and r["status"] == "error"
+                  for r in receipts.values())
+
+    def test_a_task_returning_status_ok_is_still_a_success(self, executor):
+        result = _run_wrapped(
+            executor, "morning_report", lambda: {"status": "ok", "event_id": "e1"},
+        )
+        assert result == {"status": "ok", "event_id": "e1"}
+        assert executor.scheduler_engine.get_job("morning_report").state == "completed"
+
+    def test_a_plain_non_dict_result_is_still_a_success(self, executor):
+        # Most tasks return a plain string/None; the result-protocol check
+        # is additive and must not demand every task adopt a dict shape.
+        result = _run_wrapped(executor, "detector_sweep", lambda: "swept 3 issues")
+        assert result == "swept 3 issues"
+        assert executor.scheduler_engine.get_job("detector_sweep").state == "completed"
+
+    def test_a_timeout_is_not_retried_while_the_worker_still_runs(self, executor):
+        calls = []
+        started = threading.Event()
+
+        def slow():
+            calls.append(1)
+            started.set()
+            time.sleep(2)
+            return "too late"
+
+        from halbert_core.scheduler.job import Job
+
+        executor.scheduler_engine.add_job(Job(id="slow", task="t", schedule="x"))
+        wrapped = executor._wrap_task("slow", slow, max_retries=3, timeout_s=0.2)
+        # A timeout is handled (job marked failed, receipt closed) but not
+        # re-raised into the retry decorator, which is exactly what stops
+        # it from re-entering the task while the first attempt's worker
+        # thread — a daemon thread nothing can actually stop — is still
+        # alive underneath it.
+        assert wrapped() is None
+        assert started.wait(1)
+        assert len(calls) == 1
+        assert executor.scheduler_engine.get_job("slow").state == "failed"
+
+    def test_safe_mode_skip_leaves_a_blocked_config_receipt(self, guarded_executor):
+        executor = guarded_executor
+        # In-memory only: GuardrailEnforcer.enter_safe_mode() writes a real
+        # marker file at a cwd-relative path (a separate, pre-existing bug,
+        # not this test's concern) that would leak across unrelated test
+        # runs; setting the flag directly avoids that side effect.
+        executor.guardrail_enforcer.safe_mode_active = True
+        result = _run_wrapped(executor, "morning_report", lambda: "should not run")
+        assert result is None
+        receipts = _read_receipts_dict(executor)
+        assert any(
+            r["job_id"] == "morning_report" and r["status"] == "blocked_config"
+            for r in receipts.values()
+        )
+
+    def test_guardrail_rejection_leaves_a_blocked_config_receipt(self, guarded_executor, monkeypatch):
+        executor = guarded_executor
+        from halbert_core.autonomy import GuardrailViolation
+
+        def _reject(**kwargs):
+            raise GuardrailViolation("budget exceeded")
+
+        monkeypatch.setattr(executor.guardrail_enforcer, "check_all", _reject)
+        result = _run_wrapped(executor, "morning_report", lambda: "should not run")
+        assert result is None
+        receipts = _read_receipts_dict(executor)
+        assert any(
+            r["job_id"] == "morning_report" and r["status"] == "blocked_config"
+            for r in receipts.values()
+        )
 
 
 def test_one_time_job_runs_and_records_outcome(guarded_executor):

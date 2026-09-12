@@ -11,6 +11,8 @@ import asyncio
 import logging
 import json
 import os
+import threading
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, List, Optional
 from pathlib import Path
@@ -267,11 +269,18 @@ def register_proactive_jobs(
     try:
         sweep_task = create_autonomous_task('detector_sweep')
         sweep_func = lambda: sweep_task.execute({})  # noqa: E731
+        # A06-G7: the regular cron fire gets its own gate check here; boot
+        # catch-up (below) already gates its own one-time run via
+        # _monitor_allows before ever scheduling it, so catchup_specs keeps
+        # the UNWRAPPED sweep_func — gating it too would double-evaluate
+        # the probe moments apart and suppress the catch-up run against
+        # the baseline its own first evaluation just persisted.
         executor.schedule_cron_job(
             job_id='detector_sweep',
-            task_func=sweep_func,
+            task_func=_gate_regular_fire('detector_sweep', sweep_func),
             cron_expr={'hour': '*/6', 'minute': 12},
             description='Detector sweep (drop-ins, fstab, permissions)',
+            period_s=_PROACTIVE_PERIOD_S['detector_sweep'],
         )
         logger.info("Detector sweep scheduled every 6 hours")
         outcome['detector_sweep'] = 'scheduled'
@@ -335,6 +344,7 @@ def register_proactive_jobs(
             task_func=_prune_timeline,
             cron_expr={'hour': 4, 'minute': 37},
             description='Event ledger retention sweep (90 days)',
+            period_s=_PROACTIVE_PERIOD_S['timeline_retention'],
         )
         logger.info("Timeline retention sweep scheduled daily")
         outcome['timeline_retention'] = 'scheduled'
@@ -365,6 +375,7 @@ def register_proactive_jobs(
                 task_func=report_func,
                 cron_expr={'hour': hour, 'minute': minute},
                 description='Daily morning report',
+                period_s=_PROACTIVE_PERIOD_S['morning_report'],
             )
             logger.info(
                 f"Morning report scheduled daily at {hour:02d}:{minute:02d} "
@@ -486,8 +497,37 @@ def _detector_sweep_probe():
         except OSError:
             ok = False
 
+    def _surface_digest_only(path: str) -> None:
+        """Same change-detection as ``_surface``, without ever writing a
+        filename to the probe text (A15 own-bug 5, FD-12). The gate stores
+        this text verbatim in monitor_hashes.json, so ``~/.ssh``'s own
+        listing must never reach it — only a digest that still moves on
+        any name/size/mode/mtime change."""
+        nonlocal ok
+        try:
+            if not os.path.isdir(path):
+                lines.append(f"{path}: absent")
+                return
+            parts = []
+            for name in sorted(os.listdir(path)):
+                p = os.path.join(path, name)
+                try:
+                    st = os.stat(p)
+                    parts.append(
+                        f"{name} size={st.st_size} mode={oct(st.st_mode & 0o777)} "
+                        f"mtime={int(st.st_mtime)}"
+                    )
+                except OSError as e:
+                    parts.append(f"{name} stat-error={e.errno}")
+            digest = hashlib.sha256(
+                "\n".join(parts).encode("utf-8", errors="replace")
+            ).hexdigest()
+            lines.append(f"{path}: sha256={digest} (digest-only, permissions hygiene)")
+        except OSError:
+            ok = False
+
     _surface("/etc/systemd/system", recursive=True)  # drop-in conflicts
-    _surface(os.path.join(os.path.expanduser("~"), ".ssh"), recursive=False)  # permissions hygiene
+    _surface_digest_only(os.path.join(os.path.expanduser("~"), ".ssh"))
     try:
         if os.path.isfile("/etc/fstab"):
             with open("/etc/fstab", "rb") as f:
@@ -517,33 +557,76 @@ def _last_run_of(record) -> Optional[datetime]:
     return None
 
 
+# R-03 (A06-G1/A15-G1/G2): the last-due-slot binary search moved to
+# scheduler/catchup.py::last_due_slot so executor._wrap_task's live
+# occurrence-instant computation can share it; kept as a module-level name
+# here since existing callers/tests import ``_last_due_slot`` from this module.
 def _last_due_slot(trigger, now: datetime, *, horizon_s: float = 7 * 86400.0,
                    max_steps: int = 64):
-    """The most recent slot at or before ``now`` for an APScheduler trigger.
+    from ..scheduler.catchup import last_due_slot
+    return last_due_slot(trigger, now, horizon_s=horizon_s, max_steps=max_steps)
 
-    APScheduler 3.x has no ``get_prev_fire_time``, so binary-search the
-    anchor whose "next slot" is the last one not after ``now``:
-    ``f(anchor) = get_next_fire_time(None, anchor)`` is monotonic, the last
-    due slot is ``f`` evaluated just below the point where ``f`` jumps past
-    ``now``, and the search is bounded regardless of how fast the cron
-    runs (a forward walk from a horizon is not — a 15-minute cron walks
-    672 slots in 7 days). None when no slot lies in the window.
+
+def _monitor_gate_allows(gate, job_id: str, probe: Optional[Callable], *, context: str) -> bool:
+    """Named-job-set-only monitor gate: detector_sweep-class check-on-X jobs
+    are suppressed when their source is unchanged; everything else
+    (morning_report, timeline_retention) runs unconditionally.
+
+    Shared by boot catch-up and the regular cron fire (A06-G7) — before
+    this fix the gate suppressed only a boot catch-up replay, so the
+    REGULAR fire ran detector_sweep every cadence regardless of whether
+    its probed source had changed at all since the last evaluation.
     """
-    lo = now - timedelta(seconds=horizon_s)
-    hi = now
-    first = trigger.get_next_fire_time(None, lo)
-    if first is None or first > now:
-        return None  # no slot between the horizon and now
-    for _ in range(max_steps):
-        mid = lo + (hi - lo) / 2
-        cand = trigger.get_next_fire_time(None, mid)
-        if cand is not None and cand <= now:
-            lo = mid
-        else:
-            hi = mid
-        if hi - lo <= timedelta(microseconds=1):
-            break
-    return trigger.get_next_fire_time(None, lo)
+    from ..scheduler.monitor_hash import MonitorDecision
+
+    if gate is None or probe is None or not gate.is_gated(job_id):
+        return True
+    try:
+        outcome = gate.evaluate(job_id, probe())
+    except Exception as e:
+        logger.warning(f"{context}: monitor probe for {job_id} failed ({e}); running anyway")
+        return True
+    if outcome.decision is MonitorDecision.SUPPRESS:
+        logger.info(f"{context}: {job_id} suppressed (source unchanged)")
+        return False
+    if outcome.decision is MonitorDecision.BASELINE:
+        logger.info(f"{context}: {job_id} monitor baseline established; run suppressed")
+        return False
+    if outcome.decision is MonitorDecision.SOURCE_ERROR:
+        logger.warning(
+            f"{context}: monitor source for {job_id} errored; "
+            f"running anyway (a source failure is never a 'change')"
+        )
+        return True
+    if outcome.diff:
+        logger.info(f"{context}: {job_id} source changed:\n{outcome.diff}")
+    return True
+
+
+def _gate_regular_fire(job_id: str, task_func: Callable[[], Any],
+                       probe: Optional[Callable] = None) -> Callable[[], Any]:
+    """Wrap a proactive job's task so its REGULAR cron fire (not just a
+    boot catch-up replay) consults the monitor-hash gate too (A06-G7),
+    sharing the same on-disk baseline both paths already read and write."""
+    if probe is None:
+        probe = _detector_sweep_probe
+
+    def wrapped():
+        from ..scheduler.monitor_hash import MonitorHashGate
+        from ..utils.paths import data_subdir
+
+        try:
+            gate = MonitorHashGate(
+                os.path.join(data_subdir("scheduler"), "monitor_hashes.json")
+            )
+        except Exception as e:
+            logger.warning(f"Monitor gate for {job_id} unavailable ({e}); running anyway")
+            return task_func()
+        if not _monitor_gate_allows(gate, job_id, probe, context="Scheduled fire"):
+            return {"status": "suppressed", "reason": "monitor_source_unchanged"}
+        return task_func()
+
+    return wrapped
 
 
 def _run_boot_catchup(
@@ -580,7 +663,7 @@ def _run_boot_catchup(
         from apscheduler.triggers.cron import CronTrigger
     except ImportError:
         return result
-    from ..scheduler.catchup import CatchupAction, decide_catchup
+    from ..scheduler.catchup import CatchupAction, decide_catchup, write_retirement_diagnostic
     from ..scheduler.monitor_hash import MonitorDecision, MonitorHashGate
     from ..utils.paths import data_subdir
 
@@ -605,9 +688,66 @@ def _run_boot_catchup(
         if job_id not in prior_records:
             # Never registered before (fresh install): nothing was missed.
             continue
+        # A15-G4/A06-G10: a schedule edit re-anchors without firing. The
+        # prior boot's record already carries str(cron_expr) as `schedule`
+        # (schedule_cron_job's own Job() construction) — comparing it
+        # against this boot's cron_expr is enough to tell "the operator
+        # changed this job's timing" from "a slot genuinely passed while
+        # the machine was off". A slot only "missed" because of the edit
+        # itself is not a missed run; blank on either side (a record from
+        # before this field was populated) fails soft to "assume
+        # unchanged", never to "assume edited".
+        prior_schedule = getattr(prior_records[job_id], "schedule", "") or ""
+        this_schedule = str(spec["cron_expr"])
+        if prior_schedule and prior_schedule != this_schedule:
+            logger.info(
+                f"Boot catch-up: {job_id} schedule changed since the last "
+                f"boot ({prior_schedule!r} -> {this_schedule!r}); "
+                f"re-anchoring without firing"
+            )
+            continue
+        # A15-G3: recovery and catch-up can otherwise arm the same job at
+        # boot. The audit's own proposed guard (checking
+        # _boot_recovery_pending here) is broken -- registration drains
+        # that set for every job before catch-up ever runs, so it would
+        # always read empty. _boot_recovery_armed is a separate,
+        # boot-scoped set the executor only ever ADDS to (never drains)
+        # when it actually arms a receipt-recovery re-run this boot.
+        if job_id in getattr(executor, "_boot_recovery_armed", ()):
+            logger.info(
+                f"Boot catch-up: {job_id} already armed by boot receipt "
+                f"recovery this boot; not double-armed"
+            )
+            continue
+        # R-03 (A06-G1/A15-G1/G2): the occurrence store is authoritative
+        # when it has an answer — it is credited the same way whether the
+        # slot was served by a regular fire, an earlier catch-up, or a
+        # boot recovery run, unlike the parent job record alone (own-bug
+        # 1's other half). Falls back to the job-record check when the
+        # receipts store is unavailable (e.g. a bare fake in a test).
+        receipts = getattr(executor, "receipts", None)
+        if receipts is not None:
+            try:
+                if receipts.occurrence_completed(job_id, due.isoformat()):
+                    continue
+            except Exception as e:
+                logger.debug(f"Boot catch-up: occurrence check for {job_id} failed: {e}")
         last_run = _last_run_of(prior_records[job_id])
         if last_run is not None and last_run >= due:
-            continue  # the slot was served by the previous boot's run
+            # A15-G8: completed_at is set for ANY terminal state (engine.py
+            # update_job_state), so a FAILED attempt looked identical to a
+            # served slot here -- a transient failure (a locked store, say)
+            # meant no catch-up ever fired again for that slot. Only a
+            # genuinely completed run is served unconditionally; a failed
+            # one backs off briefly (so a restart moments later does not
+            # spin into an immediate retry loop) and then replays.
+            last_state = getattr(prior_records[job_id], "state", None)
+            if last_state != "failed":
+                continue
+            period_s = _PROACTIVE_PERIOD_S.get(job_id)
+            backoff_s = min(period_s / 2, 900.0) if period_s else 900.0
+            if (now - last_run).total_seconds() < backoff_s:
+                continue  # still within backoff; not eligible yet
         max_age_s = _PROACTIVE_MAX_AGE_S.get(job_id)
         if max_age_s is not None and (now - due).total_seconds() > max_age_s:
             logger.info(
@@ -620,7 +760,11 @@ def _run_boot_catchup(
             "id": job_id,
             "due_at": due,
             "period_s": _PROACTIVE_PERIOD_S.get(job_id),
-            "one_shot": False,
+            # No registered proactive job is one-shot today (all three are
+            # cron jobs); passed through, not hardcoded, so a caller CAN
+            # route a one-shot spec through this same catch-up path and
+            # reach RETIRE below rather than that branch being unreachable.
+            "one_shot": bool(spec.get("one_shot", False)),
             "task": spec["task"],
         })
 
@@ -647,39 +791,7 @@ def _run_boot_catchup(
             gate = None
 
     def _monitor_allows(job_id: str) -> bool:
-        """Named-job-set-only monitor gate: detector_sweep-class check-on-X
-        jobs are suppressed when their source is unchanged; everything else
-        (morning_report, timeline_retention) runs unconditionally."""
-        if gate is None or not gate.is_gated(job_id):
-            return True
-        try:
-            outcome = gate.evaluate(job_id, probe())
-        except Exception as e:
-            logger.warning(
-                f"Boot catch-up: monitor probe for {job_id} failed ({e}); "
-                f"running anyway"
-            )
-            return True
-        if outcome.decision is MonitorDecision.SUPPRESS:
-            logger.info(
-                f"Boot catch-up: {job_id} suppressed (source unchanged)"
-            )
-            return False
-        if outcome.decision is MonitorDecision.BASELINE:
-            logger.info(
-                f"Boot catch-up: {job_id} monitor baseline established; "
-                f"catch-up suppressed"
-            )
-            return False
-        if outcome.decision is MonitorDecision.SOURCE_ERROR:
-            logger.warning(
-                f"Boot catch-up: monitor source for {job_id} errored; "
-                f"running anyway (a source failure is never a 'change')"
-            )
-            return True
-        if outcome.diff:
-            logger.info(f"Boot catch-up: {job_id} source changed:\n{outcome.diff}")
-        return True
+        return _monitor_gate_allows(gate, job_id, probe, context="Boot catch-up")
 
     def _schedule_one_time(job: Dict[str, Any], run_at: datetime, tag: str) -> None:
         run_id = f"{job['id']}:catchup"
@@ -688,6 +800,13 @@ def _run_boot_catchup(
                 job_id=run_id,
                 task_func=job["task"],
                 run_at=run_at,
+                # R-03: credit the PARENT job's occurrence for the slot
+                # actually missed (job["due_at"]), not "now" (run_at) and
+                # not the sibling ":catchup" id — the same slot must read
+                # as served on the next boot regardless of which of the
+                # three ids actually served it.
+                occurrence_job_id=job["id"],
+                scheduled_instant=job["due_at"].isoformat(),
             )
         except Exception as e:
             logger.warning(
@@ -711,6 +830,16 @@ def _run_boot_catchup(
         elif entry.action is CatchupAction.ADVANCE_ONLY:
             result.setdefault(job["id"], "advanced")
         elif entry.action is CatchupAction.RETIRE:
+            # A15-G9: the one-shot is deliberately never fired late; this
+            # file is the only record of why, for a human (or the morning
+            # report) to find later.
+            try:
+                write_retirement_diagnostic(data_subdir("scheduler"), entry)
+            except OSError as e:
+                logger.warning(
+                    f"Boot catch-up: could not write retirement diagnostic "
+                    f"for {job['id']} (non-fatal): {e}"
+                )
             result.setdefault(job["id"], "retired")
     for entry in plan.deferred:
         job = entry.job
@@ -792,12 +921,42 @@ def _tick_thread_manager() -> list:
     return manager.tick()
 
 
+#: A15-G7: bounds stop's join of an in-flight sweep. The sweep is expected
+#: to be fast (an idle housekeeping tick); this is generous, not tuned.
+_TICK_JOIN_TIMEOUT_S = 30.0
+
+
+def _ticker_marker_path(name: str) -> str:
+    from ..utils.paths import data_subdir
+
+    return os.path.join(data_subdir("scheduler"), name)
+
+
+def _write_ticker_marker(name: str, payload: dict) -> None:
+    """One on-disk liveness marker (A06-G11/A15-G5), best-effort like
+    Hermes's own ``_write_marker`` — a write failure (disk full,
+    permissions) must not break the ticker it exists to report on."""
+    with open(_ticker_marker_path(name), "w", encoding="utf-8") as f:
+        json.dump(payload, f)
+
+
+def read_ticker_marker(name: str) -> Optional[dict]:
+    """The last-written liveness marker, or ``None`` when it was never
+    written (fresh install) or is unreadable."""
+    try:
+        with open(_ticker_marker_path(name), "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
+
+
 async def run_thread_tick_loop(
     interval_s: float,
     *,
     tick: Callable[[], Any] = _tick_thread_manager,
     turn_busy: Callable[[], bool] = _agent_turn_busy,
     max_beats: Optional[int] = None,
+    inflight: Optional[Dict[str, Any]] = None,
 ) -> int:
     """Every ``interval_s`` seconds, run ``tick`` off the event loop unless a
     turn is in flight (then wait for the next beat). Returns the number of
@@ -805,20 +964,69 @@ async def run_thread_tick_loop(
 
     A failing tick is logged and the loop carries on: the sweep is the
     being's housekeeping, and a locked store this minute is not a reason to
-    stop sweeping for the rest of the process's life.
+    stop sweeping for the rest of the process's life. Catches
+    ``BaseException`` (A15-G6, Hermes's own choice) — a tick that raises
+    something outside the ``Exception`` hierarchy must not silently end the
+    heartbeat task; ``asyncio.CancelledError`` is re-raised immediately, so
+    the loop's own cancellation (``stop_thread_tick_heartbeat``) is
+    unaffected by the broadened catch.
+
+    ``inflight`` (A15-G7), when given, is a caller-owned dict this loop
+    records a ``threading.Event`` into for the duration of each real tick —
+    ``stop_thread_tick_heartbeat`` waits on it after cancelling, because
+    cancelling this coroutine only stops AWAITING the executor thread the
+    tick runs in; the thread itself keeps running to completion, orphaned,
+    unless something explicitly joins it.
+
+    Three on-disk liveness markers (A06-G11/A15-G5) distinguish "the ticker
+    thread is dead" from "nothing was due": ``ticker_heartbeat`` advances
+    every beat regardless of outcome; ``ticker_last_success`` only on a
+    clean tick; ``ticker_last_error`` holds the last failure's text. Each
+    write is best-effort — a failure (or a test replacing the writer
+    outright) must never propagate into the loop it is reporting on.
     """
+
+    def _mark(name: str, payload: dict) -> None:
+        try:
+            _write_ticker_marker(name, payload)
+        except Exception:
+            pass
+
     beats = 0
     while max_beats is None or beats < max_beats:
         await asyncio.sleep(interval_s)
         beats += 1
+        _mark("ticker_heartbeat", {"epoch": time.time()})
         if turn_busy():
             continue
+        done = threading.Event()
+        if inflight is not None:
+            inflight["done"] = done
+
+        def _tick_and_signal(_tick=tick, _done=done):
+            try:
+                return _tick()
+            finally:
+                _done.set()
+
         try:
-            closed = await asyncio.to_thread(tick)
+            closed = await asyncio.to_thread(_tick_and_signal)
             if closed:
                 logger.info(f"Idle tick closed {len(closed)} thread(s)")
-        except Exception as e:
+            _mark("ticker_last_success", {"epoch": time.time()})
+        except asyncio.CancelledError:
+            # Deliberately NOT cleared here: cancellation reaches this
+            # coroutine well before the executor thread actually finishes
+            # (it keeps running, orphaned, underneath the cancelled await),
+            # so the reference must survive for stop_thread_tick_heartbeat
+            # to join it. The thread's own `finally` still sets `done`
+            # when it genuinely completes.
+            raise
+        except BaseException as e:
             logger.warning(f"Thread tick failed (non-fatal): {e}")
+            _mark("ticker_last_error", {"epoch": time.time(), "error": str(e)})
+        if inflight is not None:
+            inflight["done"] = None
     return beats
 
 
@@ -832,17 +1040,22 @@ def start_thread_tick_heartbeat(
     """Start the heartbeat task on the running loop and park it on ``app.state``."""
     if interval_s is None:
         interval_s = heartbeat_interval_s()
+    inflight: Dict[str, Any] = {"done": None}
     task = asyncio.get_running_loop().create_task(
-        run_thread_tick_loop(interval_s, tick=tick, turn_busy=turn_busy),
+        run_thread_tick_loop(interval_s, tick=tick, turn_busy=turn_busy, inflight=inflight),
         name="halbert-thread-tick",
     )
     app.state.thread_tick_task = task
+    app.state.thread_tick_inflight = inflight
     logger.info(f"Thread tick heartbeat started (every {interval_s:g}s)")
     return task
 
 
 async def stop_thread_tick_heartbeat(app: FastAPI) -> None:
-    """Cancel the heartbeat task started by ``start_thread_tick_heartbeat``."""
+    """Cancel the heartbeat task started by ``start_thread_tick_heartbeat``,
+    and join an in-flight sweep (A15-G7) — cancelling only stops awaiting
+    the executor thread the sweep runs in; the thread itself runs to
+    completion regardless, orphaned unless this waits for it too."""
     task = getattr(app.state, "thread_tick_task", None)
     if task is None:
         return
@@ -853,7 +1066,17 @@ async def stop_thread_tick_heartbeat(app: FastAPI) -> None:
         pass
     except Exception as e:
         logger.warning(f"Thread tick heartbeat ended with an error: {e}")
+    inflight = getattr(app.state, "thread_tick_inflight", None)
+    done = inflight.get("done") if inflight else None
+    if done is not None and not done.is_set():
+        joined = await asyncio.to_thread(done.wait, _TICK_JOIN_TIMEOUT_S)
+        if not joined:
+            logger.warning(
+                "Thread tick heartbeat stopped, but the in-flight sweep did "
+                f"not finish within {_TICK_JOIN_TIMEOUT_S:g}s (orphaned thread)"
+            )
     app.state.thread_tick_task = None
+    app.state.thread_tick_inflight = None
     logger.info("Thread tick heartbeat stopped")
 
 

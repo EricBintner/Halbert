@@ -39,16 +39,19 @@ nothing claims DONE without evidence.
 
 from __future__ import annotations
 
+import hashlib
 import re
+import threading
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Callable, Optional, Sequence
+from typing import Any, Callable, Dict, Optional, Sequence, Tuple
 
 __all__ = [
     "VerdictKind", "WaitDirective", "Verdict", "Gate",
     "VerdictParseError", "JudgeTransportError",
     "JudgeCircuit", "ParseCircuitOpen", "TransportCircuitOpen",
-    "JUDGE_PROMPT", "MAX_GATE_OUTPUT_CHARS",
+    "JUDGE_PROMPT", "MAX_GATE_OUTPUT_CHARS", "JUDGE_INPUT_CHARS",
+    "MAX_BARRIER_WAIT_S",
     "parse_verdict", "verdict",
 ]
 
@@ -96,6 +99,10 @@ class Gate:
     check: Callable[[Any], bool]
     #: the bounded continuation prompt when the gate fails
     output: str
+    #: consecutive failures allowed before this gate BLOCKs instead of
+    #: CONTINUE-ing forever; ``None`` (default) is unlimited, unchanged
+    #: from before this field existed.
+    max_retries: Optional[int] = None
 
 
 class VerdictParseError(ValueError):
@@ -111,11 +118,36 @@ class JudgeTransportError(Exception):
 #: gate outputs stitched by upstream callers. 4000 chars is generous.
 MAX_GATE_OUTPUT_CHARS = 4000
 
+#: The judge sees claims, not the whole transcript; bounded next to the gate
+#: output cap so a single call site can't blow the same budget the gates do.
+JUDGE_INPUT_CHARS = 8000
 
-def _bound(text: str) -> str:
-    if len(text) <= MAX_GATE_OUTPUT_CHARS:
+#: A WAIT barrier expires after this long — an unbounded wait target is a
+#: stuck loop by another name.
+MAX_BARRIER_WAIT_S = 1800.0
+
+_TRUNCATION_MARKER = "[gate output truncated]\n"
+
+
+def _fingerprint(claims: Any) -> str:
+    """A stable content hash of ``claims`` (A02-G15).
+
+    A gate's ``check`` must not call a model (documented contract) — it is
+    deterministic, so re-running it on byte-identical claims can never
+    produce a different answer. The fingerprint lets ``verdict()`` skip the
+    redundant re-run on an unchanged workspace between turns and replay the
+    cached pass/fail instead, with no change to any observable outcome.
+    """
+    return hashlib.sha256(repr(claims).encode("utf-8", "replace")).hexdigest()
+
+
+def _bound(text: str, limit: int = MAX_GATE_OUTPUT_CHARS) -> str:
+    """Keep the TAIL of ``text`` — that is where a failure's diagnostic
+    line lives — prefixed with a marker that survives the bound itself."""
+    if len(text) <= limit:
         return text
-    return text[:MAX_GATE_OUTPUT_CHARS] + "\n[gate output truncated]"
+    kept = max(limit - len(_TRUNCATION_MARKER), 0)
+    return _TRUNCATION_MARKER + text[len(text) - kept:]
 
 
 # -- parsing ------------------------------------------------------------------
@@ -154,15 +186,17 @@ def parse_verdict(raw: str) -> Verdict:
             if not sep or key not in _DIRECTIVE_KEYS or "=" in value:
                 raise VerdictParseError(f"unknown directive: {token!r}")
             if key == "wait_on_pid":
-                if not _INT.match(value):
-                    raise VerdictParseError(f"wait_on_pid must be an integer: {value!r}")
+                if not _INT.match(value) or int(value) < 1:
+                    raise VerdictParseError(f"wait_on_pid must be a positive integer: {value!r}")
                 kwargs["wait_on_pid"] = int(value)
             else:
-                if not _FLOAT.match(value) or float(value) < 0:
+                if not _FLOAT.match(value) or float(value) <= 0:
                     raise VerdictParseError(
-                        f"wait_for_seconds must be a non-negative number: {value!r}")
-                kwargs["wait_for_seconds"] = float(value)
-        wait = WaitDirective(**kwargs) if kwargs else None
+                        f"wait_for_seconds must be a positive number: {value!r}")
+                kwargs["wait_for_seconds"] = min(float(value), MAX_BARRIER_WAIT_S)
+        if not kwargs:
+            raise VerdictParseError("WAIT with no target (wait_on_pid or wait_for_seconds)")
+        wait = WaitDirective(**kwargs)
         reason = ""
     elif any(t.partition("=")[0] in _DIRECTIVE_KEYS for t in tokens[1:]):
         raise VerdictParseError("only WAIT carries a directive")
@@ -214,20 +248,30 @@ class TransportCircuitOpen(RuntimeError):
 
 
 class JudgeCircuit:
-    """Consecutive-failure counters for one judge, separating the two modes.
+    """Consecutive-failure counters for one judge, separating the two modes,
+    plus the per-gate retry counters and turn counter for the same turn loop.
 
-    Parse failures and transport failures count independently; a clean verdict
-    resets both. This object is deliberately the only mutable state in the
-    contract, so ``verdict`` itself stays a pure decision.
+    Parse failures and transport failures count independently, and each
+    resets the *other* (a flaky transport interleaved with parse failures
+    must not trip the parse breaker on non-consecutive failures); a clean
+    verdict resets both. This object is deliberately the only mutable state
+    in the contract, so ``verdict`` itself stays a pure decision.
     """
 
     def __init__(self,
                  parse_limit: int = PARSE_BREAKER_LIMIT,
-                 transport_limit: int = TRANSPORT_BREAKER_LIMIT) -> None:
+                 transport_limit: int = TRANSPORT_BREAKER_LIMIT,
+                 max_turns: Optional[int] = None) -> None:
         self.parse_limit = parse_limit
         self.transport_limit = transport_limit
+        self.max_turns = max_turns
         self.parse_failures = 0
         self.transport_failures = 0
+        self.turns = 0
+        self.gate_attempts: Dict[str, int] = {}
+        #: A02-G15: (fingerprint, passed) of the last real check per gate,
+        #: for fingerprint-skip replay — never populated for a raising check.
+        self.gate_fingerprints: Dict[str, Tuple[str, bool]] = {}
 
     def _reset(self) -> None:
         self.parse_failures = 0
@@ -236,11 +280,13 @@ class JudgeCircuit:
     def record_parse_failure(self) -> bool:
         """Count one parse failure; True when the breaker trips."""
         self.parse_failures += 1
+        self.transport_failures = 0
         return self.parse_failures >= self.parse_limit
 
     def record_transport_failure(self) -> bool:
         """Count one transport failure; True when the breaker trips."""
         self.transport_failures += 1
+        self.parse_failures = 0
         return self.transport_failures >= self.transport_limit
 
     def parse_open(self) -> bool:
@@ -249,6 +295,53 @@ class JudgeCircuit:
     def transport_open(self) -> bool:
         return self.transport_failures >= self.transport_limit
 
+    def record_gate_failure(self, gate_name: str) -> int:
+        """Count one failure of ``gate_name``; returns the new attempt count."""
+        self.gate_attempts[gate_name] = self.gate_attempts.get(gate_name, 0) + 1
+        return self.gate_attempts[gate_name]
+
+    def reset_gate(self, gate_name: str) -> None:
+        self.gate_attempts.pop(gate_name, None)
+
+    def gate_replay(self, gate_name: str, fingerprint: str) -> Optional[bool]:
+        """The cached pass/fail for ``gate_name`` at this exact fingerprint,
+        or ``None`` when nothing is cached (a fresh gate, or the workspace
+        changed since the last real check)."""
+        cached = self.gate_fingerprints.get(gate_name)
+        if cached is not None and cached[0] == fingerprint:
+            return cached[1]
+        return None
+
+    def record_gate_result(self, gate_name: str, fingerprint: str, passed: bool) -> None:
+        self.gate_fingerprints[gate_name] = (fingerprint, passed)
+
+
+def _call_judge(judge: Callable[[Any], str], claims: Any,
+                 timeout: Optional[float]) -> str:
+    """Call ``judge(claims)``, treating a hang past ``timeout`` as a
+    transport failure like an unreachable judge. The worker thread is
+    abandoned (daemon) on timeout, not killed — Python cannot force that —
+    but the caller stops waiting on it."""
+    if timeout is None:
+        return judge(claims)
+
+    outcome: Dict[str, Any] = {}
+
+    def _run() -> None:
+        try:
+            outcome["value"] = judge(claims)
+        except BaseException as exc:  # noqa: BLE001 - re-raised on the caller's thread
+            outcome["error"] = exc
+
+    worker = threading.Thread(target=_run, daemon=True)
+    worker.start()
+    worker.join(timeout)
+    if worker.is_alive():
+        raise JudgeTransportError(f"judge did not respond within {timeout}s")
+    if "error" in outcome:
+        raise outcome["error"]
+    return outcome["value"]
+
 
 # -- the decision --------------------------------------------------------------
 
@@ -256,31 +349,83 @@ def verdict(claims: Any,
             gates: Sequence[Gate],
             judge: Optional[Callable[[Any], str]] = None,
             circuit: Optional[JudgeCircuit] = None,
-            gate_output_limit: int = MAX_GATE_OUTPUT_CHARS) -> Verdict:
+            gate_output_limit: int = MAX_GATE_OUTPUT_CHARS,
+            judge_timeout: Optional[float] = None) -> Verdict:
     """Decide one evaluation turn: gates first, judge second, breakers last.
 
     Args:
-        claims: what the turn produced — passed through to gates and judge.
+        claims: what the turn produced — passed through to gates; the judge
+            sees it too, bounded to ``JUDGE_INPUT_CHARS`` when it is text.
         gates: deterministic checks, run in order. The first failure
             short-circuits: its bounded ``output`` becomes the continuation
-            prompt and the judge is never called.
+            prompt and the judge is never called. A gate whose ``check``
+            raises is a failed gate with a diagnostic, not a crash. A gate
+            with ``max_retries`` set BLOCKs once its own attempts on
+            ``circuit`` exceed that budget, instead of CONTINUE-ing forever.
         judge: the model hook, flag-off by default (``None``). Must return a
             string in the closed vocabulary; raise :class:`JudgeTransportError`
-            when unreachable.
-        circuit: the breaker state; one per judge, created on demand.
+            when unreachable. A call exceeding ``judge_timeout`` counts as a
+            transport failure the same way.
+        circuit: the breaker state, gate-attempt counters and turn counter,
+            all in the one mutable object. Required once a live judge is
+            about to be consulted (i.e. gates already passed) — a circuit
+            created on demand cannot persist breaker state across calls,
+            which previously left the breakers silently inert.
+        judge_timeout: seconds to wait for the judge before treating the
+            call as unreachable.
 
     A gate failure is a CONTINUE carrying the gate's prompt — the work is not
     done, and the model is told what to produce. With no judge wired, a
     gate-passing turn also CONTINUEs: nothing claims DONE without evidence.
     """
+    circuit_given = circuit is not None
+    if circuit is None:
+        circuit = JudgeCircuit()
+
+    circuit.turns += 1
+    if circuit.max_turns is not None and circuit.turns > circuit.max_turns:
+        return Verdict(
+            kind=VerdictKind.BLOCKED,
+            reason=f"turn budget exhausted ({circuit.max_turns} turns)",
+            source="turn-budget",
+        )
+
     for gate in gates:
-        if not gate.check(claims):
+        fingerprint = _fingerprint(claims)
+        replay = circuit.gate_replay(gate.name, fingerprint)
+        if replay is not None:
+            passed = replay
+        else:
+            try:
+                passed = gate.check(claims)
+            except Exception as exc:  # noqa: BLE001 - a raising gate is a failed gate
+                return Verdict(
+                    kind=VerdictKind.CONTINUE,
+                    reason=f"gate {gate.name} raised {type(exc).__name__}: {exc}",
+                    source="gate",
+                    continuation_prompt=_bound(
+                        f"{gate.output}\n[gate could not run: {type(exc).__name__}: {exc}]",
+                        gate_output_limit,
+                    ),
+                )
+            circuit.record_gate_result(gate.name, fingerprint, passed)
+        if passed:
+            circuit.reset_gate(gate.name)
+            continue
+        attempts = circuit.record_gate_failure(gate.name)
+        if gate.max_retries is not None and attempts > gate.max_retries:
             return Verdict(
-                kind=VerdictKind.CONTINUE,
-                reason=f"gate {gate.name} failed",
-                source="gate",
-                continuation_prompt=_bound(gate.output)[:gate_output_limit],
+                kind=VerdictKind.BLOCKED,
+                reason=f"gate {gate.name} exhausted after {attempts} attempts",
+                source="gate-exhausted",
+                continuation_prompt=_bound(gate.output, gate_output_limit),
             )
+        return Verdict(
+            kind=VerdictKind.CONTINUE,
+            reason=f"gate {gate.name} failed",
+            source="gate",
+            continuation_prompt=_bound(gate.output, gate_output_limit),
+        )
 
     if judge is None:
         return Verdict(
@@ -289,8 +434,13 @@ def verdict(claims: Any,
             source="judge-disabled",
         )
 
-    if circuit is None:
-        circuit = JudgeCircuit()
+    if not circuit_given:
+        raise TypeError(
+            "verdict(): a JudgeCircuit must be passed explicitly once a judge "
+            "is about to be consulted — a circuit created on demand is "
+            "discarded after the call and cannot persist breaker state "
+            "across turns, which leaves the breakers silently inert."
+        )
 
     # An already-open breaker pauses the judge without spending a call.
     if circuit.parse_open():
@@ -308,8 +458,12 @@ def verdict(claims: Any,
             source="transport-circuit-breaker",
         )
 
+    judge_claims = claims
+    if isinstance(claims, str) and len(claims) > JUDGE_INPUT_CHARS:
+        judge_claims = _bound(claims, JUDGE_INPUT_CHARS)
+
     try:
-        raw = judge(claims)
+        raw = _call_judge(judge, judge_claims, judge_timeout)
     except JudgeTransportError as exc:
         trips = circuit.record_transport_failure()
         if trips:

@@ -192,11 +192,29 @@ def format_curve(rows: Sequence[RecallMetrics]) -> str:
 #: is fully programmatic.
 LLM_JUDGE_ENABLED = False
 
-#: Hedging vocabulary. Recorded here so the (flag-off) LLM judge and the
-#: programmatic judge agree on what "hedged" means; the programmatic judge
-#: itself only needs the gold-substring rule.
+#: Hedging vocabulary. A hedge marker anywhere in a gold-containing answer
+#: caps the score at partial (1) instead of correct (2) — the programmatic
+#: judge and the (flag-off) LLM judge agree on what "hedged" means.
 _HEDGES = ("not in context", "possibly", "maybe", "perhaps", "i think",
            "might be", "not sure", "could be")
+
+#: Negation markers. One of these in the few words immediately before a
+#: gold match means the answerer rejected that value, not confirmed it —
+#: distinct from a hedge marker earlier in the same answer (e.g. the
+#: "NOT IN CONTEXT" refusal prefix, which is a hedge, not a negation of
+#: whatever guess follows it).
+_NEGATIONS = ("not", "never", "isnt", "isn't", "no")
+_NEGATION_WINDOW_WORDS = 3
+
+_PUNCT = re.compile(r"[^\w\s-]")
+_WHITESPACE = re.compile(r"\s+")
+
+
+def _normalise(text: str) -> str:
+    """Lowercase, strip punctuation (keep hyphens — gold values look like
+    '47-29'), collapse whitespace. Used only for judge_score's comparison;
+    the stored ``answer`` on the verdict stays verbatim."""
+    return _WHITESPACE.sub(" ", _PUNCT.sub("", text.strip().lower())).strip()
 
 QuestionRow = Dict[str, object]
 
@@ -248,19 +266,40 @@ def answer_prompt(context: Union[str, Sequence[str]], question: str) -> str:
 def judge_score(gold: str, answer: str) -> int:
     """Programmatic judge: 2 correct / 1 partial / 0 wrong.
 
-    Exact match is correct; gold appearing inside a longer, hedged answer
-    ("NOT IN CONTEXT — possibly 47-29 based on the pattern") is partial —
-    the knowledge survived but the answerer would not commit; anything else
-    is wrong. Free-text variance beyond this is the flag-off LLM judge's
-    job, not this harness's.
+    Normalised exact match (case/punctuation-insensitive) is correct. A
+    normalised substring match is correct unless: a negation marker sits in
+    the ``_NEGATION_WINDOW_WORDS`` immediately before it ("definitely not
+    47-29" — wrong, the answerer rejected that value), or a hedge marker
+    appears anywhere in the answer ("NOT IN CONTEXT — possibly 47-29" —
+    partial, the knowledge survived but the answerer would not commit).
+    Free-text variance beyond this is the flag-off LLM judge's job, not
+    this harness's.
     """
     if not answer or not gold:
         return 0
-    if answer.strip() == gold:
+    norm_answer = _normalise(answer)
+    norm_gold = _normalise(gold)
+    if not norm_gold:
+        return 0
+    if norm_answer == norm_gold:
         return 2
-    if gold.lower() in answer.lower():
+
+    words = norm_answer.split()
+    gold_words = norm_gold.split()
+    span = len(gold_words)
+    match_at = next(
+        (i for i in range(len(words) - span + 1) if words[i:i + span] == gold_words),
+        None,
+    )
+    if match_at is None:
+        return 0
+
+    preceding = words[max(0, match_at - _NEGATION_WINDOW_WORDS):match_at]
+    if any(neg in preceding for neg in _NEGATIONS):
+        return 0
+    if any(hedge in norm_answer for hedge in _HEDGES):
         return 1
-    return 0
+    return 2
 
 
 @dataclass
@@ -299,15 +338,17 @@ def run_exam(questions: Sequence[QuestionRow],
              answer_fn) -> ExamResult:
     """Ask every question against whatever ``answer_fn`` closes the book on.
 
-    ``answer_fn`` receives the bank row and returns a free-text answer; it
-    never sees gold — that is the closed-book constraint, and it is why the
-    answerer is constructed from the retained context, not from the exam.
+    ``answer_fn`` receives only the question text and returns a free-text
+    answer; it never sees ``gold`` or ``source_turn`` (which leaks the
+    region position) — that is the closed-book constraint, and it is why
+    the answerer is constructed from the retained context, not from the
+    exam. Gold reaches only ``judge_score``, via the returned verdict.
     """
     verdicts: List[ExamVerdict] = []
     for row in questions:
         question = row["question"]
         gold = row["gold"]
-        answer = answer_fn(row)
+        answer = answer_fn(str(question))
         verdicts.append(ExamVerdict(
             question=str(question),
             gold=str(gold),
@@ -320,19 +361,20 @@ def run_exam(questions: Sequence[QuestionRow],
 def context_answerer(context: Union[str, Sequence[str]]):
     """The deterministic closed-book answerer for the synthetic corpus.
 
-    Reads only the retained context it is handed. For a template question
-    ("what is the garage keypad code?") it searches the context for the
-    planted statement's value and answers it; when the context does not
-    contain the statement it refuses with the forced NOT IN CONTEXT option.
-    A wrong-but-confident answer is impossible by construction — which is
-    why the hallucination half of the instrument only becomes live with an
-    LLM answerer arm.
+    Reads only the retained context it is handed and the question text
+    ``run_exam`` passes it — never the bank row, which would carry gold.
+    For a template question ("what is the garage keypad code?") it
+    searches the context for the planted statement's value and answers it;
+    when the context does not contain the statement it refuses with the
+    forced NOT IN CONTEXT option. A wrong-but-confident answer is
+    impossible by construction — which is why the hallucination half of
+    the instrument only becomes live with an LLM answerer arm.
     """
     if not isinstance(context, str):
         context = "\n".join(str(part) for part in context)
 
-    def answer(row: QuestionRow) -> str:
-        subject = str(row["question"]).strip().rstrip("?")
+    def answer(question: str) -> str:
+        subject = question.strip().rstrip("?")
         prefix = "what is the "
         if subject.lower().startswith(prefix):
             subject = subject[len(prefix):]

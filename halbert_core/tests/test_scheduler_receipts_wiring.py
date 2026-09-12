@@ -16,6 +16,7 @@ looping.
 
 import json
 import logging
+import os
 import threading
 import time
 from datetime import datetime, timedelta, timezone
@@ -163,6 +164,9 @@ def test_boot_recovery_interrupts_a_dead_owner_and_reruns_once(data_dir):
         lambda: ex.scheduler_engine.get_job("detector_sweep:recovery").state
         == "completed"
     )
+    # A15-G3: recorded as armed this boot, so boot catch-up (a separate
+    # path, running later in registration) knows not to double-arm it.
+    assert "detector_sweep" in ex._boot_recovery_armed
 
     # Bounded: re-registering the job again does not arm a second re-run —
     # the pending set was consumed, and the durable ledger shows one arm.
@@ -252,3 +256,104 @@ def test_spent_restart_budget_blocks_the_sixth_restart_and_holds(data_dir, caplo
     # Safe-mode hold, not a loop: the next restart must come from a human.
     assert holds and "restart_budget_exhausted" in holds[0]
     ex.stop(wait=False)
+
+
+def test_a_clock_rollback_holds_without_escalating_to_safe_mode(data_dir, caplog):
+    # A06-G4: the last restart stamp is in the FUTURE relative to "now" --
+    # the machine's clock rolled back (suspend, NTP step). This must still
+    # hold this boot's re-run (never ALLOW), but it is not a crash-loop:
+    # unlike a genuinely exhausted budget it must not escalate to a
+    # persistent, human-required safe mode.
+    ledger_path = data_dir / "scheduler" / "restarts.json"
+    ledger_path.parent.mkdir(parents=True, exist_ok=True)
+    future = time.time() + 3600
+    ledger_path.write_text(
+        json.dumps({"crashy": [future]}), encoding="utf-8",
+    )
+
+    ex = _make_executor()
+    ex._boot_recovery_pending = {"crashy"}
+
+    holds: list = []
+
+    class _FakeEnforcer:
+        def enter_safe_mode(self, reason):
+            holds.append(reason)
+
+    ex.guardrail_enforcer = _FakeEnforcer()
+
+    with caplog.at_level(logging.INFO, logger="halbert.scheduler.executor"):
+        ex.start()
+        ex.schedule_cron_job(
+            job_id="crashy",
+            task_func=lambda: None,
+            cron_expr={"hour": 3, "minute": 33},
+            max_retries=3,
+        )
+
+    assert not any(
+        j["id"] == "crashy:recovery" for j in ex.get_scheduled_jobs()
+    ), "a clock rollback must still hold this boot's re-run"
+    assert not holds, "a clock rollback must not escalate to persistent safe mode"
+    rollback_lines = [
+        r.getMessage() for r in caplog.records
+        if "clock_rollback" in r.getMessage()
+    ]
+    assert rollback_lines, "no clock-rollback line was logged"
+    assert "restart_budget_exhausted" not in rollback_lines[0]
+    ex.stop(wait=False)
+
+
+# ---------------------------------------------------------------------------
+# own-bug 6: the restart ledger's own persistence containment
+# ---------------------------------------------------------------------------
+
+def test_a_future_dated_stamp_is_pruned_not_kept_forever(data_dir):
+    # A stamp ahead of "now" (a clock that was wrong when it was written,
+    # then corrected) satisfies `now - t <= window` forever since the
+    # difference is negative -- it must not survive a persist as a
+    # perpetually-fresh restart that silently eats the budget.
+    ex = _make_executor()
+    now = time.time()
+    ex._restart_ledger = {"crashy": [now + 3600, now - 60]}
+    ex._persist_restart_ledger()
+    assert ex._restart_ledger["crashy"] == [now - 60]
+
+    reopened = _make_executor()
+    assert reopened._restart_ledger["crashy"] == pytest.approx([now - 60], abs=1)
+
+
+def test_a_malformed_ledger_is_logged_not_silently_dropped(data_dir, caplog):
+    ledger_path = data_dir / "scheduler" / "restarts.json"
+    ledger_path.parent.mkdir(parents=True, exist_ok=True)
+    ledger_path.write_text("not json", encoding="utf-8")
+
+    with caplog.at_level(logging.WARNING, logger="halbert.scheduler.executor"):
+        ex = _make_executor()
+
+    assert ex._restart_ledger == {}
+    assert any(
+        "restart" in r.getMessage().lower() and "ledger" in r.getMessage().lower()
+        for r in caplog.records
+    )
+
+
+def test_persisting_the_ledger_fsyncs_the_directory(data_dir, monkeypatch):
+    # Matching run_receipts.py's already-fixed pattern: fsyncing the temp
+    # file's fd guarantees the file's CONTENT survives a crash, but not
+    # that the rename into place does -- the containing directory must be
+    # fsynced too, or the rename itself can be lost on an unclean shutdown.
+    ex = _make_executor()
+    ex._restart_ledger = {"crashy": [time.time()]}
+
+    fsync_calls = []
+    real_fsync = os.fsync
+
+    def _spy_fsync(fd):
+        fsync_calls.append(fd)
+        return real_fsync(fd)
+
+    monkeypatch.setattr(os, "fsync", _spy_fsync)
+    ex._persist_restart_ledger()
+    # at least two fsync calls: the temp file, and the directory
+    assert len(fsync_calls) >= 2

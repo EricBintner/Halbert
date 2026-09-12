@@ -227,6 +227,22 @@ class TestMoveLeaf:
         assert new["edge_kind"] == "branch"
         assert new["updated_at"] == 100.0
 
+    def test_move_leaf_claims_the_write_lock_before_reading(self, pair):
+        # own-bug: move_leaf used a deferred transaction ("with self._lock,
+        # self._conn:") while its sibling get_or_open_thread deliberately
+        # claims the write lock with BEGIN IMMEDIATE before reading -- a
+        # deferred read-then-write can return SQLITE_BUSY on the lock
+        # upgrade under WAL instead of waiting out busy_timeout, so two
+        # store instances on one file could report a genuinely benign
+        # topic switch as failed.
+        calls = []
+        pair._conn.set_trace_callback(calls.append)
+        try:
+            assert pair.move_leaf("old", "new", "branch", now=100.0) is True
+        finally:
+            pair._conn.set_trace_callback(None)
+        assert calls[0].strip().upper() == "BEGIN IMMEDIATE"
+
     def test_every_documented_edge_kind_is_stampable(self, pair):
         for edge in ("continuation", "branch", "delegate", "merged"):
             # reset both sides between rounds

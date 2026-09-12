@@ -42,6 +42,7 @@ except ImportError:
 
 from .job import Job
 from .engine import SchedulerEngine
+from .catchup import compute_grace_seconds, last_due_slot
 from .restart_budget import RestartBudget, RestartDecision
 from .run_receipts import RunReceiptStore
 from ..utils.retry import exponential_backoff_retry, STANDARD_TASK_POLICY
@@ -173,6 +174,13 @@ class AutonomousExecutor:
         #: Jobs whose boot recovery found an interrupted receipt; they get
         #: one budget-checked re-run when their callable re-registers.
         self._boot_recovery_pending: set = set()
+        #: A15-G3: jobs a receipt-recovery re-run was actually armed for
+        #: this boot. Unlike ``_boot_recovery_pending`` (drained per job
+        #: during registration, before boot catch-up ever runs — the
+        #: audit's own proposed guard checked the wrong set), this one is
+        #: only ever added to during a boot, so boot catch-up can consult
+        #: it afterward and not double-arm the same missed occurrence.
+        self._boot_recovery_armed: set = set()
         
         # Initialize guardrails (Phase 3 M6)
         if self.enable_guardrails:
@@ -278,14 +286,27 @@ class AutonomousExecutor:
 
     def _load_restart_ledger(self) -> Dict[str, List[float]]:
         """Per-job restart epochs, surviving reboots (crash-loop across
-        boots is the case the budget exists for). Malformed entries are
-        dropped loudly-by-omission; the ledger is bookkeeping, not truth."""
+        boots is the case the budget exists for). A malformed file is
+        logged, not silently dropped (own-bug 6) — the ledger is
+        bookkeeping, not truth, so it starts empty rather than crashing
+        construction, but an operator should be able to see it happened."""
         try:
             with open(self._restart_ledger_path, "r", encoding="utf-8") as f:
                 raw = json.load(f)
-        except (OSError, ValueError):
+        except FileNotFoundError:
+            return {}
+        except (OSError, ValueError) as e:
+            logger.warning(
+                "restart ledger %s is malformed (%s); starting empty",
+                self._restart_ledger_path, e,
+            )
             return {}
         if not isinstance(raw, dict):
+            logger.warning(
+                "restart ledger %s is malformed (expected an object, got %s); "
+                "starting empty",
+                self._restart_ledger_path, type(raw).__name__,
+            )
             return {}
         ledger: Dict[str, List[float]] = {}
         for job_id, stamps in raw.items():
@@ -296,15 +317,23 @@ class AutonomousExecutor:
         return ledger
 
     def _persist_restart_ledger(self) -> None:
-        """Write the ledger, pruning entries outside the budget window."""
+        """Write the ledger, pruning entries outside the budget window.
+
+        own-bug 6: a stamp AHEAD of ``now`` (written under a clock that was
+        later corrected) satisfies ``now - t <= window`` forever, since the
+        difference is negative — it would never prune and would sit in the
+        ledger looking perpetually fresh, permanently eating the budget.
+        Dropped alongside genuinely stale entries, not kept as a special case.
+        """
         now = time.time()
         window = self.restart_budget.window_s
         pruned = {
-            job_id: [t for t in stamps if now - t <= window]
+            job_id: [t for t in stamps if 0 <= now - t <= window]
             for job_id, stamps in self._restart_ledger.items()
         }
         pruned = {job_id: stamps for job_id, stamps in pruned.items() if stamps}
         self._restart_ledger = pruned
+        directory = os.path.dirname(self._restart_ledger_path) or "."
         tmp = f"{self._restart_ledger_path}.{os.getpid()}.tmp"
         try:
             with open(tmp, "w", encoding="utf-8") as f:
@@ -318,6 +347,13 @@ class AutonomousExecutor:
             except OSError:
                 pass
             raise
+        # fsync the directory so the rename itself is durable, not just the
+        # tmp file's content (matches run_receipts.py's RunReceiptStore._flush).
+        dir_fd = os.open(directory, os.O_RDONLY)
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
 
     def _maybe_arm_boot_recovery(
         self,
@@ -346,6 +382,18 @@ class AutonomousExecutor:
         now = time.time()
         restarts = self._restart_ledger.get(job_id, [])
         decision = self.restart_budget.evaluate(restarts, now)
+        if decision is RestartDecision.CLOCK_ROLLBACK:
+            # A06-G4: the clock moved backward (suspend, NTP step) -- this
+            # boot's re-run is held exactly like an exhausted budget would
+            # be, but it is not the same FACT: nothing about the job is
+            # crash-looping, so it must not escalate to a persistent,
+            # human-required safe mode. A future boot with a sane clock
+            # re-evaluates from the same ledger.
+            logger.warning(
+                "restart_budget_held_clock_rollback job_id=%s decision=%s",
+                job_id, decision.value,
+            )
+            return
         if decision is not RestartDecision.ALLOW:
             recent = [
                 t for t in restarts if now - t <= self.restart_budget.window_s
@@ -371,6 +419,7 @@ class AutonomousExecutor:
             return
         self._restart_ledger.setdefault(job_id, []).append(now)
         self._persist_restart_ledger()
+        self._boot_recovery_armed.add(job_id)
         recovery_id = f"{job_id}:recovery"
         self.schedule_one_time(
             job_id=recovery_id,
@@ -378,6 +427,7 @@ class AutonomousExecutor:
             run_at=datetime.now(timezone.utc),
             max_retries=max_retries,
             timeout_s=timeout_s,
+            occurrence_job_id=job_id,
         )
         logger.info(
             f"Boot recovery: one bounded re-run armed for {job_id} "
@@ -406,11 +456,21 @@ class AutonomousExecutor:
         cron_expr: Dict[str, Any],
         max_retries: int = 3,
         timeout_s: int = 600,
-        description: str = ''
+        description: str = '',
+        period_s: Optional[float] = None,
     ) -> str:
         """
         Schedule a cron job with retry logic.
-        
+
+        ``period_s``, when given (R-03, A06-G3): the job's cadence, used to
+        scale ``misfire_grace_time`` (half the period, clamped [120s, 2h] —
+        ``compute_grace_seconds``, the same rule the boot catch-up path
+        already applies) instead of the flat 60s in ``job_defaults``, which
+        was tuned to nothing in particular. This covers a slot missed while
+        the PROCESS IS ALIVE but briefly busy; a machine that was asleep
+        needs the separate boot/wake catch-up path, not a bigger grace
+        window here.
+
         Args:
             job_id: Unique job identifier
             task_func: Function to execute
@@ -449,22 +509,40 @@ class AutonomousExecutor:
             timeout_s=timeout_s
         )
         self.scheduler_engine.add_job(job)
-        
+
+        # R-03 (A06-G1/A15-G1/G2): computed live at fire time, not
+        # registration time — a cron has no single instant until it fires.
+        # Same last_due_slot walk the boot catch-up path uses, so a regular
+        # fire and a caught-up one agree on which slot they served.
+        def _cron_instant() -> Optional[str]:
+            try:
+                trigger = CronTrigger(**cron_expr, timezone=self.timezone)
+                due = last_due_slot(trigger, datetime.now(timezone.utc))
+                return due.isoformat() if due is not None else None
+            except Exception as e:
+                logger.debug(f"Job {job_id}: could not compute its own slot instant: {e}")
+                return None
+
         # Wrap task with retry logic
         wrapped_func = self._wrap_task(
             job_id=job_id,
             task_func=task_func,
             max_retries=max_retries,
-            timeout_s=timeout_s
+            timeout_s=timeout_s,
+            scheduled_instant_fn=_cron_instant,
         )
         
         # Schedule with APScheduler
+        add_job_kwargs: Dict[str, Any] = {}
+        if period_s is not None and period_s > 0:
+            add_job_kwargs["misfire_grace_time"] = int(compute_grace_seconds(period_s))
         self.scheduler.add_job(
             func=wrapped_func,
             trigger=CronTrigger(**cron_expr, timezone=self.timezone),
             id=job_id,
             name=description or job_id,
-            replace_existing=True
+            replace_existing=True,
+            **add_job_kwargs,
         )
 
         # Packet 03 B1: a job whose previous boot's run was interrupted
@@ -484,18 +562,30 @@ class AutonomousExecutor:
         task_func: Callable,
         run_at: datetime,
         max_retries: int = 3,
-        timeout_s: int = 600
+        timeout_s: int = 600,
+        occurrence_job_id: Optional[str] = None,
+        scheduled_instant: Optional[str] = None,
     ) -> str:
         """
         Schedule a one-time job.
-        
+
         Args:
             job_id: Unique job identifier
             task_func: Function to execute
             run_at: Execution time (datetime)
             max_retries: Maximum retry attempts
             timeout_s: Timeout in seconds
-        
+            occurrence_job_id: R-03 — who the occurrence is recorded
+                against, when this run serves a known slot (a boot
+                catch-up or recovery run passes the PARENT job's id here,
+                since it executes under a suffixed sibling id). Defaults
+                to ``job_id``.
+            scheduled_instant: R-03 — the slot this run serves, when it is
+                not simply ``run_at`` (a catch-up run fires at "now" but
+                serves the ORIGINAL missed slot — crediting "now" as the
+                occurrence would never match that slot's own due time on a
+                later check). Defaults to ``run_at.isoformat()``.
+
         Returns:
             Job ID
         """
@@ -507,8 +597,13 @@ class AutonomousExecutor:
             timeout_s=timeout_s
         )
         self.scheduler_engine.add_job(job)
-        
-        wrapped_func = self._wrap_task(job_id, task_func, max_retries, timeout_s)
+
+        instant = scheduled_instant if scheduled_instant is not None else run_at.isoformat()
+        wrapped_func = self._wrap_task(
+            job_id, task_func, max_retries, timeout_s,
+            occurrence_job_id=occurrence_job_id,
+            scheduled_instant_fn=lambda: instant,
+        )
         
         self.scheduler.add_job(
             func=wrapped_func,
@@ -561,14 +656,28 @@ class AutonomousExecutor:
         job_id: str,
         task_func: Callable,
         max_retries: int,
-        timeout_s: int
+        timeout_s: int,
+        *,
+        occurrence_job_id: Optional[str] = None,
+        scheduled_instant_fn: Optional[Callable[[], Optional[str]]] = None,
     ) -> Callable:
         """
         Wrap task with retry logic, timeout, and outcome tracking.
-        
+
+        R-03 (A06-G1/A15-G1/G2): ``scheduled_instant_fn``, when given, is
+        called at fire time for the instant this run serves (Hermes
+        occurrence-level idempotency — stronger than any claim TTL). A slot
+        already completed is never dispatched. ``occurrence_job_id``
+        (default ``job_id``) is who the occurrence is recorded against —
+        distinct from ``job_id`` for a boot catch-up or recovery run, which
+        executes under a suffixed sibling id (``<id>:catchup``,
+        ``<id>:recovery``) but must credit the PARENT job's occurrence, or a
+        slot served that way would never read as served on the next boot.
+
         Returns:
             Wrapped function
         """
+        occurrence_id = occurrence_job_id or job_id
         @exponential_backoff_retry(
             max_attempts=max_retries,
             base_delay=1.0,
@@ -580,9 +689,35 @@ class AutonomousExecutor:
         )
         def wrapped():
             import time
-            
+
             start_time = time.time()
-            
+
+            # R-03 (A06-G1/A15-G1/G2): the occurrence check is the real
+            # at-most-once primitive, ahead of even the guardrail checks —
+            # a slot already served needs no guardrail decision at all.
+            scheduled_instant = scheduled_instant_fn() if scheduled_instant_fn else None
+            if scheduled_instant is not None and self.receipts.occurrence_completed(
+                occurrence_id, scheduled_instant
+            ):
+                logger.info(
+                    f"Job {job_id}: occurrence {occurrence_id}@{scheduled_instant} "
+                    f"already completed; skipping"
+                )
+                return None
+
+            # R-03 own-bug 5: a receipt now exists before ANY early-return
+            # branch below, including a guardrail rejection or a safe-mode
+            # skip — both used to return before the receipt was created,
+            # so a 'rejected' or 'skipped' run was invisible to the
+            # receipt-based liveness story, indistinguishable from the
+            # scheduler simply being dead. 'blocked_config' is the closed
+            # set's own answer for "refused before spend".
+            with self._receipts_lock:
+                receipt_id = self.receipts.mark_started(
+                    occurrence_id, owner_pid=os.getpid(),
+                    scheduled_instant=scheduled_instant,
+                )
+
             # Phase 3 M6: Check guardrails before execution
             if self.enable_guardrails and self.guardrail_enforcer:
                 try:
@@ -592,6 +727,7 @@ class AutonomousExecutor:
                         self.scheduler_engine.update_job_state(
                             job_id, 'skipped', error='safe_mode_active'
                         )
+                        self._finish_receipt(receipt_id, 'blocked_config', error='safe_mode_active')
                         return None
                     
                     # Check confidence and budgets. Confidence comes from
@@ -628,6 +764,7 @@ class AutonomousExecutor:
                     self.scheduler_engine.update_job_state(
                         job_id, 'rejected', error=str(e)
                     )
+                    self._finish_receipt(receipt_id, 'blocked_config', error=str(e))
                     if self.anomaly_detector:
                         self.anomaly_detector.record_job_outcome(False, job_id)
                     return None
@@ -643,22 +780,24 @@ class AutonomousExecutor:
                 )
                 budget_tracker.start()
 
-            # Packet 03 B1: persist the 'started' receipt BEFORE the task
-            # callable runs — the marker must be on disk before any side
-            # effect begins, so a crash mid-run is distinguishable at the
-            # next boot (recover_on_boot interrupts dead-owner markers).
-            # Locked across the worker pool: the store flushes whole-file.
-            with self._receipts_lock:
-                receipt_id = self.receipts.mark_started(
-                    job_id, owner_pid=os.getpid()
-                )
-
             try:
                 # Execute task under the timeout. SIGALRM is main-thread
                 # only and APScheduler runs jobs on its worker pool, so the
                 # deadline is a thread join, not a signal (C4-01).
                 result = _call_with_timeout(task_func, timeout_s, job_id)
-                
+
+                # R-03 own-bug 3 / A06-G8: a proactive task that catches its
+                # own exception and returns {'status': 'error', ...} raises
+                # nothing, so _call_with_timeout hands back a falsy-looking
+                # "result" that fell straight into the success branch below
+                # — a failed morning report recorded as an 'ok' receipt and
+                # a 'completed' job. Route it through the same failure path
+                # a raised exception already takes.
+                if isinstance(result, dict) and result.get('status') == 'error':
+                    raise RuntimeError(
+                        str(result.get('error') or "task reported status='error'")
+                    )
+
                 # Phase 3 M6: Check budgets during execution
                 if budget_tracker:
                     try:
@@ -701,14 +840,14 @@ class AutonomousExecutor:
             
             except Exception as e:
                 execution_time = time.time() - start_time
-                
+
                 # Phase 3 M6: Stop budget tracking on failure
                 if budget_tracker:
                     try:
                         budget_tracker.stop()
                     except Exception:
                         pass  # Budget tracking failed, but we're already handling an error
-                
+
                 # Log failure
                 self._log_outcome(
                     JobResult(
@@ -718,7 +857,7 @@ class AutonomousExecutor:
                         execution_time_s=execution_time
                     )
                 )
-                
+
                 # Phase 3 M6: Record failure and check for anomalies
                 if self.anomaly_detector:
                     try:
@@ -726,20 +865,20 @@ class AutonomousExecutor:
                     except Exception as anomaly_exc:
                         # Anomaly detected (e.g., repeated failures)
                         logger.critical(f"ANOMALY DETECTED: {anomaly_exc}")
-                        
+
                         # Enter safe-mode
                         if self.guardrail_enforcer:
                             self.guardrail_enforcer.enter_safe_mode(
                                 f"Anomaly: {anomaly_exc}"
                             )
-                        
+
                         # Trigger recovery
                         if self.recovery_executor:
                             self.recovery_executor.execute_alert_user(
                                 f"Job {job_id} triggered anomaly: {anomaly_exc}",
                                 severity="critical"
                             )
-                
+
                 # Update job state
                 self.scheduler_engine.update_job_state(
                     job_id, 'failed', error=str(e)
@@ -747,8 +886,23 @@ class AutonomousExecutor:
 
                 self._finish_receipt(receipt_id, 'error', error=str(e))
 
+                # R-03 own-bug 2: _call_with_timeout explicitly leaves the
+                # worker thread running past its deadline ("the task thread
+                # is a daemon and is left to finish on its own"). TimeoutError
+                # is an OSError, hence an Exception, and the retry decorator's
+                # default exceptions=(Exception,) does not distinguish it —
+                # so a slow task got re-entered by the retry sleep while its
+                # first attempt's thread was still alive underneath it,
+                # running the same side effects twice concurrently. The
+                # receipt and job state above already record this attempt as
+                # failed; not re-raising here is what stops the decorator
+                # from starting a second one on top of the thread it can
+                # never actually stop.
+                if isinstance(e, TimeoutError):
+                    return None
+
                 raise
-        
+
         return wrapped
 
     def _finish_receipt(

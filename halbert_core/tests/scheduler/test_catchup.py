@@ -11,7 +11,7 @@ beyond grace a recurring job is fast-forwarded (skip the whole backlog,
 fire ONCE now, advance next_run_at at dispatch) and a one-shot is RETIRED
 with a diagnostic file — never fired hours late.
 """
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -20,6 +20,7 @@ from halbert_core.scheduler.catchup import (
     clamp_proposed_delay,
     compute_grace_seconds,
     decide_catchup,
+    detect_clock_jump,
     write_retirement_diagnostic,
 )
 
@@ -34,6 +35,47 @@ def test_grace_is_half_the_period_clamped():
     assert compute_grace_seconds(3600) == 1800  # half the period, in range
     assert compute_grace_seconds(60) == 120  # floored at 120s
     assert compute_grace_seconds(14 * 24 * 3600) == 7200  # capped at 2h
+
+
+# ---------------------------------------------------------------------------
+# A06-G3 (second half): the machine was actually asleep, not merely busy --
+# misfire_grace_time cannot help (APScheduler never scheduled while
+# suspended), so a wake-time catch-up needs to notice the wall clock moved
+# further than the process's own monotonic clock did.
+# ---------------------------------------------------------------------------
+
+def test_a_sleep_gap_is_detected():
+    # A heartbeat beat every 60s (interval), but the wall clock jumped 3
+    # hours between two beats -- monotonic barely moved, the process itself
+    # was suspended.
+    prev_wall = datetime(2026, 9, 7, 23, 0, tzinfo=timezone.utc)
+    now_wall = datetime(2026, 9, 8, 2, 0, tzinfo=timezone.utc)  # +3h wall
+    gap = detect_clock_jump(
+        prev_monotonic=1000.0, prev_wall=prev_wall,
+        now_monotonic=1060.0, now_wall=now_wall,  # +60s monotonic
+    )
+    assert gap is not None
+    assert gap.total_seconds() == pytest.approx(3 * 3600 - 60, abs=1)
+
+
+def test_no_jump_when_both_clocks_agree():
+    prev_wall = datetime(2026, 9, 7, 23, 0, tzinfo=timezone.utc)
+    now_wall = datetime(2026, 9, 7, 23, 1, tzinfo=timezone.utc)  # +60s wall
+    assert detect_clock_jump(
+        prev_monotonic=1000.0, prev_wall=prev_wall,
+        now_monotonic=1060.0, now_wall=now_wall,  # +60s monotonic
+    ) is None
+
+
+def test_small_scheduling_jitter_is_not_a_jump():
+    # A slow tick (GC pause, a busy CPU) is not a sleep -- within tolerance.
+    prev_wall = datetime(2026, 9, 7, 23, 0, tzinfo=timezone.utc)
+    now_wall = datetime(2026, 9, 7, 23, 1, 5, tzinfo=timezone.utc)  # +65s wall
+    assert detect_clock_jump(
+        prev_monotonic=1000.0, prev_wall=prev_wall,
+        now_monotonic=1060.0, now_wall=now_wall,  # +60s monotonic, 5s of jitter
+        tolerance_s=30.0,
+    ) is None
 
 
 def test_missed_within_grace_run_immediately_bounded():

@@ -132,6 +132,26 @@ class TestBeginEndTurn:
         assert turn2.history[0]["role"] == "system" and "kept for one turn only" in turn2.history[0]["content"]
         assert turn2.history[1]["content"] == "add a samba share for the media folder"
 
+    def test_auto_topic_switch_stamps_the_structural_edge(self, tm):
+        # own-bug: _open_new_thread recorded provenance only in metadata
+        # (previous_thread_id) -- the structural parent_thread_id/edge_kind
+        # columns move_leaf and the session-tree design read stayed NULL
+        # and 'root' regardless of how the thread was really opened.
+        t1 = _turn(tm, "add a samba share for the media folder")
+        tm.clock.advance(3 * 3600)
+        turn2 = tm.begin_turn("check the disk space on /var",
+                              analyze_message("check the disk space on /var"), "s2")
+        new = tm.store.get_thread(turn2.thread_id)
+        assert new["parent_thread_id"] == t1.thread_id
+        assert new["edge_kind"] == "continuation"
+
+    def test_explicit_new_thread_stamps_a_branch_edge(self, tm):
+        t1 = _turn(tm, "add a samba share for the media folder")
+        new_id = tm.new_thread("Something else", "model switched", from_thread_id=t1.thread_id)
+        new = tm.store.get_thread(new_id)
+        assert new["parent_thread_id"] == t1.thread_id
+        assert new["edge_kind"] == "branch"
+
     def test_strong_recall_of_closed_thread_injects_receipt(self, tm):
         t1 = _turn(tm, "add a samba share for the media folder", assistant="Added [media] at /srv/media.")
         tm.clock.advance(3 * 3600)
@@ -171,10 +191,100 @@ class TestBeginEndTurn:
         assert tm.resume_thread("nope", from_thread_id=t1.thread_id) is False
         assert tm.resume_thread(t1.thread_id, from_thread_id=t2.thread_id) is False  # already open
 
+    def test_resume_resolves_the_real_open_leaf_not_a_stale_belief(self, tm):
+        # own-bug: resume_thread/_reopen_thread trusted the caller's
+        # from_thread_id; a stale belief (e.g. a synthesized thread id from
+        # a store-outage turn) made the pause a silent no-op while the real
+        # open leaf stayed open, and the target's own status='open' write
+        # then hit idx_one_open_leaf and surfaced as "could not resume" a
+        # thread that was perfectly resumable. new_thread already resolves
+        # against current_open_thread() for the same reason (A6b);
+        # _reopen_thread now does too.
+        t1 = _turn(tm, "swap the failing nvme in the zfs pool")
+        tm.clock.advance(3 * 3600)
+        t2 = _turn(tm, "add a samba share for the media folder")
+        tm.clock.advance(GRACE_MINUTES * 60)  # past the grace window: plain reopen (merge cases: TestMergeBack)
+        assert tm.resume_thread(t1.thread_id, from_thread_id="stale-nonexistent-id") is True
+        assert tm.current()["thread_id"] == t1.thread_id
+        assert tm.store.get_thread(t2.thread_id)["status"] == "paused"
+
+    def test_reopen_routes_through_move_leaf_and_mints_branch_summaries(self, tm):
+        # A16-G7 (design §2.3), wired: a reopen is a leaf move, and a leaf
+        # move that crosses away from a thread with turns mints a departure
+        # row there and a return row in the thread coming back into focus.
+        t1 = _turn(tm, "swap the failing nvme in the zfs pool")
+        tm.clock.advance(3 * 3600)
+        t2 = _turn(tm, "add a samba share for the media folder")
+        tm.clock.advance(GRACE_MINUTES * 60)  # past the grace window: plain reopen (merge cases: TestMergeBack)
+        assert tm.resume_thread(t1.thread_id, from_thread_id=t2.thread_id) is True
+        departed = [m for m in tm.store.list_messages(t2.thread_id) if m.get("origin") == "branch"]
+        returned = [m for m in tm.store.list_messages(t1.thread_id) if m.get("origin") == "branch"]
+        assert departed and departed[0]["metadata"]["side"] == "departed"
+        assert returned and returned[0]["metadata"]["side"] == "returned"
+
     def test_mark_interrupted(self, tm):
         tm.begin_turn("add a samba share", analyze_message("add a samba share"), "s")
         assert tm.mark_interrupted() == 1
         assert tm.store.list_messages(tm.current()["thread_id"])[0]["status"] == "interrupted"
+
+    def test_interrupted_turn_leaves_a_persisted_marker_row(self, tm):
+        # A16-G5: end_turn wrote an assistant row only when it had text,
+        # blocks, diffs or terminal ids -- an interrupted turn has none of
+        # those, so it left a bare user row with no persisted fact that
+        # anything was cut short. Replay showed two consecutive user rows.
+        text = "what's the garage keypad code"
+        turn = tm.begin_turn(text, analyze_message(text), "s")
+        tm.end_turn(turn, assistant_text="", blocks=[], terminal_block_ids=[],
+                    diff_proposals=[], status="interrupted")
+        rows = tm.store.list_messages(turn.thread_id)
+        assert len(rows) == 2
+        assert rows[0]["status"] == "interrupted"
+        assert rows[1]["role"] == "assistant" and rows[1]["status"] == "interrupted"
+        assert rows[1]["content"] == "[turn interrupted before an answer]"
+
+    def test_end_turn_rotates_a_thread_that_grew_past_the_window(self, tm):
+        # R-12 Phase A: the rotation writer (Phase B, continuity/rotation.py)
+        # shipped with no caller in the turn loop -- compact_boundaries had
+        # a schema, an index, and nothing that ever wrote to it, so a long
+        # thread grew until whatever budget it hit truncated the part that
+        # had scrolled away, which is exactly the part someone expects the
+        # machine to remember.
+        assistant = (
+            "$ systemctl restart nginx\n"
+            + "\n".join(f"  reading configuration block {j} ... ok" for j in range(20))
+            + "\nExit code 1\nerror: permission denied on /etc/nginx/nginx.conf\n"
+        )
+        for i in range(15):
+            _turn(tm, f"turn {i}", assistant=assistant)
+        thread_id = tm.current()["thread_id"]
+        boundary = tm.store.last_compact_boundary(thread_id)
+        assert boundary is not None
+        assert boundary["generation"] == 1
+        visible = [m for m in tm.store.list_messages(thread_id) if m["visible_in_timeline"]]
+        assert any("compacted generation 1" in str(m["content"]) for m in visible)
+        assert len(visible) < 30  # earlier turns are hidden, not just appended past
+
+    def test_receipt_carries_the_unresolved_request(self, tm):
+        # A16-G2: the receipt is what survives a compaction window today,
+        # before compact_boundaries.unresolved_request (T3) lands.
+        text = "what's the garage keypad code"
+        turn = tm.begin_turn(text, analyze_message(text), "s")
+        tm.end_turn(turn, assistant_text="", blocks=[], terminal_block_ids=[],
+                    diff_proposals=[], status="interrupted")
+        receipt = tm.store.get_thread(turn.thread_id)["receipt"]
+        assert f"Unresolved request: {text}" in receipt
+
+    def test_cancelled_turn_gets_no_marker(self, tm):
+        # A deliberate stop is not an unexplained cut -- the user already
+        # knows they cancelled it, so no marker row is owed (and the
+        # pinned override test above already asserts exactly one row for
+        # a cancelled turn).
+        text = "add a samba share"
+        turn = tm.begin_turn(text, analyze_message(text), "s")
+        tm.end_turn(turn, assistant_text="", blocks=[], terminal_block_ids=[],
+                    diff_proposals=[], status="cancelled")
+        rows = tm.store.list_messages(turn.thread_id)
+        assert len(rows) == 1
 
 
 class TestTopicWindow:
@@ -1047,7 +1157,10 @@ class TestMergeBack:
         assert tm.resume_thread(t1.thread_id, from_thread_id=new_id) is True
         paused = tm.store.get_thread(new_id)
         assert paused["status"] == "paused" and paused["metadata"]["successor"] == t1.thread_id
-        assert len(tm.store.list_messages(t1.thread_id)) == 2 and len(tm.store.list_messages(new_id)) == 2
+        # +1 each: the reopen is a leaf move (design §2.3) and both threads
+        # have turns, so it mints a departure row in new_id and a return
+        # row in t1.
+        assert len(tm.store.list_messages(t1.thread_id)) == 3 and len(tm.store.list_messages(new_id)) == 3
         assert tm.current()["thread_id"] == t1.thread_id
 
     def test_auto_reopen_on_strong_match_never_merges(self, tm):
@@ -1058,7 +1171,9 @@ class TestMergeBack:
         turn = tm.begin_turn(text, analyze_message(text), "s3")
         assert turn.decision.action == "reopen" and turn.thread_id == t1.thread_id
         assert tm.store.get_thread(new_id)["status"] == "paused"
-        assert len(tm.store.list_messages(new_id)) == 2
+        # +1: the auto-reopen crossing away from new_id mints a departure
+        # row there (design §2.3).
+        assert len(tm.store.list_messages(new_id)) == 3
 
     def test_merge_back_holds_the_manager_lock(self, tm):
         """A6c review finding 1: ``merge_back`` moves two threads between
@@ -1093,9 +1208,17 @@ class TestMergeBack:
         certs = _turn(tm, "rotate the tls certs on the reverse proxy")
         disk_id = tm.new_thread("Disk space", "x", from_thread_id=certs.thread_id)
         _turn(tm, "check the disk space on /var")
+        # A row that no longer knows where it came from: the structural
+        # parent_thread_id column is now the source of truth
+        # (_predecessor_id trusts it first), so simulating "unrelated"
+        # means clearing that column too, not just the legacy metadata key
+        # a migrated row would be missing.
         meta = dict(tm.store.get_thread(disk_id)["metadata"])
-        meta.pop("previous_thread_id", None)  # a row that no longer knows where it came from
+        meta.pop("previous_thread_id", None)
         tm.store.update_thread(disk_id, metadata=meta)
+        tm.store._conn.execute(
+            "UPDATE conversations SET parent_thread_id = NULL WHERE id = ?", (disk_id,))
+        tm.store._conn.commit()
         assert tm.merge_back(disk_id) is None
         assert tm.store.get_thread(disk_id)["status"] == "open"
         assert len(tm.store.list_messages(disk_id)) == 2
@@ -1103,7 +1226,9 @@ class TestMergeBack:
         # ...and the model naming that same paused thread reopens it, never merges
         assert tm.resume_thread(certs.thread_id, from_thread_id=disk_id) is True
         assert tm.store.get_thread(disk_id)["status"] == "paused"
-        assert len(tm.store.list_messages(disk_id)) == 2
+        # +1: the reopen crossing away from disk_id mints a departure row
+        # there (design §2.3).
+        assert len(tm.store.list_messages(disk_id)) == 3
 
     def test_merge_back_requires_the_predecessor_to_point_back(self, tm):
         """A6c review finding 3: the predecessor must still name this thread as
@@ -1140,8 +1265,11 @@ class TestMergeBack:
         paused = tm.store.get_thread(new_id)
         assert paused["status"] == "paused" and paused["metadata"]["successor"] == t1.thread_id
         assert tm.current()["thread_id"] == t1.thread_id
-        assert len(tm.store.list_messages(t1.thread_id)) == 2
-        assert len(tm.store.list_messages(new_id)) == 2
+        # +1 each: the degraded-to-reopen crossing mints a departure row in
+        # new_id and a return row in t1 (design §2.3), same as any other
+        # reopen through move_leaf.
+        assert len(tm.store.list_messages(t1.thread_id)) == 3
+        assert len(tm.store.list_messages(new_id)) == 3
 
 
 class TestRetractionNotes:

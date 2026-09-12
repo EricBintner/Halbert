@@ -67,6 +67,25 @@ def test_judge_scores_wrong_and_refusal():
     assert judge_score(gold="47-29", answer="") == 0
 
 
+def test_judge_score_exact_match_survives_trailing_punctuation():
+    # A02-G2/bug3: a correct answer with a trailing period must not be
+    # capped at 'partial' by a punctuation-fragile exact-match check.
+    assert judge_score(gold="47-29", answer="47-29.") == 2
+
+
+def test_judge_score_confident_correct_answer_in_a_sentence_scores_correct():
+    # A02-G2: gold present with no hedge marker and no negation is correct,
+    # not merely 'hedged partial' — a confident LLM answerer must not lose
+    # to the regex ceiling on a scoring artefact.
+    assert judge_score(gold="47-29", answer="47-29 is the garage keypad code") == 2
+
+
+def test_judge_score_negated_mention_of_gold_is_wrong():
+    # A02-G2: a negation immediately before gold means the answerer
+    # rejected that value, not confirmed it.
+    assert judge_score(gold="47-29", answer="definitely not 47-29, it is 11-11") == 0
+
+
 def test_llm_judge_is_flag_off():
     """The programmatic judge is the oracle of record; an LLM judge (for
     free-text variance a regex cannot score) exists only as a flag-off hook
@@ -90,3 +109,25 @@ def test_run_exam_closed_book():
     assert all(v.score == 0 for v in empty.verdicts)
     # a refusal is distinguishable from a wrong guess
     assert all(v.answer == "NOT IN CONTEXT" for v in empty.verdicts)
+
+
+def test_run_exam_answer_fn_never_receives_gold_or_source_turn():
+    # A02-G1: the closed-book constraint is only real if answer_fn gets the
+    # question text and nothing else — not the bank row, which carries gold
+    # and source_turn. A spy answerer proves what actually crosses the seam.
+    thread = synthetic_thread(seed=7, turns=40)
+    region = thread.messages[:20]
+    facts = [f for f in planted_facts(thread) if f.source_turn < 20]
+    bank = question_bank(content_digest(region), facts=facts, cache_dir=None)
+
+    received = []
+
+    def spy(question):
+        received.append(question)
+        return "NOT IN CONTEXT"
+
+    run_exam(bank, spy)
+
+    assert received == [row["question"] for row in bank]
+    for q in received:
+        assert isinstance(q, str)

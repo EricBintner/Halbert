@@ -65,12 +65,20 @@ def _reset_capability_registry(monkeypatch):
     The llm_config parse cache is reset alongside it: it is keyed by file
     identity (path/mtime/size/inode), not content, so a probe that resolves
     a slot through it should not be able to serve a stale parse either.
+
+    The utility-slot catalog-probe cache (R-13 G2) is the same shape of
+    problem one module over: it is keyed by (url, provider), and every test
+    in ``test_utility_slot.py`` probes the same fixture endpoint, so a cache
+    entry left behind by one test's monkeypatched ``_fetch_catalog`` would
+    be served, uninvalidated, to the next.
     """
     from halbert_core import capabilities as caps_mod
     from halbert_core.model import llm_config as llm_config_mod
+    from halbert_core.model import utility_slot as utility_slot_mod
 
     caps_mod.reset_registry()
     llm_config_mod.invalidate_cache()
+    utility_slot_mod.reset_catalog_cache()
 
 
 @pytest.fixture(autouse=True)

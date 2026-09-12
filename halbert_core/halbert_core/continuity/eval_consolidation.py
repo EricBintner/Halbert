@@ -25,12 +25,13 @@ commits is the number the LLM arms will have to beat.
 
 from __future__ import annotations
 
+import copy
 import sys
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, List, Optional, Sequence, Tuple, Union
+from typing import Callable, Dict, List, Optional, Sequence, Tuple, Union
 
 from .consolidation import Consolidator
 from .corpus import (
@@ -41,14 +42,14 @@ from .corpus import (
     planted_facts,
     synthetic_thread,
 )
-from .recall_eval import context_answerer, question_bank, run_exam
+from .recall_eval import ReceiptIndex, context_answerer, question_bank, run_exam
 from .state_store import StateStore
 
 __all__ = [
     "Retained", "PolicyFailed", "validate_summary", "Arm", "ArmRow",
     "ArmAggregate", "MatrixReport", "verbatim_policy", "truncate_oldest_policy",
-    "durable_facts_policy", "llm_summary_policy", "default_arms", "run_matrix",
-    "approx_tokens", "main",
+    "durable_facts_policy", "llm_summary_policy", "recovery_policy",
+    "default_arms", "run_matrix", "approx_tokens", "main",
 ]
 
 #: Fixed "now" so the scorecard is reproducible; nothing here touches the
@@ -67,9 +68,18 @@ LLM_GATE = "closed"
 
 @dataclass
 class Retained:
-    """What a policy kept of the region, as answerable text."""
+    """What a policy kept of the region, as answerable text.
+
+    ``answer_fn`` (A02-G3) is the escape hatch for a policy whose answering
+    is not "hand the whole retained text to a closed-book reader" — RECOVERY
+    answers per question via retrieval instead. When set, the runner asks
+    it directly instead of building :func:`.recall_eval.context_answerer`
+    from ``text``; ``text``/its token count still describe what actually
+    stays in the live context (RECOVERY's own is near-empty on purpose).
+    """
 
     text: str
+    answer_fn: Optional[Callable[[str], str]] = None
 
 
 class PolicyFailed(Exception):
@@ -170,6 +180,37 @@ def llm_summary_policy(summarizer: Optional[Callable[[str], Mapping]]):
     return policy
 
 
+def recovery_policy():
+    """A02-G3: retrieval over the destroyed region — Halbert's real
+    production answer to consolidation loss, not another consolidation
+    policy. Rather than keeping a consolidated transcript in the live
+    context, RECOVERY indexes each region message as a searchable receipt
+    (:class:`.recall_eval.ReceiptIndex`, the same FTS the retrieval-decay
+    eval uses) and answers each question by searching it — the same
+    fallback the live system takes for a fact compacted out of context.
+    ``Retained.text`` is deliberately near-empty: nothing is kept in the
+    live context budget, only the ability to search for it.
+    """
+
+    def policy(thread: EvalThread, region: Sequence[EvalMessage]) -> Retained:
+        index = ReceiptIndex()
+        contents: Dict[str, str] = {}
+        for i, msg in enumerate(region):
+            key = f"{thread.thread_id}:{i}"
+            contents[key] = msg.content
+            index.add(key, msg.content)
+
+        def answer_fn(question: str) -> str:
+            hits = index.search(question, limit=1)
+            if not hits:
+                return "NOT IN CONTEXT"
+            return contents.get(hits[0], "NOT IN CONTEXT")
+
+        return Retained(text="", answer_fn=answer_fn)
+
+    return policy
+
+
 @dataclass
 class Arm:
     """One policy in the matrix. ``policy(thread, region)`` receives ONLY the
@@ -203,6 +244,11 @@ def default_arms(state_store: StateStore) -> List[Arm]:
             policy=truncate_oldest_policy(keep_turns=10),
         ),
         Arm(
+            name="RECOVERY",
+            label="production answer — retrieval over the destroyed region",
+            policy=recovery_policy(),
+        ),
+        Arm(
             name="LLM_SUMMARY",
             label="LLM abstraction pass — gated until this harness's "
                   "evidence is reviewed",
@@ -224,13 +270,20 @@ class ArmRow:
     arm: str
     thread_id: str
     bank_digest: str
-    status: str                 # OK | FAILED-RETRYABLE | SKIPPED-GATE-CLOSED
+    status: str                 # OK | FAILED | FAILED-RETRYABLE | NO-QUESTIONS | SKIPPED-GATE-CLOSED
     n_questions: Optional[int] = None
     correct: Optional[int] = None
     partial: Optional[int] = None
     wrong: Optional[int] = None
     recall: Optional[float] = None       # None when nothing was scored
     retained_tokens: Optional[int] = None
+    region_tokens: Optional[int] = None
+    #: one dict per question ({question, gold, answer, score}) — which
+    #: planted fact an arm lost is otherwise unrecoverable from the row.
+    verdicts: List[dict] = field(default_factory=list)
+    #: how many times the policy ran before this row's status was decided
+    #: (>1 only for a retried FAILED-RETRYABLE summary).
+    attempts: int = 1
     failure: Optional[str] = None
     retryable: bool = False
 
@@ -241,6 +294,8 @@ class ArmRow:
             "n_questions": self.n_questions, "correct": self.correct,
             "partial": self.partial, "wrong": self.wrong,
             "recall": self.recall, "retained_tokens": self.retained_tokens,
+            "region_tokens": self.region_tokens, "verdicts": self.verdicts,
+            "attempts": self.attempts,
             "failure": self.failure, "retryable": self.retryable,
         }
 
@@ -260,6 +315,7 @@ class ArmAggregate:
     wrong: int
     recall: Optional[float]
     mean_retained_tokens: Optional[float]
+    mean_region_tokens: Optional[float]
 
 
 @dataclass
@@ -283,8 +339,12 @@ class MatrixReport:
             rows = [r for r in self.rows if r.arm == arm_name]
             if all(r.status == "SKIPPED-GATE-CLOSED" for r in rows):
                 status = "SKIPPED-GATE-CLOSED"
+            elif any(r.status == "FAILED" for r in rows):
+                status = "FAILED"
             elif any(r.status == "FAILED-RETRYABLE" for r in rows):
                 status = "FAILED-RETRYABLE"
+            elif all(r.status == "NO-QUESTIONS" for r in rows):
+                status = "NO-QUESTIONS"
             else:
                 status = "OK"
             scored = [r for r in rows if r.status == "OK"]
@@ -294,6 +354,8 @@ class MatrixReport:
             wrong = sum(r.wrong or 0 for r in scored)
             tokens = [r.retained_tokens for r in scored
                       if r.retained_tokens is not None]
+            region_tokens = [r.region_tokens for r in scored
+                              if r.region_tokens is not None]
             out.append(ArmAggregate(
                 arm=arm_name,
                 label=labels.get(arm_name, ""),
@@ -308,6 +370,8 @@ class MatrixReport:
                        if questions else None,
                 mean_retained_tokens=(sum(tokens) / len(tokens))
                                        if tokens else None,
+                mean_region_tokens=(sum(region_tokens) / len(region_tokens))
+                                     if region_tokens else None,
             ))
         return out
 
@@ -350,16 +414,20 @@ class MatrixReport:
         lines.append("## Arms")
         lines.append("")
         lines.append("| arm | status | questions | correct | partial | wrong "
-                      "| recall | retained tokens (mean) |")
-        lines.append("|---|---|---:|---:|---:|---:|---:|---:|")
+                      "| recall | retained tokens (mean) | kept % |")
+        lines.append("|---|---|---:|---:|---:|---:|---:|---:|---:|")
         for a in aggs:
             name = f"{a.arm} (ceiling)" if a.ceiling else a.arm
-            lines.append(
-                f"| {name} | {a.status} | {a.questions} | {a.correct} | "
-                f"{a.partial} | {a.wrong} | "
-                f"{a.recall:.3f} | {a.mean_retained_tokens:.0f} |"
-                if a.status == "OK" else
-                f"| {name} | {a.status} | — | — | — | — | — | — |")
+            if a.status == "OK":
+                kept = (100.0 * a.mean_retained_tokens / a.mean_region_tokens
+                        if a.mean_region_tokens else None)
+                kept_cell = f"{kept:.0f}%" if kept is not None else "—"
+                lines.append(
+                    f"| {name} | {a.status} | {a.questions} | {a.correct} | "
+                    f"{a.partial} | {a.wrong} | "
+                    f"{a.recall:.3f} | {a.mean_retained_tokens:.0f} | {kept_cell} |")
+            else:
+                lines.append(f"| {name} | {a.status} | — | — | — | — | — | — | — |")
         lines.append("")
         lines.append("## Findings")
         lines.append("")
@@ -493,6 +561,18 @@ def run_matrix(
             for i, s in enumerate(seeds)
         ]
     threads = list(threads)
+    lengths = {len(t.messages) for t in threads}
+    if len(lengths) > 1:
+        # own-bug: the default region and the reported turn count are both
+        # derived from threads[0] only; mixed lengths would silently size
+        # the region for the first thread and misreport the header for
+        # every other one.
+        raise ValueError(
+            f"run_matrix: threads have differing turn counts {sorted(lengths)} "
+            "— the region and the scorecard's turn count are derived from "
+            "threads[0] and would misreport every other length; pass "
+            "same-length threads, or call run_matrix separately per length."
+        )
     if region is None:
         region = (0, max(1, len(threads[0].messages) // 2))
 
@@ -530,27 +610,62 @@ def run_matrix(
     )
 
 
+#: A truncated summary is retried this many times (Hermes: a one-shot
+#: larger-budget fallback before giving up) — the policy itself decides how
+#: to use each attempt; the runner only counts them.
+MAX_POLICY_ATTEMPTS = 2
+
+
 def _run_arm(arm: Arm, thread: EvalThread,
              region_messages: Sequence[EvalMessage],
              bank, digest: str) -> ArmRow:
     if arm.gate == "closed":
         return ArmRow(arm=arm.name, thread_id=thread.thread_id,
                       bank_digest=digest, status="SKIPPED-GATE-CLOSED")
-    try:
-        retained = arm.policy(thread, region_messages)
-    except PolicyFailed as e:
-        return ArmRow(arm=arm.name, thread_id=thread.thread_id,
-                      bank_digest=digest, status="FAILED-RETRYABLE",
-                      failure=e.reason, retryable=e.retryable)
-    exam = run_exam(bank, context_answerer(retained.text))
-    s = exam.summary()
-    return ArmRow(
-        arm=arm.name, thread_id=thread.thread_id, bank_digest=digest,
-        status="OK", n_questions=int(s["n"]), correct=int(s["correct"]),
-        partial=int(s["partial"]), wrong=int(s["wrong"]),
-        recall=float(s["recall"]) if s["n"] else None,
-        retained_tokens=approx_tokens(retained.text),
-    )
+
+    region_tokens = approx_tokens(_region_text(region_messages))
+    last_failure: Optional[PolicyFailed] = None
+    for attempt in range(1, MAX_POLICY_ATTEMPTS + 1):
+        # A fresh deep copy per attempt: a policy that mutates its region
+        # argument must not corrupt this thread's region for a later arm
+        # (or a retry of this same arm).
+        region_copy = copy.deepcopy(list(region_messages))
+        try:
+            retained = arm.policy(thread, region_copy)
+        except PolicyFailed as e:
+            last_failure = e
+            if not e.retryable or attempt == MAX_POLICY_ATTEMPTS:
+                return ArmRow(arm=arm.name, thread_id=thread.thread_id,
+                              bank_digest=digest, status="FAILED-RETRYABLE",
+                              region_tokens=region_tokens, attempts=attempt,
+                              failure=e.reason, retryable=e.retryable)
+            continue
+        except Exception as exc:  # noqa: BLE001 - a raising policy is a failed row, not a crashed matrix
+            return ArmRow(arm=arm.name, thread_id=thread.thread_id,
+                          bank_digest=digest, status="FAILED",
+                          region_tokens=region_tokens, attempts=attempt,
+                          failure=f"{type(exc).__name__}: {exc}", retryable=False)
+
+        exam = run_exam(bank, retained.answer_fn or context_answerer(retained.text))
+        s = exam.summary()
+        n = int(s["n"])
+        return ArmRow(
+            arm=arm.name, thread_id=thread.thread_id, bank_digest=digest,
+            status="OK" if n else "NO-QUESTIONS",
+            n_questions=n, correct=int(s["correct"]),
+            partial=int(s["partial"]), wrong=int(s["wrong"]),
+            recall=float(s["recall"]) if n else None,
+            retained_tokens=approx_tokens(retained.text),
+            region_tokens=region_tokens,
+            verdicts=[v.as_dict() for v in exam.verdicts],
+            attempts=attempt,
+        )
+
+    assert last_failure is not None  # loop always returns or sets this
+    return ArmRow(arm=arm.name, thread_id=thread.thread_id,
+                  bank_digest=digest, status="FAILED-RETRYABLE",
+                  region_tokens=region_tokens, attempts=MAX_POLICY_ATTEMPTS,
+                  failure=last_failure.reason, retryable=last_failure.retryable)
 
 
 # ---------------------------------------------------------------------------

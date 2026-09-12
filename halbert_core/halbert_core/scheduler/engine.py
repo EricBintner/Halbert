@@ -65,9 +65,29 @@ class SchedulerEngine:
 
     @trace_call("scheduler.add_job")
     def add_job(self, job: Job) -> None:
-        """Add a job to the queue."""
+        """Add a job to the queue, or re-register an existing id.
+
+        R-03 own-bug 1: jobs are re-registered at every boot (C4-01), and a
+        blind replace here blanked the last-run facts (state/started_at/
+        completed_at/error) an existing record already held — a
+        freshly-constructed ``Job()`` never sets these, so any caller
+        re-registering the same id would otherwise erase what the previous
+        boot's run actually did. A boot catch-up decision made right after
+        registration reads the correct facts (captured before this call),
+        but the FILE was left blanked, so a second reboot before the next
+        real fire saw no last-run facts at all and re-served an
+        already-served slot.
+        """
         if not job.created_at:
             job.created_at = datetime.now(timezone.utc).isoformat()
+        existing = self.jobs.get(job.id)
+        if existing is not None:
+            job.state = existing.state
+            job.started_at = existing.started_at
+            job.completed_at = existing.completed_at
+            job.error = existing.error
+            job.retries = existing.retries
+            job.created_at = existing.created_at
         self.jobs[job.id] = job
         self._persist_job(job)
 

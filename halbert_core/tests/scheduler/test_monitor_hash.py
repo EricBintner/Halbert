@@ -100,3 +100,38 @@ def test_store_survives_reopen(tmp_path):
     MonitorHashGate(path).evaluate("detector_sweep", (True, "v1"))
     reopened = MonitorHashGate(path)
     assert reopened.evaluate("detector_sweep", (True, "v1")).decision is MonitorDecision.SUPPRESS
+
+
+# ---------------------------------------------------------------------------
+# own-bug 7: a probe surfacing an undecodable filename must not crash the
+# gate. os.listdir/os.walk hand back a surrogate-escaped str for a non-UTF-8
+# filename on Linux (APFS forbids these, so this is Linux-only in practice);
+# a strict .encode("utf-8") on that text raises UnicodeEncodeError, which
+# used to escape evaluate() entirely -- the hash was never persisted, so
+# every later tick hit the same crash and catch-up ran ungated forever.
+# ---------------------------------------------------------------------------
+
+_UNDECODABLE = "etc/systemd/system/\udcffweird.service: size=1"
+
+
+def test_evaluate_survives_an_undecodable_probe_line(gate):
+    outcome = gate.evaluate("detector_sweep", (True, _UNDECODABLE))
+    assert outcome.decision is MonitorDecision.BASELINE
+
+
+def test_the_baseline_persists_after_an_undecodable_probe_line(gate):
+    # The whole point: it must not need to re-crash on every tick forever.
+    gate.evaluate("detector_sweep", (True, _UNDECODABLE))
+    again = gate.evaluate("detector_sweep", (True, _UNDECODABLE))
+    assert again.decision is MonitorDecision.SUPPRESS
+
+
+def test_an_undecodable_change_still_alerts_with_a_diff(gate):
+    gate.evaluate("detector_sweep", (True, "clean line\n"))
+    outcome = gate.evaluate("detector_sweep", (True, _UNDECODABLE + "\n"))
+    assert outcome.decision is MonitorDecision.ALERT_DIFF
+
+
+def test_capped_unified_diff_survives_undecodable_text():
+    diff = capped_unified_diff("clean\n", _UNDECODABLE + "\n", max_bytes=200)
+    assert isinstance(diff, str)

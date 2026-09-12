@@ -1981,6 +1981,7 @@ class SqliteConversationStore:
         title_source: str = "provisional",
         created_at: Optional[float] = None,
         parent_thread_id: Optional[str] = None,
+        edge_kind: str = "root",
         metadata: Optional[dict] = None,
     ) -> Optional[Dict[str, Any]]:
         """The atomic get-or-open (P3c, founder ruling D-5): find the open
@@ -2029,10 +2030,11 @@ class SqliteConversationStore:
                         self._conn.execute(
                             """INSERT INTO conversations
                                (id, user_id, title, created_at, updated_at, metadata,
-                                status, title_source, parent_thread_id)
-                               VALUES (?, NULL, ?, ?, ?, ?, 'open', ?, ?)""",
+                                status, title_source, parent_thread_id, edge_kind)
+                               VALUES (?, NULL, ?, ?, ?, ?, 'open', ?, ?, ?)""",
                             (thread_id, title, ts, ts, json.dumps(metadata or {}),
-                             title_source, parent_thread_id),
+                             title_source, parent_thread_id,
+                             edge_kind if parent_thread_id else "root"),
                         )
                         row = self._conn.execute(
                             _THREAD_SELECT + " WHERE c.id = ?", (thread_id,)
@@ -2263,63 +2265,80 @@ class SqliteConversationStore:
             return False
         ts = float(now) if now is not None else time.time()
         try:
-            with self._lock, self._conn:
-                old = self._conn.execute(
-                    "SELECT status, title FROM conversations WHERE id = ?",
-                    (old_thread_id,),
-                ).fetchone()
-                new = self._conn.execute(
-                    "SELECT status, parent_thread_id, title FROM conversations "
-                    "WHERE id = ?",
-                    (new_thread_id,),
-                ).fetchone()
-                if old is None or new is None:
-                    logger.info(
-                        "move_leaf %s -> %s: no such thread(s)", old_thread_id, new_thread_id
-                    )
-                    return False
-                if old["status"] != "open":
-                    logger.info(
-                        "move_leaf %s -> %s: %r is not the open leaf (status=%r)",
-                        old_thread_id, new_thread_id, old_thread_id, old["status"],
-                    )
-                    return False
-                if new["status"] == "merged":
-                    # merged_into is a terminal supersession edge (design
-                    # §1.2): a merged row never becomes the leaf again.
-                    logger.info(
-                        "move_leaf %s -> %s: target is merged", old_thread_id, new_thread_id
-                    )
-                    return False
-                self._conn.execute(
-                    "UPDATE conversations SET status = 'paused', paused_at = ?, "
-                    "updated_at = ? WHERE id = ?",
-                    (ts, ts, old_thread_id),
-                )
-                if new["parent_thread_id"] is None:
+            with self._lock:
+                # own-bug: this used to be a deferred transaction
+                # ("with self._lock, self._conn:"), unlike its sibling
+                # get_or_open_thread, which deliberately claims the write
+                # lock before reading -- a deferred read-then-write can
+                # return SQLITE_BUSY on the lock upgrade under WAL instead
+                # of waiting out busy_timeout, so two store instances on
+                # one file could report a genuinely benign topic switch as
+                # failed.
+                self._conn.execute("BEGIN IMMEDIATE")
+                try:
+                    old = self._conn.execute(
+                        "SELECT status, title FROM conversations WHERE id = ?",
+                        (old_thread_id,),
+                    ).fetchone()
+                    new = self._conn.execute(
+                        "SELECT status, parent_thread_id, title FROM conversations "
+                        "WHERE id = ?",
+                        (new_thread_id,),
+                    ).fetchone()
+                    if old is None or new is None:
+                        logger.info(
+                            "move_leaf %s -> %s: no such thread(s)", old_thread_id, new_thread_id
+                        )
+                        self._conn.rollback()
+                        return False
+                    if old["status"] != "open":
+                        logger.info(
+                            "move_leaf %s -> %s: %r is not the open leaf (status=%r)",
+                            old_thread_id, new_thread_id, old_thread_id, old["status"],
+                        )
+                        self._conn.rollback()
+                        return False
+                    if new["status"] == "merged":
+                        # merged_into is a terminal supersession edge (design
+                        # §1.2): a merged row never becomes the leaf again.
+                        logger.info(
+                            "move_leaf %s -> %s: target is merged", old_thread_id, new_thread_id
+                        )
+                        self._conn.rollback()
+                        return False
                     self._conn.execute(
-                        """UPDATE conversations
-                           SET status = 'open', paused_at = NULL, turns_since_pause = 0,
-                               updated_at = ?, parent_thread_id = ?, edge_kind = ?
-                           WHERE id = ?""",
-                        (ts, old_thread_id, edge_kind, new_thread_id),
+                        "UPDATE conversations SET status = 'paused', paused_at = ?, "
+                        "updated_at = ? WHERE id = ?",
+                        (ts, ts, old_thread_id),
                     )
-                else:
-                    self._conn.execute(
-                        """UPDATE conversations
-                           SET status = 'open', paused_at = NULL, turns_since_pause = 0,
-                               updated_at = ?
-                           WHERE id = ?""",
-                        (ts, new_thread_id),
+                    if new["parent_thread_id"] is None:
+                        self._conn.execute(
+                            """UPDATE conversations
+                               SET status = 'open', paused_at = NULL, turns_since_pause = 0,
+                                   updated_at = ?, parent_thread_id = ?, edge_kind = ?
+                               WHERE id = ?""",
+                            (ts, old_thread_id, edge_kind, new_thread_id),
+                        )
+                    else:
+                        self._conn.execute(
+                            """UPDATE conversations
+                               SET status = 'open', paused_at = NULL, turns_since_pause = 0,
+                                   updated_at = ?
+                               WHERE id = ?""",
+                            (ts, new_thread_id),
+                        )
+                    # Design §2.3, and the reason the docstring above named
+                    # T2: the divider rows ride the SAME transaction as the
+                    # status swap. A leaf that moved with no divider, and a
+                    # divider with no move, are both records that lie.
+                    self._mint_branch_summaries(
+                        old_thread_id, new_thread_id,
+                        old["title"], new["title"], ts,
                     )
-                # Design §2.3, and the reason the docstring above named T2:
-                # the divider rows ride the SAME transaction as the status
-                # swap. A leaf that moved with no divider, and a divider
-                # with no move, are both records that lie.
-                self._mint_branch_summaries(
-                    old_thread_id, new_thread_id,
-                    old["title"], new["title"], ts,
-                )
+                    self._conn.commit()
+                except Exception:
+                    self._conn.rollback()
+                    raise
             return True
         except Exception as e:
             logger.warning(
@@ -2569,19 +2588,25 @@ class SqliteConversationStore:
                         f"WHERE id IN ({marks})",
                         list(plan.covered_message_ids),
                     )
+                # A16-G2 (design §4.3): computed inside the same lock, on
+                # the pre-hide state -- the covered turns are about to be
+                # hidden from the timeline, not deleted, so the query still
+                # sees them either way, but there is no reason to read
+                # after the write when the answer does not depend on it.
+                unresolved = self.unresolved_request(plan.thread_id)
                 boundary_id = self._conn.execute(
                     "INSERT INTO compact_boundaries "
                     "(thread_id, trigger, pre_tokens, post_tokens, "
                     " preserved_message_ids, summary_message_id, created_at, "
                     " coverage_end_id, generation, unresolved_request, "
                     " trigger_detail) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?)",
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         plan.thread_id, plan.trigger,
                         plan.pre_chars, plan.post_chars,
                         json.dumps(list(plan.preserved_message_ids)),
                         summary_id, time.time(), plan.coverage_end_id,
-                        plan.generation, plan.trigger_detail,
+                        plan.generation, unresolved, plan.trigger_detail,
                     ),
                 ).lastrowid
             logger.info(
@@ -2614,6 +2639,44 @@ class SqliteConversationStore:
         except Exception as e:
             logger.warning("last_compact_boundary failed: %s", e)
             return None
+
+    def unresolved_request(self, thread_id: str) -> str:
+        """Design §4.3: the last human ask this thread has not answered.
+
+        Deterministic-first, zero model calls: the last ``role='user'``,
+        ``origin='human'`` row whose turn (grouped by ``turn_id``) carries
+        no ``role='assistant'`` row with ``status='complete'``. A crash
+        mid-turn, a turn still in flight, or one that ended with only the
+        A16-G5 interrupted marker (a non-'complete' status) all leave
+        exactly this shape; a turn the assistant actually finished does
+        not, however that answer read.
+        """
+        if self._conn is None:
+            return ""
+        try:
+            with self._lock:
+                row = self._conn.execute(
+                    """
+                    SELECT content FROM messages m
+                    WHERE m.conversation_id = ? AND m.role = 'user'
+                      AND COALESCE(m.origin, 'human') = 'human'
+                      AND m.turn_id IS NOT NULL
+                      AND NOT EXISTS (
+                        SELECT 1 FROM messages a
+                        WHERE a.conversation_id = m.conversation_id
+                          AND a.turn_id = m.turn_id
+                          AND a.role = 'assistant'
+                          AND a.status = 'complete'
+                      )
+                    ORDER BY m.id DESC
+                    LIMIT 1
+                    """,
+                    (thread_id,),
+                ).fetchone()
+            return str(row["content"]) if row is not None else ""
+        except Exception as e:
+            logger.warning("unresolved_request failed: %s", e)
+            return ""
 
     def set_context_included(self, message_id: int, included: bool) -> bool:
         """Record whether a message was in the context a turn actually saw.
