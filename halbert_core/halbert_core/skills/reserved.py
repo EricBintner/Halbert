@@ -39,7 +39,7 @@ logger = logging.getLogger(__name__)
 
 #: Slash commands Halbert surfaces already claim. The dashboard composer owns
 #: `/model` (dashboard/frontend/src/lib/slashCommands.ts) and the terminal
-#: page owns /explain, /fix and /dryrun with single-letter aliases
+#: page owns /explain, /fix, /dryrun and /help with single-letter aliases
 #: (dashboard/frontend/src/pages/Terminal.tsx). The skill slash channel (SK-2)
 #: must not let a skill shadow a command the user already knows.
 RESERVED_SLASH_BUILTINS: FrozenSet[str] = frozenset({
@@ -47,6 +47,7 @@ RESERVED_SLASH_BUILTINS: FrozenSet[str] = frozenset({
     "explain", "e",
     "fix", "f",
     "dryrun", "d",
+    "help", "h",
 })
 
 #: The executor's unconditional core, registered inline in

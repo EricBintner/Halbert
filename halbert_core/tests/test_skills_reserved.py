@@ -50,12 +50,22 @@ def test_persona_handback_and_become_names_are_reserved():
 
 def test_slash_builtins_are_reserved():
     # The dashboard composer claims `/model` (frontend/src/lib/slashCommands.ts)
-    # and the terminal page claims /explain /fix /dryrun with single-letter
+    # and the terminal page claims /explain /fix /dryrun /help with single-letter
     # aliases (frontend/src/pages/Terminal.tsx). A skill taking one of those
     # names would shadow a command the user already knows.
     assert "model" in RESERVED_SLASH_BUILTINS
     assert is_reserved_skill_name("model")
     assert is_reserved_skill_name("dryrun")
+
+
+def test_help_and_alias_are_reserved():
+    # SP-4a: `/help` and `/h` are handled by Terminal.tsx but were missing from
+    # RESERVED_SLASH_BUILTINS — a skill named `help` or `h` would have shadowed
+    # the command. Pin the pair so the drift cannot regress.
+    assert "help" in RESERVED_SLASH_BUILTINS
+    assert "h" in RESERVED_SLASH_BUILTINS
+    assert is_reserved_skill_name("help")
+    assert is_reserved_skill_name("h")
 
 
 def test_capability_gated_tool_names_are_reserved_too():
