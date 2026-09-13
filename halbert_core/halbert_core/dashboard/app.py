@@ -1311,7 +1311,7 @@ def create_app(enable_cors: bool = True) -> FastAPI:
 
     # Register routes
     from ..federation import compute_endpoint
-    from .routes import approvals, jobs, memory, settings, system, websocket, persona, discovery, terminal, alerts, rag, services, web_search, gpu, containers, development, editor, storage, downloads, agent, compression, being, modules, llm, legal, compute, vision, home, frigate, instance, peers, fleet, audio, conversations, devices, findings, state, mcp as mcp_status_routes, guest as guest_persona, entity, replica as replica_routes
+    from .routes import approvals, jobs, memory, settings, system, websocket, persona, discovery, terminal, alerts, rag, services, web_search, gpu, containers, development, editor, storage, downloads, agent, compression, being, modules, llm, legal, compute, vision, home, frigate, instance, peers, fleet, audio, conversations, devices, findings, state, mcp as mcp_status_routes, guest as guest_persona, entity, replica as replica_routes, backup
 
     mount_api(system.router, prefix="/api", tags=["system"])
     mount_api(agent.router, tags=["agent"])  # Phase 36: Agent state machine
@@ -1368,6 +1368,7 @@ def create_app(enable_cors: bool = True) -> FastAPI:
     mount_api(conversations.router, prefix="/api/conversations", tags=["conversations"])  # P3b: Peer conversation API
     mount_api(entity.router, tags=["entity"])  # the aggregated status card (self-authenticating)
     mount_api(replica_routes.router, tags=["replica"])  # warm-standby status + promotion
+    mount_api(backup.router, tags=["backup"])  # the State Vault (local-admin)
     
     # Serve static frontend (production)
     frontend_dist = Path(__file__).parent / "frontend" / "dist"
