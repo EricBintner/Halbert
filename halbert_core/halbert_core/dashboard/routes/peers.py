@@ -56,6 +56,7 @@ import logging
 import secrets
 import time
 import uuid
+from pathlib import Path
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
@@ -177,6 +178,12 @@ class VerifyResponse(BaseModel):
     token: str = Field(..., description="Bearer token for future auth")
     status: str = "paired"
     desktop_node_id: str = Field(..., description="The Desktop's node ID")
+    # F-D reverse-pairing: only present for a pairing that requested
+    # role="body". The satellite records this node as role="canonical"
+    # keyed by push_token's hash; this node keeps the raw in the peer's
+    # outbound_token and presents it on /api/peers/sync-replica pushes.
+    push_token: Optional[str] = Field(
+        None, description="Credential this node presents when pushing the replica (body pairings only)")
 
 
 class PeerInfo(BaseModel):
@@ -436,9 +443,23 @@ async def verify_pairing(req: VerifyRequest) -> VerifyResponse:
     import socket
     desktop_node_id = os.environ.get("HALBERT_PERSONA_ID", "halbert") + "-" + socket.gethostname()
 
+    # F-D reverse-pairing: a body peer receives a second credential, minted
+    # here, for this node to present when it pushes the replica. The body
+    # records us as role="canonical" keyed by this token's hash; we keep
+    # the raw on the peer's outbound_token. Without it the body has no
+    # record of us and every push would 401 (finding F-D).
+    push_token: Optional[str] = None
+    if fields["role"] == "body":
+        push_token = config.generate_token()
+        config.set_outbound_token(fields["node_id"], push_token)
+
     logger.info("Pairing confirmed: %s (%s)", fields["node_id"], fields["node_name"])
 
-    return VerifyResponse(token=raw_token, desktop_node_id=desktop_node_id)
+    return VerifyResponse(
+        token=raw_token,
+        desktop_node_id=desktop_node_id,
+        push_token=push_token,
+    )
 
 
 @router.get("/api/peers/list", response_model=List[PeerInfo])
@@ -636,3 +657,143 @@ async def list_discovered_peers() -> List[Dict[str, Any]]:
     # TODO(federation-9.7): Get the PeerListener singleton and return
     # its discovered peers.  For now, return empty.
     return []
+
+
+# ---------------------------------------------------------------------------
+# Warm-standby replication (Phase 1)
+# ---------------------------------------------------------------------------
+
+
+class RegisterCanonicalRequest(BaseModel):
+    """Satellite-side: record the canonical this body follows (F-D).
+
+    Sent by the satellite's own join flow after ``/api/peers/verify``
+    answered on the canonical. ``peer_token`` is what this node presents
+    when calling the canonical (stored in being.yml); ``push_token`` is
+    what the canonical presents when pushing the replica — this node
+    records the canonical as a ``canonical``-role peer keyed by its hash,
+    so ``/api/peers/sync-replica`` can authenticate the pushes it accepts.
+    """
+    canonical_node_id: str = Field(..., description="The canonical's node id (from verify's desktop_node_id)")
+    canonical_url: str = Field(..., description="Base URL, e.g. http://mac-mini.local:8000")
+    peer_token: str = Field(..., description="The token verify returned — what THIS node presents to the canonical")
+    push_token: str = Field(..., description="The push credential verify returned — what the canonical presents to THIS node")
+    canonical_name: str = Field("", description="Display name for the canonical record")
+    persona_id: str = Field("", description="The shared persona; defaults to this node's own")
+
+
+@router.post("/api/peers/register-canonical")
+async def register_canonical(
+    req: RegisterCanonicalRequest,
+    _admin: None = Depends(require_local_admin),
+) -> Dict[str, Any]:
+    """Complete the satellite's half of pairing (F-D).
+
+    Local-admin, not peer-authenticated: this endpoint rewrites the node's
+    own identity — which canonical it follows, which token it presents —
+    the same class of control require_local_admin already guards.
+
+    Writes being.yml (canonical memory/thread URLs, the peer token, the
+    shared persona) and records the canonical in this node's peers.json
+    as role="canonical", keyed by the push token's hash.
+    """
+    from ...config.being_config import load_being_config, save_being_config
+    from ...federation.peers_config import validate_node_id
+
+    node_id = validate_node_id(req.canonical_node_id)
+    base = req.canonical_url.rstrip("/")
+    if not base.startswith(("http://", "https://")):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="canonical_url must be an http(s) URL",
+        )
+
+    config = get_peers_config()
+    existing = config.get_peer(node_id)
+    if existing is not None and not existing.revoked:
+        # Re-registration is a re-pair: revoke the stale record first so
+        # the old push credential dies with it.
+        config.revoke_peer(node_id)
+    config.add_peer(
+        node_id=node_id,
+        node_name=req.canonical_name or node_id,
+        role="canonical",
+        raw_token=req.push_token,
+        endpoint=base,
+    )
+
+    cfg = load_being_config()
+    cfg.canonical_memory_url = f"{base}/api/memory"
+    cfg.canonical_thread_url = f"{base}/api/conversations"
+    cfg.peer_token = req.peer_token
+    if not cfg.persona_id_override:
+        from ...identity import resolve_persona_id
+        cfg.persona_id_override = req.persona_id or resolve_persona_id()
+    save_being_config(cfg)
+
+    logger.info("Registered canonical %s at %s", node_id, base)
+    return {"status": "registered", "canonical_node_id": node_id}
+
+
+@router.post("/api/peers/sync-replica")
+async def receive_replica(
+    request: Request,
+    peer: PeerContext = Depends(require_peer_auth),
+) -> Dict[str, Any]:
+    """Receive a warm-standby snapshot from the canonical host.
+
+    The door is deliberately narrower than the peers surface: only the
+    peer this node recorded as role="canonical" may push (F-D — any other
+    paired peer is refused for its role, not for its token), and only a
+    node that still follows a canonical accepts a replica at all — a
+    promoted node answers 409, which is the receiver-side split-brain
+    fence (security review 2026-09-13).
+
+    The body is a tar: manifest.json plus the allowlisted payload files.
+    ReplicaStore does verify-then-swap; a failed digest or parse leaves
+    the previous replica live.
+    """
+    if peer.role != "canonical":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the configured canonical peer may push a replica.",
+        )
+
+    from ...integrations.cognition_wiring import _get_canonical_memory_url
+    if not _get_canonical_memory_url():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This node does not follow a canonical — refusing the "
+                   "replica push (promoted or independent).",
+        )
+
+    import tempfile
+    from ...replica.push import unpack_snapshot_tar
+    from ...replica.store import ReplicaStore, ReplicaValidationError
+
+    body = await request.body()
+    staging = Path(tempfile.mkdtemp(prefix="halbert-replica-rx-"))
+    try:
+        manifest = unpack_snapshot_tar(body, staging)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Replica payload unreadable: {e}",
+        )
+
+    try:
+        meta = ReplicaStore().receive(
+            staging, manifest, source_node_id=peer.node_id)
+    except ReplicaValidationError as e:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Replica rejected: {e}",
+        )
+
+    return {
+        "status": "stored",
+        "source_node_id": meta.source_node_id,
+        "created_at": meta.created_at,
+        "memory_count": meta.memory_count,
+        "thread_count": meta.thread_count,
+    }

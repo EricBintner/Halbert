@@ -178,6 +178,11 @@ class PeerCredential:
     wol_mac: Optional[str] = None          # "AA:BB:CC:DD:EE:FF" — required if wol_enabled
     wol_broadcast: Optional[str] = None    # "192.168.1.255" — defaults to 255.255.255.255
     wol_timeout: int = 90                  # seconds to wait for peer to wake up
+    # The token THIS node presents when calling the peer (canonical→body
+    # replica pushes, F-D). Raw, unlike token_hash: it is a credential we
+    # hold to spend, not one we verify. peers.json is owner-only already;
+    # its exposure grants replica-push on that one peer, nothing wider.
+    outbound_token: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -199,6 +204,7 @@ class PeerCredential:
             wol_mac=d.get("wol_mac"),
             wol_broadcast=d.get("wol_broadcast"),
             wol_timeout=d.get("wol_timeout", 90),
+            outbound_token=d.get("outbound_token"),
         )
 
     def is_compute_target(self) -> bool:
@@ -554,6 +560,24 @@ class PeersConfig:
             peer.capabilities = list(capabilities)
             self._save()
             logger.info("Capabilities for peer %s: %s", node_id, peer.capabilities)
+            return True
+
+    def set_outbound_token(self, node_id: str, token: str) -> bool:
+        """Set the token this node presents when calling the peer (F-D).
+
+        The canonical holds, per body peer, the credential the satellite
+        minted for its ``/api/peers/sync-replica`` door. Unlike
+        ``token_hash`` this is stored raw — it is spent, not verified.
+
+        Returns True if the peer was found and updated.
+        """
+        with self._lock:
+            peer = self._peers.get(node_id)
+            if peer is None:
+                return False
+            peer.outbound_token = token
+            self._save()
+            logger.info("Outbound (push) credential set for peer %s", node_id)
             return True
 
     def update_last_seen(self, node_id: str) -> None:
