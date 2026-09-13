@@ -20,6 +20,33 @@ from ..utils.paths import data_subdir
 logger = logging.getLogger('halbert.approval.engine')
 
 
+class InvalidApprovalId(ValueError):
+    """An approval id that cannot name a storage path (F-C).
+
+    ``request_id`` arrives from a URL and reaches ``requests_dir /
+    f"{request_id}.json"`` unvalidated — an id carrying ``../`` (or an
+    absolute path) read or wrote outside the requests directory. Ids are
+    server-generated UUIDs; anything that isn't UUID-shaped is hostile or
+    corrupt, and both get the same refusal so the answer doesn't disclose
+    which.
+    """
+
+
+# The shape every server-generated id has (uuid4, and uuid strings joined
+# by '-' in callers that compose ids from parts). A URL-safe base64 token
+# shape is accepted too — callers may mint ids with secrets.token_urlsafe.
+import re as _re
+_APPROVAL_ID_RE = _re.compile(r"^[A-Za-z0-9_-]{1,128}$")
+
+
+def validate_approval_id(request_id: str) -> str:
+    """Refuse an id that cannot safely name a file. Returns it unchanged."""
+    text = str(request_id or "")
+    if not _APPROVAL_ID_RE.fullmatch(text):
+        raise InvalidApprovalId(f"not a valid approval request id: {request_id!r}")
+    return text
+
+
 class ApprovalStatus(Enum):
     """Approval request status."""
     PENDING = 'pending'
@@ -333,7 +360,12 @@ class ApprovalEngine:
         return pending
     
     def get_request(self, request_id: str) -> Optional[ApprovalRequest]:
-        """Get approval request by ID."""
+        """Get approval request by ID.
+
+        Refuses ids that cannot name a storage path (F-C) rather than
+        following them outside the requests directory.
+        """
+        validate_approval_id(request_id)
         request_file = self.requests_dir / f"{request_id}.json"
         
         if not request_file.exists():
@@ -386,7 +418,13 @@ class ApprovalEngine:
         return history
     
     def _save_request(self, request: ApprovalRequest):
-        """Save approval request to disk."""
+        """Save approval request to disk.
+
+        Refuses an id that cannot name a storage path (F-C): request ids
+        arrive from callers (routes compose them from URL segments), and an
+        unvalidated id here was an arbitrary-write primitive.
+        """
+        validate_approval_id(request.id)
         request_file = self.requests_dir / f"{request.id}.json"
         
         with open(request_file, 'w') as f:
@@ -394,6 +432,7 @@ class ApprovalEngine:
     
     def _save_decision(self, decision: ApprovalDecision):
         """Save approval decision to history."""
+        validate_approval_id(decision.request_id)
         # Save to history with timestamp in filename
         timestamp = decision.decided_at.replace(':', '-').replace('.', '-')
         history_file = self.history_dir / f"{decision.request_id}_{timestamp}.json"

@@ -6,13 +6,38 @@ Approval management API routes.
 
 import asyncio
 import logging
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel
+
+from ..auth import require_owner
 
 logger = logging.getLogger('halbert.dashboard.routes.approvals')
 
 router = APIRouter()
+
+
+#: Every route states its own door rather than inheriting the mount-level
+#: one. The security review's companion plan swaps the two decision routes
+#: to ``require_trust_anchor`` (owner OR a paired trust_anchor peer); if a
+#: route's guard lives only in ``app.py``'s ``mount_api`` call, that swap
+#: can't be made per-route — and a router that later joins
+#: SELF_AUTHENTICATING would expose its reads with nothing noticed (F-A).
+_OWNER = [Depends(require_owner)]
+
+
+def _validate_id_or_400(request_id: str) -> None:
+    """Refuse a path-hostile approval id with a clean 400 (F-C).
+
+    request_id arrives from the URL; the engine validates again at the
+    storage boundary, but answering a traversal-shaped id with 400 rather
+    than a 500 is the route's job.
+    """
+    from ...approval.engine import validate_approval_id, InvalidApprovalId
+    try:
+        validate_approval_id(request_id)
+    except InvalidApprovalId as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 class ApprovalDecisionRequest(BaseModel):
@@ -56,7 +81,7 @@ def _handle_proposal_decision(request_id: str, approved: bool, reason: str) -> D
         return {"linked": None, "error": str(e)}
 
 
-@router.get("")
+@router.get("", dependencies=_OWNER)
 async def list_pending_approvals() -> List[Dict[str, Any]]:
     """
     Get all pending approval requests.
@@ -89,7 +114,7 @@ async def list_pending_approvals() -> List[Dict[str, Any]]:
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/history")
+@router.get("/history", dependencies=_OWNER)
 async def get_approval_history(
     limit: int = 100,
     approved_only: bool = False
@@ -107,7 +132,7 @@ async def get_approval_history(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/proposals")
+@router.get("/proposals", dependencies=_OWNER)
 async def list_pending_proposals() -> List[Dict[str, Any]]:
     """List pending proposals joined with their findings.
 
@@ -187,9 +212,10 @@ async def list_pending_proposals() -> List[Dict[str, Any]]:
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/{request_id}")
+@router.get("/{request_id}", dependencies=_OWNER)
 async def get_approval_details(request_id: str) -> Dict[str, Any]:
     """Get detailed information about an approval request."""
+    _validate_id_or_400(request_id)
     try:
         from ...approval.engine import ApprovalEngine
 
@@ -222,7 +248,7 @@ async def get_approval_details(request_id: str) -> Dict[str, Any]:
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/{request_id}/approve")
+@router.post("/{request_id}/approve", dependencies=_OWNER)
 async def approve_request(request_id: str, body: ApprovalDecisionRequest, request: Request):
     """
     Approve an approval request.
@@ -231,6 +257,7 @@ async def approve_request(request_id: str, body: ApprovalDecisionRequest, reques
     proposal is linked) which executes the approved changes. Broadcasts
     the decision and execution outcome over WebSocket when available.
     """
+    _validate_id_or_400(request_id)
     try:
         from ...approval.engine import ApprovalEngine, ApprovalDecision
 
@@ -312,7 +339,7 @@ async def approve_request(request_id: str, body: ApprovalDecisionRequest, reques
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/{request_id}/reject")
+@router.post("/{request_id}/reject", dependencies=_OWNER)
 async def reject_request(request_id: str, body: ApprovalDecisionRequest, request: Request):
     """
     Reject an approval request.
@@ -320,6 +347,7 @@ async def reject_request(request_id: str, body: ApprovalDecisionRequest, request
     Saves the decision with the real reason and hands it to the proposal
     pipeline (if a proposal is linked) so the proposal is marked rejected.
     """
+    _validate_id_or_400(request_id)
     try:
         from ...approval.engine import ApprovalEngine, ApprovalDecision
 
