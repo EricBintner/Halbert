@@ -329,13 +329,38 @@ def _create_memory_store():
                     "— falling back to local PersonaMemoryStore"
                 )
             else:
-                logger.info(
-                    "Memory adapter: using PeerMemoryBackend at %s",
+                # Phase 1.6: is the canonical actually there? When it is
+                # not and a valid replica exists, serve read-only recall
+                # from it rather than building a proxy whose every call
+                # fails — and rather than writing to a divergent local
+                # store the entity will never see.
+                from ..replica.fallback import probe_canonical_reachable
+                from ..replica.store import ReplicaStore
+
+                replica = ReplicaStore()
+                if probe_canonical_reachable(canonical_memory_url, token):
+                    logger.info(
+                        "Memory adapter: using PeerMemoryBackend at %s",
+                        canonical_memory_url,
+                    )
+                    return PeerMemoryBackend(
+                        peer_url=canonical_memory_url,
+                        bearer_token=token,
+                    )
+                if replica.is_valid() and (
+                        replica.path() / "memories.json").is_file():
+                    from ..replica.fallback import ReplicaMemoryStore
+                    logger.warning(
+                        "Canonical %s unreachable — memory reads served "
+                        "from the local replica (read-only)",
+                        canonical_memory_url,
+                    )
+                    return ReplicaMemoryStore(
+                        replica.path() / "memories.json")
+                logger.warning(
+                    "Canonical %s unreachable and no replica — local "
+                    "PersonaMemoryStore as last resort",
                     canonical_memory_url,
-                )
-                return PeerMemoryBackend(
-                    peer_url=canonical_memory_url,
-                    bearer_token=token,
                 )
         except ImportError as e:
             logger.warning(
