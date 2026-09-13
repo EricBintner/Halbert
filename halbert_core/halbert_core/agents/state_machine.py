@@ -5130,7 +5130,7 @@ class AgentStateMachine:
                         # The speech_text above stays the full adapted
                         # spoken copy (screen-side record); only what is
                         # synthesized is summarized.
-                        spoken_segments: List[tuple] = []
+                        spoken_segments: List[dict] = []
                         # A14-G4 (summarizer half): a secure turn's spoken
                         # copy is the same material the turn was restricted
                         # to local models for. Handing it to a cloud utility
@@ -5143,8 +5143,12 @@ class AgentStateMachine:
                             clean_response, payload, summarizer=summarizer
                         ):
                             seg_text = apply_pronunciation(line["text"])
-                            seg_rate = float(line.get("rate") or 1.0)
-                            spoken_segments.append((seg_text, seg_rate))
+                            spoken_segments.append({
+                                "text": seg_text,
+                                "rate": float(line.get("rate") or 1.0),
+                                "voice_id": line.get("voice_id"),
+                                "cadence_style": line.get("cadence_style"),
+                            })
                             yield StreamEvent(
                                 type="speech_segment",
                                 session_id=self.ctx.session_id,
@@ -5180,7 +5184,7 @@ class AgentStateMachine:
                             logger.debug(f"turn digest tail skipped (non-fatal): {e}")
                             tail = None
                         if tail:
-                            spoken_segments.append((tail, 1.0))
+                            spoken_segments.append({"text": tail, "rate": 1.0})
                             yield StreamEvent(
                                 type="speech_segment",
                                 session_id=self.ctx.session_id,
@@ -5223,7 +5227,9 @@ class AgentStateMachine:
                             try:
                                 if stream_tts_ran and tail:
                                     # Only speak the audit tail.
-                                    await self._speak_to_tts_egress([(tail, 1.0)])
+                                    await self._speak_to_tts_egress(
+                                        [{"text": tail, "rate": 1.0}]
+                                    )
                                 elif not stream_tts_ran:
                                     await self._speak_to_tts_egress(spoken_segments)
                             except Exception as e:
@@ -5272,7 +5278,31 @@ class AgentStateMachine:
             self._egress_tts = None
         return self._egress_tts
 
-    async def _speak_to_tts_egress(self, segments: List[tuple]) -> None:
+    @staticmethod
+    def _apply_segment_voice(tts: Any, voice_id: Any, cadence_style: Any) -> None:
+        """Point the shared TTS instance at a segment's voice selection.
+
+        ``voice_id`` wins: a numeric speaker id (legacy Piper) or a Kokoro
+        voice name (``resolve_voice_name``); ``cadence_style`` falls back
+        to the style registry (``resolve_style``) when the engine has one.
+        Caller restores ``tts._speaker_id`` in ``finally``.
+        """
+        if voice_id is not None:
+            try:
+                tts._speaker_id = int(voice_id)
+            except (ValueError, TypeError):
+                if hasattr(tts, "resolve_voice_name"):
+                    name_sid = tts.resolve_voice_name(voice_id)
+                    if name_sid is not None:
+                        tts._speaker_id = name_sid
+                else:
+                    logger.debug(f"Voice id '{voice_id}' is not numeric; ignoring")
+        elif cadence_style and hasattr(tts, "resolve_style"):
+            style_sid = tts.resolve_style(cadence_style)
+            if style_sid is not None:
+                tts._speaker_id = style_sid
+
+    async def _speak_to_tts_egress(self, segments: List[Dict[str, Any]]) -> None:
         """Synthesize and stream spoken segments to browser TTS subscribers.
 
         The hub (dashboard ``routes/tts_egress.py``, the get_event_bus-style
@@ -5356,12 +5386,35 @@ class AgentStateMachine:
             token = BargeInHandler().create_token()
 
         hub.register_cancel_token(session_id, token)
+
+        # Notify the spatial arbiter so it ducks mics and suppresses
+        # self-speech feedback during TTS output — same as the streaming
+        # path; without it the mic hears the speaker and VAD can
+        # false-trigger a barge-in on Halbert's own voice.
+        arbiter = None
+        if pipeline is not None:
+            try:
+                arbiter = pipeline.arbiter
+            except Exception:
+                pass
+        if arbiter is not None:
+            arbiter.on_tts_start(source_id="local_mic")
+
         any_began = False
         sent_cancelled = False
+        # Persona default voice (being.yml voice_profile.voice_id): a
+        # segment without its own voice_id still speaks as the persona.
+        try:
+            from ..integrations.modality_wiring import get_persona_voice
+            _, persona_voice_id = get_persona_voice()
+        except Exception:
+            persona_voice_id = ""
         try:
             spoken_words = 0
-            total_words = sum(len((t or "").split()) for t, _ in segments)
-            for text, rate in segments:
+            total_words = sum(
+                len((seg.get("text") or "").split()) for seg in segments
+            )
+            for seg in segments:
                 # Barge-in between segments: stop before spending a full
                 # sherpa-onnx generation pass on a segment nobody will hear.
                 if token is not None and token.is_set():
@@ -5380,10 +5433,16 @@ class AgentStateMachine:
                     except Exception as e:
                         logger.debug(f"barge-in note not recorded: {e}")
                     break
+                text = seg.get("text", "")
                 if not text.strip():
                     continue
+                rate = float(seg.get("rate") or 1.0)
+                voice_id = seg.get("voice_id") or persona_voice_id or None
+                cadence_style = seg.get("cadence_style")
                 original_speed = tts._speed
+                original_speaker_id = getattr(tts, "_speaker_id", 0)
                 tts._speed = rate
+                self._apply_segment_voice(tts, voice_id, cadence_style)
                 began = False
                 try:
                     async for chunk in tts.synthesize(text, cancel_token=token):
@@ -5402,6 +5461,7 @@ class AgentStateMachine:
                     spoken_words += len((text or "").split())
                 finally:
                     tts._speed = original_speed
+                    tts._speaker_id = original_speaker_id
                 if began:
                     any_began = True
                     cancelled = token is not None and token.is_set()
@@ -5425,6 +5485,8 @@ class AgentStateMachine:
                 await hub.publish(session_id, {"type": "cancelled"})
         finally:
             hub.clear_cancel_token(session_id)
+            if arbiter is not None:
+                arbiter.on_tts_end()
             # Give the coordinator its slot back so it does not go stale
             # after the turn (a stale active token would eat the next VAD
             # barge-in). No-op when the active token has moved on. NOTE for
@@ -5595,24 +5657,7 @@ class AgentStateMachine:
                 original_speed = tts._speed
                 original_speaker_id = getattr(tts, "_speaker_id", 0)
                 tts._speed = rate
-                if voice_id is not None:
-                    # Try numeric speaker ID first, then Kokoro voice
-                    # name resolution (e.g. "af_heart").
-                    try:
-                        tts._speaker_id = int(voice_id)
-                    except (ValueError, TypeError):
-                        if hasattr(tts, "resolve_voice_name"):
-                            name_sid = tts.resolve_voice_name(voice_id)
-                            if name_sid is not None:
-                                tts._speaker_id = name_sid
-                        else:
-                            logger.debug(
-                                f"Voice id '{voice_id}' not numeric; ignoring"
-                            )
-                elif cadence_style and hasattr(tts, "resolve_style"):
-                    style_sid = tts.resolve_style(cadence_style)
-                    if style_sid is not None:
-                        tts._speaker_id = style_sid
+                self._apply_segment_voice(tts, voice_id, cadence_style)
 
                 began = False
                 try:

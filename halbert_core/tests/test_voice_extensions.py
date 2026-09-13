@@ -581,3 +581,169 @@ class TestVoiceFlowIntegration:
         # Enabled: streaming is on.
         cfg.stream_to_egress = True
         assert cfg.stream_to_egress is True
+
+
+# ---------------------------------------------------------------------------
+# Persona voice identity (being.yml voice_profile -> demuxer + synthesis)
+# ---------------------------------------------------------------------------
+
+class TestPersonaVoiceProfile:
+    """``voice_profile`` on BeingConfig carries the VoiceProfileData export
+    shape; get_persona_voice() turns it into (PersonaVoiceProfile, voice_id)."""
+
+    def test_being_config_voice_profile_field(self):
+        """The field exists, defaults empty, and round-trips through YAML."""
+        from halbert_core.config.being_config import BeingConfig
+        cfg = BeingConfig()
+        assert cfg.voice_profile == {}
+        cfg = BeingConfig.from_dict({
+            "voice_profile": {"voice_id": "af_sarah", "base_rate": 1.1},
+        })
+        assert cfg.voice_profile["voice_id"] == "af_sarah"
+        assert cfg.voice_profile["base_rate"] == 1.1
+        assert cfg.to_dict()["voice_profile"]["voice_id"] == "af_sarah"
+
+    def test_get_persona_voice_empty(self, monkeypatch):
+        """No voice_profile configured -> (None, "") subtractive default."""
+        from halbert_core.config.being_config import BeingConfig
+        from halbert_core.integrations import modality_wiring as mw
+        monkeypatch.setattr(
+            "halbert_core.config.being_config.load_being_config",
+            lambda *a, **k: BeingConfig(),
+        )
+        pvp, voice_id = mw.get_persona_voice()
+        assert voice_id == ""
+
+    def test_get_persona_voice_reads_voice_id(self, monkeypatch):
+        """A configured voice_profile yields its Kokoro pack id."""
+        from halbert_core.config.being_config import BeingConfig
+        from halbert_core.integrations import modality_wiring as mw
+        monkeypatch.setattr(
+            "halbert_core.config.being_config.load_being_config",
+            lambda *a, **k: BeingConfig(
+                voice_profile={"voice_id": "bm_george"},
+            ),
+        )
+        pvp, voice_id = mw.get_persona_voice()
+        assert voice_id == "bm_george"
+
+    def test_get_persona_voice_builds_profile(self, monkeypatch):
+        """The five prosody-base fields build a PersonaVoiceProfile when
+        the engine is installed; a 0.0 weight survives (full-PAD blend)."""
+        pytest.importorskip("haloysius.modality.types")
+        from halbert_core.config.being_config import BeingConfig
+        from halbert_core.integrations import modality_wiring as mw
+        monkeypatch.setattr(
+            "halbert_core.config.being_config.load_being_config",
+            lambda *a, **k: BeingConfig(
+                voice_profile={
+                    "voice_id": "af_heart",
+                    "base_rate": 1.2,
+                    "base_energy": 0.7,
+                    "cadence_style": "calm",
+                    "weight": 0.0,  # legitimate: all-PAD, no persona base
+                },
+            ),
+        )
+        pvp, voice_id = mw.get_persona_voice()
+        assert voice_id == "af_heart"
+        assert pvp is not None
+        assert pvp.base_rate == 1.2
+        assert pvp.base_energy == 0.7
+        assert pvp.cadence_style == "calm"
+        assert pvp.weight == 0.0
+
+    def test_get_persona_voice_invalid_profile(self, monkeypatch):
+        """A non-dict voice_profile degrades to the subtractive default."""
+        from halbert_core.config.being_config import BeingConfig
+        from halbert_core.integrations import modality_wiring as mw
+        monkeypatch.setattr(
+            "halbert_core.config.being_config.load_being_config",
+            lambda *a, **k: BeingConfig(voice_profile="af_sarah"),
+        )
+        pvp, voice_id = mw.get_persona_voice()
+        assert pvp is None
+        assert voice_id == ""
+
+
+class TestSpokenSegmentVoiceCarry:
+    """spoken_segment_lines carries voice_id/cadence_style to synthesis."""
+
+    def _payload(self, *segments):
+        from types import SimpleNamespace
+        return SimpleNamespace(segments=list(segments))
+
+    def _seg(self, text, voice_id=None, cadence_style=None, spoken=True):
+        from types import SimpleNamespace
+        return SimpleNamespace(
+            text=text,
+            is_spoken=spoken,
+            role=SimpleNamespace(value="persona"),
+            voice_id=voice_id,
+            prosody=SimpleNamespace(
+                rate=1.0, volume=1.0, whisper=False,
+                cadence_style=cadence_style,
+            ),
+        )
+
+    def test_voice_id_carried_through(self):
+        from halbert_core.integrations.modality_wiring import spoken_segment_lines
+        payload = self._payload(self._seg("Hello.", voice_id="af_sarah"))
+        lines = spoken_segment_lines("Hello.", payload)
+        assert lines[0]["voice_id"] == "af_sarah"
+
+    def test_cadence_style_carried_through(self):
+        from halbert_core.integrations.modality_wiring import spoken_segment_lines
+        payload = self._payload(self._seg("Hello.", cadence_style="oratorical"))
+        lines = spoken_segment_lines("Hello.", payload)
+        assert lines[0]["cadence_style"] == "oratorical"
+
+    def test_no_voice_fields_default_none(self):
+        from halbert_core.integrations.modality_wiring import spoken_segment_lines
+        payload = self._payload(self._seg("Hello."))
+        lines = spoken_segment_lines("Hello.", payload)
+        assert lines[0]["voice_id"] is None
+        assert lines[0]["cadence_style"] is None
+
+
+class TestApplySegmentVoice:
+    """_apply_segment_voice: voice_id wins, cadence_style falls back."""
+
+    def _tts(self):
+        class _T:
+            _speaker_id = 0
+        return _T()
+
+    def test_numeric_voice_id(self):
+        from halbert_core.agents.state_machine import AgentStateMachine
+        tts = self._tts()
+        AgentStateMachine._apply_segment_voice(tts, "3", None)
+        assert tts._speaker_id == 3
+
+    def test_voice_name_resolution(self):
+        from halbert_core.agents.state_machine import AgentStateMachine
+        tts = self._tts()
+        tts.resolve_voice_name = lambda v: {"af_sarah": 2}.get(v)
+        AgentStateMachine._apply_segment_voice(tts, "af_sarah", None)
+        assert tts._speaker_id == 2
+
+    def test_cadence_style_fallback(self):
+        from halbert_core.agents.state_machine import AgentStateMachine
+        tts = self._tts()
+        tts.resolve_style = lambda s: {"calm": 4}.get(s)
+        AgentStateMachine._apply_segment_voice(tts, None, "calm")
+        assert tts._speaker_id == 4
+
+    def test_voice_id_beats_cadence_style(self):
+        from halbert_core.agents.state_machine import AgentStateMachine
+        tts = self._tts()
+        tts.resolve_voice_name = lambda v: 1
+        tts.resolve_style = lambda s: 9
+        AgentStateMachine._apply_segment_voice(tts, "af_heart", "calm")
+        assert tts._speaker_id == 1
+
+    def test_no_fields_leaves_speaker(self):
+        from halbert_core.agents.state_machine import AgentStateMachine
+        tts = self._tts()
+        AgentStateMachine._apply_segment_voice(tts, None, None)
+        assert tts._speaker_id == 0

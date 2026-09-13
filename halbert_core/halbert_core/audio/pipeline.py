@@ -474,9 +474,12 @@ class AudioPipelineCoordinator:
 
         # Spatial arbiter: multi-mic coincidence suppression and
         # per-speaker turn locks. Suppress duplicate turns from
-        # different mics capturing the same speaker.
-        if self._arbiter is not None:
-            result = self._arbiter.arbitrate(
+        # different mics capturing the same speaker. The property (not
+        # the field) is what lazily constructs it — checking _arbiter
+        # directly left arbitration dormant until a TTS run touched it.
+        arbiter = self.arbiter
+        if arbiter is not None:
+            result = arbiter.arbitrate(
                 speaker_id=observation.speaker_id,
                 source_id=observation.area_id or "local_mic",
                 text=observation.text,
@@ -610,8 +613,9 @@ class AudioPipelineCoordinator:
         )
         # Spatial arbiter: suppress duplicate transcripts from multiple
         # satellites capturing the same speaker.
-        if self._arbiter is not None:
-            result = self._arbiter.arbitrate(
+        arbiter = self.arbiter
+        if arbiter is not None:
+            result = arbiter.arbitrate(
                 speaker_id="",  # unknown for Wyoming
                 source_id=f"wyoming:{area_id}",
                 text=text,

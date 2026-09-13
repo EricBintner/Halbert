@@ -240,6 +240,12 @@ class BeingConfig:
     # readers go through halbert_core.identity.resolve_entity_name().
     name: str = ""
     voice_presentation: str = "not_defined"  # not_defined | male | female
+    # Voice identity for TTS — the VoiceProfileData export shape a
+    # cross-app persona import (Personality.Computer) writes:
+    # {voice_id, base_rate, base_pitch, base_energy, cadence_style, weight}.
+    # voice_id is the Kokoro voice pack id (e.g. "af_sarah"); the other
+    # fields build the persona prosody base (PersonaVoiceProfile).
+    voice_profile: Dict[str, Any] = field(default_factory=dict)
     model: Optional[str] = None  # per-persona model override (shadows chat_model when set)
     model_endpoint_id: Optional[str] = None  # saved-endpoint id for the persona model
 
