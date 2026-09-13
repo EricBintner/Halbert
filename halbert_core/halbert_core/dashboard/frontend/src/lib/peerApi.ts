@@ -518,3 +518,49 @@ export async function removeDevice(nodeId: string, forget = false): Promise<void
   )
   if (!res.ok) throw new Error(`Remove failed: ${res.status}`)
 }
+
+// ---------------------------------------------------------------------------
+// Warm-standby replica (Phase 1)
+// ---------------------------------------------------------------------------
+
+/** The satellite's replica summary — GET /api/replica/status. */
+export interface ReplicaStatus {
+  has_replica: boolean
+  replica: {
+    source_node_id: string
+    created_at: string
+    received_at: string
+    memory_count: number
+    thread_count: number
+    file_digests: Record<string, string>
+  } | null
+  is_valid: boolean
+  can_promote: boolean
+  /** null when no liveness probe runs (canonical host / independent node). */
+  canonical_reachable: boolean | null
+}
+
+/** POST /api/replica/promote result. */
+export interface PromotionResult {
+  status: string
+  old_canonical_url: string
+  replica_timestamp: string
+  memory_count: number
+  thread_count: number
+  quarantined: string[]
+}
+
+export async function getReplicaStatus(): Promise<ReplicaStatus> {
+  const res = await fetch(apiUrl('/api/replica/status'))
+  if (!res.ok) throw new Error(`Replica status failed: ${res.status}`)
+  return res.json()
+}
+
+export async function promoteReplica(): Promise<PromotionResult> {
+  const res = await fetch(apiUrl('/api/replica/promote'), { method: 'POST' })
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new Error(body.detail || `Promotion failed: ${res.status}`)
+  }
+  return res.json()
+}

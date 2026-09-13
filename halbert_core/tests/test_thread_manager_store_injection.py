@@ -39,7 +39,8 @@ class TestCreateConversationStore:
         assert isinstance(store, SqliteConversationStore)
 
     def test_peer_store_when_canonical_url_set(self):
-        """When canonical_thread_url is set, use PeerConversationStore."""
+        """When canonical_thread_url is set, use the peer store — wrapped
+        in the replica fallback since Step 1.6."""
         with patch(
             "halbert_core.integrations.cognition_wiring._get_canonical_thread_url",
             return_value="http://ha-server.lan:8001/api/conversations",
@@ -50,9 +51,11 @@ class TestCreateConversationStore:
             store = _create_conversation_store()
 
         from halbert_core.agents.peer_conversation_store import PeerConversationStore
-        assert isinstance(store, PeerConversationStore)
-        assert store.peer_url == "http://ha-server.lan:8001/api/conversations"
-        assert store.bearer_token == "test-token-123"
+        from halbert_core.replica.fallback import FallbackConversationStore
+        assert isinstance(store, FallbackConversationStore)
+        assert isinstance(store._peer, PeerConversationStore)
+        assert store._peer.peer_url == "http://ha-server.lan:8001/api/conversations"
+        assert store._peer.bearer_token == "test-token-123"
 
     def test_falls_back_to_local_when_no_token(self):
         """When canonical_thread_url is set but no token, fall back to local."""
@@ -93,7 +96,7 @@ class TestGetThreadManager:
         assert isinstance(mgr.store, SqliteConversationStore)
 
     def test_uses_peer_store_when_configured(self):
-        """Singular entity mode: PeerConversationStore."""
+        """Singular entity mode: the fallback-wrapped peer store."""
         with patch(
             "halbert_core.integrations.cognition_wiring._get_canonical_thread_url",
             return_value="http://ha-server.lan:8001/api/conversations",
@@ -104,7 +107,9 @@ class TestGetThreadManager:
             mgr = get_thread_manager()
 
         from halbert_core.agents.peer_conversation_store import PeerConversationStore
-        assert isinstance(mgr.store, PeerConversationStore)
+        from halbert_core.replica.fallback import FallbackConversationStore
+        assert isinstance(mgr.store, FallbackConversationStore)
+        assert isinstance(mgr.store._peer, PeerConversationStore)
 
     def test_singleton_returns_same_manager(self):
         """get_thread_manager() returns the same instance on repeated calls."""
@@ -117,8 +122,10 @@ class TestGetThreadManager:
         assert mgr1 is mgr2
 
     def test_peer_store_skips_consolidator(self):
-        """Consolidator should not be wired for PeerConversationStore
-        (consolidation runs on the canonical host, not the satellite)."""
+        """Consolidator should not be wired for the remote store
+        (consolidation runs on the canonical host, not the satellite) —
+        the fallback wrapper must count as remote, or a body with a warm
+        replica would start consolidating stale state."""
         with patch(
             "halbert_core.integrations.cognition_wiring._get_canonical_thread_url",
             return_value="http://ha-server.lan:8001/api/conversations",
@@ -128,8 +135,8 @@ class TestGetThreadManager:
         ):
             mgr = get_thread_manager()
 
-        from halbert_core.agents.peer_conversation_store import PeerConversationStore
-        assert isinstance(mgr.store, PeerConversationStore)
+        from halbert_core.replica.fallback import FallbackConversationStore
+        assert isinstance(mgr.store, FallbackConversationStore)
         assert mgr._consolidator is None
 
     def test_local_store_wires_consolidator(self):

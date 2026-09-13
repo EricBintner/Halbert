@@ -91,10 +91,14 @@ PUBLIC_PREFIXES: tuple[str, ...] = (
 #: remediation (finding F-A): both carry per-route peer credentials, but the
 #: mount-level door had been ``require_owner`` — which knows only the
 #: dashboard token — so every peer token 401'd at the door and a new
-#: satellite could not even reach ``POST /api/peers/pair``. The routers
-#: authenticate every route themselves now; the census requires that, a
-#: tag alone exempts nothing.
-SELF_AUTHENTICATING = ("compute-peer", "websocket", "peers", "conversations")
+#: satellite could not even reach ``POST /api/peers/pair``. ``approvals``
+#: joined with the trust_anchor work: its decision routes answer to
+#: ``require_trust_anchor`` and its owner-only reads carry an explicit
+#: ``require_owner`` — a mount-level door would still 401 the phone's peer
+#: token before any of that ran. The routers authenticate every route
+#: themselves now; the census requires that, a tag alone exempts nothing.
+SELF_AUTHENTICATING = ("compute-peer", "websocket", "peers", "conversations",
+                       "approvals", "entity", "replica", "backup")
 
 _TICKET_TTL_SECONDS = 300
 _SESSION_TTL_SECONDS = 12 * 60 * 60
@@ -470,6 +474,12 @@ if FASTAPI_AVAILABLE:
         else. A WebSocket cannot carry an Authorization header from a browser,
         so the session cookie or a ``?token=`` query parameter is what a real
         client uses here.
+
+        A paired peer may also open the sockets with its own revocable token
+        (security review 2026-09-13, Q9) — the trust_anchor phone streams
+        voice with its peer credential, not the dashboard token. Its record
+        rides on ``websocket.state.peer`` so handlers can tell a paired
+        device from a room mic.
         """
         state = _state(websocket.app)
         if not host_allowed(websocket.headers.get("host"), state.allowed_hosts):
@@ -480,7 +490,45 @@ if FASTAPI_AVAILABLE:
         if state.check(kind, value):
             return True
         qp = websocket.query_params.get("token")
-        return bool(qp) and state.check("bearer", qp)
+        if qp and state.check("bearer", qp):
+            return True
+        peer = _peer_ws_credential(websocket)
+        if peer is not None:
+            websocket.state.peer = peer
+            return True
+        return False
+
+    def _peer_ws_credential(websocket):
+        """The peer behind a WebSocket credential, or None (Q9).
+
+        Same candidates a real client has: the Bearer header, the legacy
+        ``X-Halbert-Peer-Token`` header, and the ``?token=`` query param.
+
+        Lazy import — this module must stay importable on installs without
+        the federation wiring, and ``peer_middleware`` lazily imports back
+        for ``require_trust_anchor``.
+        """
+        try:
+            from ..federation.peer_middleware import get_peers_config
+        except Exception:
+            return None
+        auth = websocket.headers.get("authorization") or ""
+        candidates = []
+        if auth[:7].lower() == "bearer ":
+            candidates.append(auth[7:].strip())
+        candidates.append(websocket.headers.get("X-Halbert-Peer-Token"))
+        candidates.append(websocket.query_params.get("token"))
+        try:
+            config = get_peers_config()
+        except Exception:
+            return None
+        for token in candidates:
+            if not token:
+                continue
+            peer = config.verify_token(token)
+            if peer is not None:
+                return peer
+        return None
 
     async def reject_websocket(websocket) -> None:
         """Close an unauthenticated handshake with a policy-violation code."""

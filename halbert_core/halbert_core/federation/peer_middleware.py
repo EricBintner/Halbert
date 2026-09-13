@@ -113,26 +113,24 @@ def get_peers_config() -> PeersConfig:
 # Auth dependency
 # ---------------------------------------------------------------------------
 
-async def require_peer_auth(
-    request: Request,
-    credentials: Optional[HTTPAuthorizationCredentials] = Depends(_bearer_scheme),
-) -> PeerContext:
-    """FastAPI dependency that validates a bearer token against PeersConfig.
+async def _authenticate_peer(request: Request) -> PeerContext:
+    """Validate the request's peer credential against ``PeersConfig``.
+
+    Shared by ``require_peer_auth`` (the FastAPI dependency) and
+    ``require_trust_anchor`` (which calls it directly — a ``Depends``-
+    bound parameter is not resolved outside dependency injection).
 
     Accepts:
     - ``Authorization: Bearer <token>`` (preferred, MCP-compatible)
     - ``X-Halbert-Peer-Token: <token>`` (legacy, backward-compatible)
 
     Raises 401 if no token, invalid token, or revoked token.
-
-    On success, returns a ``PeerContext`` and updates ``last_seen``.
     """
-    # Extract token from either header
+    auth = request.headers.get("Authorization") or ""
     raw_token: Optional[str] = None
-
-    if credentials and credentials.credentials:
-        raw_token = credentials.credentials
-    else:
+    if auth[:7].lower() == "bearer ":
+        raw_token = auth[7:].strip()
+    if not raw_token:
         # Fall back to legacy X-Halbert-Peer-Token header
         raw_token = request.headers.get("X-Halbert-Peer-Token")
 
@@ -173,6 +171,23 @@ async def require_peer_auth(
 
     logger.debug("Authenticated peer: %s (%s)", peer.node_id, peer.node_name)
     return ctx
+
+
+async def require_peer_auth(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(_bearer_scheme),
+) -> PeerContext:
+    """FastAPI dependency that validates a bearer token against PeersConfig.
+
+    Accepts:
+    - ``Authorization: Bearer <token>`` (preferred, MCP-compatible)
+    - ``X-Halbert-Peer-Token: <token>`` (legacy, backward-compatible)
+
+    Raises 401 if no token, invalid token, or revoked token.
+
+    On success, returns a ``PeerContext`` and updates ``last_seen``.
+    """
+    return await _authenticate_peer(request)
 
 
 # ---------------------------------------------------------------------------
@@ -303,3 +318,53 @@ async def require_local_admin(request: "Request") -> None:
         status_code=status.HTTP_403_FORBIDDEN,
         detail="This control is available only from the machine it configures.",
     )
+
+
+async def require_trust_anchor(request: "Request") -> Optional[PeerContext]:
+    """Accept the local operator, the owner credential, or a ``trust_anchor``
+    peer. Returns the ``PeerContext`` when a peer authenticated, else None.
+
+    The door for decisions a human confirms from a device they hold:
+    pairing approvals, staged-command decisions. The operator at the
+    machine always satisfies it; a remote caller must present either the
+    dashboard credential (the owner, wherever they are — this is what lets
+    a router leave the ``require_owner`` mount without regressing remote
+    owners) or a peer token whose stored role is ``trust_anchor`` — the
+    phone-class device paired for exactly this purpose. Any other peer
+    role fails closed (security review 2026-09-13, Q1/Q2).
+    """
+    if _is_local_client(request):
+        return None
+    # Lazy import: peer_middleware must stay importable on dashboard-less
+    # installs, and dashboard.auth has no dependency back on federation.
+    from ..dashboard.auth import credential_from_headers, _state
+    kind, value = credential_from_headers(request.headers, request.cookies)
+    if _state(request.app).check(kind, value):
+        request.state.principal = "owner"
+        return None
+    peer = await _authenticate_peer(request)
+    if peer.role != "trust_anchor":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This action needs the local operator or a paired trust_anchor device.",
+        )
+    return peer
+
+
+async def require_known_principal(request: "Request") -> Optional[PeerContext]:
+    """Accept any caller this node can identify: the local operator, the
+    owner credential, or any live peer token — every role.
+
+    The door for read-only status surfaces: ``require_trust_anchor`` would
+    refuse a body peer that legitimately needs canonical status, and
+    ``require_peer_auth`` would refuse the owner credential and the local
+    operator. An anonymous caller still gets nothing.
+    """
+    if _is_local_client(request):
+        return None
+    from ..dashboard.auth import credential_from_headers, _state
+    kind, value = credential_from_headers(request.headers, request.cookies)
+    if _state(request.app).check(kind, value):
+        request.state.principal = "owner"
+        return None
+    return await _authenticate_peer(request)

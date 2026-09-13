@@ -132,13 +132,17 @@ class TestPeerTokenAgainstTheProductionDoor:
     def test_owner_surface_still_refuses_peer_tokens(self, app, peer_token):
         """The fix opens the peer door; it grants nothing else. A peer token
         on an owner route is still nobody (the pre-fix behaviour for every
-        route, retained where it belongs)."""
+        route, retained where it belongs). /api/approvals is the one
+        exception by design: its pending list answers to
+        require_trust_anchor, so a genuine peer is authenticated and then
+        refused for its role — 403, not 401."""
         sat = TestClient(app, client=REMOTE,
                          headers={"Authorization": f"Bearer {peer_token}"})
-        for path in ("/api/approvals", "/api/settings/policy", "/api/terminal/exec"):
+        for path in ("/api/settings/policy", "/api/terminal/exec"):
             res = sat.get(path) if not path.endswith("exec") else \
                 sat.post(path, json={"command": "id"})
             assert res.status_code == 401, f"{path} answered a peer token"
+        assert sat.get("/api/approvals").status_code == 403
 
 
 class TestPerPeerControlsStayPerPeer:
@@ -201,3 +205,202 @@ class TestLocalAdminOnlyControlsStayLocal:
         sat = TestClient(app, client=REMOTE,
                          headers={"Authorization": f"Bearer {peer_token}"})
         assert sat.get("/api/peers/discovered").status_code == 403
+
+
+@pytest.fixture
+def trust_anchor_token(peers_store):
+    """A paired trust_anchor device (the phone-class peer)."""
+    raw = f"hbt_{uuid.uuid4().hex}"
+    peers_store.add_peer(
+        node_id="prod-mount-phone", node_name="Prod Mount Phone",
+        role="trust_anchor", raw_token=raw,
+    )
+    return raw
+
+
+class TestTrustAnchorApproval:
+    """The phone-class peer approves additions, never mints its own kind
+    (security review 2026-09-13, Q1.1/Q2.2)."""
+
+    def _request_pairing(self, app, role: str, node: str) -> str:
+        res = TestClient(app, client=REMOTE).post("/api/peers/pair", json={
+            "node_id": node, "node_name": node, "role": role,
+        })
+        assert res.status_code == 200, res.text
+        return res.json()["request_id"]
+
+    def test_trust_anchor_can_approve_a_body_pairing(
+            self, app, trust_anchor_token):
+        rid = self._request_pairing(app, "body", "incoming-body")
+        phone = TestClient(app, client=REMOTE,
+                           headers={"Authorization": f"Bearer {trust_anchor_token}"})
+        res = phone.post(f"/api/peers/pending/{rid}/approve")
+        assert res.status_code == 200, res.text
+
+    def test_trust_anchor_can_list_pending_without_pins(
+            self, app, trust_anchor_token):
+        self._request_pairing(app, "body", "incoming-body-2")
+        phone = TestClient(app, client=REMOTE,
+                           headers={"Authorization": f"Bearer {trust_anchor_token}"})
+        res = phone.get("/api/peers/pending")
+        assert res.status_code == 200, res.text
+        assert all(item["pin"] is None for item in res.json())
+
+    def test_local_operator_sees_pins(self, app, dashboard_token):
+        self._request_pairing(app, "body", "incoming-body-3")
+        owner = TestClient(app, client=LOCAL,
+                           headers={"Authorization": f"Bearer {dashboard_token}"})
+        res = owner.get("/api/peers/pending")
+        assert res.status_code == 200, res.text
+        pending = [i for i in res.json() if i["node_id"] == "incoming-body-3"]
+        assert pending and pending[0]["pin"]
+
+    def test_a_body_peer_cannot_approve(self, app, peer_token):
+        rid = self._request_pairing(app, "body", "incoming-body-4")
+        sat = TestClient(app, client=REMOTE,
+                         headers={"Authorization": f"Bearer {peer_token}"})
+        res = sat.post(f"/api/peers/pending/{rid}/approve")
+        assert res.status_code == 403
+
+    def test_a_body_peer_cannot_list_pending(self, app, peer_token):
+        sat = TestClient(app, client=REMOTE,
+                         headers={"Authorization": f"Bearer {peer_token}"})
+        assert sat.get("/api/peers/pending").status_code == 403
+
+    def test_anonymous_remote_cannot_list_pending(self, app):
+        res = TestClient(app, client=REMOTE).get("/api/peers/pending")
+        assert res.status_code == 401
+
+    def test_trust_anchor_cannot_mint_another_trust_anchor(
+            self, app, trust_anchor_token):
+        rid = self._request_pairing(app, "trust_anchor", "incoming-phone")
+        phone = TestClient(app, client=REMOTE,
+                           headers={"Authorization": f"Bearer {trust_anchor_token}"})
+        res = phone.post(f"/api/peers/pending/{rid}/approve")
+        assert res.status_code == 403
+
+    def test_trust_anchor_pairing_approved_at_the_machine(
+            self, app, dashboard_token, trust_anchor_token):
+        rid = self._request_pairing(app, "trust_anchor", "incoming-phone-2")
+        owner = TestClient(app, client=LOCAL,
+                           headers={"Authorization": f"Bearer {dashboard_token}"})
+        res = owner.post(f"/api/peers/pending/{rid}/approve")
+        assert res.status_code == 200, res.text
+
+    def test_remote_owner_credential_can_approve(
+            self, app, dashboard_token):
+        """The owner credential satisfies the door from anywhere — a router
+        that leaves require_owner must not regress the remote owner."""
+        rid = self._request_pairing(app, "body", "incoming-body-5")
+        owner = TestClient(app, client=REMOTE,
+                           headers={"Authorization": f"Bearer {dashboard_token}"})
+        res = owner.post(f"/api/peers/pending/{rid}/approve")
+        assert res.status_code == 200, res.text
+
+
+class TestApprovalsTrustAnchorSurface:
+    """The approvals router is self-authenticating now: the pending list,
+    the detail read, and the two decision routes answer to
+    require_trust_anchor; history and proposals stay owner-only (F-A
+    restructure + Q1)."""
+
+    def _queue_request(self) -> str:
+        import uuid as _uuid
+        from halbert_core.approval.engine import ApprovalEngine, ApprovalRequest
+        rid = str(_uuid.uuid4())
+        ApprovalEngine()._save_request(ApprovalRequest(
+            id=rid, task="t", action="a", reasoning="r", confidence=0.5,
+            risk_level="low", system_state={}, affected_resources=[],
+        ))
+        return rid
+
+    def test_trust_anchor_lists_pending_approvals(self, app, trust_anchor_token):
+        phone = TestClient(app, client=REMOTE,
+                           headers={"Authorization": f"Bearer {trust_anchor_token}"})
+        assert phone.get("/api/approvals").status_code == 200
+
+    def test_trust_anchor_approves_a_staged_command(
+            self, app, trust_anchor_token):
+        rid = self._queue_request()
+        phone = TestClient(app, client=REMOTE,
+                           headers={"Authorization": f"Bearer {trust_anchor_token}"})
+        res = phone.post(f"/api/approvals/{rid}/approve", json={"approved": True})
+        assert res.status_code == 200, res.text
+        assert res.json()["success"] is True
+
+    def test_a_body_peer_cannot_approve_a_staged_command(
+            self, app, peer_token):
+        rid = self._queue_request()
+        sat = TestClient(app, client=REMOTE,
+                         headers={"Authorization": f"Bearer {peer_token}"})
+        assert sat.post(f"/api/approvals/{rid}/approve",
+                        json={"approved": True}).status_code == 403
+
+    def test_history_and_proposals_stay_owner_only(
+            self, app, trust_anchor_token, peer_token):
+        phone = TestClient(app, client=REMOTE,
+                           headers={"Authorization": f"Bearer {trust_anchor_token}"})
+        assert phone.get("/api/approvals/history").status_code == 401
+        assert phone.get("/api/approvals/proposals").status_code == 401
+        sat = TestClient(app, client=REMOTE,
+                         headers={"Authorization": f"Bearer {peer_token}"})
+        assert sat.get("/api/approvals").status_code == 403
+
+
+class TestWebSocketPeerCredential:
+    """Q9: a paired peer opens the audio sockets with its own token —
+    the companion voice MVP's prerequisite. Before this, the WS door knew
+    only the dashboard token and the phone would have needed the owner
+    credential (F-B)."""
+
+    def test_peer_token_opens_the_audio_socket(self, app, peer_token):
+        sat = TestClient(app, client=REMOTE)
+        # Auth passed if the handshake completes; the pipeline may then
+        # close 1013 (audio disabled in the test app) — that is after the
+        # door, not at it.
+        with sat.websocket_connect(f"/api/audio/stream?token={peer_token}"):
+            pass
+
+    def test_dashboard_token_still_opens_the_audio_socket(
+            self, app, dashboard_token):
+        sat = TestClient(app, client=REMOTE)
+        with sat.websocket_connect(f"/api/audio/stream?token={dashboard_token}"):
+            pass
+
+    def test_garbage_token_is_refused(self, app):
+        sat = TestClient(app, client=REMOTE)
+        with pytest.raises(Exception):
+            with sat.websocket_connect("/api/audio/stream?token=hbt_garbage"):
+                pass
+
+
+class TestEntityStatus:
+    """The aggregated status card — any identified principal reads it,
+    an anonymous caller does not (Q1's status surface)."""
+
+    def test_a_body_peer_reads_status(self, app, peer_token):
+        sat = TestClient(app, client=REMOTE,
+                         headers={"Authorization": f"Bearer {peer_token}"})
+        res = sat.get("/api/entity/status")
+        assert res.status_code == 200, res.text
+        body = res.json()
+        assert body["entity_name"]
+        assert body["node_id"]
+        assert body["role"] in ("canonical", "body", "independent")
+        assert "counts" in body
+        assert body["replica"] is None
+
+    def test_trust_anchor_reads_status(self, app, trust_anchor_token):
+        phone = TestClient(app, client=REMOTE,
+                           headers={"Authorization": f"Bearer {trust_anchor_token}"})
+        assert phone.get("/api/entity/status").status_code == 200
+
+    def test_owner_credential_reads_status(self, app, dashboard_token):
+        owner = TestClient(app, client=REMOTE,
+                           headers={"Authorization": f"Bearer {dashboard_token}"})
+        assert owner.get("/api/entity/status").status_code == 200
+
+    def test_anonymous_remote_is_refused(self, app):
+        anon = TestClient(app, client=REMOTE)
+        anon.headers.pop("Authorization", None)
+        assert anon.get("/api/entity/status").status_code == 401

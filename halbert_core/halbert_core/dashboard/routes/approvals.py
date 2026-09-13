@@ -11,6 +11,7 @@ from typing import List, Dict, Any, Optional
 from pydantic import BaseModel
 
 from ..auth import require_owner
+from ...federation.peer_middleware import PeerContext, require_trust_anchor
 
 logger = logging.getLogger('halbert.dashboard.routes.approvals')
 
@@ -18,12 +19,18 @@ router = APIRouter()
 
 
 #: Every route states its own door rather than inheriting the mount-level
-#: one. The security review's companion plan swaps the two decision routes
-#: to ``require_trust_anchor`` (owner OR a paired trust_anchor peer); if a
-#: route's guard lives only in ``app.py``'s ``mount_api`` call, that swap
-#: can't be made per-route — and a router that later joins
-#: SELF_AUTHENTICATING would expose its reads with nothing noticed (F-A).
+#: one (the router is self-authenticating — "approvals" is in
+#: SELF_AUTHENTICATING — so a route with no dependency is genuinely open).
+#:
+#: ``require_owner`` on the reads that stay owner-only: history and the
+#: findings-joined proposals list carry richer data than an approval card
+#: needs. ``require_trust_anchor`` on the pending list, the detail read,
+#: and the two decision routes: a trust_anchor device (the phone) must
+#: see what it decides — the pending list and the command detail ARE the
+#: approval card — and approve or deny it (security review 2026-09-13,
+#: Q1; F-A restructure).
 _OWNER = [Depends(require_owner)]
+_ANCHOR = [Depends(require_trust_anchor)]
 
 
 def _validate_id_or_400(request_id: str) -> None:
@@ -81,7 +88,7 @@ def _handle_proposal_decision(request_id: str, approved: bool, reason: str) -> D
         return {"linked": None, "error": str(e)}
 
 
-@router.get("", dependencies=_OWNER)
+@router.get("", dependencies=_ANCHOR)
 async def list_pending_approvals() -> List[Dict[str, Any]]:
     """
     Get all pending approval requests.
@@ -212,7 +219,7 @@ async def list_pending_proposals() -> List[Dict[str, Any]]:
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/{request_id}", dependencies=_OWNER)
+@router.get("/{request_id}", dependencies=_ANCHOR)
 async def get_approval_details(request_id: str) -> Dict[str, Any]:
     """Get detailed information about an approval request."""
     _validate_id_or_400(request_id)
@@ -248,7 +255,7 @@ async def get_approval_details(request_id: str) -> Dict[str, Any]:
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/{request_id}/approve", dependencies=_OWNER)
+@router.post("/{request_id}/approve", dependencies=_ANCHOR)
 async def approve_request(request_id: str, body: ApprovalDecisionRequest, request: Request):
     """
     Approve an approval request.
@@ -339,7 +346,7 @@ async def approve_request(request_id: str, body: ApprovalDecisionRequest, reques
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/{request_id}/reject", dependencies=_OWNER)
+@router.post("/{request_id}/reject", dependencies=_ANCHOR)
 async def reject_request(request_id: str, body: ApprovalDecisionRequest, request: Request):
     """
     Reject an approval request.

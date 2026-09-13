@@ -69,13 +69,22 @@ class WebRtcIngress(AudioIngressAdapter):
         self._active_websockets.append(websocket)
         logger.info(f"Dashboard audio WebSocket connected ({len(self._active_websockets)} active)")
 
+        # A peer-authenticated socket (e.g. the trust_anchor phone, let in by
+        # websocket_authenticated's peer path) stamps its own source so the
+        # downstream telemetry and speaker-id paths can tell a paired device
+        # from a room mic (security review 2026-09-13, Q9.2).
+        peer = getattr(getattr(websocket, "state", None), "peer", None)
+        chunk_source = (
+            f"companion:{peer.node_id}" if peer is not None else self.source_type
+        )
+
         try:
             while self._running:
                 data = await websocket.receive_bytes()
                 chunk = AudioChunk(
                     pcm=data,
                     samples=len(data) // 2,
-                    source=self.source_type,
+                    source=chunk_source,
                     source_id=self.source_id,
                     area_id=self.area_id,
                 )

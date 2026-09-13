@@ -90,8 +90,12 @@ class TestThePinIsNotHandedToTheRequester:
         assert [p["request_id"] for p in pending] == [rid]
         assert len(pending[0]["pin"]) == 4
 
+        # An anonymous remote caller gets nothing — conftest injects the
+        # owner credential into every TestClient, so take it back off for
+        # the door check itself (test_route_auth_census.py does the same).
         remote = TestClient(http.app, client=("203.0.113.7", 4444))
-        assert remote.get("/api/peers/pending").status_code == 403
+        remote.headers.pop("Authorization", None)
+        assert remote.get("/api/peers/pending").status_code == 401
 
 
 class TestNoTokenWithoutApproval:
@@ -121,11 +125,16 @@ class TestNoTokenWithoutApproval:
         assert resp.json()["token"]
         assert config.get_peer("satellite-1") is not None
 
-    def test_approval_is_local_admin_only(self, client):
+    def test_approval_needs_the_operator_or_a_trust_anchor(self, client):
+        """The door is require_trust_anchor now: the local operator, the
+        owner credential, or a paired trust_anchor device. An anonymous
+        remote caller still gets nothing (conftest's injected owner header
+        is taken back off for the check itself)."""
         http, _ = client
         rid = _pair(http)["request_id"]
         remote = TestClient(http.app, client=("203.0.113.7", 4444))
-        assert remote.post(f"/api/peers/pending/{rid}/approve").status_code == 403
+        remote.headers.pop("Authorization", None)
+        assert remote.post(f"/api/peers/pending/{rid}/approve").status_code == 401
 
 
 class TestGuessingThePin:
