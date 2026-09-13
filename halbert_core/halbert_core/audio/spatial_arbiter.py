@@ -331,6 +331,28 @@ class SpatialAudioArbiter:
         return source_id in self._media_sources
 
     # ------------------------------------------------------------------
+    # Egress follows ingress (Primitive 1 from the handoff)
+    # ------------------------------------------------------------------
+
+    def egress_sink_for_current_turn(self, speaker_id: str) -> str:
+        """The output sink for the current turn's response.
+
+        "Egress follows ingress": Halbert speaks back through the
+        audio output paired with the microphone that won the turn.
+        Returns the source_id of the winning mic, or "" when no turn
+        is active for this speaker.
+
+        The caller maps this to a physical output:
+        - "local_mic" -> local speaker / browser TTS egress
+        - "wyoming:<area>" -> Wyoming egress to that area's satellite
+        - "webrtc:<device>" -> WebRTC egress to that device
+        """
+        lock = self._locks.get(speaker_id)
+        if lock is None:
+            return ""
+        return lock.source_id
+
+    # ------------------------------------------------------------------
     # Internal
     # ------------------------------------------------------------------
 

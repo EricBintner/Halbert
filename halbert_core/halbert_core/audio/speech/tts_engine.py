@@ -236,6 +236,25 @@ class KokoroTTS:
         "aphoristic": 9,
     }
 
+    # Voice name-to-ID map for kokoro-en-v0_19 (11 voices, in
+    # sherpa-onnx pack order). Haloysius VoiceProfileData.voice_id
+    # carries these names (e.g. "af_heart"); Halbert resolves them to
+    # speaker IDs for the sherpa-onnx API.
+    VOICE_NAME_MAP: dict = {
+        "af": 0,          # Default (Bella + Sarah mix)
+        "af_heart": 0,    # Warm, neutral (A grade)
+        "af_bella": 1,    # Warm, expressive (A-)
+        "af_sarah": 2,    # Professional (C+)
+        "af_nicole": 3,   # Whisper-style (B-)
+        "af_sky": 4,      # Bright (C-)
+        "am_adam": 5,     # Male, friendly (F+)
+        "am_michael": 6,  # Male, deep (C+)
+        "bf_emma": 7,     # British female, proper
+        "bf_isabella": 8, # British female, soft
+        "bm_george": 9,   # British male, formal
+        "bm_lewis": 10,   # British male, casual
+    }
+
     def __init__(
         self,
         voice_model: str = "",
@@ -412,6 +431,26 @@ class KokoroTTS:
         if not cadence_style:
             return None
         sid = self._style_map.get(cadence_style)
+        if sid is None:
+            return None
+        # Clamp to available voices.
+        if self._tts is not None and hasattr(self._tts, "num_speakers"):
+            max_sid = int(self._tts.num_speakers) - 1
+            if sid > max_sid:
+                return None
+        return sid
+
+    def resolve_voice_name(self, voice_id: Optional[str]) -> Optional[int]:
+        """Map a Kokoro voice name (e.g. "af_heart") to a speaker ID.
+
+        Haloysius ``VoiceProfileData.voice_id`` carries voice names;
+        Halbert resolves them to numeric speaker IDs for the
+        sherpa-onnx API. Returns None when the name is unknown or
+        None — the caller keeps the current ``speaker_id``.
+        """
+        if not voice_id:
+            return None
+        sid = self.VOICE_NAME_MAP.get(voice_id)
         if sid is None:
             return None
         # Clamp to available voices.

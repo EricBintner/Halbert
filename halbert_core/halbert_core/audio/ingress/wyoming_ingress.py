@@ -30,6 +30,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from dataclasses import dataclass, field
 from typing import AsyncIterator, Optional
 
@@ -37,6 +38,11 @@ from .base import AudioIngressAdapter
 from ..buffer import AudioChunk
 
 logger = logging.getLogger("halbert.audio.ingress.wyoming")
+
+#: Maximum acceptable staleness for a client-timestamped audio frame
+#: (Primitive 2 from the handoff). Frames older than this are dropped
+#: to defend against network jitter / buffer bloat.
+STALE_FRAME_THRESHOLD_S: float = 0.350
 
 
 @dataclass
@@ -211,12 +217,25 @@ class WyomingIngress(AudioIngressAdapter):
         elif frame.msg_type == "audio-chunk":
             # Raw PCM audio payload
             if frame.payload and self._audio_format:
+                # Primitive 2: reject stale client-timestamped frames
+                # to defend against network jitter / buffer bloat.
+                client_ts = frame.data.get("timestamp", 0.0)
+                if client_ts > 0:
+                    staleness = time.monotonic() - client_ts
+                    if staleness > STALE_FRAME_THRESHOLD_S:
+                        logger.debug(
+                            f"Dropping stale audio frame from {peer} "
+                            f"(staleness={staleness:.3f}s)"
+                        )
+                        return
+
                 chunk = AudioChunk(
                     pcm=frame.payload,
                     samples=len(frame.payload) // self._audio_format.get("width", 2),
                     source=self.source_type,
                     source_id=self.source_id,
                     area_id=self.area_id,
+                    timestamp=client_ts or time.monotonic(),
                 )
                 try:
                     self._chunk_queue.put_nowait(chunk)

@@ -115,10 +115,20 @@ class HalbertVoiceBackend:
         original_speaker_id = getattr(tts, "_speaker_id", 0)
         tts._speed = rate
         if voice_id is not None:
+            # Try numeric speaker ID first (legacy Piper path), then
+            # try Kokoro voice name resolution (e.g. "af_heart").
             try:
                 tts._speaker_id = int(voice_id)
             except (ValueError, TypeError):
-                logger.debug(f"Voice id '{voice_id}' is not a numeric Kokoro sid; ignoring")
+                if hasattr(tts, "resolve_voice_name"):
+                    name_sid = tts.resolve_voice_name(voice_id)
+                    if name_sid is not None:
+                        tts._speaker_id = name_sid
+                        logger.debug(f"voice_id='{voice_id}' -> sid={name_sid}")
+                    else:
+                        logger.debug(f"Voice id '{voice_id}' not a known Kokoro voice name; ignoring")
+                else:
+                    logger.debug(f"Voice id '{voice_id}' is not numeric; ignoring")
         elif cadence_style and hasattr(tts, "resolve_style"):
             # Map cadence_style to a Kokoro voice pack.
             style_sid = tts.resolve_style(cadence_style)

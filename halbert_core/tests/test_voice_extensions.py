@@ -231,6 +231,51 @@ class TestSpatialArbiter:
         assert r1.decision == ArbitrationDecision.ACCEPT
         assert r2.decision == ArbitrationDecision.ACCEPT
 
+    def test_egress_follows_ingress(self):
+        """The winning mic's source_id is the egress sink for the
+        response (Primitive 1: egress follows ingress)."""
+        from halbert_core.audio.spatial_arbiter import SpatialAudioArbiter
+        arb = SpatialAudioArbiter()
+        # No active turn -> no egress sink
+        assert arb.egress_sink_for_current_turn("alice") == ""
+
+        # Alice speaks through the kitchen satellite
+        arb.arbitrate(speaker_id="alice", source_id="wyoming:kitchen")
+        assert arb.egress_sink_for_current_turn("alice") == "wyoming:kitchen"
+
+        # Bob speaks through the local mic
+        arb.arbitrate(speaker_id="bob", source_id="local_mic")
+        assert arb.egress_sink_for_current_turn("bob") == "local_mic"
+
+        # Alice's sink is still the kitchen satellite
+        assert arb.egress_sink_for_current_turn("alice") == "wyoming:kitchen"
+
+
+class TestKokoroVoiceNameResolution:
+    def test_resolve_known_voice_name(self):
+        from halbert_core.audio.speech.tts_engine import KokoroTTS
+        tts = KokoroTTS()
+        assert tts.resolve_voice_name("af_heart") == 0
+        assert tts.resolve_voice_name("af_bella") == 1
+        assert tts.resolve_voice_name("bm_lewis") == 10
+
+    def test_resolve_unknown_voice_name(self):
+        from halbert_core.audio.speech.tts_engine import KokoroTTS
+        tts = KokoroTTS()
+        assert tts.resolve_voice_name("nonexistent") is None
+
+    def test_resolve_none_voice_name(self):
+        from halbert_core.audio.speech.tts_engine import KokoroTTS
+        tts = KokoroTTS()
+        assert tts.resolve_voice_name(None) is None
+        assert tts.resolve_voice_name("") is None
+
+    def test_resolve_default_voice(self):
+        from halbert_core.audio.speech.tts_engine import KokoroTTS
+        tts = KokoroTTS()
+        # "af" is the default voice (Bella + Sarah mix)
+        assert tts.resolve_voice_name("af") == 0
+
 
 # ---------------------------------------------------------------------------
 # Wyoming Egress Hub

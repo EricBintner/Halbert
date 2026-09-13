@@ -5596,12 +5596,19 @@ class AgentStateMachine:
                 original_speaker_id = getattr(tts, "_speaker_id", 0)
                 tts._speed = rate
                 if voice_id is not None:
+                    # Try numeric speaker ID first, then Kokoro voice
+                    # name resolution (e.g. "af_heart").
                     try:
                         tts._speaker_id = int(voice_id)
                     except (ValueError, TypeError):
-                        logger.debug(
-                            f"Voice id '{voice_id}' not numeric; ignoring"
-                        )
+                        if hasattr(tts, "resolve_voice_name"):
+                            name_sid = tts.resolve_voice_name(voice_id)
+                            if name_sid is not None:
+                                tts._speaker_id = name_sid
+                        else:
+                            logger.debug(
+                                f"Voice id '{voice_id}' not numeric; ignoring"
+                            )
                 elif cadence_style and hasattr(tts, "resolve_style"):
                     style_sid = tts.resolve_style(cadence_style)
                     if style_sid is not None:
