@@ -31,6 +31,7 @@ import {
   Brain
 } from 'lucide-react'
 import { apiUrl } from '@/lib/apiBase'
+import { RestoreFromBackup } from './onboarding/RestoreFromBackup'
 
 interface OnboardingProps {
   open: boolean
@@ -71,7 +72,7 @@ const userTypes = [
 ]
 
 export function Onboarding({ open, onComplete }: OnboardingProps) {
-  const [step, setStep] = useState<'welcome' | 'configure' | 'scanning' | 'scan_results' | 'complete'>('welcome')
+  const [step, setStep] = useState<'welcome' | 'configure' | 'scanning' | 'scan_results' | 'restore' | 'complete'>('welcome')
   const [computerName, setComputerName] = useState('')
   const [adminName, setAdminName] = useState('')
   const [suggestedName, setSuggestedName] = useState('')
@@ -207,7 +208,53 @@ export function Onboarding({ open, onComplete }: OnboardingProps) {
               <Button onClick={() => setStep('configure')} className="w-full" size="lg">
                 Get Started
               </Button>
+
+              {/* Recovery door (Phase 2.7): a machine that used to be an
+                  entity skips the tour — it restores its backup. */}
+              <Button
+                variant="link"
+                className="w-full text-muted-foreground"
+                onClick={() => setStep('restore')}
+              >
+                Restore from a backup instead
+              </Button>
             </div>
+          </>
+        )}
+
+        {/* Restore Step — the State Vault's onboarding door */}
+        {step === 'restore' && (
+          <>
+            <DialogHeader>
+              <DialogTitle className="text-2xl">Restore from Backup</DialogTitle>
+              <DialogDescription className="text-base">
+                Point me at a vault archive and this machine becomes that
+                entity again.
+              </DialogDescription>
+            </DialogHeader>
+
+            <RestoreFromBackup
+              onRestored={async () => {
+                try {
+                  await fetch(apiUrl('/api/settings/onboarding/complete'), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      computer_name: computerName || suggestedName,
+                      admin_name: adminName || 'Admin',
+                      user_type: userType,
+                    }),
+                  })
+                } catch (e) {
+                  console.error('onboarding completion after restore failed:', e)
+                }
+                onComplete()
+              }}
+            />
+
+            <Button variant="ghost" className="w-full" onClick={() => setStep('welcome')}>
+              Back
+            </Button>
           </>
         )}
         
