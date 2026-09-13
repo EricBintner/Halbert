@@ -65,7 +65,7 @@ from pydantic import BaseModel, Field
 from ...federation.peers_config import PeersConfig, PeerCredential
 from ...federation.peer_middleware import (
     require_peer_auth, require_local_admin, optional_peer_auth,
-    require_local_or_self_peer,
+    require_local_or_self_peer, require_trust_anchor,
     PeerContext, get_peers_config,
 )
 
@@ -152,13 +152,15 @@ class PairResponse(BaseModel):
 
 
 class PendingPairingInfo(BaseModel):
-    """Local-admin view of a pairing waiting for approval — PIN included,
-    because this is the screen the operator reads it off."""
+    """View of a pairing waiting for approval — PIN included for the
+    local operator (this is the screen they read it off), redacted for a
+    trust_anchor peer: the phone needs the request metadata to render its
+    approval card, not the secret that proves the joining device."""
     request_id: str
     node_id: str
     node_name: str
     role: str
-    pin: str
+    pin: Optional[str] = None
     approved: bool
     expires_in: float
 
@@ -274,14 +276,17 @@ async def request_pairing(req: PairRequest) -> PairResponse:
 @router.get(
     "/api/peers/pending",
     response_model=List[PendingPairingInfo],
-    dependencies=[Depends(require_local_admin)],
 )
-async def list_pending_pairings() -> List[PendingPairingInfo]:
-    """Pairings waiting on this machine, with their PINs.
+async def list_pending_pairings(
+    caller: Optional[PeerContext] = Depends(require_trust_anchor),
+) -> List[PendingPairingInfo]:
+    """Pairings waiting on this machine.
 
-    This is the screen the operator reads the PIN off. Local-admin only: the
-    PIN is the whole secret, so serving it to anyone who asks would put the
-    hole straight back.
+    The local operator and the owner credential see the PIN — this is the
+    screen it is read off. A trust_anchor peer sees the same list with the
+    PIN redacted: it needs the metadata to approve or deny, but the PIN is
+    the secret that proves the *joining* device, and a phone that could
+    read it could complete a pairing the joining device never confirmed.
     """
     _sweep_pending()
     now = time.time()
@@ -291,7 +296,7 @@ async def list_pending_pairings() -> List[PendingPairingInfo]:
             node_id=p.fields["node_id"],
             node_name=p.fields["node_name"],
             role=p.fields["role"],
-            pin=p.pin,
+            pin=None if caller is not None else p.pin,
             approved=p.approved,
             expires_in=max(0.0, PAIRING_TTL_S - (now - p.created_at)),
         )
@@ -299,33 +304,51 @@ async def list_pending_pairings() -> List[PendingPairingInfo]:
     ]
 
 
-@router.post(
-    "/api/peers/pending/{request_id}/approve",
-    dependencies=[Depends(require_local_admin)],
-)
-async def approve_pairing(request_id: str) -> Dict[str, Any]:
+@router.post("/api/peers/pending/{request_id}/approve")
+async def approve_pairing(
+    request_id: str,
+    caller: Optional[PeerContext] = Depends(require_trust_anchor),
+) -> Dict[str, Any]:
     """The confirmation step: a person at this machine says yes.
 
     Nothing issues a token without this. It is the whole difference between
     a handshake and self-service — /verify used to mint a bearer on a PIN
     match alone, and the PIN was in the pairing response.
+
+    The door is ``require_trust_anchor``: the local operator, the owner
+    credential, or a paired trust_anchor device (the phone — approving a
+    pairing *adds* a peer; it revokes nothing, so the R10-F5 reasoning that
+    keeps revocation local-only does not apply). One carve-out: a
+    trust_anchor peer may not approve a pairing that requests the
+    trust_anchor role — trust anchors are minted only at the machine
+    (security review 2026-09-13, Q1.1/Q2.2).
     """
     _sweep_pending()
     pending = _pending_pairings.get(request_id)
     if pending is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,
                             detail="No such pairing request, or it has expired")
+    if caller is not None and pending.fields["role"] == "trust_anchor":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="A trust_anchor pairing is approved at the machine, not by another trust_anchor",
+        )
     pending.approved = True
     logger.info("Pairing %s approved for %s", request_id, pending.fields["node_id"])
     return {"status": "approved", "request_id": request_id}
 
 
-@router.delete(
-    "/api/peers/pending/{request_id}",
-    dependencies=[Depends(require_local_admin)],
-)
-async def reject_pairing(request_id: str) -> Dict[str, Any]:
-    """Refuse a pairing outright rather than letting it lapse."""
+@router.delete("/api/peers/pending/{request_id}")
+async def reject_pairing(
+    request_id: str,
+    _caller: Optional[PeerContext] = Depends(require_trust_anchor),
+) -> Dict[str, Any]:
+    """Refuse a pairing outright rather than letting it lapse.
+
+    Same door as approve (``require_trust_anchor``): the phone's Deny
+    button is the other half of the pairing decision, and rejecting a
+    pending request grants nothing.
+    """
     _sweep_pending()
     if _pending_pairings.pop(request_id, None) is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND,

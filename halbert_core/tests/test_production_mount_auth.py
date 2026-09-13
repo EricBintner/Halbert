@@ -201,3 +201,94 @@ class TestLocalAdminOnlyControlsStayLocal:
         sat = TestClient(app, client=REMOTE,
                          headers={"Authorization": f"Bearer {peer_token}"})
         assert sat.get("/api/peers/discovered").status_code == 403
+
+
+@pytest.fixture
+def trust_anchor_token(peers_store):
+    """A paired trust_anchor device (the phone-class peer)."""
+    raw = f"hbt_{uuid.uuid4().hex}"
+    peers_store.add_peer(
+        node_id="prod-mount-phone", node_name="Prod Mount Phone",
+        role="trust_anchor", raw_token=raw,
+    )
+    return raw
+
+
+class TestTrustAnchorApproval:
+    """The phone-class peer approves additions, never mints its own kind
+    (security review 2026-09-13, Q1.1/Q2.2)."""
+
+    def _request_pairing(self, app, role: str, node: str) -> str:
+        res = TestClient(app, client=REMOTE).post("/api/peers/pair", json={
+            "node_id": node, "node_name": node, "role": role,
+        })
+        assert res.status_code == 200, res.text
+        return res.json()["request_id"]
+
+    def test_trust_anchor_can_approve_a_body_pairing(
+            self, app, trust_anchor_token):
+        rid = self._request_pairing(app, "body", "incoming-body")
+        phone = TestClient(app, client=REMOTE,
+                           headers={"Authorization": f"Bearer {trust_anchor_token}"})
+        res = phone.post(f"/api/peers/pending/{rid}/approve")
+        assert res.status_code == 200, res.text
+
+    def test_trust_anchor_can_list_pending_without_pins(
+            self, app, trust_anchor_token):
+        self._request_pairing(app, "body", "incoming-body-2")
+        phone = TestClient(app, client=REMOTE,
+                           headers={"Authorization": f"Bearer {trust_anchor_token}"})
+        res = phone.get("/api/peers/pending")
+        assert res.status_code == 200, res.text
+        assert all(item["pin"] is None for item in res.json())
+
+    def test_local_operator_sees_pins(self, app, dashboard_token):
+        self._request_pairing(app, "body", "incoming-body-3")
+        owner = TestClient(app, client=LOCAL,
+                           headers={"Authorization": f"Bearer {dashboard_token}"})
+        res = owner.get("/api/peers/pending")
+        assert res.status_code == 200, res.text
+        pending = [i for i in res.json() if i["node_id"] == "incoming-body-3"]
+        assert pending and pending[0]["pin"]
+
+    def test_a_body_peer_cannot_approve(self, app, peer_token):
+        rid = self._request_pairing(app, "body", "incoming-body-4")
+        sat = TestClient(app, client=REMOTE,
+                         headers={"Authorization": f"Bearer {peer_token}"})
+        res = sat.post(f"/api/peers/pending/{rid}/approve")
+        assert res.status_code == 403
+
+    def test_a_body_peer_cannot_list_pending(self, app, peer_token):
+        sat = TestClient(app, client=REMOTE,
+                         headers={"Authorization": f"Bearer {peer_token}"})
+        assert sat.get("/api/peers/pending").status_code == 403
+
+    def test_anonymous_remote_cannot_list_pending(self, app):
+        res = TestClient(app, client=REMOTE).get("/api/peers/pending")
+        assert res.status_code == 401
+
+    def test_trust_anchor_cannot_mint_another_trust_anchor(
+            self, app, trust_anchor_token):
+        rid = self._request_pairing(app, "trust_anchor", "incoming-phone")
+        phone = TestClient(app, client=REMOTE,
+                           headers={"Authorization": f"Bearer {trust_anchor_token}"})
+        res = phone.post(f"/api/peers/pending/{rid}/approve")
+        assert res.status_code == 403
+
+    def test_trust_anchor_pairing_approved_at_the_machine(
+            self, app, dashboard_token, trust_anchor_token):
+        rid = self._request_pairing(app, "trust_anchor", "incoming-phone-2")
+        owner = TestClient(app, client=LOCAL,
+                           headers={"Authorization": f"Bearer {dashboard_token}"})
+        res = owner.post(f"/api/peers/pending/{rid}/approve")
+        assert res.status_code == 200, res.text
+
+    def test_remote_owner_credential_can_approve(
+            self, app, dashboard_token):
+        """The owner credential satisfies the door from anywhere — a router
+        that leaves require_owner must not regress the remote owner."""
+        rid = self._request_pairing(app, "body", "incoming-body-5")
+        owner = TestClient(app, client=REMOTE,
+                           headers={"Authorization": f"Bearer {dashboard_token}"})
+        res = owner.post(f"/api/peers/pending/{rid}/approve")
+        assert res.status_code == 200, res.text
