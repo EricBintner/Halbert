@@ -59,11 +59,12 @@ the disallowed tools, so it cannot attempt to call them.
 
 Streaming
 ---------
-TODO(federation-9.4): Streaming responses (``stream: true``) require
-redaction on each SSE chunk.  This is harder because a secret might be
-split across chunks.  The initial implementation supports non-streaming
-only.  Streaming will require a buffering redaction filter that holds
-back chunks until it can verify no secret pattern spans the boundary.
+``stream: true`` returns an SSE response whose deltas have passed
+through ``SlidingWindowRedactor`` (``security.result_redaction``) — the
+same egress redaction as the non-stream path, holding back any chunk
+tail that could be a secret mid-split. The model's own upstream
+streaming path is still unbuilt (the broker returns a completed
+response, which this endpoint then slices into deltas).
 """
 from __future__ import annotations
 
@@ -74,9 +75,11 @@ import uuid
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from ..mcp.response import mcp_response
+from ..security.result_redaction import SlidingWindowRedactor
 from .peer_middleware import PeerContext, require_peer_auth
 from .tool_allowlist import filter_tools_for_peer
 
@@ -118,7 +121,7 @@ class ChatCompletionRequest(BaseModel):
     """
     model: str = Field(..., description="Model ID (e.g., 'qwen2.5:32b')")
     messages: List[ChatMessage]
-    stream: bool = Field(False, description="Stream tokens via SSE (TODO: federation-9.4)")
+    stream: bool = Field(False, description="Stream redacted deltas via SSE")
     tools: Optional[List[Dict[str, Any]]] = Field(None, description="Tool definitions (filtered by allowlist)")
     temperature: float = 0.7
     max_tokens: Optional[int] = None
@@ -202,6 +205,18 @@ async def peer_compute_chat(
     # For Phase 9.2a (1:1), the broker is effectively pass-through (max_concurrent=1).
     raw_response = await _submit_to_broker(request, filtered_tools, peer)
 
+    if request.stream:
+        # federation-9.4 (multi-node Task 2): upstream streaming
+        # (broker → model) is not built, so the completed response is
+        # chunked through the sliding-window redactor — the SAME egress
+        # redaction the non-stream path applies, exercised against real
+        # boundary splits. When upstream deltas arrive this generator
+        # shape carries them unchanged.
+        return StreamingResponse(
+            _stream_redacted_chat(request, raw_response),
+            media_type="text/event-stream",
+        )
+
     # Step 3: Apply the MCP redaction boundary (C4 — the egress choke point)
     # This is the SAME redaction used by the MCP server. It strips:
     # - Secret values in config-value-pair shapes
@@ -239,6 +254,68 @@ def _as_int(value: Any) -> int:
         return int(value)
     except (TypeError, ValueError):
         return 0
+
+
+#: How the finished response is sliced into SSE deltas until upstream
+#: streaming exists. Deliberately smaller than any line of real model
+#: output — secrets land mid-slice exactly as they would mid-delta.
+_STREAM_SLICE_CHARS = 64
+
+
+def _sse_frame(chunk_id: str, created: int, model: str,
+               delta: Dict[str, Any], finish: Optional[str],
+               usage: Optional[Dict[str, int]] = None) -> str:
+    """One OpenAI-shaped ``data:`` frame."""
+    import json as _json
+
+    payload: Dict[str, Any] = {
+        "id": chunk_id,
+        "object": "chat.completion.chunk",
+        "created": created,
+        "model": model,
+        "choices": [{"index": 0, "delta": delta, "finish_reason": finish}],
+    }
+    if usage is not None:
+        payload["usage"] = usage
+    return f"data: {_json.dumps(payload)}\n\n"
+
+
+def _stream_redacted_chat(
+    request: ChatCompletionRequest, raw: Dict[str, Any]
+):
+    """Yield redacted content deltas, then a finish+usage frame, then DONE.
+
+    The redactor decides what is safe to emit per slice — a secret split
+    across slices is held until it completes (or replaced at flush), so
+    no partial match ever leaves in a delta.
+    """
+    redactor = SlidingWindowRedactor()
+    content = raw.get("content", "") or ""
+    chunk_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
+    created = int(time.time())
+
+    def emit(text: str):
+        return _sse_frame(chunk_id, created, request.model,
+                          {"content": text}, None)
+
+    for i in range(0, len(content), _STREAM_SLICE_CHARS):
+        out = redactor.feed(content[i:i + _STREAM_SLICE_CHARS])
+        if out:
+            yield emit(out)
+    tail = redactor.flush()
+    if tail:
+        yield emit(tail)
+    usage = raw.get("usage") or {}
+    yield _sse_frame(
+        chunk_id, created, request.model, {},
+        raw.get("finish_reason", "stop"),
+        usage={
+            "prompt_tokens": _as_int(usage.get("prompt_tokens")),
+            "completion_tokens": _as_int(usage.get("completion_tokens")),
+            "total_tokens": _as_int(usage.get("total_tokens")),
+        },
+    )
+    yield "data: [DONE]\n\n"
 
 
 # ---------------------------------------------------------------------------

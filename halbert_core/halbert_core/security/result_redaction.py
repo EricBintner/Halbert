@@ -81,9 +81,25 @@ caller's internal copy retains the raw value if it held one.
 """
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any, List, Optional
 
-from ..ingestion.redaction import _is_secret_key, redact_text
+from ..ingestion.redaction import (
+    _BLOCK_HEADER_RE,
+    _indent_width,
+    _is_credential_flag,
+    _is_secret_key,
+    _is_structure,
+    _KEY_LINE_RE,
+    _leading_ws,
+    _PLIST_CONTAINER_TAGS,
+    _PLIST_FLAG_RE,
+    _PLIST_KEY_RE,
+    _PLIST_SPAN_LIMIT,
+    _PLIST_STRING_RE,
+    _PLIST_VALUE_TAGS,
+    _TAG_RE,
+    redact_text,
+)
 from ..ingestion.redaction_registry import get_global_registry
 from ..config.security_constants import EGRESS_ACK_FIELD
 
@@ -280,6 +296,191 @@ def redact_result(payload: Any) -> Any:
     Returns a new structure; the input is not mutated.
     """
     return _redact_value(payload)
+
+
+class SlidingWindowRedactor:
+    """Incremental redaction for a text stream, at the same choke point.
+
+    Multi-node Task 2 (federation-9.4): the peer compute endpoint's
+    ``stream: true`` path must apply the identical redaction as the
+    non-stream path — but a secret can be split across chunk boundaries,
+    so feeding each chunk straight to ``redact_string`` would emit
+    partial matches (``password=hu`` out, ``nter2`` out) that the
+    whole-document pass would have caught.
+
+    ``feed`` therefore emits only text whose redaction is already FINAL —
+    complete lines that cannot be inside a construct still open. It holds
+    back:
+
+    * the unterminated tail line (every line-scope pattern needs the
+      whole line — this alone is what stops the ``password=hu|nter2``
+      split),
+    * a PEM block whose ``-----END`` marker has not arrived,
+    * a deferred value or ``|``/``>`` block scalar under a secret key
+      (``password:`` / ``password: |``) until its extent is bounded,
+    * a plist ``<key>secret</key>`` whose value element has not closed,
+    * a plist credential-flag ``<string>`` awaiting its value member.
+
+    The closure predicates are the redaction module's own regexes and
+    helpers — the boundary question ("is this construct finished?") is
+    asked in the matcher's vocabulary, not re-guessed here.
+
+    ``flush`` emits whatever remains, redacted as one piece — at
+    end-of-stream every construct is as complete as it will ever be,
+    which is exactly what ``redact_string`` does to a whole document.
+
+    Known residual: a *registered* secret (exact-value registry) that
+    itself contains a newline and is not PEM-shaped can straddle a line
+    cut — in practice multi-line registered values are private keys,
+    which the PEM hold covers.
+    """
+
+    def __init__(self):
+        self._buf = ""
+
+    def feed(self, chunk: str) -> str:
+        """Add stream text; return as much redacted output as is final."""
+        if chunk:
+            self._buf += chunk
+        cut = self._safe_cut()
+        if cut <= 0:
+            return ""
+        emit, self._buf = self._buf[:cut], self._buf[cut:]
+        return redact_string(emit)
+
+    def flush(self) -> str:
+        """End of stream: redact and return everything still buffered."""
+        out, self._buf = redact_string(self._buf), ""
+        return out
+
+    @property
+    def buffered(self) -> int:
+        """Bytes currently held back — test/debug visibility."""
+        return len(self._buf)
+
+    # -- emission boundary -------------------------------------------------
+
+    def _safe_cut(self) -> int:
+        """Byte length of the longest line-boundary prefix safe to emit."""
+        lines = self._buf.split("\n")
+        complete = lines[:-1]  # the last element is the partial line
+        if not complete:
+            return 0
+        hold_from = len(complete)
+        for i, line in enumerate(complete):
+            if i >= hold_from:
+                break
+            if not self._line_closed(complete, i, line):
+                hold_from = i
+        if hold_from <= 0:
+            return 0
+        return len("\n".join(complete[:hold_from])) + 1
+
+    def _line_closed(self, complete: List[str], i: int, line: str) -> bool:
+        """False when this line opens a construct still open within
+        ``complete`` — meaning its redaction (or a later line's, through
+        it) is not yet decided."""
+        if "-----BEGIN " in line and "-----END " not in "\n".join(complete[i:]):
+            return False
+        m = _KEY_LINE_RE.match(line)
+        if m and _is_secret_key(m.group(2)):
+            rest = m.group(3).strip()
+            if rest.startswith("#"):
+                rest = ""  # `password: # note` still defers its value
+            is_block = bool(_BLOCK_HEADER_RE.match(rest))
+            if (not rest or is_block) and not self._deferred_closed(
+                complete, i, _indent_width(_leading_ws(line)), is_block
+            ):
+                return False
+        for km in _PLIST_KEY_RE.finditer(line):
+            if _is_secret_key(km.group(1)) and not self._plist_value_closed(
+                complete, i, km.end()
+            ):
+                return False
+        for fm in _PLIST_FLAG_RE.finditer(line):
+            if not _is_credential_flag(fm.group(1)):
+                continue
+            tail = line[fm.end():]
+            if _PLIST_STRING_RE.search(tail):
+                continue  # value member on the same line
+            if any(
+                _PLIST_STRING_RE.search(later)
+                for later in complete[i + 1 :]
+            ):
+                continue
+            return False
+        return True
+
+    @staticmethod
+    def _deferred_closed(
+        complete: List[str], i: int, key_indent: int, is_block: bool
+    ) -> bool:
+        """Mirror of ``_handle_deferred_value``'s forward scan, read-only:
+        is the deferred scalar / block body bounded inside ``complete``?"""
+        for j in range(i + 1, len(complete)):
+            content = complete[j].strip()
+            if not content:
+                continue
+            if _indent_width(_leading_ws(complete[j])) <= key_indent:
+                return True  # dedent — the construct ended
+            if not is_block:
+                if content.startswith("#"):
+                    continue  # a comment does not terminate the value
+                # A structure line means no scalar came; a scalar line IS
+                # the value — either way the deferred region is decided.
+                return True
+            # block scalar: indented content keeps the construct open
+        return False
+
+    @staticmethod
+    def _plist_value_closed(complete: List[str], row: int, pos: int) -> bool:
+        """Mirror of ``_redact_plist_value``, read-only."""
+        found = None
+        for k in range(row, min(len(complete), row + _PLIST_SPAN_LIMIT)):
+            found = _TAG_RE.search(complete[k], pos if k == row else 0)
+            if found:
+                row = k
+                break
+        if not found:
+            return False  # the value tag may simply not have arrived yet
+        if found.group(1) or found.group(4):
+            return True  # close tag or self-closing — no pending value
+        name = found.group(2).lower()
+        if name in _PLIST_CONTAINER_TAGS:
+            return SlidingWindowRedactor._container_closed(
+                complete, row, found.end())
+        if name in _PLIST_VALUE_TAGS:
+            return SlidingWindowRedactor._element_closed(
+                complete, row, found.end(), name)
+        return True
+
+    @staticmethod
+    def _element_closed(
+        complete: List[str], row: int, pos: int, name: str
+    ) -> bool:
+        """Mirror of ``_redact_plist_element``'s bounds, read-only."""
+        close = "</" + name
+        for k in range(row, min(len(complete), row + _PLIST_SPAN_LIMIT)):
+            line = complete[k]
+            start = pos if k == row else 0
+            if close in line[start:].lower():
+                return True
+            if k > row and "<key>" in line.lower():
+                return True  # next entry began — the value cannot extend
+        return False
+
+    @staticmethod
+    def _container_closed(complete: List[str], row: int, pos: int) -> bool:
+        """Depth-walk mirror of ``_redact_plist_container``, read-only."""
+        depth = 1
+        for k in range(row, min(len(complete), row + _PLIST_SPAN_LIMIT)):
+            segment = complete[k][pos:] if k == row else complete[k]
+            for m in _TAG_RE.finditer(segment):
+                if m.group(2).lower() in _PLIST_CONTAINER_TAGS and not m.group(4):
+                    depth += -1 if m.group(1) else 1
+            if depth <= 0:
+                return True
+        return False
 
 
 #: How much of an error string may reach the model or the UI. Server- and
