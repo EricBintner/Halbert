@@ -4835,6 +4835,34 @@ class AgentStateMachine:
             yield StreamEvent.response_chunk(self.ctx.session_id, refusal)
 
         # Stream response
+        # Streaming TTS (O3+): when voice mode is active and the browser
+        # is subscribed, tee the LLM response chunks into a queue that
+        # feeds stream_spoken_segments() -> synthesize_stream() so the
+        # first sentence starts playing before the full response is
+        # generated. The batch path below still emits modality_resolved
+        # and speech_segment SSE events for the frontend ribbon, but
+        # skips re-synthesizing the main content when streaming already
+        # delivered it (only the audit tail is spoken afterward).
+        stream_tts_queue: Optional[asyncio.Queue] = None
+        stream_tts_task: Optional[asyncio.Task] = None
+        stream_tts_ran = False
+        if modality_ctx is not None:
+            try:
+                from ..integrations.modality_wiring import should_speak as _should_speak
+                if _should_speak(modality_ctx):
+                    from ..audio.config import load_config
+                    _tts_cfg = load_config().tts
+                    if _tts_cfg.stream_to_egress:
+                        stream_tts_queue = asyncio.Queue()
+                        stream_tts_task = asyncio.create_task(
+                            self._speak_stream_to_tts_egress(
+                                stream_tts_queue, modality_ctx,
+                            )
+                        )
+            except Exception as e:
+                logger.debug(f"Streaming TTS not started (non-fatal): {e}")
+                stream_tts_queue = None
+
         if hasattr(self.llm, 'stream'):
             logger.info(f"Starting LLM stream for session {self.ctx.session_id}")
             chunk_count = 0
@@ -4879,6 +4907,9 @@ class AgentStateMachine:
                 logger.debug(f"Chunk {chunk_count}: {repr(chunk[:50])}...")
                 self.ctx.response_chunks.append(chunk)
                 yield StreamEvent.response_chunk(self.ctx.session_id, chunk)
+                # Tee response chunks into the streaming TTS queue.
+                if stream_tts_queue is not None:
+                    await stream_tts_queue.put(chunk)
             # The stream ended while still thinking — close the span so the
             # panel does not hang in "Thinking...".
             if thinking_open and self.ctx.thinking_started_at is not None:
@@ -4906,6 +4937,21 @@ class AgentStateMachine:
             content = response.content if hasattr(response, 'content') else str(response)
             self.ctx.response_chunks.append(content)
             yield StreamEvent.response_chunk(self.ctx.session_id, content)
+            # Non-streaming model: feed the whole response at once.
+            if stream_tts_queue is not None:
+                await stream_tts_queue.put(content)
+
+        # Signal the streaming TTS task that the LLM stream is done.
+        if stream_tts_queue is not None:
+            await stream_tts_queue.put(None)  # sentinel
+        if stream_tts_task is not None:
+            try:
+                stream_tts_ran = await stream_tts_task
+            except Exception as e:
+                self._egress_log_once(
+                    "stream_hook",
+                    f"Stream TTS egress failed (non-fatal): {e}",
+                )
 
         # A stream that resolved a model and then produced nothing still owes
         # the user the reason its answer is empty.
@@ -5168,9 +5214,18 @@ class AgentStateMachine:
                         # any browser subscribed to this session's audio on
                         # /api/audio/tts. Strictly optional — the turn is
                         # already complete for everyone else.
+                        #
+                        # When streaming TTS already delivered the main
+                        # content (stream_tts_ran), skip re-synthesizing it
+                        # and only speak the audit tail (which was not part
+                        # of the LLM token stream).
                         if spoken_segments:
                             try:
-                                await self._speak_to_tts_egress(spoken_segments)
+                                if stream_tts_ran and tail:
+                                    # Only speak the audit tail.
+                                    await self._speak_to_tts_egress([(tail, 1.0)])
+                                elif not stream_tts_ran:
+                                    await self._speak_to_tts_egress(spoken_segments)
                             except Exception as e:
                                 self._egress_log_once(
                                     "hook",
@@ -5394,6 +5449,148 @@ class AgentStateMachine:
             return
         self._egress_warned.add(site)
         logger.warning(message)
+
+    async def _speak_stream_to_tts_egress(
+        self,
+        token_queue: "asyncio.Queue[str]",
+        modality_ctx: Any,
+    ) -> bool:
+        """Stream-synthesize spoken audio concurrently with the LLM stream.
+
+        The streaming twin of ``_speak_to_tts_egress``: instead of
+        waiting for the full response and then synthesizing, this feeds
+        LLM token deltas through ``stream_spoken_segments()`` (which
+        flushes at sentence boundaries) and then through
+        ``HalbertVoiceBackend.synthesize_stream()``, publishing PCM
+        chunks to the TTS egress hub as they arrive.
+
+        Returns True if any audio was published (so the caller can skip
+        the batch ``_speak_to_tts_egress`` for the main content and only
+        speak the audit tail afterward).
+        """
+        try:
+            from ..dashboard.routes.tts_egress import get_tts_egress_hub
+        except Exception as e:
+            self._egress_log_once("hub_import", f"TTS egress hub unavailable: {e}")
+            return False
+
+        hub = get_tts_egress_hub()
+        session_id = self.ctx.session_id
+        if not hub.has_subscribers(session_id):
+            return False
+
+        # Resolve the TTS engine: use the cached egress instance first
+        # (the test path patches agent._egress_tts directly), then try
+        # the voice backend through the seam. The streaming path is
+        # strictly optional — if no engine is available, return False
+        # silently and let the batch path handle the warning.
+        tts = self._voice_tts_for_egress()
+        if tts is None:
+            logger.debug("Stream TTS: no TTS engine available, deferring to batch")
+            return False
+
+        # Barge-in token: coordinator-owned when the pipeline runs.
+        token = None
+        pipeline = getattr(hub, "pipeline", None)
+        if pipeline is not None:
+            try:
+                token = pipeline.create_barge_in_token()
+            except Exception:
+                token = None
+        if token is None:
+            from ..audio.speech.barge_in import BargeInHandler
+            token = BargeInHandler().create_token()
+
+        hub.register_cancel_token(session_id, token)
+
+        # Wake-before-speak (P2): raise the panel before the first frame.
+        try:
+            from ..system import display_power
+            await asyncio.to_thread(display_power.wake)
+        except Exception:
+            logger.debug("wake-before-speak unavailable", exc_info=True)
+
+        # Adapt the queue into an async generator for stream_spoken_segments.
+        async def _token_stream():
+            while True:
+                chunk = await token_queue.get()
+                if chunk is None:  # sentinel: LLM stream is done
+                    break
+                yield chunk
+
+        from ..integrations.modality_wiring import stream_spoken_segments
+
+        segments_iter = stream_spoken_segments(
+            _token_stream(),
+            modality_ctx,
+            session_id=session_id,
+            thread_id=self.ctx.thread_id or "",
+        )
+        if segments_iter is None:
+            hub.clear_cancel_token(session_id)
+            return False
+
+        any_began = False
+        sent_cancelled = False
+        try:
+            async for seg in segments_iter:
+                if token is not None and token.is_set():
+                    break
+                text = seg.get("text", "")
+                if not text.strip():
+                    continue
+                rate = float(seg.get("rate", 1.0) or 1.0)
+                original_speed = tts._speed
+                tts._speed = rate
+                began = False
+                try:
+                    async for pcm_chunk in tts.synthesize(text, cancel_token=token):
+                        if token is not None and token.is_set():
+                            break
+                        if not began:
+                            began = True
+                            if not any_began:
+                                any_began = True
+                                sr = getattr(tts, "_sample_rate", None) or 22050
+                                await hub.publish(session_id, {
+                                    "type": "begin",
+                                    "sample_rate": sr,
+                                    "format": "s16le",
+                                })
+                        await hub.publish(session_id, pcm_chunk)
+                finally:
+                    tts._speed = original_speed
+                if began:
+                    cancelled = token is not None and token.is_set()
+                    sent_cancelled = cancelled
+                    await hub.publish(
+                        session_id,
+                        {"type": "cancelled" if cancelled else "end"},
+                    )
+            # Barge-in between segments: tell the browser.
+            if (
+                not sent_cancelled
+                and any_began
+                and token is not None
+                and token.is_set()
+            ):
+                await hub.publish(session_id, {"type": "cancelled"})
+        except Exception as e:
+            logger.debug(f"Stream TTS egress failed (non-fatal): {e}")
+            if any_began and not sent_cancelled:
+                try:
+                    await hub.publish(session_id, {"type": "cancelled"})
+                except Exception:
+                    pass
+        finally:
+            hub.clear_cancel_token(session_id)
+            if pipeline is not None and token is not None:
+                try:
+                    pipeline.release_barge_in_token(token)
+                except Exception:
+                    pass
+
+        return any_began
 
     async def _handle_error(self) -> AsyncIterator[StreamEvent]:
         """

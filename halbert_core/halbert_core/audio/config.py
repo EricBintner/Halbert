@@ -102,6 +102,7 @@ class TtsConfig:
     kokoro_data_dir: str = ""        # path to Kokoro espeak-ng-data
     num_threads: int = 2             # ONNX Runtime / sherpa-onnx threads
     execution_provider: str = "cpu"  # cpu, cuda, coreml, nnapi, etc.
+    stream_to_egress: bool = False   # stream TTS concurrently with LLM (low-latency preview)
 
 
 @dataclass
@@ -199,6 +200,7 @@ def _parse_config(data: dict) -> AudioConfig:
             kokoro_data_dir=tts.get("kokoro_data_dir", ""),
             num_threads=tts.get("num_threads", 2),
             execution_provider=tts.get("execution_provider", "cpu"),
+            stream_to_egress=tts.get("stream_to_egress", False),
         ),
         privacy=AudioPrivacyConfig(
             delete_raw_after_transcription=privacy.get("delete_raw_after_transcription", True),
@@ -258,6 +260,7 @@ def save_config(config: AudioConfig) -> None:
             "kokoro_data_dir": config.tts.kokoro_data_dir,
             "num_threads": config.tts.num_threads,
             "execution_provider": config.tts.execution_provider,
+            "stream_to_egress": config.tts.stream_to_egress,
         },
         "privacy": {
             "delete_raw_after_transcription": config.privacy.delete_raw_after_transcription,
