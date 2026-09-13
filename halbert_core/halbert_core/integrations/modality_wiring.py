@@ -560,6 +560,86 @@ def get_prosody(ctx: Any) -> Any:
 
 
 # ---------------------------------------------------------------------------
+# Streaming sentence delivery (spec section 2 — split_stream consumer)
+# ---------------------------------------------------------------------------
+
+async def stream_spoken_segments(
+    token_stream: Any,  # AsyncIterator[str] — LLM token deltas
+    ctx: Any,
+    session_id: str = "",
+    thread_id: str = "",
+) -> Any:  # AsyncIterator[dict]
+    """Yield spoken segments as sentences complete in the token stream.
+
+    Wraps the engine's ``SpeechTextDemuxer.split_stream()`` — which
+    flushes at sentence boundaries (``[.!?…]+``) — and applies
+    Halbert's pronunciation lexicon + code-noise stripping to each
+    segment before yielding. The consumer's ``VoiceBackend`` then
+    re-chunks each sentence for Kokoro's 128-phoneme limit (that
+    re-chunking lives in ``KokoroTTS``, not here).
+
+    Yields dicts ``{text, role, rate, volume, whisper, voice_id}`` —
+    the same shape as ``spoken_segment_lines`` but produced
+    incrementally as the LLM streams, so the first sentence reaches
+    the synthesizer before the full response is generated.
+
+    Degrades to nothing when the engine is not installed (the caller
+    falls back to the batch ``demux_response`` + ``spoken_segment_lines``
+    path).
+
+    Args:
+        token_stream: An async iterator of LLM token deltas (strings).
+        ctx: A resolved ``ModalityContext`` (from ``resolve_turn_modality``).
+        session_id: The turn's session id (for tracing).
+        thread_id: The turn's thread id (for the demuxer's payload).
+
+    Returns:
+        An async iterator of spoken-segment dicts, or ``None`` if the
+        engine is not installed.
+    """
+    if ctx is None:
+        return None
+    demuxer = get_speech_demuxer()
+    if demuxer is None:
+        return None
+    try:
+        from haloysius.modality.types import ResponseModality
+    except ImportError:
+        return None
+
+    prosody = getattr(ctx, "prosody", None)
+    risk_policy = getattr(ctx, "voice_risk_policy", None)
+    modality = getattr(ctx, "recommended_modality", ResponseModality.TEXT)
+    whisper = getattr(prosody, "whisper", False) if prosody else False
+
+    from .tts_quality import strip_code_noise
+
+    async def _stream():
+        async for seg in demuxer.split_stream(
+            token_stream,
+            whisper_active=whisper,
+            prosody=prosody,
+            risk_policy=risk_policy,
+        ):
+            if not getattr(seg, "is_spoken", False):
+                continue
+            text = strip_code_noise(getattr(seg, "text", "") or "")
+            if not text:
+                continue
+            seg_prosody = getattr(seg, "prosody", None)
+            yield {
+                "text": apply_pronunciation(text),
+                "role": getattr(getattr(seg, "role", None), "value", "persona"),
+                "rate": float(getattr(seg_prosody, "rate", 1.0) or 1.0),
+                "volume": float(getattr(seg_prosody, "volume", 1.0) or 1.0),
+                "whisper": bool(getattr(seg_prosody, "whisper", False)),
+                "voice_id": getattr(seg, "voice_id", None),
+            }
+
+    return _stream()
+
+
+# ---------------------------------------------------------------------------
 # Life-safety bypass (spec B2)
 # ---------------------------------------------------------------------------
 

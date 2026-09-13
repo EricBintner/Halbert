@@ -29,7 +29,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import struct
-from typing import Any, List, Optional
+from typing import Any, AsyncIterator, List, Optional
 
 logger = logging.getLogger("halbert.integrations.voice_backend")
 
@@ -111,7 +111,7 @@ class HalbertVoiceBackend:
 
         # TTS engines store speed as _speed and voice selection as _speaker_id.
         original_speed = tts._speed
-        original_speaker_id = tts._speaker_id
+        original_speaker_id = getattr(tts, "_speaker_id", 0)
         tts._speed = rate
         if voice_id is not None:
             try:
@@ -175,7 +175,8 @@ class HalbertVoiceBackend:
             return SpeechResult(success=False, error=str(e))
         finally:
             tts._speed = original_speed
-            tts._speaker_id = original_speaker_id
+            if hasattr(tts, "_speaker_id"):
+                tts._speaker_id = original_speaker_id
 
     def cancel(self) -> None:
         """Cancel any in-flight synthesis (barge-in)."""
@@ -184,6 +185,53 @@ class HalbertVoiceBackend:
             logger.debug("Voice backend: barge-in token triggered")
         if self._playback_task is not None and not self._playback_task.done():
             self._playback_task.cancel()
+
+    async def synthesize_stream(
+        self,
+        segments: Any,  # AsyncIterator[dict] — from stream_spoken_segments()
+    ) -> AsyncIterator[bytes]:
+        """Stream-synthesize spoken segments, yielding PCM chunks.
+
+        Consumes the async iterator from
+        ``modality_wiring.stream_spoken_segments()`` — which yields
+        sentences as the LLM produces them — and synthesizes each one
+        through the configured TTS engine (Piper or Kokoro). Kokoro
+        internally re-chunks each sentence for its 128-phoneme limit.
+
+        Barge-in: checks the ``BargeInToken`` between segments and
+        between PCM chunks; stops yielding when it fires.
+
+        Yields raw 16-bit PCM bytes. The first chunk's sample rate is
+        available from ``get_tts().sample_rate`` after the first
+        synthesis call.
+        """
+        cancel_token = self._barge_in_token
+        try:
+            tts = self._get_tts()
+            tts._ensure_initialized()
+        except Exception as e:
+            logger.warning(f"TTS unavailable for stream: {e}")
+            return
+
+        async for seg in segments:
+            if cancel_token is not None and cancel_token.is_set():
+                logger.debug("Stream synthesis: barge-in, aborting")
+                return
+
+            text = seg.get("text", "")
+            if not text.strip():
+                continue
+
+            rate = float(seg.get("rate", 1.0) or 1.0)
+            original_speed = tts._speed
+            tts._speed = rate
+            try:
+                async for chunk in tts.synthesize(text, cancel_token=cancel_token):
+                    if cancel_token is not None and cancel_token.is_set():
+                        return
+                    yield chunk
+            finally:
+                tts._speed = original_speed
 
     def list_voices(self) -> List[Any]:
         """List available Piper voices.
