@@ -1418,6 +1418,16 @@ def create_app(enable_cors: bool = True) -> FastAPI:
             start_thread_tick_heartbeat(app)
         except Exception as e:
             logger.warning(f"Thread tick heartbeat not started (non-fatal): {e}")
+
+        # Warm-standby replication: a canonical host snapshots and pushes
+        # its entity state to body peers on the configured interval
+        # (Phase 1). A body gets no task — it is the receiver, not the
+        # sender. Cancelled in shutdown_event.
+        try:
+            from ..replica.push import start_replica_push_loop
+            start_replica_push_loop(app)
+        except Exception as e:
+            logger.warning(f"Replica push loop not started (non-fatal): {e}")
         
         # Bootstrap system identity (if not already done)
         try:
@@ -1902,6 +1912,16 @@ def create_app(enable_cors: bool = True) -> FastAPI:
             await stop_thread_tick_heartbeat(app)
         except Exception as e:
             logger.warning(f"Failed to stop thread tick heartbeat: {e}")
+
+        # Phase 1: stop the replica push loop — a cancelled push leaves the
+        # satellite's previous replica live (verify-then-swap), never torn.
+        task = getattr(app.state, "replica_push_task", None)
+        if task is not None:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
 
         # B4: stop the MCP health monitor and disconnect its servers
         # (cancels the sweep + in-flight reconnects, reaps the client's

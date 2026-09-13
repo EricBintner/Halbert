@@ -146,3 +146,83 @@ def push_snapshot_to_peers(
                     "ok" if reports[-1].success else reports[-1].error)
 
     return reports
+
+
+# ---------------------------------------------------------------------------
+# The periodic push loop (Step 1.4)
+# ---------------------------------------------------------------------------
+
+DEFAULT_PUSH_INTERVAL_S = 21600  # 6 hours
+
+
+def _is_canonical_host() -> bool:
+    """Is this node the memory host right now?
+
+    Re-checked every iteration: a node that was promoted to canonical
+    starts pushing on the next tick, and one that was demoted to a body
+    stops — the loop does not have to be restarted for a role change.
+    """
+    try:
+        from ..identity import resolve_entity_role, ENTITY_ROLE_CANONICAL
+        return resolve_entity_role() == ENTITY_ROLE_CANONICAL
+    except Exception:
+        return False
+
+
+def _push_interval_s() -> float:
+    """being.yml replica_push_interval_s, else the 6-hour default."""
+    try:
+        from ..config.being_config import load_being_config
+        return float(load_being_config().replica_push_interval_s or
+                     DEFAULT_PUSH_INTERVAL_S)
+    except Exception:
+        return DEFAULT_PUSH_INTERVAL_S
+
+
+async def _replica_push_loop() -> None:
+    """Periodically snapshot and push to body peers.
+
+    One iteration on start (a fresh replica beats waiting six hours for
+    the first one), then once per interval. Snapshot and push run in a
+    worker thread — requests is blocking and the event loop has a
+    dashboard to serve. Any failure is logged and the loop continues;
+    only cancellation stops it.
+    """
+    import asyncio
+
+    while True:
+        try:
+            if _is_canonical_host():
+                from .snapshot import create_replication_snapshot
+                snapshot = await asyncio.to_thread(create_replication_snapshot)
+                reports = await asyncio.to_thread(
+                    push_snapshot_to_peers, snapshot)
+                for report in reports:
+                    if not report.success:
+                        logger.warning(
+                            "Replica push to %s failed: %s",
+                            report.peer_id, report.error,
+                        )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Replica push iteration failed")
+        await asyncio.sleep(_push_interval_s())
+
+
+def start_replica_push_loop(app) -> Optional[Any]:
+    """Start the push loop on a canonical host. Returns the task or None.
+
+    Called from app startup; the task lives on app.state.replica_push_task
+    for shutdown cancellation. A node that is not canonical gets no task
+    — the loop itself would skip it, but not starting it keeps the idle
+    body's task list honest.
+    """
+    import asyncio
+
+    if not _is_canonical_host():
+        return None
+    task = asyncio.get_running_loop().create_task(_replica_push_loop())
+    app.state.replica_push_task = task
+    logger.info("Replica push loop started (interval %.0fs)", _push_interval_s())
+    return task
