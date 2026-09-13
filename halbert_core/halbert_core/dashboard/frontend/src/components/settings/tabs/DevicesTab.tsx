@@ -28,6 +28,8 @@ import type { DevicesState, DeviceInfo } from '@/lib/peerApi'
 import { EntityIdentityCard } from '@/components/settings/devices/EntityIdentityCard'
 import { DeviceCard } from '@/components/settings/devices/DeviceCard'
 import { PersonaHomesCard } from '@/components/settings/devices/PersonaHomesCard'
+import { ReplicaStatus } from '@/components/settings/devices/ReplicaStatus'
+import { PairingQRCode } from '@/components/settings/devices/PairingQRCode'
 import { PeerPairingModal } from '@/components/fleet/PeerPairingModal'
 
 export function DevicesTab() {
@@ -155,6 +157,16 @@ export function DevicesTab() {
           </ul>
         </Collapsible>
       )}
+
+      {/* QR onboarding (Phase 1.9): the code carries the host URL only —
+          the PIN stays the physical-presence boundary. On the kiosk
+          (loopback origin) the card says so and offers the manual path. */}
+      <PairingQRCode />
+
+      {/* Warm standby (Phase 1): the replica tile — renders nothing on a
+          node that holds no replica, shows freshness + counts and the
+          manual promote path on a body that does. */}
+      <ReplicaStatus />
 
       {/* Guest personas (§5R.3 N1): "Be someone else" lives here now, not in
           the top bar. Not a primary feature — until a persona home is

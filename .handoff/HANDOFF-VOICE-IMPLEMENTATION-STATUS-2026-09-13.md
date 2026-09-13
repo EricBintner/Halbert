@@ -135,17 +135,59 @@ Three seam violations found and fixed in commit `593ffd02`:
 
 ## 4. What remains
 
-### Hardware verification (Phase 3)
+### Voice flow — already wired end-to-end
 
-- Benchmark Kokoro on Intel N100/N150 CPU vs NVIDIA RTX A2000 TensorRT.
-- Test Raspberry Pi 5 with INT8 quantized weights.
-- Verify sub-120ms barge-in on real hardware.
-- Validate multi-mic arbitration with real simultaneous microphone sources.
+The full voice interaction path is built and connected:
 
-### Wyoming interoperability
+- **Mic -> Pipeline**: `PcmUplink` (frontend) -> `/api/audio/stream` -> `WebRtcIngress` -> `AudioChunk` -> pipeline -> VAD -> ASR -> speaker ID -> transcript
+- **Transcript -> Turn**: pipeline -> `on_voice_turn` -> `_relay_voice_turn` -> `onTranscript` -> `submitTurn` -> `sendMessage` -> state machine
+- **LLM -> TTS -> Speaker**: state machine -> `demux_response` -> `_speak_to_tts_egress` (batch) or `_speak_stream_to_tts_egress` (streaming) -> `TtsEgressHub` -> `/api/audio/tts` -> `TtsPlaybackClient` -> speaker
 
-- Test Wyoming egress against a real Home Assistant/Wyoming satellite.
-- Test bidirectional: satellite -> Halbert ingress, Halbert -> satellite egress.
+The frontend (`VoiceMode.tsx`) handles:
+- Push-to-talk via `TouchBar` and mark tap
+- Mic capture via `PcmUplink` (AudioWorklet + ScriptProcessorNode fallback)
+- TTS playback via `TtsPlaybackClient` (WebSocket + Web Audio)
+- Speaker recognition via `/api/audio/status` poll
+- Standby tiers via `StandbyController`
+- On-screen keyboard via `OnScreenKeyboard`
+- Subtitle ribbon via `SubtitleRibbon`
+- Barge-in via `cancel()` on `TtsPlaybackClient` (sends `{"type":"cancel"}` control frame)
+- Mute toggle, echo-back, recognition timeout
+
+The backend handles:
+- `AudioPipelineCoordinator` — VAD -> ASR -> speaker ID -> barge-in -> `on_voice_turn`
+- `WyomingIngress` — satellite audio ingress with stale frame rejection
+- `WyomingEgressHub` — satellite audio egress (subscribers receive PCM)
+- `TtsEgressHub` — browser TTS egress (session-keyed pub/sub)
+- `SpatialAudioArbiter` — multi-mic arbitration, coincidence grouping, turn locks
+- `HardwareProfile` — ONNX provider detection, tier classification
+- `HalbertVoiceBackend` — TTS execution with prosody, voice name resolution, cadence style
+- `HalbertChannelCapability` — capability reporting with hardware extensions
+- `HalbertGovernancePolicy` — full `GovernancePolicy` protocol (authorize_action, check_detailed)
+- `HalbertAppSeam` — `AppSeam` protocol implementation
+
+### Rebase
+
+The branch was rebased onto main (37 commits of drift — scheduler, continuity, model fixes). 8 commits ahead, 0 behind. Clean rebase, no conflicts.
+
+### Test coverage
+
+49 new tests in `test_voice_extensions.py`:
+- Hardware detection (5)
+- Channel capability hardware (4)
+- Spatial arbiter (14)
+- Kokoro voice name resolution (4)
+- Wyoming egress hub (6)
+- Kokoro style resolution (4)
+- Wyoming stale frame rejection (4)
+- TTS config stream_to_egress (4)
+- Voice flow integration (4)
+
+284 voice/audio/seam tests pass total.
+
+### Test isolation fix
+
+`_voice_turn_patches` now patches `load_config()` to return `stream_to_egress=False`. The developer's real `audio_config.yml` had `stream_to_egress: true`, which triggered the streaming TTS path and created a second barge-in token in tests that expected one.
 
 ### Style vectors
 

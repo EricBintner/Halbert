@@ -118,19 +118,24 @@ def _recognised_guards():
     credential, so a route carrying it is not open. ``require_local_admin``
     and ``require_local_or_self_peer`` are the federation surface's doors for
     machine-local and per-peer controls; they guard the peers router now that
-    it authenticates itself (F-A). Recognising the *dependency*
+    it authenticates itself (F-A). ``require_trust_anchor`` is the
+    local-operator-or-trusted-device door for pairing and approval
+    decisions (Q1/Q2 of the security review). Recognising the *dependency*
     rather than a tag matters: a tag is a label anyone can copy onto an
     unguarded router, and this test would then wave it through.
     """
     from halbert_core.dashboard.auth import require_owner
     from halbert_core.federation.peer_middleware import (
+        require_known_principal,
         require_local_admin,
         require_local_or_self_peer,
         require_peer_auth,
+        require_trust_anchor,
     )
 
     return (require_owner, require_peer_auth, require_local_admin,
-            require_local_or_self_peer)
+            require_local_or_self_peer, require_trust_anchor,
+            require_known_principal)
 
 
 def _guards(dep) -> bool:

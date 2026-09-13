@@ -191,6 +191,11 @@ class PeerCredential:
     # TLS pinning (multi-node Task 1) — self-signed cert, fingerprint-pinned.
     tls_enabled: bool = False              # True = speak HTTPS to this peer
     tls_pin: Optional[str] = None          # "sha256:<hex>" of the peer's cert
+    # The token THIS node presents when calling the peer (canonical→body
+    # replica pushes, F-D). Raw, unlike token_hash: it is a credential we
+    # hold to spend, not one we verify. peers.json is owner-only already;
+    # its exposure grants replica-push on that one peer, nothing wider.
+    outbound_token: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -214,6 +219,7 @@ class PeerCredential:
             wol_timeout=d.get("wol_timeout", 90),
             tls_enabled=d.get("tls_enabled", False),
             tls_pin=d.get("tls_pin"),
+            outbound_token=d.get("outbound_token"),
         )
 
     def is_compute_target(self) -> bool:
@@ -595,6 +601,24 @@ class PeersConfig:
             logger.info(
                 "TLS pin %s for peer %s", "set" if pin else "cleared", node_id
             )
+            return True
+
+    def set_outbound_token(self, node_id: str, token: str) -> bool:
+        """Set the token this node presents when calling the peer (F-D).
+
+        The canonical holds, per body peer, the credential the satellite
+        minted for its ``/api/peers/sync-replica`` door. Unlike
+        ``token_hash`` this is stored raw — it is spent, not verified.
+
+        Returns True if the peer was found and updated.
+        """
+        with self._lock:
+            peer = self._peers.get(node_id)
+            if peer is None:
+                return False
+            peer.outbound_token = token
+            self._save()
+            logger.info("Outbound (push) credential set for peer %s", node_id)
             return True
 
     def find_peer_by_endpoint(self, url: str) -> Optional[PeerCredential]:

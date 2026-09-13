@@ -242,6 +242,49 @@ def is_quiet_hours() -> bool:
     return policy.start_hour <= hour < policy.end_hour
 
 
+def get_persona_voice() -> tuple:
+    """The active persona's voice identity, ``(PersonaVoiceProfile|None, voice_id)``.
+
+    Reads ``voice_profile`` from being.yml — the ``VoiceProfileData``
+    shape a cross-app persona export writes (``voice_id`` plus the five
+    ``PersonaVoiceProfile`` fields). ``voice_id`` is the Kokoro voice
+    pack id (e.g. ``"af_sarah"``); the other fields build the persona
+    prosody base the ``ProsodyMapper`` blends against PAD.
+
+    Returns ``(None, "")`` when no profile is configured or the engine
+    is not installed — the subtractive default.
+    """
+    try:
+        from ..config.being_config import load_being_config
+        profile = getattr(load_being_config(), "voice_profile", None) or {}
+    except Exception as e:
+        logger.debug(f"persona voice_profile load skipped: {e}")
+        return None, ""
+    if not isinstance(profile, dict):
+        return None, ""
+    voice_id = profile.get("voice_id") or ""
+
+    def _num(key: str, default: float) -> float:
+        # ``or`` is wrong here: 0.0 is a legitimate value for every field
+        # (weight=0.0 is a full-PAD blend), so falsy must not mean default.
+        v = profile.get(key)
+        return float(v) if v is not None else default
+
+    try:
+        from haloysius.modality.types import PersonaVoiceProfile
+        pvp = PersonaVoiceProfile(
+            base_rate=_num("base_rate", 1.0),
+            base_pitch=_num("base_pitch", 0.0),
+            base_energy=_num("base_energy", 0.5),
+            cadence_style=profile.get("cadence_style"),
+            weight=_num("weight", 0.5),
+        )
+    except Exception as e:
+        logger.debug(f"PersonaVoiceProfile build skipped: {e}")
+        return None, voice_id
+    return pvp, voice_id
+
+
 def build_modality_context(
     user_query: str,
     speaker_role: str = "unknown",
@@ -337,6 +380,13 @@ def build_modality_context(
     quiet_active = is_quiet_hours()
     quiet_policy = get_quiet_hours_policy()
 
+    # Persona prosody base (spec 4.3): the persona's VoiceProfileData from
+    # being.yml — base_rate/pitch/energy/cadence_style/weight blended
+    # against the PAD delta by ProsodyMapper. The pack id itself
+    # (``voice_id``) is not on PersonaVoiceProfile; demux_response and
+    # stream_spoken_segments read it separately for persona_voice_id.
+    persona_voice_profile, _ = get_persona_voice()
+
     ctx = ModalityContext(
         query_risk=query_risk,
         speaker=speaker,
@@ -347,6 +397,7 @@ def build_modality_context(
         quiet_hours_policy=quiet_policy,
         voice_policy=VoicePolicy(tier=0),  # Halbert: Tier 0
         area=AreaContext(multi_occupant=True),  # always on for smart-home
+        persona_voice_profile=persona_voice_profile,
     )
     return ctx
 
@@ -396,6 +447,7 @@ def demux_response(
     ctx: Any,
     session_id: str = "",
     thread_id: str = "",
+    persona_voice_id: str = "",
 ) -> Any:
     """Demux the model response into a MultiStreamPayload.
 
@@ -403,6 +455,10 @@ def demux_response(
     ``SpeechTextDemuxer.assemble_payload()``. Halbert is Tier 0
     (single PERSONA segment), multi_occupant=True (always on for
     smart-home), with the turn's resolved prosody and risk policy.
+
+    ``persona_voice_id`` is stamped on persona segments' ``voice_id``
+    (the Kokoro voice pack id); when empty it falls back to the active
+    persona's ``voice_profile.voice_id`` from being.yml.
 
     Returns a MultiStreamPayload, or None if the engine is not installed.
     """
@@ -418,6 +474,8 @@ def demux_response(
         risk_policy = getattr(ctx, "voice_risk_policy", None)
         modality = getattr(ctx, "recommended_modality", ResponseModality.TEXT)
         whisper = getattr(prosody, "whisper", False) if prosody else False
+        if not persona_voice_id:
+            _, persona_voice_id = get_persona_voice()
 
         payload = demuxer.assemble_payload(
             response,
@@ -428,6 +486,7 @@ def demux_response(
             risk_policy=risk_policy,
             thread_id=thread_id,
             session_id=session_id or str(uuid.uuid4()),
+            persona_voice_id=persona_voice_id,
         )
         return payload
     except Exception as e:
@@ -479,8 +538,9 @@ def spoken_segment_lines(response: str, payload: Any, summarizer: Any = None) ->
             display copy is never passed to it — only the spoken copy.
 
     Returns:
-        A list of dicts ``{text, role, rate, volume, whisper}`` — the
-        spoken lines in order; empty when there is nothing to speak.
+        A list of dicts ``{text, role, rate, volume, whisper, voice_id,
+        cadence_style}`` — the spoken lines in order; empty when there
+        is nothing to speak.
     """
     from .tts_quality import adapt_for_speech, is_code_heavy, strip_code_noise
 
@@ -494,6 +554,8 @@ def spoken_segment_lines(response: str, payload: Any, summarizer: Any = None) ->
             "rate": 1.0,
             "volume": 1.0,
             "whisper": False,
+            "voice_id": None,
+            "cadence_style": None,
         }]
 
     lines = []
@@ -513,6 +575,10 @@ def spoken_segment_lines(response: str, payload: Any, summarizer: Any = None) ->
             "rate": float(getattr(prosody, "rate", 1.0) or 1.0),
             "volume": float(getattr(prosody, "volume", 1.0) or 1.0),
             "whisper": bool(getattr(prosody, "whisper", False)),
+            # The demuxer already stamped the persona pack id (or a cameo
+            # override) on the segment; pass it through to synthesis.
+            "voice_id": getattr(seg, "voice_id", None),
+            "cadence_style": getattr(prosody, "cadence_style", None),
         })
 
     # C2: one summary for the whole spoken copy. The summarizer owns
@@ -534,6 +600,8 @@ def spoken_segment_lines(response: str, payload: Any, summarizer: Any = None) ->
                 "rate": first["rate"],
                 "volume": first["volume"],
                 "whisper": first["whisper"],
+                "voice_id": first["voice_id"],
+                "cadence_style": first["cadence_style"],
             }]
     return lines
 
@@ -557,6 +625,99 @@ def get_prosody(ctx: Any) -> Any:
     if ctx is None:
         return None
     return getattr(ctx, "prosody", None)
+
+
+# ---------------------------------------------------------------------------
+# Streaming sentence delivery (spec section 2 — split_stream consumer)
+# ---------------------------------------------------------------------------
+
+async def stream_spoken_segments(
+    token_stream: Any,  # AsyncIterator[str] — LLM token deltas
+    ctx: Any,
+    session_id: str = "",
+    thread_id: str = "",
+    persona_voice_id: str = "",
+) -> Any:  # AsyncIterator[dict]
+    """Yield spoken segments as sentences complete in the token stream.
+
+    Wraps the engine's ``SpeechTextDemuxer.split_stream()`` — which
+    flushes at sentence boundaries (``[.!?…]+``) — and applies
+    Halbert's pronunciation lexicon + code-noise stripping to each
+    segment before yielding. The consumer's ``VoiceBackend`` then
+    re-chunks each sentence for Kokoro's 128-phoneme limit (that
+    re-chunking lives in ``KokoroTTS``, not here).
+
+    Yields dicts ``{text, role, rate, volume, whisper, voice_id}`` —
+    the same shape as ``spoken_segment_lines`` but produced
+    incrementally as the LLM streams, so the first sentence reaches
+    the synthesizer before the full response is generated.
+
+    ``persona_voice_id`` is the default Kokoro voice pack id from the
+    persona's ``VoiceProfileData.voice_id``; a segment's own
+    ``voice_id`` (cameo override) takes precedence when set.
+
+    Degrades to nothing when the engine is not installed (the caller
+    falls back to the batch ``demux_response`` + ``spoken_segment_lines``
+    path).
+
+    Args:
+        token_stream: An async iterator of LLM token deltas (strings).
+        ctx: A resolved ``ModalityContext`` (from ``resolve_turn_modality``).
+        session_id: The turn's session id (for tracing).
+        thread_id: The turn's thread id (for the demuxer's payload).
+        persona_voice_id: Default voice pack id from the persona profile.
+
+    Returns:
+        An async iterator of spoken-segment dicts, or ``None`` if the
+        engine is not installed.
+    """
+    if ctx is None:
+        return None
+    demuxer = get_speech_demuxer()
+    if demuxer is None:
+        return None
+    try:
+        from haloysius.modality.types import ResponseModality
+    except ImportError:
+        return None
+
+    prosody = getattr(ctx, "prosody", None)
+    risk_policy = getattr(ctx, "voice_risk_policy", None)
+    modality = getattr(ctx, "recommended_modality", ResponseModality.TEXT)
+    whisper = getattr(prosody, "whisper", False) if prosody else False
+    if not persona_voice_id:
+        _, persona_voice_id = get_persona_voice()
+
+    from .tts_quality import strip_code_noise
+
+    async def _stream():
+        async for seg in demuxer.split_stream(
+            token_stream,
+            persona_voice_id=persona_voice_id,
+            whisper_active=whisper,
+            prosody=prosody,
+            risk_policy=risk_policy,
+        ):
+            if not getattr(seg, "is_spoken", False):
+                continue
+            text = strip_code_noise(getattr(seg, "text", "") or "")
+            if not text:
+                continue
+            seg_prosody = getattr(seg, "prosody", None)
+            # Segment voice_id (cameo override) wins; persona default is
+            # the fallback so every persona line speaks in its own voice.
+            seg_voice_id = getattr(seg, "voice_id", None) or persona_voice_id or None
+            yield {
+                "text": apply_pronunciation(text),
+                "role": getattr(getattr(seg, "role", None), "value", "persona"),
+                "rate": float(getattr(seg_prosody, "rate", 1.0) or 1.0),
+                "volume": float(getattr(seg_prosody, "volume", 1.0) or 1.0),
+                "whisper": bool(getattr(seg_prosody, "whisper", False)),
+                "voice_id": seg_voice_id,
+                "cadence_style": getattr(seg_prosody, "cadence_style", None),
+            }
+
+    return _stream()
 
 
 # ---------------------------------------------------------------------------

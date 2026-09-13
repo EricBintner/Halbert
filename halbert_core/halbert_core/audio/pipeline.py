@@ -130,6 +130,12 @@ class AudioPipelineCoordinator:
         # and must not clobber a real one.
         self._last_speaker_observation: Optional[VoiceTurnObservation] = None
 
+        # Spatial Audio Arbiter: multi-mic arbitration, coincidence
+        # suppression, per-speaker turn locks, and half-duplex ducking.
+        # Lazy import so the pipeline stays importable without the
+        # arbiter module (though it is stdlib-only, so this never fails).
+        self._arbiter = None
+
     @property
     def state(self) -> AudioState:
         return self._state
@@ -466,6 +472,31 @@ class AudioPipelineCoordinator:
         # must go back to "unidentified" rather than keep a stale match.
         self._last_speaker_observation = observation
 
+        # Spatial arbiter: multi-mic coincidence suppression and
+        # per-speaker turn locks. Suppress duplicate turns from
+        # different mics capturing the same speaker. The property (not
+        # the field) is what lazily constructs it — checking _arbiter
+        # directly left arbitration dormant until a TTS run touched it.
+        arbiter = self.arbiter
+        if arbiter is not None:
+            result = arbiter.arbitrate(
+                speaker_id=observation.speaker_id,
+                source_id=observation.area_id or "local_mic",
+                text=observation.text,
+                confidence=observation.speaker_confidence,
+            )
+            if result.decision.value != "accept":
+                logger.info(
+                    f"Arbiter suppressed turn (reason={result.reason}, "
+                    f"speaker={observation.speaker_id}, "
+                    f"source={observation.area_id})"
+                )
+                await self._set_state(
+                    AudioState.IDLE,
+                    {"reason": f"arbiter: {result.reason}"},
+                )
+                return
+
         if self.on_voice_turn:
             try:
                 await self.on_voice_turn(observation)
@@ -580,6 +611,21 @@ class AudioPipelineCoordinator:
             area_id=area_id,
             speaker_role="unknown",  # HA satellites don't do speaker ID
         )
+        # Spatial arbiter: suppress duplicate transcripts from multiple
+        # satellites capturing the same speaker.
+        arbiter = self.arbiter
+        if arbiter is not None:
+            result = arbiter.arbitrate(
+                speaker_id="",  # unknown for Wyoming
+                source_id=f"wyoming:{area_id}",
+                text=text,
+            )
+            if result.decision.value != "accept":
+                logger.info(
+                    f"Arbiter suppressed Wyoming transcript "
+                    f"(reason={result.reason}, area={area_id})"
+                )
+                return
         if self.on_voice_turn:
             try:
                 await self.on_voice_turn(observation)
@@ -683,6 +729,17 @@ class AudioPipelineCoordinator:
         """
         if self._active_barge_in_token is token:
             self._active_barge_in_token = None
+
+    @property
+    def arbiter(self):
+        """The SpatialAudioArbiter, lazy-constructed on first access."""
+        if self._arbiter is None:
+            try:
+                from .spatial_arbiter import SpatialAudioArbiter
+                self._arbiter = SpatialAudioArbiter()
+            except Exception as e:
+                logger.debug(f"Spatial arbiter unavailable: {e}")
+        return self._arbiter
 
     async def trigger_barge_in(self, area_id: str = "") -> Optional[Any]:
         """Trigger barge-in: cancel current TTS playback.

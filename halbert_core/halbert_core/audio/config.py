@@ -91,10 +91,18 @@ class SpeakerIdConfig:
 
 @dataclass
 class TtsConfig:
-    """Piper TTS via sherpa-onnx (OHF-Voice/piper1-gpl voices)."""
+    """TTS configuration — Piper or Kokoro-82M via sherpa-onnx."""
     enabled: bool = False
-    voice_model: str = ""            # path to Piper .onnx voice
-    speaker_id: int = 0              # for multi-speaker voices
+    engine: str = "piper"            # "piper" or "kokoro"
+    voice_model: str = ""            # path to Piper .onnx or fallback model
+    speaker_id: int = 0              # for multi-speaker / Kokoro style id
+    kokoro_model: str = ""           # path to Kokoro model.onnx
+    kokoro_voices: str = ""          # path to Kokoro voices.bin
+    kokoro_tokens: str = ""          # path to Kokoro tokens.txt
+    kokoro_data_dir: str = ""        # path to Kokoro espeak-ng-data
+    num_threads: int = 2             # ONNX Runtime / sherpa-onnx threads
+    execution_provider: str = "cpu"  # cpu, cuda, coreml, nnapi, etc.
+    stream_to_egress: bool = False   # stream TTS concurrently with LLM (low-latency preview)
 
 
 @dataclass
@@ -183,8 +191,16 @@ def _parse_config(data: dict) -> AudioConfig:
         ),
         tts=TtsConfig(
             enabled=tts.get("enabled", False),
+            engine=tts.get("engine", "piper"),
             voice_model=tts.get("voice_model", ""),
             speaker_id=tts.get("speaker_id", 0),
+            kokoro_model=tts.get("kokoro_model", ""),
+            kokoro_voices=tts.get("kokoro_voices", ""),
+            kokoro_tokens=tts.get("kokoro_tokens", ""),
+            kokoro_data_dir=tts.get("kokoro_data_dir", ""),
+            num_threads=tts.get("num_threads", 2),
+            execution_provider=tts.get("execution_provider", "cpu"),
+            stream_to_egress=tts.get("stream_to_egress", False),
         ),
         privacy=AudioPrivacyConfig(
             delete_raw_after_transcription=privacy.get("delete_raw_after_transcription", True),
@@ -235,8 +251,16 @@ def save_config(config: AudioConfig) -> None:
         },
         "tts": {
             "enabled": config.tts.enabled,
+            "engine": config.tts.engine,
             "voice_model": config.tts.voice_model,
             "speaker_id": config.tts.speaker_id,
+            "kokoro_model": config.tts.kokoro_model,
+            "kokoro_voices": config.tts.kokoro_voices,
+            "kokoro_tokens": config.tts.kokoro_tokens,
+            "kokoro_data_dir": config.tts.kokoro_data_dir,
+            "num_threads": config.tts.num_threads,
+            "execution_provider": config.tts.execution_provider,
+            "stream_to_egress": config.tts.stream_to_egress,
         },
         "privacy": {
             "delete_raw_after_transcription": config.privacy.delete_raw_after_transcription,

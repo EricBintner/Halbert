@@ -4835,6 +4835,34 @@ class AgentStateMachine:
             yield StreamEvent.response_chunk(self.ctx.session_id, refusal)
 
         # Stream response
+        # Streaming TTS (O3+): when voice mode is active and the browser
+        # is subscribed, tee the LLM response chunks into a queue that
+        # feeds stream_spoken_segments() -> synthesize_segments() so the
+        # first sentence starts playing before the full response is
+        # generated. The batch path below still emits modality_resolved
+        # and speech_segment SSE events for the frontend ribbon, but
+        # skips re-synthesizing the main content when streaming already
+        # delivered it (only the audit tail is spoken afterward).
+        stream_tts_queue: Optional[asyncio.Queue] = None
+        stream_tts_task: Optional[asyncio.Task] = None
+        stream_tts_ran = False
+        if modality_ctx is not None:
+            try:
+                from ..integrations.modality_wiring import should_speak as _should_speak
+                if _should_speak(modality_ctx):
+                    from ..audio.config import load_config
+                    _tts_cfg = load_config().tts
+                    if _tts_cfg.stream_to_egress:
+                        stream_tts_queue = asyncio.Queue()
+                        stream_tts_task = asyncio.create_task(
+                            self._speak_stream_to_tts_egress(
+                                stream_tts_queue, modality_ctx,
+                            )
+                        )
+            except Exception as e:
+                logger.debug(f"Streaming TTS not started (non-fatal): {e}")
+                stream_tts_queue = None
+
         if hasattr(self.llm, 'stream'):
             logger.info(f"Starting LLM stream for session {self.ctx.session_id}")
             chunk_count = 0
@@ -4879,6 +4907,9 @@ class AgentStateMachine:
                 logger.debug(f"Chunk {chunk_count}: {repr(chunk[:50])}...")
                 self.ctx.response_chunks.append(chunk)
                 yield StreamEvent.response_chunk(self.ctx.session_id, chunk)
+                # Tee response chunks into the streaming TTS queue.
+                if stream_tts_queue is not None:
+                    await stream_tts_queue.put(chunk)
             # The stream ended while still thinking — close the span so the
             # panel does not hang in "Thinking...".
             if thinking_open and self.ctx.thinking_started_at is not None:
@@ -4906,6 +4937,21 @@ class AgentStateMachine:
             content = response.content if hasattr(response, 'content') else str(response)
             self.ctx.response_chunks.append(content)
             yield StreamEvent.response_chunk(self.ctx.session_id, content)
+            # Non-streaming model: feed the whole response at once.
+            if stream_tts_queue is not None:
+                await stream_tts_queue.put(content)
+
+        # Signal the streaming TTS task that the LLM stream is done.
+        if stream_tts_queue is not None:
+            await stream_tts_queue.put(None)  # sentinel
+        if stream_tts_task is not None:
+            try:
+                stream_tts_ran = await stream_tts_task
+            except Exception as e:
+                self._egress_log_once(
+                    "stream_hook",
+                    f"Stream TTS egress failed (non-fatal): {e}",
+                )
 
         # A stream that resolved a model and then produced nothing still owes
         # the user the reason its answer is empty.
@@ -5084,7 +5130,7 @@ class AgentStateMachine:
                         # The speech_text above stays the full adapted
                         # spoken copy (screen-side record); only what is
                         # synthesized is summarized.
-                        spoken_segments: List[tuple] = []
+                        spoken_segments: List[dict] = []
                         # A14-G4 (summarizer half): a secure turn's spoken
                         # copy is the same material the turn was restricted
                         # to local models for. Handing it to a cloud utility
@@ -5097,8 +5143,12 @@ class AgentStateMachine:
                             clean_response, payload, summarizer=summarizer
                         ):
                             seg_text = apply_pronunciation(line["text"])
-                            seg_rate = float(line.get("rate") or 1.0)
-                            spoken_segments.append((seg_text, seg_rate))
+                            spoken_segments.append({
+                                "text": seg_text,
+                                "rate": float(line.get("rate") or 1.0),
+                                "voice_id": line.get("voice_id"),
+                                "cadence_style": line.get("cadence_style"),
+                            })
                             yield StreamEvent(
                                 type="speech_segment",
                                 session_id=self.ctx.session_id,
@@ -5134,7 +5184,7 @@ class AgentStateMachine:
                             logger.debug(f"turn digest tail skipped (non-fatal): {e}")
                             tail = None
                         if tail:
-                            spoken_segments.append((tail, 1.0))
+                            spoken_segments.append({"text": tail, "rate": 1.0})
                             yield StreamEvent(
                                 type="speech_segment",
                                 session_id=self.ctx.session_id,
@@ -5168,9 +5218,20 @@ class AgentStateMachine:
                         # any browser subscribed to this session's audio on
                         # /api/audio/tts. Strictly optional — the turn is
                         # already complete for everyone else.
+                        #
+                        # When streaming TTS already delivered the main
+                        # content (stream_tts_ran), skip re-synthesizing it
+                        # and only speak the audit tail (which was not part
+                        # of the LLM token stream).
                         if spoken_segments:
                             try:
-                                await self._speak_to_tts_egress(spoken_segments)
+                                if stream_tts_ran and tail:
+                                    # Only speak the audit tail.
+                                    await self._speak_to_tts_egress(
+                                        [{"text": tail, "rate": 1.0}]
+                                    )
+                                elif not stream_tts_ran:
+                                    await self._speak_to_tts_egress(spoken_segments)
                             except Exception as e:
                                 self._egress_log_once(
                                     "hook",
@@ -5217,7 +5278,31 @@ class AgentStateMachine:
             self._egress_tts = None
         return self._egress_tts
 
-    async def _speak_to_tts_egress(self, segments: List[tuple]) -> None:
+    @staticmethod
+    def _apply_segment_voice(tts: Any, voice_id: Any, cadence_style: Any) -> None:
+        """Point the shared TTS instance at a segment's voice selection.
+
+        ``voice_id`` wins: a numeric speaker id (legacy Piper) or a Kokoro
+        voice name (``resolve_voice_name``); ``cadence_style`` falls back
+        to the style registry (``resolve_style``) when the engine has one.
+        Caller restores ``tts._speaker_id`` in ``finally``.
+        """
+        if voice_id is not None:
+            try:
+                tts._speaker_id = int(voice_id)
+            except (ValueError, TypeError):
+                if hasattr(tts, "resolve_voice_name"):
+                    name_sid = tts.resolve_voice_name(voice_id)
+                    if name_sid is not None:
+                        tts._speaker_id = name_sid
+                else:
+                    logger.debug(f"Voice id '{voice_id}' is not numeric; ignoring")
+        elif cadence_style and hasattr(tts, "resolve_style"):
+            style_sid = tts.resolve_style(cadence_style)
+            if style_sid is not None:
+                tts._speaker_id = style_sid
+
+    async def _speak_to_tts_egress(self, segments: List[Dict[str, Any]]) -> None:
         """Synthesize and stream spoken segments to browser TTS subscribers.
 
         The hub (dashboard ``routes/tts_egress.py``, the get_event_bus-style
@@ -5301,12 +5386,35 @@ class AgentStateMachine:
             token = BargeInHandler().create_token()
 
         hub.register_cancel_token(session_id, token)
+
+        # Notify the spatial arbiter so it ducks mics and suppresses
+        # self-speech feedback during TTS output — same as the streaming
+        # path; without it the mic hears the speaker and VAD can
+        # false-trigger a barge-in on Halbert's own voice.
+        arbiter = None
+        if pipeline is not None:
+            try:
+                arbiter = pipeline.arbiter
+            except Exception:
+                pass
+        if arbiter is not None:
+            arbiter.on_tts_start(source_id="local_mic")
+
         any_began = False
         sent_cancelled = False
+        # Persona default voice (being.yml voice_profile.voice_id): a
+        # segment without its own voice_id still speaks as the persona.
+        try:
+            from ..integrations.modality_wiring import get_persona_voice
+            _, persona_voice_id = get_persona_voice()
+        except Exception:
+            persona_voice_id = ""
         try:
             spoken_words = 0
-            total_words = sum(len((t or "").split()) for t, _ in segments)
-            for text, rate in segments:
+            total_words = sum(
+                len((seg.get("text") or "").split()) for seg in segments
+            )
+            for seg in segments:
                 # Barge-in between segments: stop before spending a full
                 # sherpa-onnx generation pass on a segment nobody will hear.
                 if token is not None and token.is_set():
@@ -5325,10 +5433,16 @@ class AgentStateMachine:
                     except Exception as e:
                         logger.debug(f"barge-in note not recorded: {e}")
                     break
+                text = seg.get("text", "")
                 if not text.strip():
                     continue
+                rate = float(seg.get("rate") or 1.0)
+                voice_id = seg.get("voice_id") or persona_voice_id or None
+                cadence_style = seg.get("cadence_style")
                 original_speed = tts._speed
+                original_speaker_id = getattr(tts, "_speaker_id", 0)
                 tts._speed = rate
+                self._apply_segment_voice(tts, voice_id, cadence_style)
                 began = False
                 try:
                     async for chunk in tts.synthesize(text, cancel_token=token):
@@ -5347,6 +5461,7 @@ class AgentStateMachine:
                     spoken_words += len((text or "").split())
                 finally:
                     tts._speed = original_speed
+                    tts._speaker_id = original_speaker_id
                 if began:
                     any_began = True
                     cancelled = token is not None and token.is_set()
@@ -5370,6 +5485,8 @@ class AgentStateMachine:
                 await hub.publish(session_id, {"type": "cancelled"})
         finally:
             hub.clear_cancel_token(session_id)
+            if arbiter is not None:
+                arbiter.on_tts_end()
             # Give the coordinator its slot back so it does not go stale
             # after the turn (a stale active token would eat the next VAD
             # barge-in). No-op when the active token has moved on. NOTE for
@@ -5394,6 +5511,213 @@ class AgentStateMachine:
             return
         self._egress_warned.add(site)
         logger.warning(message)
+
+    async def _speak_stream_to_tts_egress(
+        self,
+        token_queue: "asyncio.Queue[str]",
+        modality_ctx: Any,
+    ) -> bool:
+        """Stream-synthesize spoken audio concurrently with the LLM stream.
+
+        The streaming twin of ``_speak_to_tts_egress``: instead of
+        waiting for the full response and then synthesizing, this feeds
+        LLM token deltas through ``stream_spoken_segments()`` (which
+        flushes at sentence boundaries) and then through the TTS
+        engine, publishing PCM chunks to both the browser TTS egress
+        hub and the Wyoming egress hub as they arrive.
+
+        Returns True if any audio was published (so the caller can skip
+        the batch ``_speak_to_tts_egress`` for the main content and only
+        speak the audit tail afterward).
+        """
+        try:
+            from ..dashboard.routes.tts_egress import get_tts_egress_hub
+        except Exception as e:
+            self._egress_log_once("hub_import", f"TTS egress hub unavailable: {e}")
+            return False
+
+        hub = get_tts_egress_hub()
+        session_id = self.ctx.session_id
+
+        # Also publish to the Wyoming egress hub (satellite speakers).
+        wyoming_hub = None
+        try:
+            from ..audio.egress.wyoming_egress import get_wyoming_egress_hub
+            wyoming_hub = get_wyoming_egress_hub()
+        except Exception:
+            pass
+
+        has_browser_subs = hub.has_subscribers(session_id)
+        has_wyoming_subs = (
+            wyoming_hub is not None and wyoming_hub.has_subscribers(session_id)
+        )
+        if not has_browser_subs and not has_wyoming_subs:
+            return False
+
+        # Resolve the TTS engine: use the cached egress instance first
+        # (the test path patches agent._egress_tts directly), then try
+        # the voice backend through the seam. The streaming path is
+        # strictly optional — if no engine is available, return False
+        # silently and let the batch path handle the warning.
+        tts = self._voice_tts_for_egress()
+        if tts is None:
+            logger.debug("Stream TTS: no TTS engine available, deferring to batch")
+            return False
+
+        # Barge-in token: coordinator-owned when the pipeline runs.
+        token = None
+        pipeline = getattr(hub, "pipeline", None)
+        if pipeline is not None:
+            try:
+                token = pipeline.create_barge_in_token()
+            except Exception:
+                token = None
+        if token is None:
+            from ..audio.speech.barge_in import BargeInHandler
+            token = BargeInHandler().create_token()
+
+        hub.register_cancel_token(session_id, token)
+        if wyoming_hub is not None:
+            wyoming_hub.register_cancel_token(session_id, token)
+
+        # Notify the spatial arbiter so it ducks mics and suppresses
+        # self-speech feedback during TTS output.
+        arbiter = None
+        if pipeline is not None:
+            try:
+                arbiter = pipeline.arbiter
+            except Exception:
+                pass
+        if arbiter is not None:
+            arbiter.on_tts_start(source_id="local_mic")
+
+        # Wake-before-speak (P2): raise the panel before the first frame.
+        try:
+            from ..system import display_power
+            await asyncio.to_thread(display_power.wake)
+        except Exception:
+            logger.debug("wake-before-speak unavailable", exc_info=True)
+
+        # Adapt the queue into an async generator for stream_spoken_segments.
+        async def _token_stream():
+            while True:
+                chunk = await token_queue.get()
+                if chunk is None:  # sentinel: LLM stream is done
+                    break
+                yield chunk
+
+        from ..integrations.modality_wiring import stream_spoken_segments
+
+        segments_iter = stream_spoken_segments(
+            _token_stream(),
+            modality_ctx,
+            session_id=session_id,
+            thread_id=self.ctx.thread_id or "",
+        )
+        if segments_iter is None:
+            hub.clear_cancel_token(session_id)
+            if arbiter is not None:
+                arbiter.on_tts_end()
+            return False
+
+        # Import volume gain helper for post-synthesis PCM scaling.
+        try:
+            from ..integrations.voice_backend import _apply_volume_gain
+        except ImportError:
+            _apply_volume_gain = None
+
+        any_began = False
+        sent_cancelled = False
+
+        async def _publish(data):
+            """Publish to both browser and Wyoming hubs."""
+            if has_browser_subs:
+                await hub.publish(session_id, data)
+            if has_wyoming_subs and wyoming_hub is not None:
+                await wyoming_hub.publish(session_id, data)
+
+        try:
+            async for seg in segments_iter:
+                if token is not None and token.is_set():
+                    break
+                text = seg.get("text", "")
+                if not text.strip():
+                    continue
+                rate = float(seg.get("rate", 1.0) or 1.0)
+                volume = float(seg.get("volume", 1.0) or 1.0)
+                whisper = bool(seg.get("whisper", False))
+                voice_id = seg.get("voice_id")
+                cadence_style = seg.get("cadence_style")
+
+                if whisper:
+                    volume = min(volume, 0.5)
+
+                # Apply prosody to the TTS engine (same mapping as the
+                # batch path in voice_backend.py).
+                original_speed = tts._speed
+                original_speaker_id = getattr(tts, "_speaker_id", 0)
+                tts._speed = rate
+                self._apply_segment_voice(tts, voice_id, cadence_style)
+
+                began = False
+                try:
+                    async for pcm_chunk in tts.synthesize(text, cancel_token=token):
+                        if token is not None and token.is_set():
+                            break
+                        # Apply volume gain post-synthesis.
+                        if (
+                            _apply_volume_gain is not None
+                            and volume != 1.0
+                        ):
+                            pcm_chunk = _apply_volume_gain(pcm_chunk, volume)
+                        if not began:
+                            began = True
+                            if not any_began:
+                                any_began = True
+                                sr = getattr(tts, "_sample_rate", None) or 22050
+                                await _publish({
+                                    "type": "begin",
+                                    "sample_rate": sr,
+                                    "format": "s16le",
+                                })
+                        await _publish(pcm_chunk)
+                finally:
+                    tts._speed = original_speed
+                    tts._speaker_id = original_speaker_id
+                if began:
+                    cancelled = token is not None and token.is_set()
+                    sent_cancelled = cancelled
+                    await _publish(
+                        {"type": "cancelled" if cancelled else "end"},
+                    )
+            # Barge-in between segments: tell both hubs.
+            if (
+                not sent_cancelled
+                and any_began
+                and token is not None
+                and token.is_set()
+            ):
+                await _publish({"type": "cancelled"})
+        except Exception as e:
+            logger.debug(f"Stream TTS egress failed (non-fatal): {e}")
+            if any_began and not sent_cancelled:
+                try:
+                    await _publish({"type": "cancelled"})
+                except Exception:
+                    pass
+        finally:
+            hub.clear_cancel_token(session_id)
+            if wyoming_hub is not None:
+                wyoming_hub.clear_cancel_token(session_id)
+            if arbiter is not None:
+                arbiter.on_tts_end()
+            if pipeline is not None and token is not None:
+                try:
+                    pipeline.release_barge_in_token(token)
+                except Exception:
+                    pass
+
+        return any_began
 
     async def _handle_error(self) -> AsyncIterator[StreamEvent]:
         """

@@ -66,14 +66,19 @@ class HalbertGovernancePolicy:
         }
 
     def check_detailed(self, message: str, **kwargs: Any) -> Any:
-        from types import SimpleNamespace
+        from haloysius.seam import SimpleGovernanceResult
 
-        return SimpleNamespace(
-            safe=True,
-            should_proceed=True,
-            rag_query=message,
-            to_dict=lambda: {"safe": True, "on_topic": True},
-        )
+        return SimpleGovernanceResult(rag_query=message)
+
+    def authorize_action(
+        self,
+        action: str,
+        arguments: Any,
+        context: Any,
+    ) -> Any:
+        from haloysius.seam import ActionDecision
+
+        return ActionDecision.allow()
 
 
 class HalbertModelBackend:

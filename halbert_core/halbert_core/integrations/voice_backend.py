@@ -29,7 +29,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import struct
-from typing import Any, List, Optional
+from typing import Any, AsyncIterator, List, Optional
 
 logger = logging.getLogger("halbert.integrations.voice_backend")
 
@@ -94,24 +94,62 @@ class HalbertVoiceBackend:
         try:
             tts = self._get_tts()
         except Exception as e:
-            logger.warning(f"PiperTTS unavailable: {e}")
+            logger.warning(f"TTS unavailable: {e}")
             return SpeechResult(success=False, error=str(e))
 
-        # Apply prosody to Piper's speed parameter.
+        # Apply prosody to the active TTS engine.
         rate = getattr(prosody, "rate", 1.0) or 1.0
         volume = getattr(prosody, "volume", 1.0) or 1.0
         whisper = getattr(prosody, "whisper", False)
+        voice_id = getattr(prosody, "voice_id", None)
+        pitch_offset = getattr(prosody, "pitch_offset", 0.0)
+        energy = getattr(prosody, "energy", 1.0)
+        cadence_style = getattr(prosody, "cadence_style", None)
+        expression_tokens = getattr(prosody, "expression_tokens", None)
 
         if whisper:
             volume = min(volume, 0.5)
 
-        # PiperTTS stores speed as _speed; override for this call.
+        # TTS engines store speed as _speed and voice selection as _speaker_id.
         original_speed = tts._speed
+        original_speaker_id = getattr(tts, "_speaker_id", 0)
         tts._speed = rate
+        if voice_id is not None:
+            # Try numeric speaker ID first (legacy Piper path), then
+            # try Kokoro voice name resolution (e.g. "af_heart").
+            try:
+                tts._speaker_id = int(voice_id)
+            except (ValueError, TypeError):
+                if hasattr(tts, "resolve_voice_name"):
+                    name_sid = tts.resolve_voice_name(voice_id)
+                    if name_sid is not None:
+                        tts._speaker_id = name_sid
+                        logger.debug(f"voice_id='{voice_id}' -> sid={name_sid}")
+                    else:
+                        logger.debug(f"Voice id '{voice_id}' not a known Kokoro voice name; ignoring")
+                else:
+                    logger.debug(f"Voice id '{voice_id}' is not numeric; ignoring")
+        elif cadence_style and hasattr(tts, "resolve_style"):
+            # Map cadence_style to a Kokoro voice pack.
+            style_sid = tts.resolve_style(cadence_style)
+            if style_sid is not None:
+                tts._speaker_id = style_sid
+                logger.debug(f"cadence_style='{cadence_style}' -> sid={style_sid}")
+
+        # Prosody fields not yet mapped by the consumer; log for tuning.
+        if pitch_offset:
+            logger.debug(f"pitch_offset={pitch_offset} not yet applied")
+        if energy is not None and energy != 1.0:
+            logger.debug(f"energy={energy} applied as volume gain instead of style")
+        if cadence_style and not hasattr(tts, "resolve_style"):
+            logger.debug(f"cadence_style='{cadence_style}' not supported by this engine")
+        if expression_tokens:
+            logger.debug(f"expression_tokens={expression_tokens} not yet applied")
+
         try:
             tts._ensure_initialized()
         except Exception as e:
-            logger.warning(f"PiperTTS init failed: {e}")
+            logger.warning(f"TTS init failed: {e}")
             return SpeechResult(success=False, error=str(e))
 
         cancel_token = self._barge_in_token
@@ -156,6 +194,8 @@ class HalbertVoiceBackend:
             return SpeechResult(success=False, error=str(e))
         finally:
             tts._speed = original_speed
+            if hasattr(tts, "_speaker_id"):
+                tts._speaker_id = original_speaker_id
 
     def cancel(self) -> None:
         """Cancel any in-flight synthesis (barge-in)."""
@@ -165,11 +205,99 @@ class HalbertVoiceBackend:
         if self._playback_task is not None and not self._playback_task.done():
             self._playback_task.cancel()
 
-    def list_voices(self) -> List[Any]:
-        """List available Piper voices.
+    async def synthesize_segments(
+        self,
+        segments: Any,  # AsyncIterator[dict] — from stream_spoken_segments()
+    ) -> AsyncIterator[bytes]:
+        """Stream-synthesize spoken segments, yielding PCM chunks.
 
-        Returns a list of VoiceInfo-shaped objects. Piper typically has one
-        configured voice (the model file); we report it as a single entry.
+        Consumes the async iterator from
+        ``modality_wiring.stream_spoken_segments()`` — which yields
+        sentences as the LLM produces them — and synthesizes each one
+        through the configured TTS engine (Piper or Kokoro). Kokoro
+        internally re-chunks each sentence for its 128-phoneme limit.
+
+        This is intentionally NOT named ``synthesize_stream`` to avoid
+        a false-positive ``isinstance(backend, StreamingVoiceBackend)``
+        check against the Haloysius seam protocol, which expects a
+        different signature (``text, prosody`` -> ``SpeechResult``).
+        This method consumes segment dicts, not raw text+prosody.
+
+        Prosody applied per segment:
+        - ``rate`` -> TTS engine speed (override, restored after).
+        - ``volume`` -> post-synthesis linear gain on PCM.
+        - ``whisper`` -> volume capped at 0.5.
+        - ``voice_id`` -> TTS engine speaker_id (numeric Kokoro sid
+          or voice name like "af_heart").
+
+        Barge-in: checks the ``BargeInToken`` between segments and
+        between PCM chunks; stops yielding when it fires.
+
+        Yields raw 16-bit PCM bytes. The first chunk's sample rate is
+        available from ``get_tts().sample_rate`` after the first
+        synthesis call.
+        """
+        cancel_token = self._barge_in_token
+        try:
+            tts = self._get_tts()
+            tts._ensure_initialized()
+        except Exception as e:
+            logger.warning(f"TTS unavailable for stream: {e}")
+            return
+
+        async for seg in segments:
+            if cancel_token is not None and cancel_token.is_set():
+                logger.debug("Stream synthesis: barge-in, aborting")
+                return
+
+            text = seg.get("text", "")
+            if not text.strip():
+                continue
+
+            rate = float(seg.get("rate", 1.0) or 1.0)
+            volume = float(seg.get("volume", 1.0) or 1.0)
+            whisper = bool(seg.get("whisper", False))
+            voice_id = seg.get("voice_id")
+            cadence_style = seg.get("cadence_style")
+
+            if whisper:
+                volume = min(volume, 0.5)
+
+            original_speed = tts._speed
+            original_speaker_id = getattr(tts, "_speaker_id", 0)
+            tts._speed = rate
+            if voice_id is not None:
+                try:
+                    tts._speaker_id = int(voice_id)
+                except (ValueError, TypeError):
+                    if hasattr(tts, "resolve_voice_name"):
+                        name_sid = tts.resolve_voice_name(voice_id)
+                        if name_sid is not None:
+                            tts._speaker_id = name_sid
+                    else:
+                        logger.debug(f"voice_id '{voice_id}' not numeric, ignoring")
+            elif cadence_style and hasattr(tts, "resolve_style"):
+                style_sid = tts.resolve_style(cadence_style)
+                if style_sid is not None:
+                    tts._speaker_id = style_sid
+            try:
+                async for chunk in tts.synthesize(text, cancel_token=cancel_token):
+                    if cancel_token is not None and cancel_token.is_set():
+                        return
+                    if volume != 1.0:
+                        chunk = _apply_volume_gain(chunk, volume)
+                    yield chunk
+            finally:
+                tts._speed = original_speed
+                if hasattr(tts, "_speaker_id"):
+                    tts._speaker_id = original_speaker_id
+
+    def list_voices(self) -> List[Any]:
+        """List available voices for the configured engine.
+
+        Piper reports one voice (the model file). Kokoro packs many
+        voices in ``voices.bin``; sherpa-onnx exposes the count via
+        ``OfflineTts.num_speakers``. We report each as a VoiceInfo.
         Returns [] when the engine is not installed.
         """
         try:
@@ -181,9 +309,17 @@ class HalbertVoiceBackend:
             tts = self._get_tts()
             tts._ensure_initialized()
             voice_model = getattr(tts, "_voice_model", "default")
-            # Derive a voice id from the model filename.
-            voice_id = voice_model.split("/")[-1].replace(".onnx", "") if voice_model else "default"
-            return [VoiceInfo(voice_id=voice_id, name=voice_id, language="en")]
+            model_name = voice_model.split("/")[-1].replace(".onnx", "") if voice_model else "default"
+
+            # Kokoro exposes num_speakers; Piper does not (one voice).
+            num_speakers = getattr(tts, "_tts", None)
+            if num_speakers is not None and hasattr(num_speakers, "num_speakers"):
+                count = int(num_speakers.num_speakers)
+                return [
+                    VoiceInfo(voice_id=str(i), name=f"{model_name}#{i}", language="en")
+                    for i in range(count)
+                ]
+            return [VoiceInfo(voice_id=model_name, name=model_name, language="en")]
         except Exception:
             return []
 
@@ -214,10 +350,30 @@ class HalbertVoiceBackend:
         return self._get_tts()
 
     def _get_tts(self) -> Any:
-        """Return the PiperTTS instance, lazy-constructing if needed."""
-        if self._tts is None:
-            from ..audio.speech.tts_engine import PiperTTS
-            self._tts = PiperTTS()
+        """Return the configured TTS instance, lazy-constructing if needed."""
+        if self._tts is not None:
+            return self._tts
+        from ..audio.config import load_config
+        from ..audio.speech.tts_engine import KokoroTTS, PiperTTS
+        cfg = load_config()
+        tts_cfg = cfg.tts
+        if tts_cfg.engine == "kokoro":
+            self._tts = KokoroTTS(
+                voice_model=tts_cfg.kokoro_model or tts_cfg.voice_model,
+                voices=tts_cfg.kokoro_voices,
+                tokens=tts_cfg.kokoro_tokens,
+                data_dir=tts_cfg.kokoro_data_dir,
+                speaker_id=tts_cfg.speaker_id,
+                num_threads=tts_cfg.num_threads,
+                provider=tts_cfg.execution_provider,
+            )
+        else:
+            self._tts = PiperTTS(
+                voice_model=tts_cfg.voice_model,
+                speaker_id=tts_cfg.speaker_id,
+                num_threads=tts_cfg.num_threads,
+                speed=1.0,
+            )
         return self._tts
 
 

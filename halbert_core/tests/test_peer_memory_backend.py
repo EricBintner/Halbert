@@ -184,6 +184,11 @@ class TestCognitionWiring:
                             lambda: "http://ha-server.lan:8001")
         monkeypatch.setattr(cw, "_get_peer_token", lambda: "tok")
         monkeypatch.setattr(cw, "_get_persona_id", lambda: "ha_persona")
+        # Phase 1.6: the wiring probes reachability before choosing —
+        # stub it up, the way this test always stubbed the config.
+        monkeypatch.setattr(
+            "halbert_core.replica.fallback.probe_canonical_reachable",
+            lambda *a, **kw: True)
         store = cw._create_memory_store()
         assert isinstance(store, PeerMemoryBackend)
         assert store.peer_url == "http://ha-server.lan:8001"
@@ -220,6 +225,11 @@ class TestCognitionWiring:
                             lambda: "http://ha-server.lan:8001")
         monkeypatch.setattr(cw, "_get_peer_token", lambda: "tok")
         monkeypatch.setattr(cw, "_get_persona_id", lambda: "ha_persona")
+        # Build the peer backend as if the canonical answered its probe —
+        # then kill the wire below, which is the failure under test.
+        monkeypatch.setattr(
+            "halbert_core.replica.fallback.probe_canonical_reachable",
+            lambda *a, **kw: True)
         adapter = HaloysiusMemoryAdapter(cw._create_memory_store())
 
         def dead(verb, url, **kw):

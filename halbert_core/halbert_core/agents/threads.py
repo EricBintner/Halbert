@@ -1374,7 +1374,7 @@ def get_thread_manager() -> ThreadManager:
                 # idle tick (close sweep). Fail-soft, never blocks a turn.
                 # Skip for PeerConversationStore — consolidation runs on the
                 # canonical host, not the satellite.
-                if not isinstance(store, _PeerConversationStoreType):
+                if not isinstance(store, _REMOTE_STORE_TYPES):
                     try:
                         from ..continuity.consolidation import Consolidator
                         from ..continuity.state_store import StateStore, default_state_db_path
@@ -1426,36 +1426,58 @@ def _create_conversation_store():
             except Exception as e:
                 logger.warning("peer TLS pin resolution failed (%s) — HTTP", e)
             logger.info("ThreadManager: using PeerConversationStore at %s", thread_url)
-            peer_store = PeerConversationStore(
+            peer = PeerConversationStore(
                 peer_url=thread_url,
                 bearer_token=token,
                 session=session,
             )
-            # Multi-node Task 3: wrap it with the local mirror + durable
-            # staging queue so a sleeping or unreachable canonical host
-            # degrades to local reads/writes that flush on reconnect,
-            # instead of failing every turn. A construction failure falls
-            # back to the raw proxy — no worse than before.
+            # Two complementary resilience layers compose here:
+            #
+            #   FallbackConversationStore (warm standby, Step 1.6) — reads
+            #   fall back to the pushed replica when the canonical is
+            #   down: the freshest copy after the peer itself. Writes
+            #   raise PeerConversationUnavailable.
+            #
+            #   ResilientPeerConversationStore (multi-node Task 3) —
+            #   wraps that with the write-through local mirror and the
+            #   durable staging queue: reads cascade peer → replica →
+            #   mirror; writes go peer-or-staged and replay FIFO on
+            #   reconnect. A write never lands on the replica.
+            try:
+                from ..replica.fallback import FallbackConversationStore
+                inner = FallbackConversationStore(peer)
+            except Exception as e:
+                logger.warning(
+                    "replica fallback unavailable, peer-only store: %s", e)
+                inner = peer
             try:
                 from .resilient_peer_store import ResilientPeerConversationStore
                 from ..utils.paths import data_dir
 
                 return ResilientPeerConversationStore(
-                    peer=peer_store,
+                    peer=inner,
                     cache_path=str(data_dir() / "local_conversation_cache.db"),
                 )
             except Exception as e:
                 logger.warning(
                     "resilient peer store unavailable (%s) — using raw proxy", e)
-                return peer_store
+                return inner
     except Exception as e:
         logger.warning(f"Failed to create PeerConversationStore (falling back to local): {e}")
 
     return SqliteConversationStore(_cs._default_db_path())
 
 
-# Type alias for isinstance check (avoids importing if not available)
+# Type alias for isinstance check (avoids importing if not available).
+# FallbackConversationStore and ResilientPeerConversationStore wrap a
+# peer store — they count too, or a body with a warm replica or a
+# staging queue would wire the consolidator that belongs on the
+# canonical.
 try:
     from .peer_conversation_store import PeerConversationStore as _PeerConversationStoreType
+    from .resilient_peer_store import ResilientPeerConversationStore as _ResilientStoreType
+    from ..replica.fallback import FallbackConversationStore as _FallbackStoreType
+    _REMOTE_STORE_TYPES = (
+        _PeerConversationStoreType, _ResilientStoreType, _FallbackStoreType)
 except ImportError:
-    _PeerConversationStoreType = type(None)  # never matches
+    _REMOTE_STORE_TYPES = (type(None),)  # never matches
