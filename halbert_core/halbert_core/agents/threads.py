@@ -1426,11 +1426,28 @@ def _create_conversation_store():
             except Exception as e:
                 logger.warning("peer TLS pin resolution failed (%s) — HTTP", e)
             logger.info("ThreadManager: using PeerConversationStore at %s", thread_url)
-            return PeerConversationStore(
+            peer_store = PeerConversationStore(
                 peer_url=thread_url,
                 bearer_token=token,
                 session=session,
             )
+            # Multi-node Task 3: wrap it with the local mirror + durable
+            # staging queue so a sleeping or unreachable canonical host
+            # degrades to local reads/writes that flush on reconnect,
+            # instead of failing every turn. A construction failure falls
+            # back to the raw proxy — no worse than before.
+            try:
+                from .resilient_peer_store import ResilientPeerConversationStore
+                from ..utils.paths import data_dir
+
+                return ResilientPeerConversationStore(
+                    peer=peer_store,
+                    cache_path=str(data_dir() / "local_conversation_cache.db"),
+                )
+            except Exception as e:
+                logger.warning(
+                    "resilient peer store unavailable (%s) — using raw proxy", e)
+                return peer_store
     except Exception as e:
         logger.warning(f"Failed to create PeerConversationStore (falling back to local): {e}")
 
