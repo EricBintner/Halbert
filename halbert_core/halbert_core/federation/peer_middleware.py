@@ -349,3 +349,22 @@ async def require_trust_anchor(request: "Request") -> Optional[PeerContext]:
             detail="This action needs the local operator or a paired trust_anchor device.",
         )
     return peer
+
+
+async def require_known_principal(request: "Request") -> Optional[PeerContext]:
+    """Accept any caller this node can identify: the local operator, the
+    owner credential, or any live peer token — every role.
+
+    The door for read-only status surfaces: ``require_trust_anchor`` would
+    refuse a body peer that legitimately needs canonical status, and
+    ``require_peer_auth`` would refuse the owner credential and the local
+    operator. An anonymous caller still gets nothing.
+    """
+    if _is_local_client(request):
+        return None
+    from ..dashboard.auth import credential_from_headers, _state
+    kind, value = credential_from_headers(request.headers, request.cookies)
+    if _state(request.app).check(kind, value):
+        request.state.principal = "owner"
+        return None
+    return await _authenticate_peer(request)

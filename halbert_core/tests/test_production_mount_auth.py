@@ -372,3 +372,35 @@ class TestWebSocketPeerCredential:
         with pytest.raises(Exception):
             with sat.websocket_connect("/api/audio/stream?token=hbt_garbage"):
                 pass
+
+
+class TestEntityStatus:
+    """The aggregated status card — any identified principal reads it,
+    an anonymous caller does not (Q1's status surface)."""
+
+    def test_a_body_peer_reads_status(self, app, peer_token):
+        sat = TestClient(app, client=REMOTE,
+                         headers={"Authorization": f"Bearer {peer_token}"})
+        res = sat.get("/api/entity/status")
+        assert res.status_code == 200, res.text
+        body = res.json()
+        assert body["entity_name"]
+        assert body["node_id"]
+        assert body["role"] in ("canonical", "body", "independent")
+        assert "counts" in body
+        assert body["replica"] is None
+
+    def test_trust_anchor_reads_status(self, app, trust_anchor_token):
+        phone = TestClient(app, client=REMOTE,
+                           headers={"Authorization": f"Bearer {trust_anchor_token}"})
+        assert phone.get("/api/entity/status").status_code == 200
+
+    def test_owner_credential_reads_status(self, app, dashboard_token):
+        owner = TestClient(app, client=REMOTE,
+                           headers={"Authorization": f"Bearer {dashboard_token}"})
+        assert owner.get("/api/entity/status").status_code == 200
+
+    def test_anonymous_remote_is_refused(self, app):
+        anon = TestClient(app, client=REMOTE)
+        anon.headers.pop("Authorization", None)
+        assert anon.get("/api/entity/status").status_code == 401

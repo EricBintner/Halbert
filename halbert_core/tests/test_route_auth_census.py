@@ -126,6 +126,7 @@ def _recognised_guards():
     """
     from halbert_core.dashboard.auth import require_owner
     from halbert_core.federation.peer_middleware import (
+        require_known_principal,
         require_local_admin,
         require_local_or_self_peer,
         require_peer_auth,
@@ -133,7 +134,8 @@ def _recognised_guards():
     )
 
     return (require_owner, require_peer_auth, require_local_admin,
-            require_local_or_self_peer, require_trust_anchor)
+            require_local_or_self_peer, require_trust_anchor,
+            require_known_principal)
 
 
 def _guards(dep) -> bool:

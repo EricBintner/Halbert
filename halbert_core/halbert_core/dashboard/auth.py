@@ -98,7 +98,7 @@ PUBLIC_PREFIXES: tuple[str, ...] = (
 #: token before any of that ran. The routers authenticate every route
 #: themselves now; the census requires that, a tag alone exempts nothing.
 SELF_AUTHENTICATING = ("compute-peer", "websocket", "peers", "conversations",
-                       "approvals")
+                       "approvals", "entity")
 
 _TICKET_TTL_SECONDS = 300
 _SESSION_TTL_SECONDS = 12 * 60 * 60
