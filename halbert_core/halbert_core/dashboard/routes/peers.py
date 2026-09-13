@@ -65,6 +65,7 @@ from pydantic import BaseModel, Field
 from ...federation.peers_config import PeersConfig, PeerCredential
 from ...federation.peer_middleware import (
     require_peer_auth, require_local_admin, optional_peer_auth,
+    require_local_or_self_peer,
     PeerContext, get_peers_config,
 )
 
@@ -449,9 +450,8 @@ async def list_peers(
 
 @router.delete("/api/peers/{node_id}")
 async def revoke_peer(
-    request: Request,
     node_id: str,
-    peer: Optional[PeerContext] = Depends(optional_peer_auth),
+    _guard: Optional[PeerContext] = Depends(require_local_or_self_peer),
 ) -> Dict[str, Any]:
     """Revoke a peer's token (M14 — surgical revocation).
 
@@ -462,16 +462,9 @@ async def revoke_peer(
     a peer revoking itself (leaving the fleet). Any authenticated peer could
     revoke any other — the file's own TODO called it a privilege-escalation
     risk, and it was: one compromised satellite could cut every other node
-    off from the host (R10-F5).
+    off from the host (R10-F5). The predicate is ``require_local_or_self_peer``
+    — the same one the WoL route and any future per-peer control must use.
     """
-    from ...federation.peer_middleware import _is_local_client
-
-    if not _is_local_client(request) and (peer is None or peer.node_id != node_id):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="A peer may revoke only itself; revoking another peer is "
-                   "done from the machine they are paired with.",
-        )
 
     config = get_peers_config()
     if not config.revoke_peer(node_id):
@@ -493,13 +486,18 @@ class WolUpdateRequest(BaseModel):
 async def update_wol(
     node_id: str,
     req: WolUpdateRequest,
-    peer: PeerContext = Depends(require_peer_auth),
+    _guard: Optional[PeerContext] = Depends(require_local_or_self_peer),
 ) -> Dict[str, Any]:
     """Toggle Wake-on-LAN for a paired peer (P6c).
 
     WoL is LAN-only and off by default.  When enabled, the ComputeRouter
     (P6b) will attempt to wake this peer before falling through to
     template degraded mode.
+
+    Local-or-self, same as revocation: when this carried only
+    ``require_peer_auth``, any paired peer could re-aim or silence any
+    other peer's wake-from-sleep (the R10-F5 class — a per-peer control
+    reachable by every peer).
     """
     config = get_peers_config()
     if not config.set_wol(node_id, req.enabled, req.mac, req.broadcast):
@@ -539,7 +537,11 @@ def _peer_url(address: str) -> str:
     return u
 
 
-@router.post("/api/peers/compute-peer", response_model=ComputePeerLinkResponse)
+@router.post(
+    "/api/peers/compute-peer",
+    response_model=ComputePeerLinkResponse,
+    dependencies=[Depends(require_local_admin)],
+)
 async def link_compute_peer(req: ComputePeerLinkRequest) -> ComputePeerLinkResponse:
     """Persist a paired workstation as this node's compute endpoint.
 
@@ -555,6 +557,10 @@ async def link_compute_peer(req: ComputePeerLinkRequest) -> ComputePeerLinkRespo
 
     Only home variants may set the link: a sysadmin instance
     keeps the full model picker, where each slot is chosen per endpoint.
+
+    Local-admin only: the body carries a bearer token into persisted LLM
+    config, and it rewrites this node's own model wiring — the same class
+    of "rewrites this node" controls ``require_local_admin`` exists for.
     """
     from ...integrations.cognition_wiring import is_home_variant
 
@@ -587,13 +593,18 @@ async def link_compute_peer(req: ComputePeerLinkRequest) -> ComputePeerLinkRespo
     )
 
 
-@router.get("/api/peers/discovered")
+@router.get(
+    "/api/peers/discovered",
+    dependencies=[Depends(require_local_admin)],
+)
 async def list_discovered_peers() -> List[Dict[str, Any]]:
-    """List peers discovered via mDNS (unauthenticated — no tokens involved).
+    """List peers discovered via mDNS.
 
     Returns the current mDNS discovery cache.  These are unauthenticated
     discoveries — the user must pair via /api/peers/pair before any
-    compute or fleet interaction.
+    compute or fleet interaction. Local-admin: this feeds the pairing
+    surface, and mDNS presence on a LAN says what is *near this machine*,
+    not what a remote caller should learn.
 
     TODO(federation-9.7): Wire to PeerListener.get_discovered().
     If zeroconf is not installed, returns an empty list with a 200

@@ -1,0 +1,203 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
+"""The peer surface must work through the production mounts (F-A).
+
+The security review of 2026-09-13 (``.handoff/research/halbert-backup/
+security-review-response.md``) found that ``peers`` and ``conversations``
+were mounted behind ``require_owner`` — a door that knows only the dashboard
+token — while every peer-scoped suite mounted its router bare. Result: the
+pairing handshake was unreachable for a real satellite, and a genuine peer
+token 401'd on every peer route except compute. The suites proved the
+handshake and production never ran it.
+
+These tests drive the REAL app — ``create_app()`` with the production
+``mount_api`` — with real client addresses, the way the probe did. Any test
+in this file failing means the production door has diverged from the
+per-route guards again, not that a unit is broken.
+"""
+from __future__ import annotations
+
+import os
+import uuid
+
+import pytest
+
+pytest.importorskip("fastapi")
+from fastapi.testclient import TestClient  # noqa: E402
+
+
+REMOTE = ("203.0.113.7", 4444)  # a satellite on the LAN
+LOCAL = ("127.0.0.1", 4444)     # the operator at the machine
+
+
+@pytest.fixture(scope="module")
+def app(tmp_path_factory):
+    """The real app, production mounts, isolated state and peer store."""
+    tmp = tmp_path_factory.mktemp("prod-mount-auth")
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv("XDG_STATE_HOME", str(tmp))
+        mp.setenv("HALBERT_CONFIG_DIR", str(tmp / "config"))
+        mp.setenv("HALBERT_DATA_DIR", str(tmp / "data"))
+        # The conftest autouse fixture pins a TEST_API_TOKEN for every client;
+        # this suite manages its own credentials explicitly.
+        prev = os.environ.pop("HALBERT_API_TOKEN", None)
+        try:
+            from halbert_core.dashboard.app import create_app
+            yield create_app()
+        finally:
+            if prev is not None:
+                os.environ["HALBERT_API_TOKEN"] = prev
+
+
+@pytest.fixture
+def dashboard_token(app):
+    from halbert_core.dashboard import auth as dashboard_auth
+    return dashboard_auth.load_or_create_token()
+
+
+@pytest.fixture
+def peers_store(app, tmp_path):
+    """Point the process-wide PeersConfig singleton at an isolated file."""
+    from pathlib import Path
+
+    from halbert_core.federation.peers_config import PeersConfig
+    import halbert_core.federation.peer_middleware as pm
+
+    config = PeersConfig(config_path=Path(tmp_path) / "peers.json")
+    prev, pm._peers_config = getattr(pm, "_peers_config", None), config
+    yield config
+    pm._peers_config = prev
+
+
+@pytest.fixture
+def peer_token(peers_store):
+    """A genuine peer token: stored hashed, presented raw by a remote client."""
+    raw = f"hbt_{uuid.uuid4().hex}"
+    peers_store.add_peer(
+        node_id="prod-mount-sat", node_name="Prod Mount Satellite",
+        role="body", raw_token=raw,
+    )
+    return raw
+
+
+class TestPairingIsReachableInProduction:
+    """The handshake a satellite drives — through the production door."""
+
+    def test_a_credential_less_satellite_can_request_pairing(self, app):
+        sat = TestClient(app, client=REMOTE)
+        res = sat.post("/api/peers/pair", json={
+            "node_id": "want-in", "node_name": "New Satellite", "role": "body",
+        })
+        assert res.status_code == 200, res.text
+        assert "pin" not in res.json()
+
+    def test_verify_refuses_before_approval_unchanged(self, app):
+        sat = TestClient(app, client=REMOTE)
+        rid = sat.post("/api/peers/pair", json={
+            "node_id": "want-in", "node_name": "New Satellite", "role": "body",
+        }).json()["request_id"]
+        # A correct PIN alone never issued a token (SE-16), and still must
+        # not — the F-A fix opens the door, it does not lower the handshake.
+        res = sat.post("/api/peers/verify", json={
+            "request_id": rid, "pin": "0000", "node_id": "want-in",
+        })
+        assert res.status_code == 403
+
+    def test_the_local_operator_can_approve_with_the_dashboard_token(
+            self, app, dashboard_token):
+        owner = TestClient(app, client=LOCAL,
+                           headers={"Authorization": f"Bearer {dashboard_token}"})
+        rid = TestClient(app, client=REMOTE).post("/api/peers/pair", json={
+            "node_id": "want-in", "node_name": "New Satellite", "role": "body",
+        }).json()["request_id"]
+        res = owner.post(f"/api/peers/pending/{rid}/approve")
+        assert res.status_code == 200, res.text
+
+
+class TestPeerTokenAgainstTheProductionDoor:
+    """What a paired satellite can and cannot do with its own token."""
+
+    def test_peers_list(self, app, peer_token):
+        sat = TestClient(app, client=REMOTE,
+                         headers={"Authorization": f"Bearer {peer_token}"})
+        assert sat.get("/api/peers/list").status_code == 200
+
+    def test_conversations_health(self, app, peer_token):
+        sat = TestClient(app, client=REMOTE,
+                         headers={"Authorization": f"Bearer {peer_token}"})
+        res = sat.get("/api/conversations/health")
+        assert res.status_code == 200, res.text
+        assert res.json() == {"healthy": True, "connected": True}
+
+    def test_owner_surface_still_refuses_peer_tokens(self, app, peer_token):
+        """The fix opens the peer door; it grants nothing else. A peer token
+        on an owner route is still nobody (the pre-fix behaviour for every
+        route, retained where it belongs)."""
+        sat = TestClient(app, client=REMOTE,
+                         headers={"Authorization": f"Bearer {peer_token}"})
+        for path in ("/api/approvals", "/api/settings/policy", "/api/terminal/exec"):
+            res = sat.get(path) if not path.endswith("exec") else \
+                sat.post(path, json={"command": "id"})
+            assert res.status_code == 401, f"{path} answered a peer token"
+
+
+class TestPerPeerControlsStayPerPeer:
+    """require_local_or_self_peer on revocation and WoL (F-E / R10-F5)."""
+
+    def test_a_peer_cannot_revoke_another(self, app, peers_store, peer_token):
+        peers_store.add_peer(
+            node_id="other-sat", node_name="Other", role="body",
+            raw_token=f"hbt_{uuid.uuid4().hex}",
+        )
+        sat = TestClient(app, client=REMOTE,
+                         headers={"Authorization": f"Bearer {peer_token}"})
+        assert sat.delete("/api/peers/other-sat").status_code == 403
+        assert peers_store.get_peer("other-sat").revoked is False
+
+    def test_a_peer_may_revoke_itself(self, app, peer_token):
+        sat = TestClient(app, client=REMOTE,
+                         headers={"Authorization": f"Bearer {peer_token}"})
+        assert sat.delete("/api/peers/prod-mount-sat").status_code == 200
+
+    def test_a_peer_cannot_retarget_another_peers_wol(
+            self, app, peers_store, peer_token):
+        peers_store.add_peer(
+            node_id="other-sat", node_name="Other", role="body",
+            raw_token=f"hbt_{uuid.uuid4().hex}",
+        )
+        sat = TestClient(app, client=REMOTE,
+                         headers={"Authorization": f"Bearer {peer_token}"})
+        res = sat.put("/api/peers/other-sat/wol",
+                      json={"enabled": True, "mac": "AA:BB:CC:DD:EE:FF"})
+        assert res.status_code == 403
+        assert peers_store.get_peer("other-sat").wol_enabled is False
+
+    def test_a_peer_may_retarget_its_own_wol(self, app, peer_token):
+        sat = TestClient(app, client=REMOTE,
+                         headers={"Authorization": f"Bearer {peer_token}"})
+        res = sat.put("/api/peers/prod-mount-sat/wol",
+                      json={"enabled": True, "mac": "AA:BB:CC:DD:EE:FF"})
+        assert res.status_code == 200, res.text
+
+
+class TestLocalAdminOnlyControlsStayLocal:
+    """compute-peer link and discovered inventory (the two formerly unguarded
+    routes on the peers router) — local-admin now, reachable by the owner."""
+
+    def test_compute_peer_link_refuses_a_remote_peer(self, app, peer_token):
+        sat = TestClient(app, client=REMOTE,
+                         headers={"Authorization": f"Bearer {peer_token}"})
+        res = sat.post("/api/peers/compute-peer",
+                       json={"endpoint": "peer://x:8000", "token": ""})
+        assert res.status_code == 403
+
+    def test_compute_peer_link_refuses_a_remote_anon(self, app):
+        sat = TestClient(app, client=REMOTE)
+        res = sat.post("/api/peers/compute-peer",
+                       json={"endpoint": "peer://x:8000", "token": ""})
+        assert res.status_code == 403
+
+    def test_discovered_refuses_a_remote_peer(self, app, peer_token):
+        sat = TestClient(app, client=REMOTE,
+                         headers={"Authorization": f"Bearer {peer_token}"})
+        assert sat.get("/api/peers/discovered").status_code == 403

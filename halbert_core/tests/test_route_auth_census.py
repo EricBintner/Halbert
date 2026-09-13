@@ -85,26 +85,29 @@ def _iter_routes(app):
     Both shapes are handled so the test does not quietly stop checking anything
     the day FastAPI changes its mind.
     """
-    stack = [(r, ()) for r in app.routes]
+    stack = [(r, (), ()) for r in app.routes]
     while stack:
-        route, inherited = stack.pop()
+        route, inherited, in_tags = stack.pop()
         if isinstance(route, Mount):
             continue
 
         if type(route).__name__ == "_IncludedRouter":
             ctx = getattr(route, "include_context", None)
             deps = tuple(getattr(ctx, "dependencies", ()) or ())
+            tags = tuple(getattr(ctx, "tags", ()) or ())
             original = getattr(route, "original_router", None)
             if original is not None:
-                stack.extend((r, inherited + deps) for r in original.routes)
+                stack.extend(
+                    (r, inherited + deps, in_tags + tags) for r in original.routes
+                )
                 continue
 
         children = getattr(route, "routes", None)
         if children and not isinstance(children, (str, bytes)):
-            stack.extend((r, inherited) for r in children)
+            stack.extend((r, inherited, in_tags) for r in children)
             continue
 
-        yield route, inherited
+        yield route, inherited, in_tags
 
 
 def _recognised_guards():
@@ -112,14 +115,22 @@ def _recognised_guards():
 
     ``require_owner`` is the general one. ``require_peer_auth`` is the peer
     compute surface's own bearer scheme — a different principal, but a real
-    credential, so a route carrying it is not open. Recognising the *dependency*
+    credential, so a route carrying it is not open. ``require_local_admin``
+    and ``require_local_or_self_peer`` are the federation surface's doors for
+    machine-local and per-peer controls; they guard the peers router now that
+    it authenticates itself (F-A). Recognising the *dependency*
     rather than a tag matters: a tag is a label anyone can copy onto an
     unguarded router, and this test would then wave it through.
     """
     from halbert_core.dashboard.auth import require_owner
-    from halbert_core.federation.peer_middleware import require_peer_auth
+    from halbert_core.federation.peer_middleware import (
+        require_local_admin,
+        require_local_or_self_peer,
+        require_peer_auth,
+    )
 
-    return (require_owner, require_peer_auth)
+    return (require_owner, require_peer_auth, require_local_admin,
+            require_local_or_self_peer)
 
 
 def _guards(dep) -> bool:
@@ -174,18 +185,35 @@ def test_every_http_route_is_authenticated_or_allowlisted(app):
         "rather than letting this pass."
     )
 
-    for route, inherited in walked:
+    for route, inherited, in_tags in walked:
         if not isinstance(route, (APIRoute, Route)):
             continue
         path = getattr(route, "path", "")
+        methods = ",".join(sorted(getattr(route, "methods", []) or []))
         if path in PUBLIC_ALLOWLIST or path in spa:
-            continue
-        tags = set(getattr(route, "tags", []) or [])
-        if tags & set(SELF_AUTHENTICATING):
             continue
         if _has_owner_dependency(route, inherited):
             continue
-        methods = ",".join(sorted(getattr(route, "methods", []) or []))
+        # Include-time tags live on the wrapper, never on the leaf route —
+        # reading route.tags here sees [] and the skip never fires.
+        tags = set(in_tags) | set(getattr(route, "tags", []) or [])
+        if tags & set(SELF_AUTHENTICATING):
+            # Self-authenticating routers must actually authenticate every
+            # route — the exemption exists for routers whose guards are not
+            # require_owner-shaped, not for routers with a privileged tag
+            # and no guards. The pairing flow is the one deliberate open
+            # door: POST /api/peers/pair and POST /api/peers/verify are how
+            # a credential-less satellite bootstraps (the PIN + local-admin
+            # approval are the boundary, SE-16), and they are listed above.
+            unguarded_self_auth = {
+                "/api/peers/pair": "the pairing bootstrap: PIN + local-admin "
+                                   "approval are the boundary (SE-16)",
+                "/api/peers/verify": "consumes the PIN the operator read off "
+                                     "their own screen (SE-16)",
+            }
+            if path not in unguarded_self_auth:
+                offenders.append(f"{methods or 'GET'} {path} [self-auth tag, no guard]")
+            continue
         offenders.append(f"{methods or 'GET'} {path}")
 
     assert not offenders, (
@@ -208,7 +236,7 @@ def test_websocket_routes_check_the_handshake(app):
     from halbert_core.dashboard.routes import websocket as ws_module
 
     ws_routes = [
-        r for r, _ in _iter_routes(app)
+        r for r, _, _ in _iter_routes(app)
         if isinstance(r, APIWebSocketRoute) or "WebSocket" in type(r).__name__
     ]
     assert ws_routes, "expected the dashboard to expose WebSocket routes"

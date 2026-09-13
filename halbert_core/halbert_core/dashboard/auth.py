@@ -86,7 +86,15 @@ PUBLIC_PREFIXES: tuple[str, ...] = (
 #: the peer/compute surface carries its own bearer scheme, and the WebSocket
 #: router checks inside each handler because a dependency that raises
 #: HTTPException on a handshake produces a 500, not a clean refusal.
-SELF_AUTHENTICATING = ("compute-peer", "websocket")
+#:
+#: ``peers`` and ``conversations`` joined this set in the security-review
+#: remediation (finding F-A): both carry per-route peer credentials, but the
+#: mount-level door had been ``require_owner`` — which knows only the
+#: dashboard token — so every peer token 401'd at the door and a new
+#: satellite could not even reach ``POST /api/peers/pair``. The routers
+#: authenticate every route themselves now; the census requires that, a
+#: tag alone exempts nothing.
+SELF_AUTHENTICATING = ("compute-peer", "websocket", "peers", "conversations")
 
 _TICKET_TTL_SECONDS = 300
 _SESSION_TTL_SECONDS = 12 * 60 * 60

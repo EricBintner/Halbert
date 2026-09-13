@@ -259,6 +259,31 @@ def _is_local_client(request: "Request") -> bool:
     return _is_loopback_host(host)
 
 
+async def require_local_or_self_peer(
+    node_id: str,
+    request: "Request",
+    peer: Optional[PeerContext] = Depends(optional_peer_auth),
+) -> Optional[PeerContext]:
+    """Restrict a per-peer control to the operator at this machine, or the
+    peer it names.
+
+    The predicate behind ``DELETE /api/peers/{node_id}`` since R10-F5, lifted
+    into a dependency so every per-peer control states it the same way: a peer
+    may act on its own record, and nobody else's; only the local operator can
+    act on any record. Raising it here rather than checking inline keeps the
+    route census able to recognise the guard.
+    """
+    if _is_local_client(request):
+        return peer
+    if peer is not None and peer.node_id == node_id:
+        return peer
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="A peer may change only its own record; changing another "
+               "peer's is done from the machine they are paired with.",
+    )
+
+
 async def require_local_admin(request: "Request") -> None:
     """Restrict a route to the operator sitting at this machine.
 
