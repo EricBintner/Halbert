@@ -132,13 +132,17 @@ class TestPeerTokenAgainstTheProductionDoor:
     def test_owner_surface_still_refuses_peer_tokens(self, app, peer_token):
         """The fix opens the peer door; it grants nothing else. A peer token
         on an owner route is still nobody (the pre-fix behaviour for every
-        route, retained where it belongs)."""
+        route, retained where it belongs). /api/approvals is the one
+        exception by design: its pending list answers to
+        require_trust_anchor, so a genuine peer is authenticated and then
+        refused for its role — 403, not 401."""
         sat = TestClient(app, client=REMOTE,
                          headers={"Authorization": f"Bearer {peer_token}"})
-        for path in ("/api/approvals", "/api/settings/policy", "/api/terminal/exec"):
+        for path in ("/api/settings/policy", "/api/terminal/exec"):
             res = sat.get(path) if not path.endswith("exec") else \
                 sat.post(path, json={"command": "id"})
             assert res.status_code == 401, f"{path} answered a peer token"
+        assert sat.get("/api/approvals").status_code == 403
 
 
 class TestPerPeerControlsStayPerPeer:
@@ -292,3 +296,52 @@ class TestTrustAnchorApproval:
                            headers={"Authorization": f"Bearer {dashboard_token}"})
         res = owner.post(f"/api/peers/pending/{rid}/approve")
         assert res.status_code == 200, res.text
+
+
+class TestApprovalsTrustAnchorSurface:
+    """The approvals router is self-authenticating now: the pending list,
+    the detail read, and the two decision routes answer to
+    require_trust_anchor; history and proposals stay owner-only (F-A
+    restructure + Q1)."""
+
+    def _queue_request(self) -> str:
+        import uuid as _uuid
+        from halbert_core.approval.engine import ApprovalEngine, ApprovalRequest
+        rid = str(_uuid.uuid4())
+        ApprovalEngine()._save_request(ApprovalRequest(
+            id=rid, task="t", action="a", reasoning="r", confidence=0.5,
+            risk_level="low", system_state={}, affected_resources=[],
+        ))
+        return rid
+
+    def test_trust_anchor_lists_pending_approvals(self, app, trust_anchor_token):
+        phone = TestClient(app, client=REMOTE,
+                           headers={"Authorization": f"Bearer {trust_anchor_token}"})
+        assert phone.get("/api/approvals").status_code == 200
+
+    def test_trust_anchor_approves_a_staged_command(
+            self, app, trust_anchor_token):
+        rid = self._queue_request()
+        phone = TestClient(app, client=REMOTE,
+                           headers={"Authorization": f"Bearer {trust_anchor_token}"})
+        res = phone.post(f"/api/approvals/{rid}/approve", json={"approved": True})
+        assert res.status_code == 200, res.text
+        assert res.json()["success"] is True
+
+    def test_a_body_peer_cannot_approve_a_staged_command(
+            self, app, peer_token):
+        rid = self._queue_request()
+        sat = TestClient(app, client=REMOTE,
+                         headers={"Authorization": f"Bearer {peer_token}"})
+        assert sat.post(f"/api/approvals/{rid}/approve",
+                        json={"approved": True}).status_code == 403
+
+    def test_history_and_proposals_stay_owner_only(
+            self, app, trust_anchor_token, peer_token):
+        phone = TestClient(app, client=REMOTE,
+                           headers={"Authorization": f"Bearer {trust_anchor_token}"})
+        assert phone.get("/api/approvals/history").status_code == 401
+        assert phone.get("/api/approvals/proposals").status_code == 401
+        sat = TestClient(app, client=REMOTE,
+                         headers={"Authorization": f"Bearer {peer_token}"})
+        assert sat.get("/api/approvals").status_code == 403

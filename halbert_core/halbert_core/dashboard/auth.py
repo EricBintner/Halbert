@@ -91,10 +91,14 @@ PUBLIC_PREFIXES: tuple[str, ...] = (
 #: remediation (finding F-A): both carry per-route peer credentials, but the
 #: mount-level door had been ``require_owner`` — which knows only the
 #: dashboard token — so every peer token 401'd at the door and a new
-#: satellite could not even reach ``POST /api/peers/pair``. The routers
-#: authenticate every route themselves now; the census requires that, a
-#: tag alone exempts nothing.
-SELF_AUTHENTICATING = ("compute-peer", "websocket", "peers", "conversations")
+#: satellite could not even reach ``POST /api/peers/pair``. ``approvals``
+#: joined with the trust_anchor work: its decision routes answer to
+#: ``require_trust_anchor`` and its owner-only reads carry an explicit
+#: ``require_owner`` — a mount-level door would still 401 the phone's peer
+#: token before any of that ran. The routers authenticate every route
+#: themselves now; the census requires that, a tag alone exempts nothing.
+SELF_AUTHENTICATING = ("compute-peer", "websocket", "peers", "conversations",
+                       "approvals")
 
 _TICKET_TTL_SECONDS = 300
 _SESSION_TTL_SECONDS = 12 * 60 * 60
