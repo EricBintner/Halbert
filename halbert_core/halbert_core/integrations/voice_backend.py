@@ -205,7 +205,7 @@ class HalbertVoiceBackend:
         if self._playback_task is not None and not self._playback_task.done():
             self._playback_task.cancel()
 
-    async def synthesize_stream(
+    async def synthesize_segments(
         self,
         segments: Any,  # AsyncIterator[dict] — from stream_spoken_segments()
     ) -> AsyncIterator[bytes]:
@@ -217,11 +217,18 @@ class HalbertVoiceBackend:
         through the configured TTS engine (Piper or Kokoro). Kokoro
         internally re-chunks each sentence for its 128-phoneme limit.
 
+        This is intentionally NOT named ``synthesize_stream`` to avoid
+        a false-positive ``isinstance(backend, StreamingVoiceBackend)``
+        check against the Haloysius seam protocol, which expects a
+        different signature (``text, prosody`` -> ``SpeechResult``).
+        This method consumes segment dicts, not raw text+prosody.
+
         Prosody applied per segment:
         - ``rate`` -> TTS engine speed (override, restored after).
         - ``volume`` -> post-synthesis linear gain on PCM.
         - ``whisper`` -> volume capped at 0.5.
-        - ``voice_id`` -> TTS engine speaker_id (numeric Kokoro sid).
+        - ``voice_id`` -> TTS engine speaker_id (numeric Kokoro sid
+          or voice name like "af_heart").
 
         Barge-in: checks the ``BargeInToken`` between segments and
         between PCM chunks; stops yielding when it fires.
@@ -251,6 +258,7 @@ class HalbertVoiceBackend:
             volume = float(seg.get("volume", 1.0) or 1.0)
             whisper = bool(seg.get("whisper", False))
             voice_id = seg.get("voice_id")
+            cadence_style = seg.get("cadence_style")
 
             if whisper:
                 volume = min(volume, 0.5)
@@ -262,7 +270,16 @@ class HalbertVoiceBackend:
                 try:
                     tts._speaker_id = int(voice_id)
                 except (ValueError, TypeError):
-                    logger.debug(f"voice_id '{voice_id}' not numeric, ignoring")
+                    if hasattr(tts, "resolve_voice_name"):
+                        name_sid = tts.resolve_voice_name(voice_id)
+                        if name_sid is not None:
+                            tts._speaker_id = name_sid
+                    else:
+                        logger.debug(f"voice_id '{voice_id}' not numeric, ignoring")
+            elif cadence_style and hasattr(tts, "resolve_style"):
+                style_sid = tts.resolve_style(cadence_style)
+                if style_sid is not None:
+                    tts._speaker_id = style_sid
             try:
                 async for chunk in tts.synthesize(text, cancel_token=cancel_token):
                     if cancel_token is not None and cancel_token.is_set():

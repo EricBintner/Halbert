@@ -4837,7 +4837,7 @@ class AgentStateMachine:
         # Stream response
         # Streaming TTS (O3+): when voice mode is active and the browser
         # is subscribed, tee the LLM response chunks into a queue that
-        # feeds stream_spoken_segments() -> synthesize_stream() so the
+        # feeds stream_spoken_segments() -> synthesize_segments() so the
         # first sentence starts playing before the full response is
         # generated. The batch path below still emits modality_resolved
         # and speech_segment SSE events for the frontend ribbon, but
