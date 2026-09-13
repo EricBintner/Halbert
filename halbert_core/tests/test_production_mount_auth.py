@@ -345,3 +345,30 @@ class TestApprovalsTrustAnchorSurface:
         sat = TestClient(app, client=REMOTE,
                          headers={"Authorization": f"Bearer {peer_token}"})
         assert sat.get("/api/approvals").status_code == 403
+
+
+class TestWebSocketPeerCredential:
+    """Q9: a paired peer opens the audio sockets with its own token —
+    the companion voice MVP's prerequisite. Before this, the WS door knew
+    only the dashboard token and the phone would have needed the owner
+    credential (F-B)."""
+
+    def test_peer_token_opens_the_audio_socket(self, app, peer_token):
+        sat = TestClient(app, client=REMOTE)
+        # Auth passed if the handshake completes; the pipeline may then
+        # close 1013 (audio disabled in the test app) — that is after the
+        # door, not at it.
+        with sat.websocket_connect(f"/api/audio/stream?token={peer_token}"):
+            pass
+
+    def test_dashboard_token_still_opens_the_audio_socket(
+            self, app, dashboard_token):
+        sat = TestClient(app, client=REMOTE)
+        with sat.websocket_connect(f"/api/audio/stream?token={dashboard_token}"):
+            pass
+
+    def test_garbage_token_is_refused(self, app):
+        sat = TestClient(app, client=REMOTE)
+        with pytest.raises(Exception):
+            with sat.websocket_connect("/api/audio/stream?token=hbt_garbage"):
+                pass
