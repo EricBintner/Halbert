@@ -7,6 +7,9 @@ export function CategorySidebar({
   statusFilter,
   onStatusFilterChange,
   statusCounts,
+  scopeFilter,
+  onScopeFilterChange,
+  scopeCounts,
   expandAll,
   onToggleExpandAll,
 }) {
@@ -16,6 +19,12 @@ export function CategorySidebar({
     { id: 'hidden', label: 'Backend-only' },
     { id: 'unbuilt', label: 'Unbuilt' },
     { id: 'deferred', label: 'Deferred' },
+  ];
+
+  const SCOPES = [
+    { id: 'all', label: 'All' },
+    { id: 'workstation', label: 'Workstation' },
+    { id: 'home', label: 'Home' },
   ];
 
   return (
@@ -73,10 +82,37 @@ export function CategorySidebar({
         })}
       </nav>
 
-      {/* Status Filter: Minimal flat list, zero pills */}
+      {/* Scope Filter */}
+      <div className="pt-4 border-t border-[var(--color-line)] mb-6">
+        <div className="font-mono text-xs uppercase tracking-wider text-[var(--color-ink-tertiary)] font-semibold mb-2">
+          Scope
+        </div>
+        <div className="flex flex-col space-y-1">
+          {SCOPES.map((sc) => {
+            const isSelected = scopeFilter === sc.id;
+            const count = scopeCounts?.[sc.id] ?? 0;
+            return (
+              <button
+                key={sc.id}
+                onClick={() => onScopeFilterChange(sc.id)}
+                className={`flex items-center justify-between px-2.5 py-1 rounded text-xs font-mono transition-colors text-left ${
+                  isSelected
+                    ? 'text-[var(--color-accent)] font-semibold bg-[var(--color-surface-subtle)]'
+                    : 'text-[var(--color-ink-secondary)] hover:text-[var(--color-ink)]'
+                }`}
+              >
+                <span>{sc.label}</span>
+                <span className="text-[10px] text-[var(--color-ink-tertiary)]">{count}</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Status Filter */}
       <div className="pt-4 border-t border-[var(--color-line)]">
         <div className="font-mono text-xs uppercase tracking-wider text-[var(--color-ink-tertiary)] font-semibold mb-2">
-          Filter Status
+          Status
         </div>
         <div className="flex flex-col space-y-1">
           {STATUSES.map((st) => {

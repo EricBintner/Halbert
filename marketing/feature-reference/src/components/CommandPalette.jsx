@@ -33,7 +33,8 @@ export function CommandPalette({ isOpen, onClose, features, onSelectFeature }) {
           f.name.toLowerCase().includes(q) ||
           f.oneLine?.toLowerCase().includes(q) ||
           f.category?.toLowerCase().includes(q) ||
-          f.toolingAndBackend?.toLowerCase().includes(q)
+          f.toolingAndBackend?.toLowerCase().includes(q) ||
+          f.scope?.some((s) => s.toLowerCase().includes(q))
         );
       })
     : features.slice(0, 8);

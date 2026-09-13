@@ -9,6 +9,7 @@ import { CommandPalette } from './components/CommandPalette';
 export function App() {
   const [activeCategory, setActiveCategory] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [scopeFilter, setScopeFilter] = useState('all');
   const [expandAll, setExpandAll] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
 
@@ -61,6 +62,17 @@ export function App() {
     return counts;
   }, [rawFeatures]);
 
+  // Scope counts
+  const scopeCounts = useMemo(() => {
+    const counts = { all: rawFeatures.length, workstation: 0, home: 0 };
+    rawFeatures.forEach((f) => {
+      const scope = f.scope || [];
+      if (scope.includes('workstation')) counts.workstation += 1;
+      if (scope.includes('home')) counts.home += 1;
+    });
+    return counts;
+  }, [rawFeatures]);
+
   // Category counts
   const categoryCounts = useMemo(() => {
     const counts = {};
@@ -70,10 +82,14 @@ export function App() {
     return counts;
   }, [rawFeatures]);
 
-  // Filter features by status and activeCategory
+  // Filter features by status, scope, and activeCategory
   const filteredFeatures = useMemo(() => {
     return rawFeatures.filter((f) => {
       if (statusFilter !== 'all' && f.status !== statusFilter) return false;
+      if (scopeFilter !== 'all') {
+        const scope = f.scope || [];
+        if (!scope.includes(scopeFilter)) return false;
+      }
       if (
         activeCategory !== 'all' &&
         f.category !== activeCategory &&
@@ -83,7 +99,7 @@ export function App() {
       }
       return true;
     });
-  }, [rawFeatures, statusFilter, activeCategory]);
+  }, [rawFeatures, statusFilter, scopeFilter, activeCategory]);
 
   // Jump to specific feature from CommandPalette
   const handleSelectFeature = (featureId) => {
@@ -112,7 +128,7 @@ export function App() {
         {/* Editorial Hero Banner */}
         <section className="mb-16 pb-10 border-b border-[var(--color-line)] max-w-3xl" id="top">
           <div className="font-mono text-xs uppercase tracking-wider text-[var(--color-ink-tertiary)] mb-2 font-semibold">
-            Architecture & Capability Inventory
+            Design Problems Solved · Innovative Features
           </div>
 
           <h1 className="font-display font-semibold text-4xl sm:text-5xl lg:text-6xl text-[var(--color-ink)] tracking-tight leading-[1.1]">
@@ -120,7 +136,7 @@ export function App() {
           </h1>
 
           <p className="mt-4 text-base sm:text-lg text-[var(--color-ink-secondary)] font-sans leading-relaxed">
-            An engineering inventory of every subsystem, cognitive loop, and security boundary in Halbert.
+            Every capability in Halbert — what problem it solves, how it works under the hood, and the invariants that keep it safe.
           </p>
         </section>
 
@@ -135,6 +151,9 @@ export function App() {
             statusFilter={statusFilter}
             onStatusFilterChange={setStatusFilter}
             statusCounts={statusCounts}
+            scopeFilter={scopeFilter}
+            onScopeFilterChange={setScopeFilter}
+            scopeCounts={scopeCounts}
             expandAll={expandAll}
             onToggleExpandAll={() => setExpandAll(!expandAll)}
           />
@@ -162,6 +181,7 @@ export function App() {
                 <button
                   onClick={() => {
                     setStatusFilter('all');
+                    setScopeFilter('all');
                     setActiveCategory('all');
                   }}
                   className="font-mono text-xs font-bold text-[var(--color-accent)] hover:underline"

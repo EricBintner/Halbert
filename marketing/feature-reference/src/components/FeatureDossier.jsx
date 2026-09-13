@@ -51,6 +51,11 @@ export function FeatureDossier({ feature, forceOpen = false }) {
           <span className="text-xs font-mono text-[var(--color-ink-tertiary)] select-all">
             #{feature.id}
           </span>
+          {feature.scope?.length > 0 && (
+            <span className="text-[10px] font-mono text-[var(--color-ink-tertiary)] uppercase tracking-wider">
+              {feature.scope.join(' · ')}
+            </span>
+          )}
         </div>
         <div className="shrink-0">
           <StatusIndicator status={feature.status} />
