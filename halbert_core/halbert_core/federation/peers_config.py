@@ -88,6 +88,19 @@ KNOWN_PEER_CAPABILITIES = frozenset({
 })
 
 
+#: The peer roles this node knows. Like KNOWN_PEER_CAPABILITIES, an unknown
+#: role is stored but warned about — a peer running a newer Halbert may
+#: arrive with one this node has not learned yet (security review 2026-09-13,
+#: response item 7).
+KNOWN_PEER_ROLES = frozenset({
+    "compute_provider",  # serves model inference to this node
+    "body",              # another body of this entity (holds a replica)
+    "canonical",         # this node's canonical host (reverse-pairing record, F-D)
+    "satellite",         # legacy, kept for compat
+    "trust_anchor",      # phone-class device: the second factor for approvals
+})
+
+
 # ---------------------------------------------------------------------------
 # Data model
 # ---------------------------------------------------------------------------
@@ -152,7 +165,7 @@ class PeerCredential:
 
     node_id: str                           # unique identifier (hostname or user-provided)
     node_name: str                         # human-readable display name
-    role: str                              # "compute_provider" | "body" (another body of this entity) | "satellite" (legacy, kept for compat)
+    role: str                              # see KNOWN_PEER_ROLES: "compute_provider" | "body" | "canonical" | "satellite" (legacy) | "trust_anchor"
     token_hash: str                        # "sha256:<hex>"
     paired_at: str                         # ISO 8601 timestamp
     last_seen: Optional[str] = None        # ISO 8601, updated on each authenticated request
@@ -414,6 +427,16 @@ class PeersConfig:
                     "Peer %s advertises unknown capabilities %s — stored but not "
                     "routable by this node until its vocabulary learns them",
                     node_id, unknown,
+                )
+            if role not in KNOWN_PEER_ROLES:
+                # Same forward-compat rule as capabilities: kept, not rejected —
+                # a newer peer may pair with a role this node has not learned
+                # yet, and dropping it would break that peer after an upgrade
+                # in the wrong order.
+                logger.warning(
+                    "Peer %s paired with unknown role %r — stored, but this node "
+                    "does not know what powers that role carries",
+                    node_id, role,
                 )
             cred = PeerCredential(
                 node_id=node_id,
