@@ -39,7 +39,7 @@ from __future__ import annotations
 
 import logging
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from typing import Dict, List, Optional, Set
 
@@ -156,7 +156,9 @@ class SpatialAudioArbiter:
         now = time.monotonic()
 
         # 1. Media filtering: TV/podcast audio is never privileged speech.
-        if is_media:
+        #    Check both the per-observation is_media flag and the
+        #    persistent media source set.
+        if is_media or source_id in self._media_sources:
             logger.debug(
                 f"Arbiter: suppressing media from {source_id} "
                 f"(speaker={speaker_id})"
@@ -175,6 +177,19 @@ class SpatialAudioArbiter:
             return ArbitrationResult(
                 decision=ArbitrationDecision.SUPPRESS,
                 reason="self_speech_feedback",
+            )
+
+        # Unknown speakers (empty speaker_id, e.g. Wyoming satellite
+        # transcripts that don't do speaker ID) skip the turn lock and
+        # coincidence check — we can't distinguish two different unknown
+        # speakers, so locking would suppress the wrong person.
+        if not speaker_id:
+            logger.info(
+                f"Arbiter: ACCEPT unknown speaker, source={source_id}"
+            )
+            return ArbitrationResult(
+                decision=ArbitrationDecision.ACCEPT,
+                reason="unknown_speaker",
             )
 
         # 3. Per-speaker turn lock: if this speaker recently had a turn

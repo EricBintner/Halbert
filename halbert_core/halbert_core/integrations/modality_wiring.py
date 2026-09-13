@@ -644,6 +644,7 @@ async def stream_spoken_segments(
                 "volume": float(getattr(seg_prosody, "volume", 1.0) or 1.0),
                 "whisper": bool(getattr(seg_prosody, "whisper", False)),
                 "voice_id": seg_voice_id,
+                "cadence_style": getattr(seg_prosody, "cadence_style", None),
             }
 
     return _stream()

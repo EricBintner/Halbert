@@ -144,6 +144,35 @@ class TestSpatialArbiter:
         assert result.decision == ArbitrationDecision.SUPPRESS
         assert result.reason == "media_filtered"
 
+    def test_media_source_marked_filtered(self):
+        """A source marked as media via mark_media_source is filtered
+        even when the per-observation is_media flag is False."""
+        from halbert_core.audio.spatial_arbiter import (
+            SpatialAudioArbiter, ArbitrationDecision,
+        )
+        arb = SpatialAudioArbiter()
+        arb.mark_media_source("tv_source")
+        result = arb.arbitrate(
+            speaker_id="alice", source_id="tv_source", is_media=False,
+        )
+        assert result.decision == ArbitrationDecision.SUPPRESS
+        assert result.reason == "media_filtered"
+
+    def test_unknown_speaker_accepted(self):
+        """Empty speaker_id (unknown, e.g. Wyoming transcripts) is
+        always accepted — we can't distinguish two unknown speakers,
+        so locking would suppress the wrong person."""
+        from halbert_core.audio.spatial_arbiter import (
+            SpatialAudioArbiter, ArbitrationDecision,
+        )
+        arb = SpatialAudioArbiter()
+        r1 = arb.arbitrate(speaker_id="", source_id="wyoming_living_room")
+        assert r1.decision == ArbitrationDecision.ACCEPT
+        assert r1.reason == "unknown_speaker"
+        # A second unknown speaker from a different source is also accepted
+        r2 = arb.arbitrate(speaker_id="", source_id="wyoming_kitchen")
+        assert r2.decision == ArbitrationDecision.ACCEPT
+
     def test_self_speech_suppression(self):
         from halbert_core.audio.spatial_arbiter import (
             SpatialAudioArbiter, ArbitrationDecision,
@@ -268,6 +297,29 @@ class TestWyomingEgressHub:
         # Should not raise
         await hub.publish("nobody", b"\x00\x00" * 100)
         await hub.publish("nobody", {"type": "begin", "sample_rate": 24000})
+
+    @pytest.mark.asyncio
+    async def test_sample_rate_stored_from_begin_frame(self):
+        """The sample rate from the begin frame is stored and reused
+        for audio-chunk frames (Kokoro is 24000, not 22050)."""
+        from halbert_core.audio.egress.wyoming_egress import WyomingEgressHub
+        hub = WyomingEgressHub()
+        writer = MagicMock()
+        writer.drain = AsyncMock()
+        writer.write = MagicMock()
+        hub.subscribe("session1", writer, area_id="living_room")
+
+        # Send a begin frame with Kokoro's 24000 Hz
+        await hub.publish("session1", {"type": "begin", "sample_rate": 24000})
+        assert hub._sample_rates["session1"] == 24000
+
+        # Send PCM — the audio-chunk frame should carry 24000, not 22050
+        writer.write.reset_mock()
+        await hub.publish("session1", b"\x00\x00" * 100)
+        # write_wyoming_frame writes the JSON header first, then the
+        # binary payload. The header is the first write call.
+        header_bytes = writer.write.call_args_list[0][0][0]
+        assert b'"rate": 24000' in header_bytes or b'"rate":24000' in header_bytes
 
 
 # ---------------------------------------------------------------------------

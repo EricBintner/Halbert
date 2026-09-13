@@ -54,6 +54,10 @@ class WyomingEgressHub:
         self._subscribers: Dict[str, List[Dict[str, Any]]] = {}
         # session_id -> BargeInToken (shared with the browser hub).
         self._cancel_tokens: Dict[str, Any] = {}
+        # session_id -> sample rate from the last begin frame, so
+        # audio-chunk frames carry the correct rate (Kokoro is 24000,
+        # Piper is 22050 — the satellite needs the right number).
+        self._sample_rates: Dict[str, int] = {}
 
     # ------------------------------------------------------------------
     # Subscription (called by the ingress handler when a satellite
@@ -116,14 +120,16 @@ class WyomingEgressHub:
             return
 
         if isinstance(data, bytes):
-            # Send as audio-chunk with raw PCM payload.
+            # Send as audio-chunk with raw PCM payload. Use the sample
+            # rate from the last begin frame (default 22050 for Piper).
+            sr = self._sample_rates.get(session_id, 22050)
             for sub in list(subs):
                 writer = sub["writer"]
                 try:
                     await write_wyoming_frame(
                         writer,
                         "audio-chunk",
-                        {"rate": 22050, "width": 2, "channels": 1},
+                        {"rate": sr, "width": 2, "channels": 1},
                         payload=data,
                     )
                 except Exception:
@@ -137,8 +143,10 @@ class WyomingEgressHub:
             msg_type = data.get("type", "")
             if msg_type == "begin":
                 frame_type = "audio-start"
+                sr = data.get("sample_rate", 22050)
+                self._sample_rates[session_id] = sr
                 frame_data = {
-                    "rate": data.get("sample_rate", 22050),
+                    "rate": sr,
                     "width": 2,
                     "channels": 1,
                 }

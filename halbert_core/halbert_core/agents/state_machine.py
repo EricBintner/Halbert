@@ -5460,9 +5460,9 @@ class AgentStateMachine:
         The streaming twin of ``_speak_to_tts_egress``: instead of
         waiting for the full response and then synthesizing, this feeds
         LLM token deltas through ``stream_spoken_segments()`` (which
-        flushes at sentence boundaries) and then through
-        ``HalbertVoiceBackend.synthesize_stream()``, publishing PCM
-        chunks to the TTS egress hub as they arrive.
+        flushes at sentence boundaries) and then through the TTS
+        engine, publishing PCM chunks to both the browser TTS egress
+        hub and the Wyoming egress hub as they arrive.
 
         Returns True if any audio was published (so the caller can skip
         the batch ``_speak_to_tts_egress`` for the main content and only
@@ -5476,7 +5476,20 @@ class AgentStateMachine:
 
         hub = get_tts_egress_hub()
         session_id = self.ctx.session_id
-        if not hub.has_subscribers(session_id):
+
+        # Also publish to the Wyoming egress hub (satellite speakers).
+        wyoming_hub = None
+        try:
+            from ..audio.egress.wyoming_egress import get_wyoming_egress_hub
+            wyoming_hub = get_wyoming_egress_hub()
+        except Exception:
+            pass
+
+        has_browser_subs = hub.has_subscribers(session_id)
+        has_wyoming_subs = (
+            wyoming_hub is not None and wyoming_hub.has_subscribers(session_id)
+        )
+        if not has_browser_subs and not has_wyoming_subs:
             return False
 
         # Resolve the TTS engine: use the cached egress instance first
@@ -5502,6 +5515,19 @@ class AgentStateMachine:
             token = BargeInHandler().create_token()
 
         hub.register_cancel_token(session_id, token)
+        if wyoming_hub is not None:
+            wyoming_hub.register_cancel_token(session_id, token)
+
+        # Notify the spatial arbiter so it ducks mics and suppresses
+        # self-speech feedback during TTS output.
+        arbiter = None
+        if pipeline is not None:
+            try:
+                arbiter = pipeline.arbiter
+            except Exception:
+                pass
+        if arbiter is not None:
+            arbiter.on_tts_start(source_id="local_mic")
 
         # Wake-before-speak (P2): raise the panel before the first frame.
         try:
@@ -5528,10 +5554,26 @@ class AgentStateMachine:
         )
         if segments_iter is None:
             hub.clear_cancel_token(session_id)
+            if arbiter is not None:
+                arbiter.on_tts_end()
             return False
+
+        # Import volume gain helper for post-synthesis PCM scaling.
+        try:
+            from ..integrations.voice_backend import _apply_volume_gain
+        except ImportError:
+            _apply_volume_gain = None
 
         any_began = False
         sent_cancelled = False
+
+        async def _publish(data):
+            """Publish to both browser and Wyoming hubs."""
+            if has_browser_subs:
+                await hub.publish(session_id, data)
+            if has_wyoming_subs and wyoming_hub is not None:
+                await wyoming_hub.publish(session_id, data)
+
         try:
             async for seg in segments_iter:
                 if token is not None and token.is_set():
@@ -5540,50 +5582,83 @@ class AgentStateMachine:
                 if not text.strip():
                     continue
                 rate = float(seg.get("rate", 1.0) or 1.0)
+                volume = float(seg.get("volume", 1.0) or 1.0)
+                whisper = bool(seg.get("whisper", False))
+                voice_id = seg.get("voice_id")
+                cadence_style = seg.get("cadence_style")
+
+                if whisper:
+                    volume = min(volume, 0.5)
+
+                # Apply prosody to the TTS engine (same mapping as the
+                # batch path in voice_backend.py).
                 original_speed = tts._speed
+                original_speaker_id = getattr(tts, "_speaker_id", 0)
                 tts._speed = rate
+                if voice_id is not None:
+                    try:
+                        tts._speaker_id = int(voice_id)
+                    except (ValueError, TypeError):
+                        logger.debug(
+                            f"Voice id '{voice_id}' not numeric; ignoring"
+                        )
+                elif cadence_style and hasattr(tts, "resolve_style"):
+                    style_sid = tts.resolve_style(cadence_style)
+                    if style_sid is not None:
+                        tts._speaker_id = style_sid
+
                 began = False
                 try:
                     async for pcm_chunk in tts.synthesize(text, cancel_token=token):
                         if token is not None and token.is_set():
                             break
+                        # Apply volume gain post-synthesis.
+                        if (
+                            _apply_volume_gain is not None
+                            and volume != 1.0
+                        ):
+                            pcm_chunk = _apply_volume_gain(pcm_chunk, volume)
                         if not began:
                             began = True
                             if not any_began:
                                 any_began = True
                                 sr = getattr(tts, "_sample_rate", None) or 22050
-                                await hub.publish(session_id, {
+                                await _publish({
                                     "type": "begin",
                                     "sample_rate": sr,
                                     "format": "s16le",
                                 })
-                        await hub.publish(session_id, pcm_chunk)
+                        await _publish(pcm_chunk)
                 finally:
                     tts._speed = original_speed
+                    tts._speaker_id = original_speaker_id
                 if began:
                     cancelled = token is not None and token.is_set()
                     sent_cancelled = cancelled
-                    await hub.publish(
-                        session_id,
+                    await _publish(
                         {"type": "cancelled" if cancelled else "end"},
                     )
-            # Barge-in between segments: tell the browser.
+            # Barge-in between segments: tell both hubs.
             if (
                 not sent_cancelled
                 and any_began
                 and token is not None
                 and token.is_set()
             ):
-                await hub.publish(session_id, {"type": "cancelled"})
+                await _publish({"type": "cancelled"})
         except Exception as e:
             logger.debug(f"Stream TTS egress failed (non-fatal): {e}")
             if any_began and not sent_cancelled:
                 try:
-                    await hub.publish(session_id, {"type": "cancelled"})
+                    await _publish({"type": "cancelled"})
                 except Exception:
                     pass
         finally:
             hub.clear_cancel_token(session_id)
+            if wyoming_hub is not None:
+                wyoming_hub.clear_cancel_token(session_id)
+            if arbiter is not None:
+                arbiter.on_tts_end()
             if pipeline is not None and token is not None:
                 try:
                     pipeline.release_barge_in_token(token)

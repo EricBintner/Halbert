@@ -131,8 +131,8 @@ class HalbertVoiceBackend:
             logger.debug(f"pitch_offset={pitch_offset} not yet applied")
         if energy is not None and energy != 1.0:
             logger.debug(f"energy={energy} applied as volume gain instead of style")
-        if cadence_style:
-            logger.debug(f"cadence_style='{cadence_style}' not yet applied")
+        if cadence_style and not hasattr(tts, "resolve_style"):
+            logger.debug(f"cadence_style='{cadence_style}' not supported by this engine")
         if expression_tokens:
             logger.debug(f"expression_tokens={expression_tokens} not yet applied")
 
