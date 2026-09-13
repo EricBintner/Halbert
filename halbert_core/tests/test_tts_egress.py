@@ -460,6 +460,7 @@ def _voice_turn_patches(monkeypatch, payload, pronounce=lambda t: t):
     """Force the RESPONDING modality path into voice mode with a fake
     demuxed payload, without needing the Haloysius resolver machinery."""
     from halbert_core.integrations import modality_wiring as mw
+    from halbert_core.audio.config import TtsConfig
 
     ctx = _FakeCtx()
     monkeypatch.setattr(mw, "build_modality_context", lambda *a, **k: ctx)
@@ -470,6 +471,13 @@ def _voice_turn_patches(monkeypatch, payload, pronounce=lambda t: t):
     monkeypatch.setattr(mw, "demux_response", lambda *a, **k: payload)
     monkeypatch.setattr(mw, "get_speech_text", lambda p: p.speech_text)
     monkeypatch.setattr(mw, "get_display_text", lambda p: p.display_text)
+    # Isolate from the developer's real audio_config.yml — a user with
+    # stream_to_egress: true would otherwise trigger the streaming path
+    # and create a second barge-in token.
+    monkeypatch.setattr(
+        "halbert_core.audio.config.load_config",
+        lambda: type("C", (), {"tts": TtsConfig(stream_to_egress=False)})(),
+    )
     return ctx
 
 
