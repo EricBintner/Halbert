@@ -304,6 +304,10 @@ class KokoroTTS:
     ) -> AsyncIterator[bytes]:
         """Synthesize text to speech, yielding PCM chunks.
 
+        Re-chunks text for Kokoro's 128-phoneme / 5-second limit, then
+        generates and yields each chunk's audio immediately — the first
+        chunk's PCM reaches the caller before later chunks are synthesized.
+
         Args:
             text: The text to synthesize.
             cancel_token: If set, synthesis aborts when the token is set.
@@ -319,8 +323,6 @@ class KokoroTTS:
             return
 
         loop = asyncio.get_event_loop()
-        all_samples: list[float] = []
-        sample_rate = SAMPLE_RATE
 
         def _generate(chunk: str) -> tuple[list[float], int]:
             audio = self._tts.generate(
@@ -331,24 +333,21 @@ class KokoroTTS:
             samples = [audio.samples[i] for i in range(len(audio.samples))]
             return samples, audio.sample_rate
 
-        for chunk in chunks:
+        for chunk_text in chunks:
             if cancel_token is not None and cancel_token.is_set():
                 logger.debug("Kokoro TTS barge-in: cancellation received, aborting")
                 return
-            samples, sr = await loop.run_in_executor(None, _generate, chunk)
-            all_samples.extend(samples)
-            sample_rate = sr
+            samples, sr = await loop.run_in_executor(None, _generate, chunk_text)
+            self._sample_rate = sr
 
-        self._sample_rate = sample_rate
-
-        # Yield in ~30ms chunks
-        chunk_size = int(sample_rate * 0.03)
-        for i in range(0, len(all_samples), chunk_size):
-            if cancel_token is not None and cancel_token.is_set():
-                logger.debug("Kokoro TTS barge-in: cancellation received, aborting")
-                return
-            chunk = all_samples[i:i + chunk_size]
-            yield _pack_float_samples(chunk)
+            # Yield this chunk's audio immediately in ~30ms frames.
+            frame_size = int(sr * 0.03)
+            for i in range(0, len(samples), frame_size):
+                if cancel_token is not None and cancel_token.is_set():
+                    logger.debug("Kokoro TTS barge-in: cancellation received, aborting")
+                    return
+                frame = samples[i:i + frame_size]
+                yield _pack_float_samples(frame)
 
     def synthesize_sync(self, text: str) -> tuple[bytes, int]:
         """Synchronous synthesis (for testing)."""

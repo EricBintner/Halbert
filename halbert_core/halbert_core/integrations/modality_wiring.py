@@ -568,6 +568,7 @@ async def stream_spoken_segments(
     ctx: Any,
     session_id: str = "",
     thread_id: str = "",
+    persona_voice_id: str = "",
 ) -> Any:  # AsyncIterator[dict]
     """Yield spoken segments as sentences complete in the token stream.
 
@@ -583,6 +584,10 @@ async def stream_spoken_segments(
     incrementally as the LLM streams, so the first sentence reaches
     the synthesizer before the full response is generated.
 
+    ``persona_voice_id`` is the default Kokoro voice pack id from the
+    persona's ``VoiceProfileData.voice_id``; a segment's own
+    ``voice_id`` (cameo override) takes precedence when set.
+
     Degrades to nothing when the engine is not installed (the caller
     falls back to the batch ``demux_response`` + ``spoken_segment_lines``
     path).
@@ -592,6 +597,7 @@ async def stream_spoken_segments(
         ctx: A resolved ``ModalityContext`` (from ``resolve_turn_modality``).
         session_id: The turn's session id (for tracing).
         thread_id: The turn's thread id (for the demuxer's payload).
+        persona_voice_id: Default voice pack id from the persona profile.
 
     Returns:
         An async iterator of spoken-segment dicts, or ``None`` if the
@@ -617,6 +623,7 @@ async def stream_spoken_segments(
     async def _stream():
         async for seg in demuxer.split_stream(
             token_stream,
+            persona_voice_id=persona_voice_id,
             whisper_active=whisper,
             prosody=prosody,
             risk_policy=risk_policy,
@@ -627,13 +634,16 @@ async def stream_spoken_segments(
             if not text:
                 continue
             seg_prosody = getattr(seg, "prosody", None)
+            # Segment voice_id (cameo override) wins; persona default is
+            # the fallback so every persona line speaks in its own voice.
+            seg_voice_id = getattr(seg, "voice_id", None) or persona_voice_id or None
             yield {
                 "text": apply_pronunciation(text),
                 "role": getattr(getattr(seg, "role", None), "value", "persona"),
                 "rate": float(getattr(seg_prosody, "rate", 1.0) or 1.0),
                 "volume": float(getattr(seg_prosody, "volume", 1.0) or 1.0),
                 "whisper": bool(getattr(seg_prosody, "whisper", False)),
-                "voice_id": getattr(seg, "voice_id", None),
+                "voice_id": seg_voice_id,
             }
 
     return _stream()

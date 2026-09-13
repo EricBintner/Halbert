@@ -105,6 +105,7 @@ class HalbertVoiceBackend:
         pitch_offset = getattr(prosody, "pitch_offset", 0.0)
         energy = getattr(prosody, "energy", 1.0)
         cadence_style = getattr(prosody, "cadence_style", None)
+        expression_tokens = getattr(prosody, "expression_tokens", None)
 
         if whisper:
             volume = min(volume, 0.5)
@@ -121,11 +122,13 @@ class HalbertVoiceBackend:
 
         # Prosody fields not yet mapped by the consumer; log for tuning.
         if pitch_offset:
-            logger.debug(f"Kokoro pitch_offset={pitch_offset} not yet applied")
+            logger.debug(f"pitch_offset={pitch_offset} not yet applied")
         if energy is not None and energy != 1.0:
-            logger.debug(f"Kokoro energy={energy} applied as volume gain instead of style")
+            logger.debug(f"energy={energy} applied as volume gain instead of style")
         if cadence_style:
-            logger.debug(f"Kokoro cadence_style='{cadence_style}' not yet applied")
+            logger.debug(f"cadence_style='{cadence_style}' not yet applied")
+        if expression_tokens:
+            logger.debug(f"expression_tokens={expression_tokens} not yet applied")
 
         try:
             tts._ensure_initialized()
@@ -198,6 +201,12 @@ class HalbertVoiceBackend:
         through the configured TTS engine (Piper or Kokoro). Kokoro
         internally re-chunks each sentence for its 128-phoneme limit.
 
+        Prosody applied per segment:
+        - ``rate`` -> TTS engine speed (override, restored after).
+        - ``volume`` -> post-synthesis linear gain on PCM.
+        - ``whisper`` -> volume capped at 0.5.
+        - ``voice_id`` -> TTS engine speaker_id (numeric Kokoro sid).
+
         Barge-in: checks the ``BargeInToken`` between segments and
         between PCM chunks; stops yielding when it fires.
 
@@ -223,21 +232,39 @@ class HalbertVoiceBackend:
                 continue
 
             rate = float(seg.get("rate", 1.0) or 1.0)
+            volume = float(seg.get("volume", 1.0) or 1.0)
+            whisper = bool(seg.get("whisper", False))
+            voice_id = seg.get("voice_id")
+
+            if whisper:
+                volume = min(volume, 0.5)
+
             original_speed = tts._speed
+            original_speaker_id = getattr(tts, "_speaker_id", 0)
             tts._speed = rate
+            if voice_id is not None:
+                try:
+                    tts._speaker_id = int(voice_id)
+                except (ValueError, TypeError):
+                    logger.debug(f"voice_id '{voice_id}' not numeric, ignoring")
             try:
                 async for chunk in tts.synthesize(text, cancel_token=cancel_token):
                     if cancel_token is not None and cancel_token.is_set():
                         return
+                    if volume != 1.0:
+                        chunk = _apply_volume_gain(chunk, volume)
                     yield chunk
             finally:
                 tts._speed = original_speed
+                if hasattr(tts, "_speaker_id"):
+                    tts._speaker_id = original_speaker_id
 
     def list_voices(self) -> List[Any]:
-        """List available Piper voices.
+        """List available voices for the configured engine.
 
-        Returns a list of VoiceInfo-shaped objects. Piper typically has one
-        configured voice (the model file); we report it as a single entry.
+        Piper reports one voice (the model file). Kokoro packs many
+        voices in ``voices.bin``; sherpa-onnx exposes the count via
+        ``OfflineTts.num_speakers``. We report each as a VoiceInfo.
         Returns [] when the engine is not installed.
         """
         try:
@@ -249,9 +276,17 @@ class HalbertVoiceBackend:
             tts = self._get_tts()
             tts._ensure_initialized()
             voice_model = getattr(tts, "_voice_model", "default")
-            # Derive a voice id from the model filename.
-            voice_id = voice_model.split("/")[-1].replace(".onnx", "") if voice_model else "default"
-            return [VoiceInfo(voice_id=voice_id, name=voice_id, language="en")]
+            model_name = voice_model.split("/")[-1].replace(".onnx", "") if voice_model else "default"
+
+            # Kokoro exposes num_speakers; Piper does not (one voice).
+            num_speakers = getattr(tts, "_tts", None)
+            if num_speakers is not None and hasattr(num_speakers, "num_speakers"):
+                count = int(num_speakers.num_speakers)
+                return [
+                    VoiceInfo(voice_id=str(i), name=f"{model_name}#{i}", language="en")
+                    for i in range(count)
+                ]
+            return [VoiceInfo(voice_id=model_name, name=model_name, language="en")]
         except Exception:
             return []
 
