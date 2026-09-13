@@ -128,14 +128,32 @@ def _canonical_url() -> Optional[str]:
         return None
 
 
+def _replica_status() -> Optional[Dict[str, Any]]:
+    """The replica summary for the status card, or None when there is no
+    replica — a canonical host or a body that never received one."""
+    try:
+        from ...replica.store import ReplicaStore
+        store = ReplicaStore()
+        meta = store.meta()
+        if meta is None:
+            return None
+        return {
+            **meta.to_dict(),
+            "is_valid": store.is_valid(),
+            "can_promote": store.is_valid(),
+        }
+    except Exception as e:
+        logger.debug(f"entity status: replica status unavailable: {e}")
+        return None
+
+
 @router.get("/api/entity/status", dependencies=_ANCHOR)
 async def entity_status() -> Dict[str, Any]:
     """The aggregated status card.
 
-    ``replica`` and ``last_backup`` are None until the replica store
-    (Phase 1 Step 1.2) and the backup vault (Phase 2) exist — the shape is
-    reserved now so the companion app's card does not change when they
-    land.
+    ``last_backup`` is None until the vault (Phase 2) exists — the shape
+    is reserved now so the companion app's card does not change when it
+    lands.
     """
     persona_id = resolve_persona_id()
     return {
@@ -150,7 +168,7 @@ async def entity_status() -> Dict[str, Any]:
             "threads": _thread_count(),
             "pending_approvals": _pending_approvals_count(),
         },
-        "replica": None,
+        "replica": _replica_status(),
         "last_backup": None,
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }
