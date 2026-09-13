@@ -94,24 +94,43 @@ class HalbertVoiceBackend:
         try:
             tts = self._get_tts()
         except Exception as e:
-            logger.warning(f"PiperTTS unavailable: {e}")
+            logger.warning(f"TTS unavailable: {e}")
             return SpeechResult(success=False, error=str(e))
 
-        # Apply prosody to Piper's speed parameter.
+        # Apply prosody to the active TTS engine.
         rate = getattr(prosody, "rate", 1.0) or 1.0
         volume = getattr(prosody, "volume", 1.0) or 1.0
         whisper = getattr(prosody, "whisper", False)
+        voice_id = getattr(prosody, "voice_id", None)
+        pitch_offset = getattr(prosody, "pitch_offset", 0.0)
+        energy = getattr(prosody, "energy", 1.0)
+        cadence_style = getattr(prosody, "cadence_style", None)
 
         if whisper:
             volume = min(volume, 0.5)
 
-        # PiperTTS stores speed as _speed; override for this call.
+        # TTS engines store speed as _speed and voice selection as _speaker_id.
         original_speed = tts._speed
+        original_speaker_id = tts._speaker_id
         tts._speed = rate
+        if voice_id is not None:
+            try:
+                tts._speaker_id = int(voice_id)
+            except (ValueError, TypeError):
+                logger.debug(f"Voice id '{voice_id}' is not a numeric Kokoro sid; ignoring")
+
+        # Prosody fields not yet mapped by the consumer; log for tuning.
+        if pitch_offset:
+            logger.debug(f"Kokoro pitch_offset={pitch_offset} not yet applied")
+        if energy is not None and energy != 1.0:
+            logger.debug(f"Kokoro energy={energy} applied as volume gain instead of style")
+        if cadence_style:
+            logger.debug(f"Kokoro cadence_style='{cadence_style}' not yet applied")
+
         try:
             tts._ensure_initialized()
         except Exception as e:
-            logger.warning(f"PiperTTS init failed: {e}")
+            logger.warning(f"TTS init failed: {e}")
             return SpeechResult(success=False, error=str(e))
 
         cancel_token = self._barge_in_token
@@ -156,6 +175,7 @@ class HalbertVoiceBackend:
             return SpeechResult(success=False, error=str(e))
         finally:
             tts._speed = original_speed
+            tts._speaker_id = original_speaker_id
 
     def cancel(self) -> None:
         """Cancel any in-flight synthesis (barge-in)."""
@@ -214,10 +234,30 @@ class HalbertVoiceBackend:
         return self._get_tts()
 
     def _get_tts(self) -> Any:
-        """Return the PiperTTS instance, lazy-constructing if needed."""
-        if self._tts is None:
-            from ..audio.speech.tts_engine import PiperTTS
-            self._tts = PiperTTS()
+        """Return the configured TTS instance, lazy-constructing if needed."""
+        if self._tts is not None:
+            return self._tts
+        from ..audio.config import load_config
+        from ..audio.speech.tts_engine import KokoroTTS, PiperTTS
+        cfg = load_config()
+        tts_cfg = cfg.tts
+        if tts_cfg.engine == "kokoro":
+            self._tts = KokoroTTS(
+                voice_model=tts_cfg.kokoro_model or tts_cfg.voice_model,
+                voices=tts_cfg.kokoro_voices,
+                tokens=tts_cfg.kokoro_tokens,
+                data_dir=tts_cfg.kokoro_data_dir,
+                speaker_id=tts_cfg.speaker_id,
+                num_threads=tts_cfg.num_threads,
+                provider=tts_cfg.execution_provider,
+            )
+        else:
+            self._tts = PiperTTS(
+                voice_model=tts_cfg.voice_model,
+                speaker_id=tts_cfg.speaker_id,
+                num_threads=tts_cfg.num_threads,
+                speed=1.0,
+            )
         return self._tts
 
 
