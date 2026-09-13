@@ -133,14 +133,18 @@ def _replica_status() -> Optional[Dict[str, Any]]:
     replica — a canonical host or a body that never received one."""
     try:
         from ...replica.store import ReplicaStore
+        from ...replica.liveness import current_probe
         store = ReplicaStore()
         meta = store.meta()
         if meta is None:
             return None
+        probe = current_probe()
         return {
             **meta.to_dict(),
             "is_valid": store.is_valid(),
             "can_promote": store.is_valid(),
+            "canonical_reachable": (
+                probe.canonical_reachable if probe is not None else None),
         }
     except Exception as e:
         logger.debug(f"entity status: replica status unavailable: {e}")

@@ -32,15 +32,21 @@ router = APIRouter()
 
 @router.get("/api/replica/status", dependencies=[Depends(require_known_principal)])
 async def replica_status() -> Dict[str, Any]:
-    """Replica metadata and promotion eligibility for the status card."""
+    """Replica metadata, liveness, and promotion eligibility for the
+    status card. ``canonical_reachable`` is None when no probe runs —
+    a canonical host or independent node has nobody to watch."""
     from ...replica.store import ReplicaStore
+    from ...replica.liveness import current_probe
     store = ReplicaStore()
     meta = store.meta()
+    probe = current_probe()
     return {
         "has_replica": meta is not None,
         "replica": meta.to_dict() if meta else None,
         "is_valid": store.is_valid(),
         "can_promote": store.is_valid(),
+        "canonical_reachable": (
+            probe.canonical_reachable if probe is not None else None),
     }
 
 

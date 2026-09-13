@@ -197,3 +197,34 @@ class TestMemoryStoreWiring:
         store = wiring._create_memory_store()
         from haloysius.memory_v2.store import PersonaMemoryStore
         assert isinstance(store, PersonaMemoryStore)
+
+
+class TestConversationStoreWiring:
+    """_create_conversation_store wraps the peer in the fallback — the
+    Step 1.6 wiring the plan's per-call recover story needs."""
+
+    def test_peer_store_is_wrapped(self, tmp_path, monkeypatch):
+        from halbert_core.integrations import cognition_wiring as cw
+        monkeypatch.setattr(
+            cw, "_get_canonical_thread_url",
+            lambda: "http://canonical:8000/api/conversations")
+        monkeypatch.setattr(cw, "_get_peer_token", lambda: "hbt_x")
+        monkeypatch.setenv("HALBERT_DATA_DIR", str(tmp_path / "data"))
+
+        from halbert_core.agents.threads import _create_conversation_store
+        store = _create_conversation_store()
+        assert isinstance(store, FallbackConversationStore)
+        assert isinstance(store._peer, PeerConversationStore)
+        assert store._peer.peer_url == "http://canonical:8000/api/conversations"
+
+    def test_no_thread_url_stays_local(self, tmp_path, monkeypatch):
+        from halbert_core.integrations import cognition_wiring as cw
+        monkeypatch.setattr(cw, "_get_canonical_thread_url", lambda: "")
+        monkeypatch.setenv("HALBERT_DATA_DIR", str(tmp_path / "data"))
+
+        from halbert_core.agents.threads import _create_conversation_store
+        from halbert_core.agents.conversation_sqlite import (
+            SqliteConversationStore)
+        store = _create_conversation_store()
+        assert isinstance(store, SqliteConversationStore)
+        assert not isinstance(store, FallbackConversationStore)

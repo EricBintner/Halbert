@@ -21,6 +21,7 @@ conservative:
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import shutil
 import time
@@ -104,17 +105,23 @@ def promote_to_canonical(replica: Optional[ReplicaStore] = None) -> PromotionRes
     try:
         from ..utils.paths import data_dir
         from ..identity import resolve_persona_id
-        from ..integrations.cognition_wiring import (
-            _get_canonical_memory_url,
-            _get_canonical_thread_url,
-        )
+        from ..integrations.cognition_wiring import _get_canonical_memory_url
         from ..config.being_config import load_being_config, save_being_config
         from haloysius.paths import state_dir
 
+        # The replica's memories name their own persona — install under
+        # the persona they were written for, not whatever this node's
+        # being.yml currently calls itself.
         persona_id = resolve_persona_id()
+        memories_src = replica.path() / "memories.json"
+        if memories_src.is_file():
+            try:
+                persona_id = (json.loads(memories_src.read_text())
+                              .get("persona_id") or persona_id)
+            except Exception:
+                pass
         quarantined: List[str] = []
 
-        memories_src = replica.path() / "memories.json"
         threads_src = replica.path() / "conversations.db"
         if memories_src.is_file():
             _install(

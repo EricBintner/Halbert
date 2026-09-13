@@ -53,8 +53,17 @@ def _read_archive(archive_path: Path) -> Dict[str, bytes]:
                 for m in tar.getmembers() if m.isfile()}
 
 
-def _destinations(manifest: BackupManifest) -> Dict[str, Path]:
-    """member name → where it belongs on this machine."""
+def _destinations(
+    manifest: BackupManifest,
+    plaintext: Dict[str, bytes],
+) -> Dict[str, Path]:
+    """member name → where it belongs on this machine.
+
+    The memories file lands under the persona its own JSON names — the
+    archive's persona_id, not the manifest's display entity_name: a body
+    named for its hostname still restores its memories under the persona
+    they were written for.
+    """
     from ..utils.paths import data_dir
     from ..utils.platform import get_config_dir
     from haloysius.paths import state_dir
@@ -62,6 +71,12 @@ def _destinations(manifest: BackupManifest) -> Dict[str, Path]:
     config_dir = Path(get_config_dir())
     data = Path(data_dir())
     persona = manifest.entity_name or "halbert"
+    mem = plaintext.get("databases/memories.json.enc")
+    if mem is not None:
+        try:
+            persona = json.loads(mem).get("persona_id") or persona
+        except Exception:
+            pass
 
     dests: Dict[str, Path] = {}
     for member in manifest.files:
@@ -184,7 +199,25 @@ def restore_backup(
     except Exception:
         pass
 
-    dests = _destinations(manifest)
+    # A restored being.yml may carry canonical pointers — the restored
+    # node will come up as a body of whatever the archive was a body of.
+    # Warn rather than decide: whether this machine is meant to be the
+    # new canonical is an operator call (promote clears them).
+    being = plaintext.get("config/being.yml.enc")
+    if being is not None:
+        try:
+            import yaml
+            cfg_doc = yaml.safe_load(being.decode()) or {}
+            canon = cfg_doc.get("canonical_memory_url")
+            if canon:
+                report.warnings.append(
+                    f"restored being.yml points at canonical {canon} — "
+                    f"this node will come up as its body; promote it "
+                    f"(or clear the URLs) if it is meant to be canonical")
+        except Exception:
+            pass
+
+    dests = _destinations(manifest, plaintext)
     quarantined: List[str] = []
     for member, data in plaintext.items():
         dest = dests.get(member)
@@ -206,6 +239,15 @@ def restore_backup(
                 f"identity was NOT restored")
 
     report.quarantined = quarantined
+
+    # The live process may hold stores built on the pre-restore files —
+    # drop the caches so the next call rebuilds against what was just
+    # written. Same posture promotion takes.
+    try:
+        from ..replica.promotion import _clear_store_caches
+        _clear_store_caches()
+    except Exception as e:
+        logger.debug("store cache clear after restore (non-fatal): %s", e)
 
     # Counts for the report.
     mem = plaintext.get("databases/memories.json.enc")

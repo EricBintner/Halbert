@@ -109,19 +109,6 @@ def _config_dir() -> Path:
     return Path(get_config_dir())
 
 
-def _member_map() -> Dict[str, str]:
-    """Vault member name → its restored location kind, for the manifest
-    reader and the restore engine. Single source for the archive layout."""
-    return {
-        "identity/body.key.enc": "keystore",
-        "identity/did.txt": "keystore",
-        **{f"config/{n}.enc": "config" for n in _CONFIG_FILES},
-        **{f"databases/{n}.enc": "data" for n, _ in
-           (("memories.json", ""), ("conversations.db", ""), *_EXTRA_DBS)},
-        "model-manifest.json": "models",
-    }
-
-
 def create_backup(
     passphrase: str,
     export_path: Path,

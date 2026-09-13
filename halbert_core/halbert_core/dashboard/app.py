@@ -1430,7 +1430,16 @@ def create_app(enable_cors: bool = True) -> FastAPI:
             start_replica_push_loop(app)
         except Exception as e:
             logger.warning(f"Replica push loop not started (non-fatal): {e}")
-        
+
+        # The body's half: watch the canonical's health so the status
+        # surfaces can say "the mind is unreachable" after 3 strikes —
+        # the flag the replica fallback and the Warm Standby card read.
+        try:
+            from ..replica.liveness import start_liveness_probe
+            await start_liveness_probe(app)
+        except Exception as e:
+            logger.warning(f"Peer liveness probe not started (non-fatal): {e}")
+
         # Bootstrap system identity (if not already done)
         try:
             from ..knowledge import get_self_knowledge, bootstrap_identity
@@ -1924,6 +1933,13 @@ def create_app(enable_cors: bool = True) -> FastAPI:
                 await task
             except asyncio.CancelledError:
                 pass
+
+        # The body's liveness probe stops the same way.
+        try:
+            from ..replica.liveness import stop_liveness_probe
+            await stop_liveness_probe(app)
+        except Exception as e:
+            logger.warning(f"Failed to stop liveness probe (non-fatal): {e}")
 
         # B4: stop the MCP health monitor and disconnect its servers
         # (cancels the sweep + in-flight reconnects, reaps the client's

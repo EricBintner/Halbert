@@ -72,6 +72,7 @@ export function ReplicaStatus() {
 
   const meta = status.replica
   const age = formatAge(meta.created_at)
+  const unreachable = status.canonical_reachable === false
 
   return (
     <>
@@ -87,11 +88,19 @@ export function ReplicaStatus() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
-          <p className="text-sm text-muted-foreground">
-            Last synced {age} — {meta.memory_count.toLocaleString()} memories,{' '}
-            {meta.thread_count.toLocaleString()} threads
-            {meta.source_node_id ? ` from ${meta.source_node_id}` : ''}.
-          </p>
+          {unreachable ? (
+            <p className="text-sm">
+              The canonical host is unreachable — a local replica from{' '}
+              {age} ({meta.memory_count.toLocaleString()} memories,{' '}
+              {meta.thread_count.toLocaleString()} threads) is ready.
+            </p>
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              Last synced {age} — {meta.memory_count.toLocaleString()} memories,{' '}
+              {meta.thread_count.toLocaleString()} threads
+              {meta.source_node_id ? ` from ${meta.source_node_id}` : ''}.
+            </p>
+          )}
           {!status.is_valid && (
             <p className="text-sm text-destructive">
               The replica failed its integrity check — do not promote it.

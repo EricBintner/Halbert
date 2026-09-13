@@ -536,6 +536,8 @@ export interface ReplicaStatus {
   } | null
   is_valid: boolean
   can_promote: boolean
+  /** null when no liveness probe runs (canonical host / independent node). */
+  canonical_reachable: boolean | null
 }
 
 /** POST /api/replica/promote result. */

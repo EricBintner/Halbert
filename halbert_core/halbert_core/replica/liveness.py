@@ -123,3 +123,68 @@ class PeerLivenessProbe:
         except Exception as e:
             self.last_error = f"{type(e).__name__}: {e}"
             return False
+
+
+# ---------------------------------------------------------------------------
+# Lifecycle — the satellite's half of warm standby
+# ---------------------------------------------------------------------------
+
+#: The running probe, for the status surfaces. One per process.
+_current_probe: Optional[PeerLivenessProbe] = None
+
+
+def current_probe() -> Optional[PeerLivenessProbe]:
+    """The live probe if one is running — /api/replica/status reads this."""
+    return _current_probe
+
+
+def _body_peer_target() -> Optional[tuple]:
+    """(peer_origin_url, bearer_token) when this node is a body."""
+    try:
+        from ..integrations.cognition_wiring import (
+            _get_canonical_memory_url,
+            _get_canonical_thread_url,
+            _get_peer_token,
+        )
+        from urllib.parse import urlsplit
+        url = _get_canonical_thread_url() or _get_canonical_memory_url() or ""
+        if not url:
+            return None
+        token = _get_peer_token() or ""
+        parts = urlsplit(url)
+        return f"{parts.scheme}://{parts.netloc}", token
+    except Exception:
+        return None
+
+
+async def start_liveness_probe(app, interval_s: float = 30.0) -> Optional[PeerLivenessProbe]:
+    """Start the probe on a body node. Returns the probe or None.
+
+    Mirrors start_replica_push_loop: a node that is not a body gets no
+    probe — a canonical host does not watch itself, and an independent
+    node has no canonical to watch. The probe lives on
+    app.state.liveness_probe for shutdown, and is registered as the
+    module singleton for the status surfaces.
+    """
+    global _current_probe
+    target = _body_peer_target()
+    if target is None:
+        return None
+    url, token = target
+    probe = PeerLivenessProbe(url, token, interval_s=interval_s)
+    await probe.start()
+    app.state.liveness_probe = probe
+    _current_probe = probe
+    logger.info("Peer liveness probe started against %s (every %.0fs)", url, interval_s)
+    return probe
+
+
+async def stop_liveness_probe(app) -> None:
+    """Stop the running probe, if any."""
+    global _current_probe
+    probe = getattr(app.state, "liveness_probe", None) or _current_probe
+    if probe is None:
+        return
+    await probe.stop()
+    app.state.liveness_probe = None
+    _current_probe = None

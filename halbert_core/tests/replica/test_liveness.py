@@ -99,3 +99,58 @@ def test_probe_start_stop_clean():
         assert probe._task is None
 
     asyncio.run(go())
+
+
+class _FakeApp:
+    def __init__(self):
+        from types import SimpleNamespace
+        self.state = SimpleNamespace()
+
+
+class TestProbeLifecycle:
+    """The satellite's half of warm standby — started on a body, read
+    by the status surfaces, stopped at shutdown."""
+
+    def test_start_registers_probe_on_a_body(self, monkeypatch):
+        import halbert_core.replica.liveness as lv
+        import halbert_core.integrations.cognition_wiring as cw
+        monkeypatch.setattr(
+            cw, "_get_canonical_thread_url",
+            lambda: "http://canonical:8000/api/conversations")
+        monkeypatch.setattr(
+            cw, "_get_canonical_memory_url", lambda: "")
+        monkeypatch.setattr(cw, "_get_peer_token", lambda: "hbt_x")
+        monkeypatch.setattr(lv, "_current_probe", None)
+
+        app = _FakeApp()
+        probe = asyncio.run(lv.start_liveness_probe(app, interval_s=999))
+        try:
+            assert probe is not None
+            assert lv.current_probe() is probe
+            assert app.state.liveness_probe is probe
+            assert probe._peer_url == "http://canonical:8000"
+        finally:
+            asyncio.run(lv.stop_liveness_probe(app))
+        assert lv.current_probe() is None
+
+    def test_no_probe_on_a_canonical_or_independent_node(self, monkeypatch):
+        import halbert_core.replica.liveness as lv
+        import halbert_core.integrations.cognition_wiring as cw
+        monkeypatch.setattr(cw, "_get_canonical_thread_url", lambda: "")
+        monkeypatch.setattr(cw, "_get_canonical_memory_url", lambda: "")
+        app = _FakeApp()
+        assert asyncio.run(lv.start_liveness_probe(app)) is None
+
+    def test_probe_reads_memory_url_when_thread_url_absent(self, monkeypatch):
+        """A body may configure only the memory URL — the health endpoint
+        lives on the same origin either way."""
+        import halbert_core.replica.liveness as lv
+        import halbert_core.integrations.cognition_wiring as cw
+        monkeypatch.setattr(cw, "_get_canonical_thread_url", lambda: "")
+        monkeypatch.setattr(
+            cw, "_get_canonical_memory_url",
+            lambda: "http://canonical:8000/api/memory")
+        monkeypatch.setattr(cw, "_get_peer_token", lambda: "hbt_x")
+        url, token = lv._body_peer_target()
+        assert url == "http://canonical:8000"
+        assert token == "hbt_x"

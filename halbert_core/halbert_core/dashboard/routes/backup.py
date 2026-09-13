@@ -39,6 +39,10 @@ class RestoreRequest(BaseModel):
     passphrase: str = Field(..., min_length=1)
 
 
+class InspectRequest(BaseModel):
+    archive_path: str
+
+
 def _default_export_dir() -> Path:
     from ...utils.paths import data_dir
     return Path(data_dir()) / "backups"
@@ -65,6 +69,37 @@ async def backup_history(export_path: str = "") -> List[Dict[str, Any]]:
     from ...backup.vault import list_backups
     out = Path(export_path) if export_path else _default_export_dir()
     return [m.to_dict() for m in list_backups(out)]
+
+
+@router.post("/api/backup/inspect", dependencies=_ADMIN)
+async def backup_inspect(req: InspectRequest) -> Dict[str, Any]:
+    """Read an archive's manifest — the preview the OOBE restore shows
+    before the passphrase is asked for. The manifest is plaintext by
+    design; nothing secret is inside it."""
+    import tarfile
+    from ...backup.manifest import BackupManifest, ManifestError
+    archive = Path(req.archive_path)
+    if not archive.is_file():
+        raise HTTPException(status_code=404, detail="no such archive")
+    try:
+        with tarfile.open(archive, "r:*") as tar:
+            member = tar.extractfile("manifest.json")
+            if member is None:
+                raise HTTPException(status_code=400, detail="archive carries no manifest")
+            manifest = BackupManifest.from_json(member.read().decode())
+    except HTTPException:
+        raise
+    except (ManifestError, tarfile.TarError) as e:
+        raise HTTPException(status_code=400, detail=f"archive unreadable: {e}")
+    return {
+        "entity_name": manifest.entity_name,
+        "node_id": manifest.node_id,
+        "created_at": manifest.created_at,
+        "schema_version": manifest.schema_version,
+        "file_count": len(manifest.files),
+        "key_exported": manifest.key_exported,
+        "key_custody": manifest.key_custody,
+    }
 
 
 @router.post("/api/backup/restore", dependencies=_ADMIN)

@@ -24,6 +24,7 @@ function replicaStatus(overrides: Partial<ReplicaStatusData> = {}): ReplicaStatu
     has_replica: true,
     is_valid: true,
     can_promote: true,
+    canonical_reachable: true,
     replica: {
       source_node_id: 'halbert-mac',
       created_at: new Date(Date.now() - 2 * 3600_000).toISOString(),
@@ -72,6 +73,13 @@ describe('ReplicaStatus', () => {
     expect(screen.getByText(/2,847 memories/)).toBeInTheDocument()
     expect(screen.getByText(/156 threads/)).toBeInTheDocument()
     expect(screen.getByText(/halbert-mac/)).toBeInTheDocument()
+  })
+
+  it('shows the unreachable banner when the canonical is dark', async () => {
+    renderCard(replicaStatus({ canonical_reachable: false }))
+    expect(await screen.findByText(/canonical host is unreachable/)).toBeInTheDocument()
+    expect(screen.getByText(/local replica from 2 hours ago/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /promote/i })).toBeInTheDocument()
   })
 
   it('warns instead of offering promote when the replica fails integrity', async () => {

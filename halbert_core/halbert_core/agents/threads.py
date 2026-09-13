@@ -1374,7 +1374,7 @@ def get_thread_manager() -> ThreadManager:
                 # idle tick (close sweep). Fail-soft, never blocks a turn.
                 # Skip for PeerConversationStore — consolidation runs on the
                 # canonical host, not the satellite.
-                if not isinstance(store, _PeerConversationStoreType):
+                if not isinstance(store, _REMOTE_STORE_TYPES):
                     try:
                         from ..continuity.consolidation import Consolidator
                         from ..continuity.state_store import StateStore, default_state_db_path
@@ -1409,18 +1409,35 @@ def _create_conversation_store():
                 )
                 return SqliteConversationStore(_cs._default_db_path())
             logger.info("ThreadManager: using PeerConversationStore at %s", thread_url)
-            return PeerConversationStore(
+            peer = PeerConversationStore(
                 peer_url=thread_url,
                 bearer_token=token,
             )
+            # Step 1.6: the peer is tried first on every call; a body
+            # with a warm replica keeps answering reads when the
+            # canonical is down, and recovers on its own when it comes
+            # back. Writes still raise — a stale replica never accepts
+            # one.
+            try:
+                from ..replica.fallback import FallbackConversationStore
+                return FallbackConversationStore(peer)
+            except Exception as e:
+                logger.warning(
+                    "replica fallback unavailable, peer-only store: %s", e)
+                return peer
     except Exception as e:
         logger.warning(f"Failed to create PeerConversationStore (falling back to local): {e}")
 
     return SqliteConversationStore(_cs._default_db_path())
 
 
-# Type alias for isinstance check (avoids importing if not available)
+# Type alias for isinstance check (avoids importing if not available).
+# FallbackConversationStore wraps a peer store — it counts too, or a
+# body with a warm replica would wire the consolidator that belongs on
+# the canonical.
 try:
     from .peer_conversation_store import PeerConversationStore as _PeerConversationStoreType
+    from ..replica.fallback import FallbackConversationStore as _FallbackStoreType
+    _REMOTE_STORE_TYPES = (_PeerConversationStoreType, _FallbackStoreType)
 except ImportError:
-    _PeerConversationStoreType = type(None)  # never matches
+    _REMOTE_STORE_TYPES = (type(None),)  # never matches
