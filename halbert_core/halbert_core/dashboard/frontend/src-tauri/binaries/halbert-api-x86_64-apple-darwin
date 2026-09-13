@@ -51,8 +51,25 @@ fi
 export HALBERT_PORT="${HALBERT_PORT:-8000}"
 export HALBERT_HOST="${HALBERT_HOST:-127.0.0.1}"
 
+# On Apple Silicon the venv's Python is a universal2 binary. When the Tauri
+# shell plugin spawns this script, the child process can inherit the x86_64
+# slice (the Rosetta default for universal binaries under some conditions),
+# and the first compiled extension — pydantic_core — dies with
+# "incompatible architecture (have 'arm64', need 'x86_64')", which surfaces
+# as "FastAPI not installed." Forcing the arm64 slice fixes it. This matches
+# the `arch -arm64` prefix the test runner needs (see AGENTS.md).
+#
+# `uname -m` is no good here: it reports the *process* architecture, which is
+# x86_64 inside a Tauri-spawned shell. `sysctl hw.optional.arm64` reports the
+# *hardware* capability, which is 1 on Apple Silicon regardless of the
+# current slice.
+ARCH_PREFIX=""
+if [ "$(uname -s)" = "Darwin" ] && [ "$(sysctl -n hw.optional.arm64 2>/dev/null)" = "1" ]; then
+    ARCH_PREFIX="arch -arm64"
+fi
+
 # `exec` is load-bearing for shutdown: the Tauri shell kills the pid it
 # spawned, and with exec that pid *is* uvicorn.
 cd "$REPO_ROOT"
-exec "$PYTHON" -m uvicorn halbert_core.dashboard.app:app \
+exec $ARCH_PREFIX "$PYTHON" -m uvicorn halbert_core.dashboard.app:app \
     --host "$HALBERT_HOST" --port "$HALBERT_PORT" "$@"
