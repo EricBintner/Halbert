@@ -114,6 +114,16 @@ KNOWN_PEER_ROLES = frozenset({
 RESERVED_NODE_ID_PREFIXES = ("home:",)
 
 
+def _endpoint_netloc(url: str) -> str:
+    """Lowercased ``host[:port]`` of a peer URL, scheme-agnostic."""
+    text = str(url or "").strip().lower()
+    for scheme in ("peer://", "peers://", "http://", "https://"):
+        if text.startswith(scheme):
+            text = text[len(scheme):]
+            break
+    return text.split("/", 1)[0]
+
+
 def validate_node_id(node_id: str) -> str:
     """Refuse a peer node id in a reserved namespace. Returns it."""
     text = str(node_id or "").strip()
@@ -178,6 +188,9 @@ class PeerCredential:
     wol_mac: Optional[str] = None          # "AA:BB:CC:DD:EE:FF" — required if wol_enabled
     wol_broadcast: Optional[str] = None    # "192.168.1.255" — defaults to 255.255.255.255
     wol_timeout: int = 90                  # seconds to wait for peer to wake up
+    # TLS pinning (multi-node Task 1) — self-signed cert, fingerprint-pinned.
+    tls_enabled: bool = False              # True = speak HTTPS to this peer
+    tls_pin: Optional[str] = None          # "sha256:<hex>" of the peer's cert
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -199,6 +212,8 @@ class PeerCredential:
             wol_mac=d.get("wol_mac"),
             wol_broadcast=d.get("wol_broadcast"),
             wol_timeout=d.get("wol_timeout", 90),
+            tls_enabled=d.get("tls_enabled", False),
+            tls_pin=d.get("tls_pin"),
         )
 
     def is_compute_target(self) -> bool:
@@ -401,6 +416,8 @@ class PeersConfig:
         wol_mac: Optional[str] = None,
         wol_broadcast: Optional[str] = None,
         wol_timeout: int = 90,
+        tls_enabled: bool = False,
+        tls_pin: Optional[str] = None,
     ) -> PeerCredential:
         """Pair a new peer. Generates a credential with hashed token.
 
@@ -415,6 +432,9 @@ class PeersConfig:
             wol_mac: MAC address for WoL (required if wol_enabled).
             wol_broadcast: Broadcast address for WoL (defaults to
                 255.255.255.255 at send time if not set).
+            tls_enabled: If True, peer traffic goes over HTTPS pinned to
+                ``tls_pin`` (the peer's self-signed cert fingerprint).
+            tls_pin: ``sha256:<hex>`` fingerprint of the peer's TLS cert.
         """
         with self._lock:
             if node_id in self._peers:
@@ -451,6 +471,8 @@ class PeersConfig:
                 wol_mac=wol_mac,
                 wol_broadcast=wol_broadcast,
                 wol_timeout=wol_timeout,
+                tls_enabled=tls_enabled,
+                tls_pin=tls_pin,
             )
             self._peers[node_id] = cred
             self._save()
@@ -555,6 +577,53 @@ class PeersConfig:
             self._save()
             logger.info("Capabilities for peer %s: %s", node_id, peer.capabilities)
             return True
+
+    def set_tls_pin(self, node_id: str, pin: Optional[str]) -> bool:
+        """Set (or clear, ``pin=None``) a peer's TLS certificate pin.
+
+        Called when pairing delivers the peer's cert fingerprint, and on
+        re-pair after a cert rotation. Clearing drops the peer back to
+        plaintext HTTP — only the pairing flow should do that.
+        """
+        with self._lock:
+            peer = self._peers.get(node_id)
+            if peer is None:
+                return False
+            peer.tls_pin = pin
+            peer.tls_enabled = bool(pin)
+            self._save()
+            logger.info(
+                "TLS pin %s for peer %s", "set" if pin else "cleared", node_id
+            )
+            return True
+
+    def find_peer_by_endpoint(self, url: str) -> Optional[PeerCredential]:
+        """Best-effort match of a URL against stored peer endpoints.
+
+        Compares scheme-insensitive ``host[:port]`` — peers.json records
+        ``peer://``/``http(s)://`` endpoints while callers hold the URL
+        they actually dialed (``canonical_thread_url``, a saved compute
+        endpoint). Port is compared only when both sides carry one, so a
+        ``https://host:8001`` record still matches an ``http://host`` query.
+        """
+        target = _endpoint_netloc(url)
+        if not target:
+            return None
+        for peer in self._peers.values():
+            if peer.revoked or not peer.endpoint:
+                continue
+            if _endpoint_netloc(peer.endpoint) == target:
+                return peer
+        # Same-host fallback: the TLS port differs from the port callers
+        # dialed (pairing vs peer-TLS listener), so host alone is the
+        # second-chance match on a small LAN where one box = one peer.
+        host = target.split(":", 1)[0]
+        for peer in self._peers.values():
+            if peer.revoked or not peer.endpoint:
+                continue
+            if _endpoint_netloc(peer.endpoint).split(":", 1)[0] == host:
+                return peer
+        return None
 
     def update_last_seen(self, node_id: str) -> None:
         """Update last_seen timestamp for a peer (called on each authed request).

@@ -83,6 +83,10 @@ export interface PairRequest {
   role: string
   capabilities: string[]
   endpoint?: string
+  /** This node's TLS cert fingerprint, so the host can pin it for
+   * host→satellite calls (multi-node Task 1). Absent when the node has
+   * no cert — pairing still works, just over plaintext. */
+  tls_pin?: string
 }
 
 /** Pairing response — desktop → satellite (PIN pending). */
@@ -95,6 +99,12 @@ export interface PairResponse {
   status: 'pending'
   expires_in: number
   message: string
+  /** The host's TLS cert fingerprint — pin it, then send verify over
+   * HTTPS so the PIN and the issued token travel inside an authenticated
+   * channel. Null when the host has no TLS listener (plaintext stays). */
+  tls_pin?: string | null
+  /** The host's peer TLS listener port (typically 8001). */
+  tls_port?: number | null
 }
 
 /** A pairing waiting for approval on THIS machine. Local-admin only — the
@@ -121,6 +131,10 @@ export interface VerifyResponse {
   token: string
   status: 'paired'
   desktop_node_id: string
+  /** Host's TLS cert fingerprint + listener port — same advertisement as
+   * PairResponse so a verify sent over TLS already knows the pin. */
+  tls_pin?: string | null
+  tls_port?: number | null
 }
 
 /** MCP tool inspection request. */

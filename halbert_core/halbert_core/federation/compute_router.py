@@ -618,17 +618,31 @@ class ComputeRouter:
 
             return self._peer_online
 
-    def _http_health_probe(self) -> bool:
-        """Blocking single GET of the peer's health route (executor-safe)."""
+    def _peer_session(self):
+        """The transport for peer calls: fingerprint-pinned HTTPS when the
+        peer credential carries a cert pin (multi-node Task 1), plain HTTP
+        otherwise. Built per probe — a re-pair that rotates the cert takes
+        effect on the next call without restarting the router."""
+        if self.peers_config is not None and self.peer_endpoint:
+            cred = self.peers_config.find_peer_by_endpoint(self.peer_endpoint)
+            if cred and cred.tls_enabled and cred.tls_pin:
+                from .tls import make_pinned_session
+
+                return make_pinned_session(cred.tls_pin), "https://"
         import requests
 
+        return requests, "http://"
+
+    def _http_health_probe(self) -> bool:
+        """Blocking single GET of the peer's health route (executor-safe)."""
         from .compute_endpoint import COMPUTE_HEALTH_PATH
 
-        endpoint = self.peer_endpoint.replace("peer://", "http://", 1)
+        session, scheme = self._peer_session()
+        endpoint = self.peer_endpoint.replace("peer://", scheme, 1)
         url = endpoint.rstrip("/") + COMPUTE_HEALTH_PATH
         headers = {"Authorization": f"Bearer {self.peer_token}"} if self.peer_token else {}
         try:
-            resp = requests.get(url, headers=headers, timeout=1.5)
+            resp = session.get(url, headers=headers, timeout=1.5)
             return resp.status_code == 200
         except Exception:
             return False

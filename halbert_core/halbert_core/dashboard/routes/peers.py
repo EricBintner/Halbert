@@ -131,6 +131,7 @@ class PairRequest(BaseModel):
     wol_enabled: bool = Field(False, description="Enable Wake-on-LAN for this peer (LAN-only)")
     wol_mac: Optional[str] = Field(None, description="MAC address for WoL (required if wol_enabled)")
     wol_broadcast: Optional[str] = Field(None, description="Broadcast address for WoL (defaults to 255.255.255.255)")
+    tls_pin: Optional[str] = Field(None, description="SHA-256 fingerprint of the satellite's self-signed TLS cert — the host pins it for host→satellite calls")
 
 
 class PairResponse(BaseModel):
@@ -149,6 +150,8 @@ class PairResponse(BaseModel):
     message: str = (
         "Approve this pairing on the other machine, then enter the PIN it shows."
     )
+    tls_pin: Optional[str] = Field(None, description="This node's TLS cert fingerprint — pin it, then verify over HTTPS")
+    tls_port: Optional[int] = Field(None, description="This node's peer TLS listener port")
 
 
 class PendingPairingInfo(BaseModel):
@@ -161,6 +164,10 @@ class PendingPairingInfo(BaseModel):
     pin: str
     approved: bool
     expires_in: float
+    # The satellite's advertised cert fingerprint — the approve screen can
+    # show it so the operator compares it against the satellite's own
+    # display. Out-of-band comparison is what narrows the TOFU window.
+    tls_pin: Optional[str] = None
 
 
 class VerifyRequest(BaseModel):
@@ -175,6 +182,8 @@ class VerifyResponse(BaseModel):
     token: str = Field(..., description="Bearer token for future auth")
     status: str = "paired"
     desktop_node_id: str = Field(..., description="The Desktop's node ID")
+    tls_pin: Optional[str] = Field(None, description="This node's TLS cert fingerprint — pin it for all future calls")
+    tls_port: Optional[int] = Field(None, description="This node's peer TLS listener port")
 
 
 class PeerInfo(BaseModel):
@@ -260,6 +269,7 @@ async def request_pairing(req: PairRequest) -> PairResponse:
             "wol_enabled": req.wol_enabled,
             "wol_mac": req.wol_mac,
             "wol_broadcast": req.wol_broadcast,
+            "tls_pin": req.tls_pin,
         },
     )
     _pending_pairings[pending.request_id] = pending
@@ -268,7 +278,13 @@ async def request_pairing(req: PairRequest) -> PairResponse:
         "Pairing requested by %s (%s) — awaiting approval on this machine "
         "(request %s)", req.node_id, req.node_name, pending.request_id,
     )
-    return PairResponse(request_id=pending.request_id)
+    # Advertise this node's TLS pin so the satellite can switch to pinned
+    # HTTPS for the verify call (the PIN and the issued token then travel
+    # inside an authenticated channel, not over cleartext HTTP).
+    from ...federation.tls import peer_tls_advertisement
+
+    pin, port = peer_tls_advertisement()
+    return PairResponse(request_id=pending.request_id, tls_pin=pin, tls_port=port)
 
 
 @router.get(
@@ -294,6 +310,7 @@ async def list_pending_pairings() -> List[PendingPairingInfo]:
             pin=p.pin,
             approved=p.approved,
             expires_in=max(0.0, PAIRING_TTL_S - (now - p.created_at)),
+            tls_pin=p.fields.get("tls_pin"),
         )
         for p in _pending_pairings.values()
     ]
@@ -404,6 +421,8 @@ async def verify_pairing(req: VerifyRequest) -> VerifyResponse:
             wol_enabled=fields.get("wol_enabled", False),
             wol_mac=fields.get("wol_mac"),
             wol_broadcast=fields.get("wol_broadcast"),
+            tls_enabled=bool(fields.get("tls_pin")),
+            tls_pin=fields.get("tls_pin"),
         )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
@@ -413,9 +432,18 @@ async def verify_pairing(req: VerifyRequest) -> VerifyResponse:
     import socket
     desktop_node_id = os.environ.get("HALBERT_PERSONA_ID", "halbert") + "-" + socket.gethostname()
 
+    from ...federation.tls import peer_tls_advertisement
+
+    pin, port = peer_tls_advertisement()
+
     logger.info("Pairing confirmed: %s (%s)", fields["node_id"], fields["node_name"])
 
-    return VerifyResponse(token=raw_token, desktop_node_id=desktop_node_id)
+    return VerifyResponse(
+        token=raw_token,
+        desktop_node_id=desktop_node_id,
+        tls_pin=pin,
+        tls_port=port,
+    )
 
 
 @router.get("/api/peers/list", response_model=List[PeerInfo])

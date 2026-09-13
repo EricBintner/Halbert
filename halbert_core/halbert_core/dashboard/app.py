@@ -1417,7 +1417,18 @@ def create_app(enable_cors: bool = True) -> FastAPI:
             start_thread_tick_heartbeat(app)
         except Exception as e:
             logger.warning(f"Thread tick heartbeat not started (non-fatal): {e}")
-        
+
+        # Multi-node Task 1: the peer-facing TLS listener. Dedicated app,
+        # dedicated port — serving the full app a second time would re-run
+        # every startup hook and expose owner routes on the LAN. Disabled
+        # via HALBERT_PEER_TLS=0; a missing `cryptography` package or a
+        # bind failure logs and degrades to HTTP, it never blocks boot.
+        try:
+            from ..federation.tls import start_peer_tls_listener
+            await start_peer_tls_listener()
+        except Exception as e:
+            logger.warning(f"Peer TLS listener not started (non-fatal): {e}")
+
         # Bootstrap system identity (if not already done)
         try:
             from ..knowledge import get_self_knowledge, bootstrap_identity
@@ -1901,6 +1912,13 @@ def create_app(enable_cors: bool = True) -> FastAPI:
             await stop_thread_tick_heartbeat(app)
         except Exception as e:
             logger.warning(f"Failed to stop thread tick heartbeat: {e}")
+
+        # Multi-node Task 1: stop the peer TLS listener alongside it.
+        try:
+            from ..federation.tls import stop_peer_tls_listener
+            await stop_peer_tls_listener()
+        except Exception as e:
+            logger.warning(f"Failed to stop peer TLS listener: {e}")
 
         # B4: stop the MCP health monitor and disconnect its servers
         # (cancels the sweep + in-flight reconnects, reaps the client's

@@ -186,8 +186,18 @@ class PeerProvider(ModelProvider):
             timeout: HTTP timeout for inference requests (seconds).
                 Default 120s — LLM generation can take a while.
         """
-        # Convert peer:// to http://
-        self._endpoint = endpoint.replace("peer://", "http://", 1)
+        # TLS pinning (multi-node Task 1): when the peer credential carries
+        # a cert fingerprint, dial HTTPS pinned to it — the bearer token and
+        # every payload then ride an authenticated channel instead of
+        # cleartext HTTP. The pin resolves by peer_node_id first, endpoint
+        # host second.
+        self._endpoint_source = endpoint
+        pin = self._resolve_tls_pin(endpoint, peer_node_id)
+        self._session = self._build_session(pin)
+        scheme = "https://" if pin else "http://"
+        self._endpoint = endpoint.replace("peer://", scheme, 1)
+        if not self._endpoint.startswith("http"):
+            self._endpoint = f"{scheme}{self._endpoint}"
         self._peer_token = peer_token
         self._peer_node_id = peer_node_id
         self._peer_capabilities = peer_capabilities or []
@@ -198,9 +208,42 @@ class PeerProvider(ModelProvider):
         }
 
         logger.info(
-            "PeerProvider initialized: node=%s, endpoint=%s, caps=%s",
+            "PeerProvider initialized: node=%s, endpoint=%s, caps=%s, tls=%s",
             peer_node_id, self._endpoint, self._peer_capabilities,
+            "pinned" if pin else "off",
         )
+
+    def _resolve_tls_pin(self, endpoint: str, peer_node_id: str) -> Optional[str]:
+        """The peer's stored cert fingerprint, or None for plaintext.
+
+        Failures are non-fatal — an unreadable peers.json degrades to HTTP
+        rather than refusing compute.
+        """
+        try:
+            from ...federation.peer_middleware import get_peers_config
+
+            config = get_peers_config()
+            cred = config.get_peer(peer_node_id) if peer_node_id else None
+            if cred is None:
+                cred = config.find_peer_by_endpoint(endpoint)
+            if cred and cred.tls_enabled and cred.tls_pin:
+                return cred.tls_pin
+        except Exception as e:
+            logger.warning("peer TLS pin lookup failed (%s) — plaintext fallback", e)
+        return None
+
+    @staticmethod
+    def _build_session(pin: Optional[str]):
+        """Pinned session for TLS peers; None means "use requests directly" —
+        the module-level ``requests.get/post`` is also the seam tests mock."""
+        if pin:
+            from ...federation.tls import make_pinned_session
+
+            return make_pinned_session(pin)
+        return None
+
+    def _http(self):
+        return self._session or requests
 
     # ------------------------------------------------------------------
     # ModelProvider interface
@@ -220,7 +263,7 @@ class PeerProvider(ModelProvider):
         locally to fill the gap.
         """
         try:
-            response = requests.get(
+            response = self._http().get(
                 f"{self._endpoint}{COMPUTE_MODELS_PATH}",
                 headers=self._headers,
                 timeout=LIST_TIMEOUT_S,
@@ -296,7 +339,7 @@ class PeerProvider(ModelProvider):
             payload["tools"] = tools
 
         try:
-            response = requests.post(
+            response = self._http().post(
                 f"{self._endpoint}{COMPUTE_CHAT_PATH}",
                 json=payload,
                 headers=self._headers,
@@ -380,7 +423,7 @@ class PeerProvider(ModelProvider):
         route is the probe.)
         """
         try:
-            response = requests.get(
+            response = self._http().get(
                 f"{self._endpoint}{COMPUTE_MODELS_PATH}",
                 headers=self._headers,
                 timeout=HEALTH_TIMEOUT_S,

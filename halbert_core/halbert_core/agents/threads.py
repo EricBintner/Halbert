@@ -1408,10 +1408,28 @@ def _create_conversation_store():
                     "— falling back to local SqliteConversationStore"
                 )
                 return SqliteConversationStore(_cs._default_db_path())
+            # Multi-node Task 1: ride the pinned TLS channel when the
+            # canonical peer's credential carries a cert fingerprint and an
+            # https endpoint. Otherwise the configured URL stands (HTTP).
+            session = None
+            try:
+                from ..federation.peer_middleware import get_peers_config
+                from ..federation.tls import make_pinned_session
+
+                cred = get_peers_config().find_peer_by_endpoint(thread_url)
+                if cred and cred.tls_enabled and cred.tls_pin:
+                    if cred.endpoint and cred.endpoint.startswith("https://"):
+                        thread_url = cred.endpoint
+                    if thread_url.startswith("https://"):
+                        session = make_pinned_session(cred.tls_pin)
+                        logger.info("conversation mesh pinned to peer cert %s", cred.tls_pin)
+            except Exception as e:
+                logger.warning("peer TLS pin resolution failed (%s) — HTTP", e)
             logger.info("ThreadManager: using PeerConversationStore at %s", thread_url)
             return PeerConversationStore(
                 peer_url=thread_url,
                 bearer_token=token,
+                session=session,
             )
     except Exception as e:
         logger.warning(f"Failed to create PeerConversationStore (falling back to local): {e}")

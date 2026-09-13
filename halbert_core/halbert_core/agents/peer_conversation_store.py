@@ -116,6 +116,7 @@ class PeerConversationStore:
         peer_url: str,
         bearer_token: str = "",
         timeout: float = 15.0,
+        session=None,
     ):
         """
         Args:
@@ -125,10 +126,15 @@ class PeerConversationStore:
             timeout: Per-request HTTP timeout. Reads of one thread page stay
                 well under this; it exists so a wedged server cannot pin the
                 cognition tick forever.
+            session: Optional ``requests.Session`` — pass the fingerprint-
+                pinned session from ``federation.tls.make_pinned_session``
+                when the peer credential carries a TLS pin (multi-node
+                Task 1). None = the module-level ``requests`` calls (HTTP).
         """
         self.peer_url = peer_url.rstrip("/")
         self.bearer_token = bearer_token
         self.timeout = timeout
+        self._session = session
 
     # ------------------------------------------------------------------
     # Transport
@@ -158,9 +164,10 @@ class PeerConversationStore:
 
         url = f"{self.peer_url}/api/conversations/invoke"
         body = {"method": method, "args": args, "kwargs": kwargs}
+        http = self._session or requests
         try:
-            resp = requests.post(url, json=body, headers=self._headers,
-                                 timeout=self.timeout)
+            resp = http.post(url, json=body, headers=self._headers,
+                             timeout=self.timeout)
         except requests.ConnectionError as e:
             raise PeerConversationUnavailable(
                 f"Cannot reach peer conversation store at {url}: {e}"
@@ -200,8 +207,9 @@ class PeerConversationStore:
         import requests
 
         url = f"{self.peer_url}/api/conversations/health"
+        http = self._session or requests
         try:
-            resp = requests.get(url, headers=self._headers, timeout=self.timeout)
+            resp = http.get(url, headers=self._headers, timeout=self.timeout)
             if resp.status_code != 200:
                 return {"healthy": False, "connected": False}
             flags = resp.json()
