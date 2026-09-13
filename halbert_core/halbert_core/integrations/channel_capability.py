@@ -167,3 +167,46 @@ class HalbertChannelCapability:
     def set_audio_pipeline(self, pipeline: Optional[object]) -> None:
         """Update the audio pipeline reference (e.g. after start/stop)."""
         self._audio_pipeline = pipeline
+
+    # ------------------------------------------------------------------
+    # Hardware capability reporting (handoff: ChannelCapability extensions)
+    # ------------------------------------------------------------------
+
+    def hardware_tier(self) -> int:
+        """Coarse hardware classification (1=workstation, 2=desktop,
+        3=low-power, 4=mobile). Probed lazily and cached.
+        """
+        from ..audio.hardware_detect import detect_hardware
+        return detect_hardware().tier
+
+    def execution_providers(self) -> tuple:
+        """Ordered list of available ONNX Runtime providers, best first.
+        Probed lazily and cached.
+        """
+        from ..audio.hardware_detect import detect_hardware
+        return detect_hardware().providers
+
+    def output_sink_count(self) -> int:
+        """Number of distinct audio output sinks available.
+
+        1 (local speaker) plus 1 per connected Wyoming satellite.
+        """
+        count = 1 if self.has_speaker() else 0
+        if self._wyoming_active:
+            count += 1
+        return count
+
+    def remote_streaming_support(self) -> bool:
+        """Whether this channel can stream audio to/from a remote sink.
+
+        True when a Wyoming satellite is connected (the satellite can
+        receive synthesized PCM over the Wyoming protocol).
+        """
+        return self._wyoming_active
+
+    def sink_per_ingress(self) -> bool:
+        """Whether audio output can be routed independently per ingress
+        device. Defaults to False — Tauri/WebAudio sink routing is
+        unproven. Reported as a capability/request, not a guarantee.
+        """
+        return False

@@ -210,7 +210,31 @@ class KokoroTTS:
 
     Lazy-imports ``sherpa_onnx`` on first use. Re-chunks long sentences
     to stay within Kokoro's ~128-phoneme / 5-second synthesis limit.
+
+    Voice style selection: Kokoro packs multiple voices in
+    ``voices.bin`` (11 in v0_19). The ``speaker_id`` selects one.
+    A ``style_map`` can map ``cadence_style`` labels (from
+    ``ProsodyHints``) to speaker IDs, so a persona's "calm" voice
+    and "urgent" voice can be different packs.
     """
+
+    # Default voice style map for kokoro-en-v0_19 (11 voices).
+    # These are heuristic mappings — the actual voice character
+    # should be audited and tuned per deployment.
+    DEFAULT_STYLE_MAP: dict = {
+        "calm": 0,       # af_heart — warm, neutral
+        "neutral": 0,
+        "urgent": 1,     # different pack for urgency
+        "playful": 2,
+        "measured": 0,
+        "intimate": 4,
+        "teasing": 5,
+        "contemplative": 6,
+        "breathy": 7,
+        "oratorical": 8,
+        "dialectic": 8,
+        "aphoristic": 9,
+    }
 
     def __init__(
         self,
@@ -222,6 +246,7 @@ class KokoroTTS:
         num_threads: int = 2,
         speed: float = 1.0,
         provider: str = "cpu",
+        style_map: Optional[dict] = None,
     ):
         self._voice_model = voice_model
         self._voices = voices
@@ -231,6 +256,7 @@ class KokoroTTS:
         self._num_threads = num_threads
         self._speed = speed
         self._provider = provider
+        self._style_map = style_map or dict(self.DEFAULT_STYLE_MAP)
         self._tts = None
         self._initialized = False
 
@@ -375,3 +401,22 @@ class KokoroTTS:
         """The output sample rate of the loaded voice model."""
         self._ensure_initialized()
         return getattr(self, "_sample_rate", None) or SAMPLE_RATE
+
+    def resolve_style(self, cadence_style: Optional[str]) -> Optional[int]:
+        """Map a ``cadence_style`` label to a Kokoro speaker ID.
+
+        Returns None when the style is unknown or None — the caller
+        keeps the current ``speaker_id``. When the mapped ID exceeds
+        the available voice count, falls back to the default.
+        """
+        if not cadence_style:
+            return None
+        sid = self._style_map.get(cadence_style)
+        if sid is None:
+            return None
+        # Clamp to available voices.
+        if self._tts is not None and hasattr(self._tts, "num_speakers"):
+            max_sid = int(self._tts.num_speakers) - 1
+            if sid > max_sid:
+                return None
+        return sid

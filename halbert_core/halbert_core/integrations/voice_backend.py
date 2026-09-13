@@ -119,6 +119,12 @@ class HalbertVoiceBackend:
                 tts._speaker_id = int(voice_id)
             except (ValueError, TypeError):
                 logger.debug(f"Voice id '{voice_id}' is not a numeric Kokoro sid; ignoring")
+        elif cadence_style and hasattr(tts, "resolve_style"):
+            # Map cadence_style to a Kokoro voice pack.
+            style_sid = tts.resolve_style(cadence_style)
+            if style_sid is not None:
+                tts._speaker_id = style_sid
+                logger.debug(f"cadence_style='{cadence_style}' -> sid={style_sid}")
 
         # Prosody fields not yet mapped by the consumer; log for tuning.
         if pitch_offset:
