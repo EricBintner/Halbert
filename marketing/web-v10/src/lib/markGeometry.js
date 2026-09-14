@@ -198,10 +198,35 @@ export function requiredScale(normal, clearance, aspect, margin = 0.12) {
   return (512 * extent) / (clearance * (1 - margin));
 }
 
-/** Scale at which the whole mark occupies `fraction` of the shorter viewport side. */
+/**
+ * Scale at which the whole mark occupies `fraction` of the shorter viewport
+ * side.
+ *
+ * The full-mark stop also carries a zoom multiplier (portrait doubles it so
+ * the mark spans most of a phone's width). maxSpanFor guards that enlarged
+ * mark against the frame HEIGHT: whatever the width fraction asks for, the
+ * mark never claims more than `heightBudget` of the viewport height, so the
+ * content bands above and below keep their room on square-ish frames too.
+ */
 export function fitScale(aspect, fraction = 0.55) {
   const diameter = 2 * (MARK.outerR + MARK.halfStroke);
   return (1024 * fraction * Math.min(1, aspect)) / diameter;
+}
+
+/**
+ * Largest full-mark zoom multiplier that keeps the mark's screen height
+ * within `heightBudget` of the frame. viewBoxFor sizes the view by height,
+ * so the mark's height fraction of the frame per unit zoom is
+ * (diameter · fitScale / 1024) — fitScale shrinks with min(1, aspect), so
+ * a narrow phone's mark is height-small at the same zoom (headroom for the
+ * full ×2), while a square frame's is height-large and must be clamped to
+ * protect the content bands. Landscape is unclamped (44% fits by design).
+ */
+export function maxSpanFor(aspect, heightBudget = 0.55) {
+  if (aspect >= 1) return Infinity;
+  const diameter = 2 * (MARK.outerR + MARK.halfStroke);
+  const heightPerZoom = (diameter * fitScale(aspect, 0.44)) / 1024;
+  return heightBudget / heightPerZoom;
 }
 
 /** ViewBox for a camera pose in a viewport of the given aspect ratio. */

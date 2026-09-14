@@ -29,8 +29,9 @@
     {
       "name": "marketing-web-v10",
       "runtimeExecutable": "bash",
-      "runtimeArgs": ["-c", "cd /Volumes/4TB-BAD/Halbert/marketing/web-v10 && npx vite --port 5188 --strictPort"],
-      "port": 5188
+      "runtimeArgs": ["-c", "cd /Volumes/4TB-BAD/Halbert/marketing/web-v10 && npx vite --port $PORT --strictPort"],
+      "port": 5188,
+      "autoPort": true
     }
   ]
 }

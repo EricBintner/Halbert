@@ -1,4 +1,5 @@
 import React from 'react';
+import { maxSpanFor } from '../lib/markGeometry.js';
 
 /**
  * LayoutStage — places content into the solid colour fields the camera has
@@ -102,10 +103,17 @@ function CapLayout({ content }) {
   );
 }
 
-function FullLayout({ content, portrait }) {
-  // matches fitScale(aspect, 0.44) times the stop's zoom multiplier: the
-  // mark spans 44% (landscape) / 88% (portrait) of the shorter viewport side
-  const markSpan = portrait ? '88vmin' : '44vmin';
+function FullLayout({ content, portrait, viewport }) {
+  // matches fitScale(aspect, 0.44) times the stop's clamped zoom: 44% of
+  // the shorter side in landscape; portrait's ×2 capped so the enlarged
+  // mark never claims more than maxSpanFor's height budget — the spacer
+  // mirrors the same clamp the camera engine applies to the mark itself.
+  let markSpan = '44vmin';
+  if (portrait) {
+    const aspect = viewport.width / viewport.height;
+    const span = Math.min(2.0, maxSpanFor(aspect));
+    markSpan = `${(44 * Math.min(1, aspect) * span).toFixed(1)}vmin`;
+  }
   return (
     <div className="absolute inset-0 grid grid-rows-[1fr_auto_1fr] pt-14 pb-14">
       <Slot
@@ -182,7 +190,7 @@ export function LayoutStage({ camera, stops, content, viewport }) {
             data-stop={stop.id}
             data-layout={layout.kind}
           >
-            <Layout layout={layout} content={slots} portrait={portrait} />
+            <Layout layout={layout} content={slots} portrait={portrait} viewport={viewport} />
           </div>
         );
       })}

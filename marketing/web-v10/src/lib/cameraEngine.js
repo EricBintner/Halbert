@@ -23,6 +23,7 @@ import {
   edgeU,
   fitScale,
   lerp,
+  maxSpanFor,
   requiredScale,
   sameEdge,
 } from './markGeometry.js';
@@ -98,10 +99,14 @@ export function stopPose(rawStop, aspect) {
   const zoom = stop.zoom ?? 1;
 
   if (at.full) {
+    // Portrait stops may raise the zoom so the mark spans most of a phone's
+    // width; clamp it so the enlarged mark still leaves the above/below
+    // bands their room on square-ish frames (see maxSpanFor).
+    const span = Math.min(zoom, maxSpanFor(aspect));
     return {
       cx: MARK.cx,
       cy: MARK.cy,
-      scale: stop.scale ?? fitScale(aspect, 0.44) * zoom,
+      scale: stop.scale ?? fitScale(aspect, 0.44) * span,
       normal: { x: 0, y: 0 },
       layout: { kind: 'full', strokeSide: 'none', angle: 0 },
     };
