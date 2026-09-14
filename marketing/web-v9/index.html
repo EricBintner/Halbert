@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en" class="bg-[#F7F4EE] text-[#1C1917]">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Halbert — I know what’s wrong with me.</title>
+    <meta name="description" content="Halbert is 100% local host intelligence: it reads its own sensors and logs, remembers why you changed things, and tells you first. Linux today, macOS in beta." />
+
+    <!-- Self-hosted brand typefaces. Halbert is local-first; fetching faces from
+         a CDN at runtime contradicts that and fails outright in the packaged
+         app. Synced from /shared-tokens/fonts by scripts/sync_fonts.py. -->
+    <link rel="preload" href="/fonts/files/space-grotesk-latin-normal.woff2" as="font" type="font/woff2" crossorigin>
+    <link rel="preload" href="/fonts/files/jetbrains-mono-latin-normal.woff2" as="font" type="font/woff2" crossorigin>
+    <link rel="stylesheet" href="/fonts/fonts.css">
+  </head>
+  <body class="antialiased selection:bg-[#D34E24] selection:text-[#FFF7ED] min-h-screen bg-[#F7F4EE] text-[#1C1917] overflow-x-hidden">
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>
