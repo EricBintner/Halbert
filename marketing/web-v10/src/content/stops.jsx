@@ -202,8 +202,8 @@ export const STOP_CONTENT = {
         <Kicker>// Distributed architecture</Kicker>
         <Headline>Independent nodes. Shared&nbsp;intelligence.</Headline>
         <Body>
-          Run local models on your desktop, monitor system vitals from your terminal, and keep your decision history
-          synchronized everywhere. A host intelligence that scales across your own hardware.
+          I don’t live in a single box. A quiet server in your closet can offload heavy reasoning to your desktop GPU,
+          coordinate tasks across paired peers, and keep one continuous memory wherever you sit down.
         </Body>
       </>
     ),
