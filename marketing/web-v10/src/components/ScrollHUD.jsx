@@ -17,7 +17,7 @@ export function ScrollHUD({ currentStop, onSelectStop, scrollProgress }) {
                 isActive ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
               }`}
             >
-              {stop.name}
+              {stop.name.replace(/^\d+\s*\/\s*/, '')}
             </span>
             <span
               className={`w-2.5 h-2.5 rounded-full border border-current transition-transform ${

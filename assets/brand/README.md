@@ -12,8 +12,7 @@ The Halbert mark is engineered into four named optical densities to preserve leg
 |---|---|---|---|---|---|---|
 | **Display** | 100% (10 paths) | 1 Spine + 9 U-curves | 48.0px | 26.67px | `>= 96px` | Marketing hero, splash screen, print, banners |
 | **Medium** | 60% (6 paths) | 1 Spine + 5 U-curves | 86.4px | 48.00px | `32px - 96px` | Web & App navigation headers, cards, buttons |
-| **Compact** | 40% (4 paths) | 1 Spine + 3 U-curves | 144.0px | 80.00px | `24px - 32px` | Sidebar navigation, secondary controls |
-| **Small** | 30% (3 paths) | 1 Spine + 2 U-curves | 216.0px | 116.00px | `16px - 24px` | Browser favicons, OS status bar, micro-icons |
+| **Compact / Small** | 40% (4 paths) | 1 Spine + 3 U-curves | 144.0px | 80.00px | `<= 32px` | Browser favicons, OS status bar, micro-icons, secondary controls (3-line tier retired) |
 
 In addition, three intermediate numeric tiers exist as optical-density candidates. They are not part of the `auto`/named `density` scale — they're reached only via the explicit `lines` prop (e.g. `<HalbertMark lines={7} />`) — and ship as vector assets under the `{N}lines` naming convention below:
 
@@ -28,7 +27,7 @@ In addition, three intermediate numeric tiers exist as optical-density candidate
 ## 2. Palette & Semantic Colorways
 
 - **Signature Accent**: Olivetti Vermilion (`#D34E24`)
-- **Canvas**: Warm Archival Paper (`#F7F5F0`)
+- **Canvas**: Warm Archival Paper (`#F7F5F0` / `#F7F4EE`)
 - **Carbon Ink**: Deep Charcoal (`#1A1918`)
 - **Secondary Ink**: Graphite (`#5E5B56`)
 
@@ -46,11 +45,11 @@ Each numeric candidate tier (`{N}` = `5` / `7` / `8`) follows the same colorway 
 
 ## 3. Favicon Assets
 
-- `favicon.svg` — Vector favicon optimized using the Small 3-track tier with rounded canvas tile
+- `favicon.svg` — Vector favicon using the unified 4-line Compact mark on rounded warm canvas tile (`rx=192`)
 - `favicon-16x16.png` — 16x16 raster favicon
 - `favicon-32x32.png` — 32x32 standard retina favicon
 - `apple-touch-icon.png` — 180x180 iOS / mobile touch icon
-- `favicon.ico` — Multi-resolution ICO container (16x16 + 32x32)
+- `favicon.ico` — Multi-resolution ICO container (16x16 + 32x32 + 48x48)
 
 ---
 

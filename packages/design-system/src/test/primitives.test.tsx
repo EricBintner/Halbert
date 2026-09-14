@@ -214,6 +214,7 @@ describe('HalbertMark', () => {
     const { container } = render(<HalbertMark size={16} />)
     const svg = container.querySelector('svg')
     expect(svg).toHaveClass('hb-mark--small')
+    expect(svg).toHaveClass('hb-mark--4lines')
   })
 
   it('automatically scales density to display for sizes > 64', () => {

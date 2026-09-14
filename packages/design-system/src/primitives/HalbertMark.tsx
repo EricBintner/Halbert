@@ -170,11 +170,11 @@ function resolveLineCount(density: HalbertMarkDensity, lines?: number, size?: nu
       return 4
     case '3':
     case 'small':
-      return 3
+      return 4
     case 'auto':
     default:
       if (typeof size === 'number') {
-        if (size <= 24) return 3
+        if (size <= 24) return 4
         if (size <= 64) return 6
         return 10
       }
@@ -242,7 +242,7 @@ export const HalbertMark = React.forwardRef<SVGSVGElement, HalbertMarkProps>(
           lineCount === 10 && 'hb-mark--display',
           lineCount === 6 && 'hb-mark--medium',
           lineCount === 4 && 'hb-mark--compact',
-          lineCount === 3 && 'hb-mark--small',
+          (lineCount === 4 || lineCount === 3) && 'hb-mark--small',
           className,
         )}
         style={{

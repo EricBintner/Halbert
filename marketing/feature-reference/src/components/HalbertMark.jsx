@@ -22,9 +22,10 @@ const PATHS_6 = [
   'M 80.00 512.00 A 432.00 432.00 0 0 0 944.00 512.00',
 ].join(' ');
 
-const PATHS_3 = [
+const PATHS_4 = [
   'M 512.00 80.00 V 512.00',
-  'M 296.00 137.94 V 512.00 A 216.00 216.00 0 0 0 728.00 512.00 V 137.94',
+  'M 368.00 104.71 V 512.00 A 144.00 144.00 0 0 0 656.00 512.00 V 104.71',
+  'M 224.00 190.01 V 512.00 A 288.00 288.00 0 0 0 800.00 512.00 V 190.01',
   'M 80.00 512.00 A 432.00 432.00 0 0 0 944.00 512.00',
 ].join(' ');
 
@@ -39,9 +40,9 @@ export function HalbertMark({
   let paths = PATHS_6;
   let strokeWidth = 48.0;
 
-  if (density === 'small' || size <= 20) {
-    paths = PATHS_3;
-    strokeWidth = 116.0;
+  if (density === 'small' || density === 'compact' || size <= 20) {
+    paths = PATHS_4;
+    strokeWidth = 80.01;
   } else if (density === 'display' || size >= 64) {
     paths = PATHS_10;
     strokeWidth = 26.67;

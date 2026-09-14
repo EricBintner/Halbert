@@ -97,10 +97,21 @@ export function App() {
           <HalbertMark size={22} density="medium" color="currentColor" />
           <span className="font-bold tracking-wider">HALBERT</span>
         </div>
-        <div className="hidden md:flex items-center space-x-4 opacity-80">
-          <span>STOP {String(camera.stopIndex + 1).padStart(2, '0')} / {String(STOPS.length).padStart(2, '0')} · {camera.layout.kind.toUpperCase()}</span>
-          <span>ZOOM {Math.round(camera.scale * 100)}%</span>
-          <span>[D] RETICLE</span>
+        <div
+          className="hidden md:flex items-center space-x-4 pointer-events-auto"
+          data-testid="header-right"
+          data-stop-index={camera.stopIndex}
+          data-stop-id={STOPS[camera.stopIndex]?.id}
+          data-zoom={Math.round(camera.scale * 100)}
+        >
+          <span></span>
+          {(reticle || (typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('debug'))) && (
+            <div className="flex items-center space-x-4 opacity-80">
+              <span>STOP {String(camera.stopIndex + 1).padStart(2, '0')} / {String(STOPS.length).padStart(2, '0')} · {camera.layout.kind.toUpperCase()}</span>
+              <span>ZOOM {Math.round(camera.scale * 100)}%</span>
+              <span>[D] RETICLE</span>
+            </div>
+          )}
         </div>
       </header>
 

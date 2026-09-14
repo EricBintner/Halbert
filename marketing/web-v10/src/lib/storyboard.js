@@ -34,7 +34,7 @@ const RIDE = { lane: 2, side: 'inner' };
 export const STOPS = [
   {
     id: 'open',
-    name: '01 / Open',
+    name: 'Awareness',
     at: { edge: RIDE, leg: 'left', y: 330 },
     dwell: 0.55,
     // landscape — vertical split: stroke LEFT, canvas RIGHT
@@ -47,7 +47,7 @@ export const STOPS = [
   },
   {
     id: 'apex',
-    name: '02 / Apex',
+    name: 'Vitals',
     at: { edge: RIDE, angle: 90 },
     via: 'follow',
     dwell: 0.6,
@@ -56,7 +56,7 @@ export const STOPS = [
   },
   {
     id: 'diagonal',
-    name: '03 / Diagonal',
+    name: 'Local',
     at: { edge: RIDE, angle: 135 },
     via: 'follow',
     travel: 0.8,
@@ -65,7 +65,7 @@ export const STOPS = [
   },
   {
     id: 'rise',
-    name: '04 / Rise',
+    name: 'Rationale',
     at: { edge: RIDE, leg: 'right', y: 330 },
     via: 'follow',
     travel: 0.8,
@@ -82,7 +82,7 @@ export const STOPS = [
   },
   {
     id: 'hop',
-    name: '05 / Lane hop',
+    name: 'Knowledge',
     at: { edge: { lane: 5, side: 'outer' }, leg: 'right', y: 330 },
     via: 'fly',
     dip: 0.6,
@@ -97,7 +97,7 @@ export const STOPS = [
   },
   {
     id: 'cap',
-    name: '06 / Cap',
+    name: 'The Machine',
     at: { cap: 'spine' },
     via: 'fly',
     dip: 0.25,
@@ -113,7 +113,7 @@ export const STOPS = [
   },
   {
     id: 'reveal',
-    name: '07 / Reveal',
+    name: 'Halbert',
     at: { full: true },
     via: 'fly',
     travel: 1.3,
