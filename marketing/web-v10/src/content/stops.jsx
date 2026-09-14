@@ -154,7 +154,7 @@ export const STOP_CONTENT = {
     stroke: (
       <>
         <Kicker>// Grounded, not guessed</Kicker>
-        <Headline>Over 20,000 system references, indexed locally.</Headline>
+        <Headline>I know over 20,000 system references and docs.</Headline>
         <Body>
           Man pages, the Arch Wiki, Homebrew formulae, TLDR pages — indexed on this disk and searched before I answer.
           No invented flags. When I cite a source, you can open it.
