@@ -173,7 +173,7 @@ export const STOP_CONTENT = {
     canvas: (
       <>
         <Kicker>// Distributed architecture</Kicker>
-        <Headline>Independent nodes. Shared intelligence.</Headline>
+        <Headline>Independent nodes. Shared&nbsp;intelligence.</Headline>
         <Body>
           Run local models on your desktop, monitor system vitals from your terminal, and keep your decision history
           synchronized everywhere. A host intelligence that scales across your own hardware.
@@ -182,7 +182,7 @@ export const STOP_CONTENT = {
     ),
     stroke: (
       <>
-        <div className="font-display italic text-[clamp(1.25rem,2.4vw,2.25rem)]">“Your hardware, working in concert.”</div>
+        <div className="font-display italic text-[clamp(1.25rem,2.4vw,2.25rem)]">“Your machines, unified.”</div>
         <Kicker>Local models · Peer routing · Complete control</Kicker>
       </>
     ),
