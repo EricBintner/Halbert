@@ -90,7 +90,7 @@ export const STOP_CONTENT = {
     ),
     stroke: (
       <>
-        <Kicker>Meet Halbert</Kicker>
+        <Kicker>// MEET HALBERT</Kicker>
         <IntroOverviewPlate />
       </>
     ),
@@ -214,7 +214,7 @@ export const STOP_CONTENT = {
   reveal: {
     above: (
       <>
-        <Kicker>// GET HALBERT.</Kicker>
+        <Kicker>// MEET HALBERT.</Kicker>
         <Headline size="md">Hi, I’m your computer.</Headline>
       </>
     ),
