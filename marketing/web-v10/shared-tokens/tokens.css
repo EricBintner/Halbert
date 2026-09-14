@@ -1,0 +1,21 @@
+/*
+ * Halbert marketing (web-v7) — token entry point
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ * Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
+ *
+ * This file is NOT the source of truth. The canonical dictionary lives at
+ * /shared-tokens/tokens.css and is verified by scripts/check_contrast.py.
+ * This shim exists so the site keeps a stable local import path while the
+ * values come from one place. Do not add palette values here.
+ */
+
+@import "../../../shared-tokens/tailwind-v4.css";
+
+/*
+ * Site-local synonyms for the vector-parallax system, where the accent is
+ * literally an SVG stroke. These are aliases, never independent values.
+ */
+:root {
+  --color-stroke:         var(--color-accent);
+  --color-ink-on-stroke:  var(--color-ink-on-accent);
+}
