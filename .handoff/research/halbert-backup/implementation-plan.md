@@ -520,9 +520,15 @@ mount_api(replica.router, tags=["replica"])
 // {
 //   url: canonical_host_url,
 //   request_id: pending.request_id,
-//   pin: pending.pin,
 //   entity: entity_name,
 // }
+//
+// NO PIN. The PIN is the out-of-band secret of the whole handshake —
+// it travels "through the person doing the pairing" (peers.py), not
+// through a photographable surface. A QR carrying it converts
+// physical presence into line of sight (security review 2026-09-13,
+// Q8; companion-frontend-handoff §7.3 is authoritative on this and
+// this step now matches it).
 //
 // The QR is generated client-side from the pending pairing data
 // already fetched by DevicesTab. No new backend endpoint.
@@ -534,7 +540,7 @@ mount_api(replica.router, tags=["replica"])
 **Tests**:
 - `test_renders_qr_code_from_pairing_data`
 - `test_shows_text_fallback_below_qr`
-- `test_qr_encodes_url_request_id_pin_entity`
+- `test_qr_encodes_url_request_id_entity_and_no_pin`
 
 **Merge gate**: `npm test --workspace halbert-dashboard` + `npm run typecheck`
 
@@ -678,7 +684,9 @@ def create_backup(passphrase: str, export_path: Path) -> Path:
        - conversations.db (sqlite backup — reuse replica/snapshot.py)
        - state_ledger.db, timeline.db, findings.db (sqlite backup — same engine)
     3. Derive master key from passphrase (PBKDF2)
-    4. Encrypt each file with per-file keys wrapped by master key
+    4. Encrypt each file with the master key, per-file random nonce
+       (Step 2.2's shape. Key-wrapping buys per-file revocation nobody
+       uses in a ~10-member archive — security review 2026-09-13, Q6.4)
     5. Write model-manifest.json (plaintext: model slots → URLs + hashes)
     6. Bundle into tar archive with manifest.json
     7. Write to export_path (atomic: temp file + rename)

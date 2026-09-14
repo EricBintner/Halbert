@@ -373,3 +373,53 @@ assert owner.post(f"/api/peers/pending/{rid}/approve").status_code == 200
 ```
 
 The pairing *handshake itself* is sound — approve-then-verify, PIN not returned to the requester, three-attempt/60-second window, per-request UUID keys; `tests/test_peer_pairing_security.py` proves all of it. What production breaks is not the handshake but the **front door it stands behind**. Fix the mounts, and the request's original mental model becomes true; until then, every plan document built on it is describing a system that does not run.
+
+---
+
+## Remediation addendum — 2026-09-13 (later the same day)
+
+**Status: Step 1.0 has landed on main, plus more of the response than Step 1.0 called for.** The probe above now passes end to end. What landed, verified by re-running the probe against `create_app()`:
+
+| Finding | State | Where |
+|---|---|---|
+| F-A — peers/conversations behind the owner-only door | **Fixed** | `SELF_AUTHENTICATING` gains `"peers"`/`"conversations"`; every peers route states its guard; `pair`/`verify` are the two census-listed open routes (PIN + local-admin approval are the boundary, SE-16) |
+| F-A trap — approvals relying on mount-level guard only | **Fixed** | every approvals route carries explicit `require_owner` (reads) / `require_trust_anchor` (decisions) |
+| F-B — the phone's only working credential would be the owner token | **Closed by F-A** | the phone pairs with `role: trust_anchor` and uses its own revocable peer token |
+| F-C — approval ids reach path concatenation unvalidated | **Fixed** | `validate_approval_id` at the engine's storage boundary; routes answer hostile ids 400; `InvalidApprovalId` |
+| F-E — any peer can retarget any peer's WoL | **Fixed** | `require_local_or_self_peer` on WoL and revocation (the R10-F5 predicate, lifted into a dependency) |
+| Q9.1 — WS door rejects peer tokens | **Fixed, then scoped** | peer tokens admit on the two audio sockets only; `/ws` and the PTY bridge stay owner-only; `allow_peer` defaults to False (a new WS handler is owner-only by omission) |
+| Q9.2 — audio stream loses peer context | **Fixed** | peer-authenticated sockets stamp their source; the ingress labels a paired device vs a room mic |
+| Q1/Q2 — `require_trust_anchor` itself | **Landed, ahead of this review's schedule** | owner/local/trust_anchor doors on pairing approval + staged-command decisions, with the Q1.1 carve-out (a trust_anchor cannot approve a trust_anchor pairing) and PIN redaction for phone callers on the pending list |
+| Role vocabulary | **Fixed** | `KNOWN_PEER_ROLES` with the same warn-not-reject forward-compat rule as capabilities (response item 7) |
+| Census blind spot | **Fixed** | include-time tags now propagate to leaf routes (they never had — the tag skip was dead code); guards are checked *before* the tag exemption |
+| Production-mount test | **Added** | `tests/test_production_mount_auth.py` drives the real `create_app()` with real client addresses: anon pair 200, peer token on peers/list + conversations/health 200, peer token still 401 on owner routes, per-peer controls per-peer, WS scope |
+
+**The probe, re-run after remediation (all previously-failing rows):**
+
+```
+1. ANON  POST /api/peers/pair          -> 200   (was 401)
+2. PEER  GET  /api/conversations/health -> 200  (was 401)
+3. PEER  GET  /api/peers/list          -> 200   (was 401)
+4. PEER  POST /api/compute/v1/chat     -> 503   (auth passed; no model — unchanged)
+5. PEER  GET  /api/approvals          -> 403   (trust_anchor door: a body peer is not an anchor — correct)
+   PEER  GET  /api/settings/policy   -> 401   (owner surface, unchanged)
+6. PEER  WS   /api/audio/stream        -> admitted (was 1008)
+   PEER  WS   /api/audio/tts          -> admitted
+   PEER  WS   /ws                     -> refused  (owner-only, scoped post-remediation)
+   PEER  WS   /ws/terminal/*          -> refused  (the PTY bridge — caught by the re-run)
+8. REMOTE approve pairing             -> 403   (local-or-anchor only)
+9. LOCAL  approve pairing            -> 200
+```
+
+**Two corrections the remediation made to this document's own claims**, recorded here rather than edited above: the review asserted `DELETE /api/peers/{node_id}` was `require_local_admin`-only — the code already allowed self-revocation (the doc-drift item said this too; both were right in different paragraphs); and row 5's 403 is `require_trust_anchor` answering, which this review proposed but did not expect to see on main yet.
+
+**Commits:** F-A/F-E as `83f1b74c` (auth.py, peers.py, peer_middleware.py, census, production-mount test); F-C as `c0cec3db` + test coverage as `9253a122`; the trust_anchor layer and WS peer admission landed with the multi-node merge `8fe1eb4a` and its branch; the WS scope fix (peer admission was unscoped in the first landing) as `1854f7e6`.
+
+**Still open from the "What must change" list (not blockers, tracked for their steps):**
+
+- **F-D** — reverse-pairing so the satellite holds a `role="canonical"` record and the credential the canonical pushes with (blocks Step 1.3; the `KNOWN_PEER_ROLES` vocabulary already reserves the role).
+- **Q12 fence** — promoted-refuses-pushes at Step 1.7 (one conditional on the cleared `canonical_memory_url`).
+- **Step 2.2/2.3** — filename AAD + digest verification in restore (the per-file-key contradiction is now reconciled in the plan doc).
+- **Step 1.9** — the QR payload in the plan doc now matches §7.3 (no PIN); the component doesn't exist yet.
+- **Q3's HTTP consent gate** — companion-app concern; no backend code needed.
+- **`being.yml peer_token` ambiguity** — decide and document which token belongs in that field now that peer tokens actually work through the door.
