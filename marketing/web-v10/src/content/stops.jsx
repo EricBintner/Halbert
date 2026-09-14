@@ -75,7 +75,7 @@ export const STOP_CONTENT = {
   open: {
     stroke: (
       <>
-        <Kicker>01 // It tells you first</Kicker>
+        <Kicker>It tells you first</Kicker>
         <Headline>I know what’s wrong with me.</Headline>
         <Body>
           I run on your hardware, not in someone else’s cloud. I read my own sensors, my own logs, my own drives — and
@@ -95,7 +95,7 @@ export const STOP_CONTENT = {
   apex: {
     canvas: (
       <>
-        <Kicker>02 // Every adjective has a number</Kicker>
+        <Kicker>Every adjective has a number</Kicker>
         <Headline>I can feel my own temperature.</Headline>
       </>
     ),
@@ -113,7 +113,7 @@ export const STOP_CONTENT = {
   diagonal: {
     canvas: (
       <>
-        <Kicker>03 // Private by construction</Kicker>
+        <Kicker>Private by construction</Kicker>
         <Headline size="xl">Local.</Headline>
       </>
     ),
@@ -131,7 +131,7 @@ export const STOP_CONTENT = {
   rise: {
     canvas: (
       <>
-        <Kicker>04 // Intent, kept next to the change</Kicker>
+        <Kicker>Intent, kept next to the change</Kicker>
         <Headline>I remember why you changed that.</Headline>
         <Body>
           You moved SSH to port 2222 on July 14th because the auth log was filling with scans. I keep the reason
@@ -150,7 +150,7 @@ export const STOP_CONTENT = {
   hop: {
     stroke: (
       <>
-        <Kicker>05 // Grounded, not guessed</Kicker>
+        <Kicker>Grounded, not guessed</Kicker>
         <Headline>I know 16,000 manuals by heart.</Headline>
         <Body>
           Man pages, the Arch Wiki, Homebrew formulae, TLDR pages — indexed on this disk and searched before I answer.
@@ -169,7 +169,7 @@ export const STOP_CONTENT = {
   cap: {
     canvas: (
       <>
-        <Kicker>06 // The thesis</Kicker>
+        <Kicker>The thesis</Kicker>
         <Headline>“I am not an assistant.”</Headline>
         <Body>
           An assistant lives somewhere else and guesses about you. I live here. My logs are my memory, my sensors
