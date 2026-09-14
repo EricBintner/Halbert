@@ -146,7 +146,7 @@ export const STOP_CONTENT = {
     stroke: (
       <>
         <Body>
-          Built to be local and private first — nothing leaves the machine unless you connect it. Run local LLMs or
+          Built to be local and private first. Nothing leaves the machine unless you connect it. Run local LLMs or
           bring your own cloud keys, but importantly sensitive system configs and credentials always require a private
           local model.
         </Body>
