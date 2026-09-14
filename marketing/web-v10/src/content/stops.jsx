@@ -77,7 +77,7 @@ export const STOP_CONTENT = {
       <>
         <Kicker>// Native MCP & host intelligence</Kicker>
         <Headline>
-          I’m the computer.
+          I am the computer.
           <br />
           And I put the smart in your home.
         </Headline>
@@ -214,7 +214,7 @@ export const STOP_CONTENT = {
   reveal: {
     above: (
       <>
-        <Kicker>// MEET HALBERT.</Kicker>
+        <Kicker>// GET HALBERT.</Kicker>
         <Headline size="md">Hi, I’m your computer.</Headline>
       </>
     ),

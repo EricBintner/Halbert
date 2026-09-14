@@ -129,7 +129,7 @@ export const STOPS = [
   },
   {
     id: 'reveal',
-    name: 'Halbert',
+    name: 'Get Halbert',
     at: { full: true },
     via: 'fly',
     travel: 1.3,
