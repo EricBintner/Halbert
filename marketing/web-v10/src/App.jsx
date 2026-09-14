@@ -23,8 +23,16 @@ function useViewport() {
 }
 
 function useScrollProgress() {
-  const [s, setS] = useState(0);
+  const isFixedParam = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('s') !== null;
+  const [s, setS] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const p = new URLSearchParams(window.location.search).get('s');
+      if (p !== null) return Math.max(0, Math.min(1, parseFloat(p) || 0));
+    }
+    return 0;
+  });
   useEffect(() => {
+    if (isFixedParam) return;
     let raf = 0;
     const read = () => {
       raf = 0;
@@ -36,14 +44,55 @@ function useScrollProgress() {
     };
     window.addEventListener('scroll', onScroll, { passive: true });
     window.addEventListener('resize', onScroll);
-    read();
     return () => {
       window.removeEventListener('scroll', onScroll);
       window.removeEventListener('resize', onScroll);
       if (raf) cancelAnimationFrame(raf);
     };
-  }, []);
+  }, [isFixedParam]);
   return s;
+}
+
+function FolioBar({ camera, reticle, isOverlay = false }) {
+  return (
+    <header
+      className={`fixed top-0 inset-x-0 z-30 flex items-center justify-between px-6 py-4 text-[14px] font-mono pointer-events-none ${
+        isOverlay
+          ? 'text-[var(--color-ink-on-stroke)] select-none'
+          : 'text-[var(--color-ink)]'
+      }`}
+      style={
+        isOverlay
+          ? {
+              WebkitMaskImage: 'url(#stroke-intersection-mask)',
+              maskImage: 'url(#stroke-intersection-mask)',
+            }
+          : undefined
+      }
+      aria-hidden={isOverlay ? 'true' : undefined}
+    >
+      <div className="flex items-center space-x-3">
+        <HalbertMark size={24} density="medium" color="currentColor" />
+        <span className="font-bold tracking-wider">HALBERT</span>
+      </div>
+      <div
+        className={`hidden md:flex items-center space-x-4 ${isOverlay ? 'pointer-events-none' : 'pointer-events-auto'}`}
+        data-testid={isOverlay ? undefined : 'header-right'}
+        data-stop-index={camera.stopIndex}
+        data-stop-id={STOPS[camera.stopIndex]?.id}
+        data-zoom={Math.round(camera.scale * 100)}
+      >
+        <span></span>
+        {(reticle || (typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('debug'))) && (
+          <div className="flex items-center space-x-4 opacity-80">
+            <span>STOP {String(camera.stopIndex + 1).padStart(2, '0')} / {String(STOPS.length).padStart(2, '0')} · {camera.layout.kind.toUpperCase()}</span>
+            <span>ZOOM {Math.round(camera.scale * 100)}%</span>
+            <span>[D] RETICLE</span>
+          </div>
+        )}
+      </div>
+    </header>
+  );
 }
 
 export function App() {
@@ -76,8 +125,7 @@ export function App() {
         (st, i) => st.id.toLowerCase() === stopParam.toLowerCase() || String(i) === stopParam || String(i + 1) === stopParam
       );
       if (idx >= 0) {
-        // Small delay to allow document layout to settle
-        requestAnimationFrame(() => jumpToStop(idx, false));
+        jumpToStop(idx, false);
       }
     }
   }, [aspect]);
@@ -91,29 +139,11 @@ export function App() {
 
       <LayoutStage camera={camera} stops={STOPS} content={STOP_CONTENT} viewport={viewport} />
 
-      {/* Folio bar — chrome that never moves */}
-      <header className="fixed top-0 inset-x-0 z-30 flex items-center justify-between px-6 py-4 text-[11px] font-mono text-[var(--color-ink)] pointer-events-none">
-        <div className="flex items-center space-x-3">
-          <HalbertMark size={22} density="medium" color="currentColor" />
-          <span className="font-bold tracking-wider">HALBERT</span>
-        </div>
-        <div
-          className="hidden md:flex items-center space-x-4 pointer-events-auto"
-          data-testid="header-right"
-          data-stop-index={camera.stopIndex}
-          data-stop-id={STOPS[camera.stopIndex]?.id}
-          data-zoom={Math.round(camera.scale * 100)}
-        >
-          <span></span>
-          {(reticle || (typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('debug'))) && (
-            <div className="flex items-center space-x-4 opacity-80">
-              <span>STOP {String(camera.stopIndex + 1).padStart(2, '0')} / {String(STOPS.length).padStart(2, '0')} · {camera.layout.kind.toUpperCase()}</span>
-              <span>ZOOM {Math.round(camera.scale * 100)}%</span>
-              <span>[D] RETICLE</span>
-            </div>
-          )}
-        </div>
-      </header>
+      {/* Folio bar — base layer (black ink on canvas) */}
+      <FolioBar camera={camera} reticle={reticle} />
+
+      {/* Folio bar — inverted overlay layer (white ink where intersecting red stroke) */}
+      <FolioBar camera={camera} reticle={reticle} isOverlay />
 
       <ScrollHUD currentStop={camera.stopIndex} onSelectStop={jumpToStop} scrollProgress={s} />
 
