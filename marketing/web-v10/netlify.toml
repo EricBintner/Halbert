@@ -1,10 +1,56 @@
-[build]
-  command = "npm run build"
-  publish = "dist"
+# Halbert marketing site — Netlify production config.
+#
+# Deployed by scripts/deploy.sh (moves the deploy/main ref); a plain
+# `git push origin main` never triggers a build. This file is read from
+# the deployed commit's marketing/web-v10/, with the repo root as base.
 
+[build]
+  base = "."
+  # The vendored typefaces are a build artefact: shared-tokens/fonts is
+  # the source, each consumer's public/fonts is a gitignored copy made by
+  # scripts/sync_fonts.py. CI runs the same sync (ci.yml --check), so a
+  # stale copy fails the pull request, and the deploy build regenerates
+  # it here.
+  command = "python3 scripts/sync_fonts.py && npm --prefix marketing/web-v10 install && npm --prefix marketing/web-v10 run build"
+  publish = "marketing/web-v10/dist"
+
+[build.environment]
+  NODE_VERSION = "22"
+  NPM_VERSION = "10.9.3"
+  PYTHON_VERSION = "3.11"
+
+# Immutable build assets — hashed filenames, safe to cache hard.
+[[headers]]
+  for = "/assets/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+
+# Self-hosted fonts — content-addressed in the manifest; cache long.
+[[headers]]
+  for = "/fonts/*"
+  [headers.values]
+    Cache-Control = "public, max-age=604800"
+
+# The single-page app: never cache HTML, so deploys go live immediately.
 [[headers]]
   for = "/*"
   [headers.values]
     X-Frame-Options = "DENY"
     X-Content-Type-Options = "nosniff"
     Referrer-Policy = "strict-origin-when-cross-origin"
+    Cache-Control = "public, max-age=0, must-revalidate"
+
+# Redirect everything to the apex — the canonical production URL is
+# halbert.computer. (www is added in Cloudflare DNS; see
+# documentation/DEPLOYMENT-NETLIFY-CLOUDFLARE.md.)
+[[redirects]]
+  from = "https://www.halbert.computer/*"
+  to = "https://halbert.computer/:splat"
+  status = 301
+  force = true
+
+[[redirects]]
+  from = "http://halbert.computer/*"
+  to = "https://halbert.computer/:splat"
+  status = 301
+  force = true
