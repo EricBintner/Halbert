@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ProactiveEventsPlate, VitalsPlate, RationalePlate, KnowledgePlate } from './ui';
+import { ProactiveEventsPlate, VitalsPlate, RationalePlate, KnowledgePlate, IntroOverviewPlate } from './ui';
 
 /**
  * Content for each stop, keyed by stop id and slot (`stroke` / `canvas`, or
@@ -72,6 +72,25 @@ function EarlyAccessForm() {
 }
 
 export const STOP_CONTENT = {
+  intro: {
+    canvas: (
+      <>
+        <Kicker>// Native MCP & host intelligence</Kicker>
+        <Headline>The mind in your computer, and the smart in your smart home.</Headline>
+        <Body>
+          Halbert bridges host management and Home Assistant into one local intelligence. I monitor my own
+          hardware, automate your physical rooms, and give your AI tools native MCP access to your system. Runs locally.
+        </Body>
+      </>
+    ),
+    stroke: (
+      <>
+        <Kicker>What Halbert is</Kicker>
+        <IntroOverviewPlate />
+      </>
+    ),
+  },
+
   open: {
     stroke: (
       <>

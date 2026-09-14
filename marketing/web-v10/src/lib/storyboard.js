@@ -33,15 +33,31 @@ const RIDE = { lane: 2, side: 'inner' };
 
 export const STOPS = [
   {
+    id: 'intro',
+    name: 'Overview',
+    at: { edge: { lane: 2, side: 'outer' }, leg: 'left', y: 330 },
+    dwell: 0.6,
+    // landscape — vertical split: canvas LEFT, stroke RIGHT
+    portrait: {
+      // phones: start at apex of lane 1's inner edge
+      at: { edge: { lane: 1, side: 'inner' }, angle: 90 },
+      // horizontal split: canvas TOP, stroke BOTTOM
+    },
+  },
+  {
     id: 'open',
-    name: 'Awareness',
+    name: 'Triage',
     at: { edge: RIDE, leg: 'left', y: 330 },
+    via: 'fly',
+    travel: 0.8,
     dwell: 0.55,
     // landscape — vertical split: stroke LEFT, canvas RIGHT
     portrait: {
       // phones start sideways: the apex of lane 1's outer edge, one gap above
       // the apex stop, so the first scroll slides the gap up and flips colours
       at: { edge: { lane: 1, side: 'outer' }, angle: 90 },
+      via: 'fly',
+      travel: 0.8,
       // horizontal split: stroke TOP, canvas BOTTOM
     },
   },

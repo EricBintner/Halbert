@@ -240,3 +240,17 @@ export function KnowledgePlate() {
     </AppWindow>
   );
 }
+
+/** 00 — Overview plate for the Intro stop */
+export function IntroOverviewPlate() {
+  return (
+    <AppWindow title="Host & Ambient Overview" meta="local runtime · active" className="max-w-md">
+      <div className="grid grid-cols-2 gap-2">
+        <StatTile label="Intelligence" value="Local" sub="Ollama / MLX / BYOK" tone="success" />
+        <StatTile label="Tool Protocol" value="MCP" sub="Claude · Cursor · Agents" tone="info" />
+        <StatTile label="Smart Home" value="Linked" sub="Home Assistant · Areas" tone="neutral" />
+        <StatTile label="Telemetry" value="0.00" sub="Zero cloud data sent" tone="success" />
+      </div>
+    </AppWindow>
+  );
+}
