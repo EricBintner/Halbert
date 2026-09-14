@@ -27,7 +27,6 @@ export function ScrollHUD({ currentStop, onSelectStop, scrollProgress }) {
           </button>
         );
       })}
-      <div className="pt-2 text-[10px]">{Math.round(scrollProgress * 100)}% TRAVEL</div>
     </nav>
   );
 }
