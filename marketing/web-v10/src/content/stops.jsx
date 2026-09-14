@@ -78,8 +78,9 @@ export const STOP_CONTENT = {
         <Kicker>// Native MCP & host intelligence</Kicker>
         <Headline>The mind in your computer, and the smart in your smart home.</Headline>
         <Body>
-          Halbert bridges host management and Home Assistant into one local intelligence. I monitor my own
-          hardware, automate your physical rooms, and give your AI tools native MCP access to your system. Runs locally.
+          Halbert bridges host management and home automation into one local intelligence. I monitor my own
+          hardware, help automate your home, and give your AI tools MCP access to your systems, their configs
+          and their hardware. Runs locally.
         </Body>
       </>
     ),
