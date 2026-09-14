@@ -115,8 +115,8 @@ export const STOP_CONTENT = {
       <>
         <Kicker>// Private by construction</Kicker>
         <Headline size="xl">Local.</Headline>
-        <div className="text-[clamp(1rem,1.5vw,1.4rem)] font-mono opacity-60 mt-3 font-medium">
-          (or bring your own key)
+        <div className="font-display font-black tracking-tight text-[clamp(1rem,1.5vw,1.4rem)] mt-3">
+          {'{or BYOK, whatever you want}'}
         </div>
       </>
     ),
