@@ -90,7 +90,7 @@ export const STOP_CONTENT = {
     ),
     stroke: (
       <>
-        <Kicker>What Halbert is</Kicker>
+        <Kicker>Meet Halbert</Kicker>
         <IntroOverviewPlate />
       </>
     ),
@@ -205,8 +205,8 @@ export const STOP_CONTENT = {
     ),
     stroke: (
       <>
-        <div className="font-display italic text-[clamp(1.25rem,2.4vw,2.25rem)]">“Your machines, unified.”</div>
-        <Kicker>Local models · Peer routing</Kicker>
+        <div className="font-display italic text-[clamp(1.25rem,2.4vw,2.25rem)]">“Your machines, thinking together.”</div>
+        <Kicker>Shared local models · Peer routing</Kicker>
       </>
     ),
   },

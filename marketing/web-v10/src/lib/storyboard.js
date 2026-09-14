@@ -34,7 +34,7 @@ const RIDE = { lane: 2, side: 'inner' };
 export const STOPS = [
   {
     id: 'intro',
-    name: 'Overview',
+    name: 'Meet Halbert',
     at: { edge: { lane: 2, side: 'outer' }, leg: 'left', y: 330 },
     dwell: 0.6,
     // landscape — vertical split: canvas LEFT, stroke RIGHT
