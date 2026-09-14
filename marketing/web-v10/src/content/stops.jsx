@@ -126,7 +126,7 @@ export const STOP_CONTENT = {
           Nothing leaves this machine unless you connect it. No telemetry, ever. Bring your own cloud keys if you
           want, but sensitive system configs and credentials always require a private local model. Open source, GPL-3.0.
         </Body>
-        <Kicker>Linux today · macOS in beta</Kicker>
+        <Kicker>Linux · Mac · Win · Home Assistant</Kicker>
       </>
     ),
   },
