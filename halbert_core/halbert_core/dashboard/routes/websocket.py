@@ -172,8 +172,9 @@ async def audio_stream_endpoint(websocket: WebSocket):
     """
     # SEC-1: unauthenticated, this transcribed ten seconds of live microphone
     # for any web page that opened it, and fanned every household transcript
-    # back out to every connected socket (F17, F97, F126).
-    if not await websocket_authenticated(websocket):
+    # back out to every connected socket (F17, F97, F126). allow_peer: the
+    # companion phone's voice uplink is exactly this socket (Q9).
+    if not await websocket_authenticated(websocket, allow_peer=True):
         await reject_websocket(websocket)
         return
 
@@ -203,7 +204,9 @@ async def tts_egress_endpoint(websocket: WebSocket, session_id: str = ""):
     barge-in control frame: it fires the session's barge-in token (aborting
     in-flight synthesis) and answers with ``{"type": "cancelled"}``.
     """
-    if not await websocket_authenticated(websocket):
+    # allow_peer: the TTS downlink is the other half of the companion
+    # phone's voice path (Q9).
+    if not await websocket_authenticated(websocket, allow_peer=True):
         await reject_websocket(websocket)
         return
 

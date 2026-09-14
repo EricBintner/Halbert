@@ -373,6 +373,29 @@ class TestWebSocketPeerCredential:
             with sat.websocket_connect("/api/audio/stream?token=hbt_garbage"):
                 pass
 
+    def test_a_peer_token_cannot_open_the_dashboard_feed(self, app, peer_token):
+        """The event feed and the PTY bridge are owner-only surfaces. A peer
+        token admitted there is a satellite reaching the machine's live
+        status stream — and the terminal bridge is a shell (Q9 scope: peer
+        admission is the two audio sockets, deliberately per-handler)."""
+        sat = TestClient(app, client=REMOTE)
+        with pytest.raises(Exception):
+            with sat.websocket_connect(f"/ws?token={peer_token}"):
+                pass
+
+    def test_a_peer_token_cannot_open_the_terminal_bridge(self, app, peer_token):
+        sat = TestClient(app, client=REMOTE)
+        with pytest.raises(Exception):
+            with sat.websocket_connect(
+                f"/ws/terminal/does-not-exist?token={peer_token}"):
+                pass
+
+    def test_the_owner_token_still_opens_the_dashboard_feed(
+            self, app, dashboard_token):
+        sat = TestClient(app, client=REMOTE)
+        with sat.websocket_connect(f"/ws?token={dashboard_token}"):
+            pass
+
 
 class TestEntityStatus:
     """The aggregated status card — any identified principal reads it,

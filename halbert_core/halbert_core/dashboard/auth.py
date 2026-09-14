@@ -465,7 +465,7 @@ if FASTAPI_AVAILABLE:
         deps = [] if (public or self_auth) else [Depends(require_owner)]
         app.include_router(router, prefix=prefix, tags=tags, dependencies=deps)
 
-    async def websocket_authenticated(websocket) -> bool:
+    async def websocket_authenticated(websocket, *, allow_peer: bool = False) -> bool:
         """Check a WebSocket handshake before accepting it.
 
         CORS never sees a handshake, so the four handlers were reachable by any
@@ -475,11 +475,18 @@ if FASTAPI_AVAILABLE:
         so the session cookie or a ``?token=`` query parameter is what a real
         client uses here.
 
-        A paired peer may also open the sockets with its own revocable token
+        A paired peer may also open the socket with its own revocable token
         (security review 2026-09-13, Q9) — the trust_anchor phone streams
         voice with its peer credential, not the dashboard token. Its record
         rides on ``websocket.state.peer`` so handlers can tell a paired
         device from a room mic.
+
+        ``allow_peer`` scopes that path: peer tokens admit only where the
+        paired device has a reason to be — the two audio sockets. A peer
+        token on the dashboard event feed or the PTY bridge is a satellite
+        reaching a shell surface, and default-deny means a WebSocket handler
+        added tomorrow is owner-only unless its author says otherwise (the
+        same "authenticated by omission" posture as ``mount_router``).
         """
         state = _state(websocket.app)
         if not host_allowed(websocket.headers.get("host"), state.allowed_hosts):
@@ -492,10 +499,11 @@ if FASTAPI_AVAILABLE:
         qp = websocket.query_params.get("token")
         if qp and state.check("bearer", qp):
             return True
-        peer = _peer_ws_credential(websocket)
-        if peer is not None:
-            websocket.state.peer = peer
-            return True
+        if allow_peer:
+            peer = _peer_ws_credential(websocket)
+            if peer is not None:
+                websocket.state.peer = peer
+                return True
         return False
 
     def _peer_ws_credential(websocket):
