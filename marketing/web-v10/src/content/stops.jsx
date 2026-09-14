@@ -14,8 +14,8 @@ import { ProactiveEventsPlate, VitalsPlate, RationalePlate, KnowledgePlate, Intr
  * stop has something real to show.
  */
 
-export const Kicker = ({ children }) => (
-  <div className="text-[13px] font-mono font-bold tracking-[0.2em] uppercase opacity-80 mb-4">{children}</div>
+export const Kicker = ({ children, className = '' }) => (
+  <div className={`text-[13px] font-mono font-bold tracking-[0.2em] uppercase opacity-80 mb-4 ${className}`}>{children}</div>
 );
 
 export const Headline = ({ children, size = 'lg' }) => {
@@ -208,10 +208,10 @@ export const STOP_CONTENT = {
       </>
     ),
     stroke: (
-      <>
+      <div className="pt-8 sm:pt-14 md:pt-20 flex flex-col items-center">
         <div className="font-display italic text-[clamp(1.25rem,2.4vw,2.25rem)]">“Your machines, thinking together.”</div>
-        <Kicker>Shared local models · Peer routing</Kicker>
-      </>
+        <Kicker className="mt-3">Shared local models · Peer routing</Kicker>
+      </div>
     ),
   },
 
