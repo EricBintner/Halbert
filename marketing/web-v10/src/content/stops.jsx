@@ -146,9 +146,13 @@ export const STOP_CONTENT = {
     stroke: (
       <>
         <Body>
-          Nothing leaves this machine unless you connect it. No telemetry, ever. Bring your own cloud keys if you
-          want, but sensitive system configs and credentials always require a private local model. Open source, GPL-3.0.
+          Built to be local and private first — nothing leaves the machine unless you connect it. Run local LLMs or
+          bring your own cloud keys, but importantly sensitive system configs and credentials always require a private
+          local model.
         </Body>
+        <div className="text-[clamp(0.95rem,1.25vw,1.2rem)] opacity-90 mt-2 mb-3">
+          Open source, GPL-3.0
+        </div>
         <Kicker>Linux · Mac · Win · Home Assistant</Kicker>
       </>
     ),
