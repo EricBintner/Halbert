@@ -115,6 +115,9 @@ export const STOP_CONTENT = {
       <>
         <Kicker>// Private by construction</Kicker>
         <Headline size="xl">Local.</Headline>
+        <div className="text-[clamp(1rem,1.5vw,1.4rem)] font-mono opacity-60 mt-3 font-medium">
+          (or bring your own key)
+        </div>
       </>
     ),
     stroke: (
@@ -123,7 +126,7 @@ export const STOP_CONTENT = {
           Nothing leaves this machine unless you connect it. No telemetry, ever. Cloud models and web search are
           switches, off by default. Open source, GPL-3.0.
         </Body>
-        <Kicker>Runs on Ollama · Linux today · macOS in beta</Kicker>
+        <Kicker>Local models or BYOK · Linux today · macOS in beta</Kicker>
       </>
     ),
   },
@@ -151,10 +154,10 @@ export const STOP_CONTENT = {
     stroke: (
       <>
         <Kicker>// Grounded, not guessed</Kicker>
-        <Headline>I know 16,000 manuals by heart.</Headline>
+        <Headline>Over 20,000 system references, indexed locally.</Headline>
         <Body>
           Man pages, the Arch Wiki, Homebrew formulae, TLDR pages — indexed on this disk and searched before I answer.
-          No invented flags. When I cite a page, you can open it.
+          No invented flags. When I cite a source, you can open it.
         </Body>
       </>
     ),
@@ -169,18 +172,18 @@ export const STOP_CONTENT = {
   cap: {
     canvas: (
       <>
-        <Kicker>// The thesis</Kicker>
-        <Headline>“I am not an assistant.”</Headline>
+        <Kicker>// Distributed architecture</Kicker>
+        <Headline>Independent nodes. Shared intelligence.</Headline>
         <Body>
-          An assistant lives somewhere else and guesses about you. I live here. My logs are my memory, my sensors
-          are how I feel, my configuration is how I’m built. Ask how I am and I answer from the inside.
+          Run local models on your desktop, monitor system vitals from your terminal, and keep your decision history
+          synchronized everywhere. A host intelligence that scales across your own hardware.
         </Body>
       </>
     ),
     stroke: (
       <>
-        <div className="font-display italic text-[clamp(1.25rem,2.4vw,2.25rem)]">“I am the machine.”</div>
-        <Kicker>Halbert · you can call me AI</Kicker>
+        <div className="font-display italic text-[clamp(1.25rem,2.4vw,2.25rem)]">“Your hardware, working in concert.”</div>
+        <Kicker>Local models · Peer routing · Complete control</Kicker>
       </>
     ),
   },

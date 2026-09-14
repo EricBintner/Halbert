@@ -97,7 +97,7 @@ export const STOPS = [
   },
   {
     id: 'cap',
-    name: 'The Machine',
+    name: 'Distributed',
     at: { cap: 'spine' },
     via: 'fly',
     dip: 0.25,
