@@ -81,7 +81,6 @@ export const STOP_CONTENT = {
           I run on your hardware, not in someone else’s cloud. I read my own sensors, my own logs, my own drives — and
           when something is off, I say so, in plain first person, before it becomes your problem.
         </Body>
-        <Cue>scroll ↓</Cue>
       </>
     ),
     canvas: (
