@@ -75,8 +75,8 @@ export const STOP_CONTENT = {
   open: {
     stroke: (
       <>
-        <Kicker>// It tells you first</Kicker>
-        <Headline>I know what’s wrong with me.</Headline>
+        <Kicker>// Proactive triage</Kicker>
+        <Headline>I know what’s wrong and I can help you fix it.</Headline>
         <Body>
           I run on your hardware, not in someone else’s cloud. I read my own sensors, my own logs, my own drives — and
           when something is off, I say so, in plain first person, before it becomes your problem.
