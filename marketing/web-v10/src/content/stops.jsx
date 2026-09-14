@@ -79,7 +79,7 @@ export const STOP_CONTENT = {
         <Headline>
           I’m the computer.
           <br />
-          I put the smart in your home.
+          And I put the smart in your home.
         </Headline>
         <Body>
           Halbert bridges host management and home automation into one local intelligence. I monitor my own
