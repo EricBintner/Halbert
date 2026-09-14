@@ -76,7 +76,11 @@ export const STOP_CONTENT = {
     canvas: (
       <>
         <Kicker>// Native MCP & host intelligence</Kicker>
-        <Headline>I am your computer, and the smart in your home.</Headline>
+        <Headline>
+          I’m the computer.
+          <br />
+          I put the smart in your home.
+        </Headline>
         <Body>
           Halbert bridges host management and home automation into one local intelligence. I monitor my own
           hardware, help automate your home, and give your AI tools MCP access to your systems, their configs
