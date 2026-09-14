@@ -116,15 +116,15 @@ export const STOP_CONTENT = {
         <Kicker>// Private by construction</Kicker>
         <Headline size="xl">Local.</Headline>
         <div className="font-display font-normal text-[clamp(1rem,1.5vw,1.4rem)] mt-3">
-          {'{or BYOK, whatever you want}'}
+          &nbsp;{'{or BYOK, whatever you want}'}
         </div>
       </>
     ),
     stroke: (
       <>
         <Body>
-          Nothing leaves this machine unless you connect it. No telemetry, ever. Cloud models and web search are
-          switches, off by default. Open source, GPL-3.0.
+          Nothing leaves this machine unless you connect it. No telemetry, ever. Bring your own cloud keys if you
+          want, but sensitive system configs and credentials always require a private local model. Open source, GPL-3.0.
         </Body>
         <Kicker>Local models or BYOK · Linux today · macOS in beta</Kicker>
       </>
