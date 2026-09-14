@@ -126,7 +126,7 @@ export const STOP_CONTENT = {
           Nothing leaves this machine unless you connect it. No telemetry, ever. Bring your own cloud keys if you
           want, but sensitive system configs and credentials always require a private local model. Open source, GPL-3.0.
         </Body>
-        <Kicker>Local models or BYOK · Linux today · macOS in beta</Kicker>
+        <Kicker>Linux today · macOS in beta</Kicker>
       </>
     ),
   },
@@ -183,7 +183,7 @@ export const STOP_CONTENT = {
     stroke: (
       <>
         <div className="font-display italic text-[clamp(1.25rem,2.4vw,2.25rem)]">“Your machines, unified.”</div>
-        <Kicker>Local models · Peer routing · Complete control</Kicker>
+        <Kicker>Local models · Peer routing</Kicker>
       </>
     ),
   },
