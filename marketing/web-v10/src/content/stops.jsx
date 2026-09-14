@@ -80,7 +80,7 @@ export const STOP_CONTENT = {
         <Body>
           Halbert bridges host management and home automation into one local intelligence. I monitor my own
           hardware, help automate your home, and give your AI tools MCP access to your systems, their configs
-          and their hardware. Runs locally.
+          and their hardware. I run locally and I am the computer.
         </Body>
       </>
     ),
