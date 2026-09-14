@@ -95,15 +95,15 @@ export const STOP_CONTENT = {
   apex: {
     canvas: (
       <>
-        <Kicker>// Every adjective has a number</Kicker>
-        <Headline>I can feel my own temperature.</Headline>
+        <Kicker>// Home & host management</Kicker>
+        <Headline>I can turn out the lights for you.</Headline>
       </>
     ),
     stroke: (
       <div className="w-full md:grid md:grid-cols-[minmax(0,40ch)_minmax(0,1fr)] md:gap-10 md:items-start">
         <Body>
-          Forty-five degrees is cool. Sixty-two under load is normal. Eighty-four is when I tell you — before the kernel
-          throttles, not after. When I say I feel fine, that word is tied to a threshold I measured.
+          I don’t stop at the edge of the terminal. From dimming the lights when you step away, to validating ZFS pools,
+          rotating system journals, or restarting a stalled service — the routine chores are covered. Just ask me.
         </Body>
         <VitalsPlate />
       </div>

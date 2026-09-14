@@ -47,7 +47,7 @@ export const STOPS = [
   },
   {
     id: 'apex',
-    name: 'Vitals',
+    name: 'Automation',
     at: { edge: RIDE, angle: 90 },
     via: 'follow',
     dwell: 0.6,
