@@ -93,7 +93,8 @@ const PATHS_8 = [
   'M 80.00 512.00 A 432.00 432.00 0 0 0 944.00 512.00',
 ].join(' ')
 
-// 7 lines (N=6, sw=40.00)
+// 7 lines (N=6, sw=48.00) — the primary brand mark. 2:1 stroke:gap, the
+// proportion of the retired 10-line display mark (48/72 = 32/48 = 2/3 pitch).
 const PATHS_7 = [
   'M 512.00 80.00 V 512.00',
   'M 440.00 86.04 V 512.00 A 72.00 72.00 0 0 0 584.00 512.00 V 86.04',
@@ -141,7 +142,7 @@ const PATHS_3 = [
 const CONFIG_BY_LINE_COUNT: Record<number, { paths: string; strokeWidth: number }> = {
   10: { paths: PATHS_10, strokeWidth: 26.67 },
   8: { paths: PATHS_8, strokeWidth: 34.29 },
-  7: { paths: PATHS_7, strokeWidth: 40.00 },
+  7: { paths: PATHS_7, strokeWidth: 48.00 },
   6: { paths: PATHS_6, strokeWidth: 48.00 },
   5: { paths: PATHS_5, strokeWidth: 60.00 },
   4: { paths: PATHS_4, strokeWidth: 80.00 },

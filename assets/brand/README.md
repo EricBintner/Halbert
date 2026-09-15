@@ -19,7 +19,7 @@ In addition, three intermediate numeric tiers exist as optical-density candidate
 | Tier | Shapes (% of Original) | Elements | Pitch | Stroke Width | Selector | Status |
 |---|---|---|---|---|---|---|
 | **8-Line** | 80% (8 paths) | 1 Spine + 7 U-curves | 61.71px | 34.29px | `lines={8}` | High-detail alternative to Display |
-| **7-Line** | 70% (7 paths) | 1 Spine + 6 U-curves | 72.0px | 40.00px | `lines={7}` | Proposed unified primary mark (candidate) |
+| **7-Line** | 70% (7 paths) | 1 Spine + 6 U-curves | 72.0px | 48.00px | `lines={7}` | Primary brand mark — 2:1 stroke:gap matching the retired 10-line display proportion (founder, 2026-09-15) |
 | **5-Line** | 50% (5 paths) | 1 Spine + 4 U-curves | 108.0px | 60.00px | `lines={5}` | Intermediate density between Medium and Compact |
 
 ---

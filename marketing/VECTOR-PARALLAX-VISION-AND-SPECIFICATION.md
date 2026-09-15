@@ -25,7 +25,7 @@ The point of v2 is that this is a *system*, not a choreography:
 │  { edge:{lane:5,side:'inner'},    focal (288, 330)       stroke ▌ canvas │
 │    leg:'left', y:330 }            normal → stroke = −x   (left)  (right) │
 │                                   split: vertical                        │
-│                                   zoom: 3232% @16:9                      │
+│                                   zoom: 4310% @16:9                      │
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -40,8 +40,8 @@ The point of v2 is that this is a *system*, not a choreography:
 | Spine | vertical, x = 512, y ∈ [80, 512] |
 | Lane *i* (1‥6) | U-shape of radius **R = 72 i**: left leg down, bottom semicircle, right leg up |
 | Leg tops | on the circle of radius 432 around C: `y_top = 512 − √(432² − R²)` (lane 6 has no legs) |
-| Stroke | width **40**, round caps |
-| Gap between strokes | **32** (pitch 72 − width 40) |
+| Stroke | width **48**, round caps |
+| Gap between strokes | **24** (pitch 72 − width 48) |
 
 `MARK_PATH_D` is generated from this model and reproduces the original hand-written path to the same precision; `HalbertMark` and `VectorCanvas` both use it.
 
@@ -57,9 +57,9 @@ The point of v2 is that this is a *system*, not a choreography:
 scale ≥ 512 · (aspect·|nₓ| + |n_y|) / (clearance · 0.88)
 ```
 
-This is what keeps **exactly one line on screen**, and why the numbers are large: at 16:9 a vertical split needs ~3232%, a horizontal one ~1818%, a 45° diagonal ~3571%, the cap ~1989%; on a portrait phone the vertical split drops to ~909%. Nothing is hard-coded — a stop may still pin `scale` explicitly or apply a `zoom` multiplier.
+This is what keeps **exactly one line on screen**, and why the numbers are large: at 16:9 a vertical split needs ~4310%, a horizontal one ~2424%, a 45° diagonal ~4762%, the cap ~2155%; on a portrait phone the vertical split drops to ~1120%. Nothing is hard-coded — a stop may still pin `scale` explicitly or apply a `zoom` multiplier.
 
-**Curvature is a lane choice, not a zoom choice.** Because the single-line zoom is fixed by the 32-unit gap, it is the same on every lane; what changes with the lane is how much of the curve you see at that zoom. Sag at the frame's side edges is `(w/2)² / 2r` — on lane 5 (r = 340) the apex bows only ~4% of the screen height and follows look like a straight line rotating; on lane 2 (r = 124) the apex bows ~18% and the arc follows read as real curves, while the legs stay dead straight. The storyboard rides lane 2's inner edge for this reason (`RIDE` in `storyboard.js`).
+**Curvature is a lane choice, not a zoom choice.** Because the single-line zoom is fixed by the 24-unit gap, it is the same on every lane; what changes with the lane is how much of the curve you see at that zoom. Sag at the frame's side edges is `(w/2)² / 2r` — on lane 5 (r = 340) the apex bows only ~6% of the screen height and follows look like a straight line rotating; on lane 2 (r = 124) the apex bows ~14% and the arc follows read as real curves, while the legs stay dead straight. The storyboard rides lane 2's inner edge for this reason (`RIDE` in `storyboard.js`).
 
 ---
 
@@ -117,7 +117,7 @@ Ink colours: `--color-ink` on the canvas field, `--color-ink-on-stroke` on the s
 | 04 | `diagonal` | lane 2 inner edge, 135° | follow | 45° · canvas top-left / stroke bottom-right | same |
 | 05 | `rise` | lane 2 inner edge, right leg, y 330 | follow | vertical · canvas left / stroke right | lane 3 inner apex, 90° → horizontal · canvas top / stroke bottom |
 | 06 | `hop` | lane 5 outer edge, right leg, y 330 | fly, dip 0.6 | vertical · stroke left / canvas right | lane 5 outer apex, 90° → horizontal · stroke top / canvas bottom |
-| 07 | `cap` | crest of the spine's cap (512, 60) | fly, dip 0.25 | dome rising to the centre | same, zoom 2.34 so the dome fills the phone width |
+| 07 | `cap` | crest of the spine's cap (512, 60) | fly, dip 0.25 | dome rising to the centre | same, zoom 1.8 so the dome fills the phone width |
 | 08 | `reveal` | whole mark (50% of the short side) | fly | headline above, CTA below | same, zoom ×2 |
 
 In landscape, stops 02→05 are one continuous ride along a single edge (lane 2, inner); 06 is the perpendicular hop outward (three lanes sweep past); 07 and 08 are the two deliberate departures from path-following. In portrait only the vertical-split stops needed rethinking: the opener becomes a top/bottom split that the first scroll animates out of, and the two remaining vertical splits keep the geometry but change the type treatment.
