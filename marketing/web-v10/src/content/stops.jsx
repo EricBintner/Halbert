@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ProactiveEventsPlate, VitalsPlate, RationalePlate, KnowledgePlate, IntroOverviewPlate } from './ui';
+import { ProactiveEventsPlate, VitalsPlate, RationalePlate, KnowledgePlate, VoiceModePlate } from './ui';
 
 /**
  * Content for each stop, keyed by stop id and slot (`stroke` / `canvas`, or
@@ -23,12 +23,20 @@ export const Kicker = ({ children, className = '' }) => (
   <div className={`text-[13px] font-mono font-bold tracking-[0.2em] uppercase opacity-80 mb-4 max-sm:mb-2 max-sm:tracking-[0.12em] ${className}`}>{children}</div>
 );
 
-export const Headline = ({ children, size = 'lg' }) => {
+export const Headline = ({
+  children,
+  size = 'lg',
+  weight = 'font-black',
+  leading = size === 'sm' ? 'leading-snug' : 'leading-[0.95]',
+  className = '',
+  style,
+}) => {
   const cls = {
     xl: 'text-[clamp(3rem,9vw,9rem)]',
     lg: 'text-[clamp(2.25rem,5.5vw,5.5rem)]',
     md: 'text-[clamp(1.75rem,3.8vw,3.75rem)]',
-  }[size];
+    sm: 'text-[clamp(1.25rem,2.2vw,1.8em)] lg:text-[1.8em]',
+  }[size] || '';
   // Phones: the 36px floor wraps long lines to 3 each in a half-width column,
   // blowing the top field's budget. The phone step also carries a vh term so
   // short viewports (SE-class heights, Safari's insecure-connection banner
@@ -40,8 +48,9 @@ export const Headline = ({ children, size = 'lg' }) => {
     xl: 'max-sm:text-[clamp(1.6rem,4.2vh,2.4rem)]',
     lg: 'max-sm:text-[clamp(1.3rem,3.7vh,1.9rem)]',
     md: 'max-sm:text-[clamp(1.25rem,4vh,1.85rem)]',
-  }[size];
-  return <h2 className={`font-display font-black tracking-tight leading-[0.95] ${cls} ${phone}`}>{children}</h2>;
+    sm: 'max-sm:text-[clamp(1.05rem,2.8vh,1.35rem)]',
+  }[size] || '';
+  return <h2 className={`font-display tracking-tight ${weight} ${leading} ${cls} ${phone} ${className}`} style={style}>{children}</h2>;
 };
 
 export const Body = ({ children }) => (
@@ -91,11 +100,10 @@ function EarlyAccessForm() {
 export const STOP_CONTENT = {
   intro: {
     canvas: (
-      <>
+      <div className="stage-enter">
         <Kicker>// Native MCP & host intelligence</Kicker>
-        <Headline>
-          I am the computer.
-          <br />
+        <Headline>I am the computer.</Headline>
+        <Headline size="sm" weight="font-semibold" className="mt-[0.05em]" style={{ marginTop: '0.05em' }}>
           And I put the smart in your home.
         </Headline>
         <Body>
@@ -103,13 +111,12 @@ export const STOP_CONTENT = {
           hardware, help automate your home, and give your AI tools MCP access to your systems, their configs
           and their hardware. And I run locally.
         </Body>
-      </>
+      </div>
     ),
     stroke: (
-      <>
-        <Kicker>// MEET HALBERT</Kicker>
-        <IntroOverviewPlate />
-      </>
+      <div className="stage-enter stage-enter--late w-full">
+        <VoiceModePlate />
+      </div>
     ),
   },
 
@@ -217,7 +224,7 @@ export const STOP_CONTENT = {
     canvas: (
       <>
         <Kicker>// Distributed architecture</Kicker>
-        <Headline>Independent nodes. Shared&nbsp;intelligence.</Headline>
+        <Headline>Nodes of shared&nbsp;intelligence.</Headline>
         <Body>
           I don’t live in a single box. A quiet server in your closet can offload heavy reasoning to your desktop GPU,
           coordinate tasks across paired peers, and keep one continuous memory wherever you sit down.

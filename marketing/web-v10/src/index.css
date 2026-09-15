@@ -40,6 +40,54 @@
   box-shadow: 0 20px 50px -10px rgba(4, 47, 46, 0.6), 0 1px 2px rgba(0, 0, 0, 0.3);
 }
 
+/* Stop entrance — stop 0 is on screen at page load, so the scroll-driven
+   reveal never fires for it. The classes sit on slot content (not the stop
+   wrapper), so the scroll fade and the entrance compose multiplicatively
+   instead of fighting: scroll wins the wrapper, the entrance settles the
+   inner content. Durations and delays come from the motion tokens, so the
+   reduced-motion gate collapses the whole choreography with no extra code.
+   No `forwards` fill: the element falls back to its unanimated styles, so
+   no filter layer survives at rest. `backwards` covers the stagger delay. */
+@keyframes stage-enter {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 14px, 0) scale(0.965);
+    filter: blur(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+    filter: blur(0);
+  }
+}
+
+.stage-enter {
+  animation: stage-enter var(--duration-shutter) var(--ease-shutter) backwards;
+}
+
+.stage-enter--late {
+  animation-delay: calc(var(--duration-shutter) * 0.6);
+}
+
+/* Voice Mode kiosk plate — width is budgeted from its slot's own content
+   height, so the 3:4 device adapts to whichever colour field it lands in
+   (full-height column on the vertical split, half-height band on the
+   horizontal one) with no layout-kind branching and no vh guesswork. Slot
+   elements are stretched by fixed / 1fr grid tracks, so their size is
+   content-independent and they are safe size containers. The first width is
+   the no-container-query fallback: an unsupported cqh unit would drop the
+   whole declaration, so browsers without container queries keep the width
+   cap and lose only the height budget. */
+[data-slot] {
+  container-type: size;
+}
+
+.voice-plate {
+  width: min(100%, 30rem);
+  width: min(100%, 30rem, 75cqh);
+  aspect-ratio: 3 / 4;
+}
+
 /* Custom Scrollbar */
 ::-webkit-scrollbar {
   width: 6px;

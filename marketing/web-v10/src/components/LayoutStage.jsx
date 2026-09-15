@@ -159,6 +159,12 @@ const LAYOUTS = {
 /** Visibility + offset of each stop's content for the current camera state. */
 function stageItems(camera, stops, viewport) {
   const D = 0.6;
+  // Scale and blur ride the same reveal value as opacity (t arrives
+  // pre-eased), so all four channels settle together and hit identity at
+  // dwell. filter must be 'none' at rest — a blur(0) layer over the
+  // voice mark's per-frame path writes would re-raster it every frame.
+  const SETTLE = 0.06; // scale: 1 at rest -> 0.94 fully away
+  const BLUR = 8; // px of defocus fully away
   return stops.map((stop, i) => {
     let opacity = 0;
     let tx = 0;
@@ -177,7 +183,8 @@ function stageItems(camera, stops, viewport) {
         ty = dir.y * (1 - t) * D * viewport.height;
       }
     }
-    return { stop, index: i, opacity, tx, ty };
+    const settle = 1 - opacity; // 0 at rest, 1 fully away
+    return { stop, index: i, opacity, tx, ty, scale: 1 - SETTLE * settle, blur: BLUR * settle };
   });
 }
 
@@ -186,7 +193,7 @@ export function LayoutStage({ camera, stops, content, viewport }) {
   const portrait = viewport.width < viewport.height;
   return (
     <div className="fixed inset-0 z-10 pointer-events-none overflow-hidden">
-      {items.map(({ stop, index, opacity, tx, ty }) => {
+      {items.map(({ stop, index, opacity, tx, ty, scale, blur }) => {
         if (opacity <= 0.005) return null;
         const layout = camera.poses[index].layout;
         const Layout = LAYOUTS[layout.kind] ?? VerticalLayout;
@@ -194,10 +201,14 @@ export function LayoutStage({ camera, stops, content, viewport }) {
         return (
           <div
             key={stop.id}
-            className="absolute inset-0 will-change-transform"
+            className="absolute inset-0"
             style={{
               opacity,
-              transform: `translate3d(${tx.toFixed(1)}px, ${ty.toFixed(1)}px, 0)`,
+              transform: `translate3d(${tx.toFixed(1)}px, ${ty.toFixed(1)}px, 0) scale(${scale.toFixed(4)})`,
+              // Threshold, not exactly zero: the layer drops as soon as the
+              // defocus is imperceptible, so dwell carries no filter layer.
+              filter: blur > 0.25 ? `blur(${blur.toFixed(2)}px)` : 'none',
+              willChange: 'transform, opacity, filter',
               pointerEvents: opacity > 0.9 ? 'auto' : 'none',
             }}
             data-stop={stop.id}

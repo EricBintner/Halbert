@@ -1,4 +1,6 @@
 import React from 'react';
+import { Mic, Keyboard } from 'lucide-react';
+import { AudioReactiveHalbertMark } from '@halbert/design-system';
 
 /**
  * Placeholder app surfaces.
@@ -241,16 +243,92 @@ export function KnowledgePlate() {
   );
 }
 
-/** 00 — Overview plate for the Intro stop */
-export function IntroOverviewPlate() {
+/**
+ * 00 — Voice Mode on the kiosk tablet, for the Intro stop.
+ *
+ * The surround (bezel, status strip, caption ribbon, touch bar) is a mock in
+ * the same sense as the plates above; the mark is the real thing — the
+ * shipped audio-reactive mark from the design system, mid-thought. Sizing
+ * lives in index.css (.voice-plate) because the width budget depends on the
+ * slot geometry: a full-height column on the vertical split, a half-height
+ * band on the horizontal one.
+ */
+export function VoiceModePlate() {
+  const glassEdge = 'color-mix(in srgb, var(--color-canvas) 20%, transparent)';
   return (
-    <AppWindow title="Host & Ambient Overview" meta="local runtime · active" className="max-w-md">
-      <div className="grid grid-cols-2 gap-2">
-        <StatTile label="Intelligence" value="Local" sub="Ollama / MLX / BYOK" tone="success" />
-        <StatTile label="Tool Protocol" value="MCP" sub="Claude · Cursor · Agents" tone="info" />
-        <StatTile label="Smart Home" value="Linked" sub="Home Assistant · Areas" tone="neutral" />
-        <StatTile label="Telemetry" value="0.00" sub="Zero cloud data sent" tone="success" />
+    <div
+      className="voice-plate relative"
+      style={{
+        aspectRatio: '3 / 4',
+        padding: '4%',
+        borderRadius: '1.5em',
+        backgroundColor: PAPER.ink,
+        boxShadow: 'var(--shadow-plate)',
+      }}
+    >
+      <div
+        className="relative flex h-full w-full flex-col overflow-hidden"
+        style={{
+          borderRadius: '1.125em',
+          backgroundColor: 'color-mix(in srgb, var(--color-ink) 93%, var(--color-canvas))',
+          border: `0.0625em solid ${glassEdge}`,
+        }}
+      >
+        {/* status strip */}
+        <div
+          className="flex items-center justify-between px-[6%] pt-[4%] text-[0.625em] font-mono uppercase tracking-[var(--tracking-label)]"
+          style={{ color: 'color-mix(in srgb, var(--color-canvas) 55%, transparent)' }}
+        >
+          <span>Voice</span>
+          <span>10:47 AM</span>
+        </div>
+
+        {/* the mark — the shipped component, mid-thought */}
+        <div className="flex min-h-0 flex-1 items-center justify-center">
+          <div className="aspect-square w-[52%]">
+            <AudioReactiveHalbertMark size="100%" state="thinking" density="medium" tone="accent" />
+          </div>
+        </div>
+
+        {/* thinking caption */}
+        <p
+          className="px-[8%] pb-[2%] text-center text-[0.6875em] leading-snug"
+          style={{ color: 'color-mix(in srgb, var(--color-canvas) 90%, transparent)' }}
+        >
+          Looking over what changed while you were out…
+        </p>
+
+        {/* touch-bar hint */}
+        <div className="flex items-center justify-center gap-2 pb-[6%]">
+          <span
+            className="inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-[10px] font-medium"
+            style={{
+              color: 'var(--color-canvas)',
+              borderColor: 'color-mix(in srgb, var(--color-accent) 45%, transparent)',
+              backgroundColor: 'color-mix(in srgb, var(--color-accent) 16%, transparent)',
+            }}
+          >
+            <Mic className="h-3 w-3" aria-hidden="true" style={{ color: 'var(--color-accent)' }} />
+            Tap to speak
+          </span>
+          <span
+            className="inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-[10px] font-medium"
+            style={{
+              color: 'color-mix(in srgb, var(--color-canvas) 40%, transparent)',
+              borderColor: glassEdge,
+            }}
+          >
+            <Keyboard className="h-3 w-3" aria-hidden="true" />
+            Keyboard
+          </span>
+        </div>
+
+        {/* home indicator */}
+        <span
+          className="absolute bottom-[1.5%] left-1/2 h-[3px] w-[26%] -translate-x-1/2 rounded-full"
+          style={{ backgroundColor: 'color-mix(in srgb, var(--color-canvas) 35%, transparent)' }}
+        />
       </div>
-    </AppWindow>
+    </div>
   );
 }
