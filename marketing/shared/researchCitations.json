@@ -297,7 +297,7 @@
     },
     {
       "id": "context-rot",
-      "stopId": "hop",
+      "stopId": "rise",
       "title": "Context Rot: How Increasing Input Tokens Impacts LLM Performance",
       "authors": "K. Hong, A. Troynikov & J. Huber, Chroma",
       "venue": "Chroma technical report (trychroma.com)",

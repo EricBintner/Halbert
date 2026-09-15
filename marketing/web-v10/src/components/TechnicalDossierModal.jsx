@@ -1,34 +1,20 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { X, ChevronLeft, ChevronRight, Search } from 'lucide-react';
+import { BookOpen, X, ChevronRight, ChevronDown, ExternalLink } from 'lucide-react';
 import { STOPS } from '../lib/storyboard';
 import {
-  CITATIONS,
-  SHIPPED_FEATURES,
   citationsForStop,
   featuresForStop,
-  featuresForCitation,
   formatCitation,
 } from '../lib/researchData';
 
 /**
- * TechnicalDossierModal — the marketing site's research dossier.
+ * TechnicalDossierModal — ultra-minimal stop-curated research dossier.
  *
- * A corner trigger (bottom-left) opens a panel that tracks the active
- * storyboard stop: research citations and catalog features anchored to
- * the on-screen stop, the full searchable bibliography, and the cited
- * shipped features grouped by category. Voice is third person,
- * academic register (founder ruling 2026-09-15) — this is a reference
- * layer, not a conversation.
- *
- * Every count shown derives from the JSON at render (plan §4.2: a
- * typed count is a stale claim waiting to happen). Colours come only
- * from the token vars. No emoji anywhere in this surface.
- *
- * The panel stays mounted and switches on `inert` when closed, so the
- * open transition runs from real starting styles instead of a mount —
- * and `prefers-reduced-motion` collapses it through the duration token
- * (`--duration-shutter` is 0ms there), with no animation at all when
- * the OS gate is on.
+ * Triggered by a standalone graphic icon in the lower-left corner.
+ * Displays only the active storyboard stop's curated research papers
+ * and architectural features. No search bar, no tabs, no extra buttons,
+ * and no cards inside of cards: just clean, scannable headlines with
+ * inline click-to-expand details.
  */
 
 const TYPE_LABELS = {
@@ -41,16 +27,16 @@ const TYPE_LABELS = {
   licence: 'LICENCE',
 };
 
-// Third-person, per-status labels (plan §4.2): shipped prose names the
-// mechanism and file; design prose says it shaped the architecture;
-// deferred prose states the disposition. Never a uniform "applies this".
-const APPLIED = {
-  shipped: { label: 'HOW HALBERT SHIPS IT', tone: 'var(--color-status-nominal)' },
-  design: { label: 'HOW IT SHAPED THE DESIGN', tone: 'var(--color-status-telemetry)' },
-  deferred: { label: 'DISPOSITION IN HALBERT', tone: 'var(--color-status-warning)' },
+const CURATED_STOP_FEATURE_IDS = {
+  intro: ['mcp-server', 'local-voice-pipeline', 'acoustic-sensing'],
+  open: ['37-system-scanners', 'four-whys-findings', 'morning-reports-reflexes'],
+  apex: ['home-assistant-control', 'occupancy-behavior', 'apps-container-management'],
+  diagonal: ['air-gapped-private-execution', 'secure-credential-storage', 'hot-swap-providers'],
+  rise: ['memory-vault', 'why-brain', 'diff-proposals-rollback', 'provenance-tracking'],
+  hop: ['hybrid-retrieval', 'indexed-documents', 'context-compression'],
+  cap: ['peer-pairing', 'canonical-host-satellites', 'remote-tool-proxy'],
+  reveal: ['three-panel-shell', 'terminal-tiles-sandbox', 'skill-registry'],
 };
-
-const PAD2 = (n) => String(n).padStart(2, '0');
 
 function usePrefersReducedMotion() {
   const [reduced, setReduced] = useState(() =>
@@ -68,7 +54,6 @@ function usePrefersReducedMotion() {
   return reduced;
 }
 
-/** Traps Tab focus inside the panel while it is open. */
 function useFocusTrap(active, ref) {
   useEffect(() => {
     if (!active) return undefined;
@@ -97,175 +82,23 @@ function useFocusTrap(active, ref) {
   }, [active, ref]);
 }
 
-function matchCitation(c, q) {
-  if (!q) return true;
-  const hay = [c.title, c.authors, c.venue, c.identifier, c.takeaway, c.type].join(' ').toLowerCase();
-  return hay.includes(q);
-}
-
-function matchFeature(f, q) {
-  if (!q) return true;
-  const hay = [f.name, f.oneLine, f.howItWorks, f.whatItIs, f.toolingAndBackend].join(' ').toLowerCase();
-  return hay.includes(q);
-}
-
-function TypeBadge({ type, peerReviewed }) {
-  return (
-    <span className="inline-flex items-center gap-1.5">
-      <span className="inline-flex items-center rounded-sm border border-[var(--color-line)] bg-[var(--color-surface-subtle)] px-1.5 py-0.5 font-mono text-[9px] font-bold tracking-wider text-[var(--color-ink-secondary)]">
-        {TYPE_LABELS[type] ?? type.toUpperCase()}
-      </span>
-      {peerReviewed && (
-        <span
-          className="inline-flex items-center rounded-sm border border-[var(--color-status-nominal-line)] bg-[var(--color-status-nominal-bg)] px-1.5 py-0.5 font-mono text-[9px] font-bold tracking-wider text-[var(--color-status-nominal)]"
-          title="Peer-reviewed"
-        >
-          PEER-REVIEWED
-        </span>
-      )}
-    </span>
-  );
-}
-
-function StatusPill({ status }) {
-  return (
-    <span className="inline-flex items-center rounded-full border border-[var(--color-line)] bg-[var(--color-surface-subtle)] px-2 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-wider text-[var(--color-ink-secondary)]">
-      {status}
-    </span>
-  );
-}
-
-function FeatureChip({ feature }) {
-  return (
-    <span className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-[var(--color-line)] bg-[var(--color-surface)] px-1.5 py-0.5">
-      <span className="truncate text-[10px] font-medium text-[var(--color-ink)]">{feature.name}</span>
-      <StatusPill status={feature.status} />
-    </span>
-  );
-}
-
-function CitationCard({ citation }) {
-  const applied = APPLIED[citation.applied] ?? APPLIED.design;
-  const related = featuresForCitation(citation.id);
-  return (
-    <article className="rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)] p-3.5">
-      <div className="flex flex-wrap items-center gap-2">
-        <TypeBadge type={citation.type} peerReviewed={citation.peerReviewed} />
-        <span className="font-mono text-[10px] tracking-wider text-[var(--color-ink-tertiary)]">
-          {citation.year}
-        </span>
-      </div>
-      <h3 className="mt-2 text-[15px] font-semibold leading-snug">
-        <a
-          href={citation.url}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-[var(--color-ink)] underline decoration-[var(--color-line-strong)] decoration-1 underline-offset-2 transition-colors hover:decoration-[var(--color-stroke)]"
-        >
-          {citation.title}
-          <span className="ml-1 text-[var(--color-ink-secondary)]" aria-hidden="true">↗</span>
-        </a>
-      </h3>
-      <p className="mt-1.5 font-mono text-[10.5px] leading-relaxed text-[var(--color-ink-secondary)]">
-        {formatCitation(citation)}
-      </p>
-      <p className="mt-2 text-[12.5px] leading-relaxed text-[var(--color-ink)]">{citation.takeaway}</p>
-      <div
-        className="mt-3 rounded-md border-l-2 bg-[var(--color-surface-subtle)] p-2.5"
-        style={{ borderLeftColor: applied.tone }}
-      >
-        <div className="font-mono text-[9px] font-bold uppercase tracking-widest" style={{ color: applied.tone }}>
-          {applied.label}
-        </div>
-        <p className="mt-1 text-[12px] leading-relaxed text-[var(--color-ink)]">{citation.howHalbertApplies}</p>
-      </div>
-      {citation.applied === 'shipped' && related.length > 0 && (
-        <div className="mt-3">
-          <div className="font-mono text-[9px] font-bold uppercase tracking-widest text-[var(--color-ink-tertiary)]">
-            In the shipped architecture
-          </div>
-          <div className="mt-1.5 flex flex-wrap gap-1.5">
-            {related.map((f) => (
-              <FeatureChip key={f.id} feature={f} />
-            ))}
-          </div>
-        </div>
-      )}
-    </article>
-  );
-}
-
-function FeatureCard({ feature }) {
-  const cited =
-    Array.isArray(feature.citationIds) && feature.citationIds.length > 0
-      ? feature.citationIds
-          .map((id) => CITATIONS.find((c) => c.id === id))
-          .filter(Boolean)
-      : [];
-  return (
-    <article className="rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)] p-3.5">
-      <div className="flex flex-wrap items-center gap-2">
-        <StatusPill status={feature.status} />
-        <span className="font-mono text-[9px] uppercase tracking-widest text-[var(--color-ink-tertiary)]">
-          {feature.category}
-        </span>
-      </div>
-      <h3 className="mt-2 text-[15px] font-semibold leading-snug text-[var(--color-ink)]">{feature.name}</h3>
-      <p className="mt-1 text-[12.5px] leading-relaxed text-[var(--color-ink-secondary)]">{feature.oneLine}</p>
-      <p className="mt-2 text-[12px] leading-relaxed text-[var(--color-ink)]">{feature.howItWorks}</p>
-      {feature.toolingAndBackend && (
-        <p className="mt-2 font-mono text-[10px] leading-relaxed text-[var(--color-ink-tertiary)]">
-          {feature.toolingAndBackend}
-        </p>
-      )}
-      {cited.length > 0 && (
-        <div className="mt-3 border-t border-[var(--color-line-subtle)] pt-2.5">
-          <div className="font-mono text-[9px] font-bold uppercase tracking-widest text-[var(--color-ink-tertiary)]">
-            Cited by
-          </div>
-          <ul className="mt-1 space-y-0.5">
-            {cited.map((c) => (
-              <li key={c.id} className="text-[11px] leading-snug text-[var(--color-ink-secondary)]">
-                {c.title} ({c.year})
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-    </article>
-  );
-}
-
-function EmptyState({ children }) {
-  return (
-    <p className="px-1 py-6 text-center font-mono text-[11px] tracking-wider text-[var(--color-ink-tertiary)]">
-      {children}
-    </p>
-  );
-}
-
 const PANEL_ID = 'technical-dossier-panel';
 
-export function TechnicalDossierModal({ camera, stops, onSelectStop }) {
+export function TechnicalDossierModal({ camera, stops }) {
   const stopIndex = camera?.stopIndex ?? 0;
   const allStops = stops ?? STOPS;
   const activeStop = allStops[stopIndex] ?? allStops[0];
   const activeStopId = activeStop?.id ?? '';
 
   const [open, setOpen] = useState(false);
-  const [tab, setTab] = useState('focus');
-  const [query, setQuery] = useState('');
-  const [categoryFilter, setCategoryFilter] = useState(null);
+  const [expandedId, setExpandedId] = useState(null);
 
   const reducedMotion = usePrefersReducedMotion();
   const triggerRef = useRef(null);
   const panelRef = useRef(null);
   useFocusTrap(open, panelRef);
 
-  // Esc closes. A stale query or category chip would filter the next
-  // opening, so both reset with the panel. On close, focus returns to
-  // the trigger (the trigger keeps page focus; the panel is inert
-  // while closed, so it never steals Tab or arrow keys between uses).
+  // Esc closes
   useEffect(() => {
     if (!open) return undefined;
     const onKey = (e) => {
@@ -275,73 +108,43 @@ export function TechnicalDossierModal({ camera, stops, onSelectStop }) {
     return () => window.removeEventListener('keydown', onKey);
   }, [open]);
 
+  // Focus management
   const prevOpen = useRef(false);
   useEffect(() => {
     if (prevOpen.current === open) return;
     if (open) {
-      // Enter the dialog: settle focus onto the panel itself so Tab
-      // starts inside it, not behind it.
       if (panelRef.current) panelRef.current.focus();
     } else {
-      setQuery('');
-      setCategoryFilter(null);
+      setExpandedId(null);
       if (triggerRef.current) triggerRef.current.focus();
     }
     prevOpen.current = open;
   }, [open]);
 
+  // Reset expanded item on stop change so view stays lightweight
+  useEffect(() => {
+    setExpandedId(null);
+  }, [activeStopId]);
+
+  // Citations for the active stop
   const stopCitations = useMemo(() => citationsForStop(activeStopId), [activeStopId]);
-  const stopFeatures = useMemo(() => featuresForStop(activeStopId), [activeStopId]);
 
-  // Architecture Catalog: shipped features that cite at least one entry.
-  const citedShippedFeatures = useMemo(
-    () => SHIPPED_FEATURES.filter((f) => Array.isArray(f.citationIds) && f.citationIds.length > 0),
-    [],
-  );
-
-  const q = query.trim().toLowerCase();
-
-  const allResearch = useMemo(
-    () => CITATIONS.filter((c) => matchCitation(c, q) && (!categoryFilter || c.category === categoryFilter)),
-    [q, categoryFilter],
-  );
-
-  const catalogFeatures = useMemo(
-    () => citedShippedFeatures.filter((f) => matchFeature(f, q)),
-    [citedShippedFeatures, q],
-  );
-
-  const catalogByCategory = useMemo(() => {
-    const groups = new Map();
-    for (const f of catalogFeatures) {
-      const key = f.category ?? '';
-      if (!groups.has(key)) groups.set(key, []);
-      groups.get(key).push(f);
+  // Curated features for the active stop
+  const stopFeatures = useMemo(() => {
+    const allForStop = featuresForStop(activeStopId);
+    const curatedIds = CURATED_STOP_FEATURE_IDS[activeStopId];
+    if (curatedIds && curatedIds.length > 0) {
+      const idMap = new Map(allForStop.map((f) => [f.id, f]));
+      const curated = curatedIds.map((id) => idMap.get(id)).filter(Boolean);
+      return curated.length > 0 ? curated : allForStop;
     }
-    return groups;
-  }, [catalogFeatures]);
+    return allForStop;
+  }, [activeStopId]);
 
-  const focusCitations = tab === 'focus' && q ? stopCitations.filter((c) => matchCitation(c, q)) : stopCitations;
-  const focusFeatures = tab === 'focus' && q ? stopFeatures.filter((f) => matchFeature(f, q)) : stopFeatures;
-
-  const citationCategories = useMemo(() => {
-    const counts = new Map();
-    for (const c of CITATIONS) counts.set(c.category, (counts.get(c.category) ?? 0) + 1);
-    return counts;
-  }, []);
-
-  const jump = (delta) => {
-    const next = (stopIndex + delta + allStops.length) % allStops.length;
-    if (onSelectStop) onSelectStop(next);
+  const toggleItem = (id) => {
+    setExpandedId((prev) => (prev === id ? null : id));
   };
 
-  // Scale-in from the bottom-left corner. The visibility transition is
-  // deliberately two-sided: reading from the AFTER-change style, opening
-  // flips to visible instantly (the scale-in is visible from frame one)
-  // while closing holds visibility for the fade, then hides. Reduced
-  // motion drops the transition and transform entirely — and the
-  // OS-level gate zeroes the shutter tokens anyway, so either path
-  // gives that user an instant open from one code path.
   const motion = 'transform var(--duration-shutter) var(--ease-shutter), opacity var(--duration-shutter) var(--ease-shutter)';
   const panelStyle = reducedMotion
     ? open
@@ -360,6 +163,7 @@ export function TechnicalDossierModal({ camera, stops, onSelectStop }) {
 
   return (
     <>
+      {/* Graphic Icon Trigger — standalone mechanical icon button in bottom-left corner */}
       <button
         ref={triggerRef}
         type="button"
@@ -367,23 +171,18 @@ export function TechnicalDossierModal({ camera, stops, onSelectStop }) {
         aria-expanded={open}
         aria-controls={PANEL_ID}
         aria-haspopup="dialog"
+        aria-label="Research & Architecture Dossier"
         data-testid="dossier-trigger"
-        data-stop-index={stopIndex}
-        style={{ paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 0.25rem)' }}
-        className="group fixed bottom-6 left-6 z-40 flex items-center gap-2.5 rounded-full border border-[var(--color-line)] bg-[var(--color-surface)] py-2 pl-3 pr-4 shadow-[var(--shadow-plate)] transition-transform duration-150 hover:-translate-y-0.5 active:translate-y-0 cursor-pointer"
+        style={{
+          bottom: 'calc(env(safe-area-inset-bottom, 0px) + 1rem)',
+          left: 'calc(env(safe-area-inset-left, 0px) + 1rem)',
+        }}
+        className="fixed z-40 flex h-9 w-9 items-center justify-center rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)]/95 text-[var(--color-ink)] shadow-[var(--shadow-plate)] backdrop-blur-md transition-all duration-150 hover:border-[var(--color-stroke)] hover:text-[var(--color-stroke)] active:scale-95 cursor-pointer"
       >
-        <span
-          className="h-2 w-2 shrink-0 rounded-full bg-[var(--color-stroke)] transition-transform duration-150 group-hover:scale-125"
-          aria-hidden="true"
-        />
-        <span className="font-mono text-[10px] font-bold tracking-widest uppercase text-[var(--color-ink)]">
-          Research &amp; Specs
-        </span>
-        <span className="font-mono text-[10px] tracking-wider text-[var(--color-ink-secondary)]">
-          [{stopCitations.length} papers · {stopFeatures.length} features]
-        </span>
+        <BookOpen size={16} aria-hidden="true" />
       </button>
 
+      {/* Popup Drawer — compact, simplified, corner-anchored */}
       <div
         ref={panelRef}
         id={PANEL_ID}
@@ -396,182 +195,133 @@ export function TechnicalDossierModal({ camera, stops, onSelectStop }) {
         inert={!open}
         tabIndex={-1}
         style={panelStyle}
-        className={`fixed inset-0 z-50 flex flex-col overflow-hidden rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)]/95 text-[var(--color-ink)] shadow-[var(--shadow-popover)] backdrop-blur-xl max-sm:rounded-none sm:inset-auto sm:bottom-20 sm:left-6 sm:w-[540px] sm:max-w-[calc(100vw-3rem)] sm:max-h-[82vh] sm:origin-bottom-left ${openClass}`}
+        className={`fixed z-50 flex flex-col overflow-hidden rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)]/95 text-[var(--color-ink)] shadow-[var(--shadow-popover)] backdrop-blur-xl max-sm:inset-x-3 max-sm:bottom-16 max-sm:max-h-[70vh] sm:bottom-14 sm:left-4 sm:w-[380px] sm:max-w-[calc(100vw-2rem)] sm:max-h-[62vh] sm:origin-bottom-left ${openClass}`}
       >
-        {/* Header: stop selector, search, tabs, close. The phone sheet is
-            fixed inset-0, so the notch insets come from env() here — a
-            zero-inset display keeps the authored padding. */}
-        <div
-          className="shrink-0 border-b border-[var(--color-line)] bg-[var(--color-canvas)] px-3.5 pb-3 pt-3.5 max-sm:px-4 max-sm:pt-4"
-          style={{
-            paddingTop: 'calc(env(safe-area-inset-top, 0px) + 0.875rem)',
-            paddingLeft: 'calc(env(safe-area-inset-left, 0px) + 1rem)',
-            paddingRight: 'calc(env(safe-area-inset-right, 0px) + 1rem)',
-          }}
-        >
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => jump(-1)}
-              aria-label="Previous stop"
-              className="flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-md border border-[var(--color-line)] text-[var(--color-ink-secondary)] transition-colors hover:bg-[var(--color-surface-subtle)] hover:text-[var(--color-ink)]"
-            >
-              <ChevronLeft size={14} aria-hidden="true" />
-            </button>
-            <div className="min-w-0 flex-1 truncate text-center font-mono text-[11px] font-bold tracking-widest uppercase text-[var(--color-ink)]">
-              Stop {PAD2(stopIndex + 1)} / {PAD2(allStops.length)} · {(activeStop?.name ?? '').toUpperCase()}
-            </div>
-            <button
-              type="button"
-              onClick={() => jump(1)}
-              aria-label="Next stop"
-              className="flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-md border border-[var(--color-line)] text-[var(--color-ink-secondary)] transition-colors hover:bg-[var(--color-surface-subtle)] hover:text-[var(--color-ink)]"
-            >
-              <ChevronRight size={14} aria-hidden="true" />
-            </button>
-            <button
-              type="button"
-              onClick={() => setOpen(false)}
-              aria-label="Close dossier"
-              className="ml-1 flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-md border border-[var(--color-line)] text-[var(--color-ink-secondary)] transition-colors hover:bg-[var(--color-surface-subtle)] hover:text-[var(--color-ink)]"
-            >
-              <X size={14} aria-hidden="true" />
-            </button>
-          </div>
-
-          <div className="mt-2.5 flex items-center gap-2 rounded-md border border-[var(--color-line)] bg-[var(--color-surface)] px-2.5 py-1.5">
-            <Search size={13} className="shrink-0 text-[var(--color-ink-tertiary)]" aria-hidden="true" />
-            <input
-              type="search"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder={`Filter ${CITATIONS.length} papers & ${citedShippedFeatures.length} features...`}
-              aria-label="Filter research and features"
-              className="w-full min-w-0 bg-transparent font-mono text-[11px] text-[var(--color-ink)] placeholder:text-[var(--color-ink-tertiary)] focus:outline-none"
-            />
-          </div>
-
-          <div className="mt-2.5 grid grid-cols-3 gap-1.5" role="tablist" aria-label="Dossier sections">
-            {[
-              ['focus', 'Section Focus'],
-              ['all', `All Research (${CITATIONS.length})`],
-              ['catalog', `Architecture Catalog (${citedShippedFeatures.length})`],
-            ].map(([id, label]) => (
-              <button
-                key={id}
-                type="button"
-                role="tab"
-                aria-selected={tab === id}
-                onClick={() => setTab(id)}
-                className={`cursor-pointer truncate rounded-md border px-2 py-1.5 font-mono text-[9.5px] font-bold tracking-wider uppercase transition-colors ${
-                  tab === id
-                    ? 'border-[var(--color-stroke)] bg-[var(--color-stroke)] text-[var(--color-ink-on-stroke)]'
-                    : 'border-[var(--color-line)] text-[var(--color-ink-secondary)] hover:bg-[var(--color-surface-subtle)] hover:text-[var(--color-ink)]'
-                }`}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
+        {/* Header: Headline + Close button only */}
+        <div className="flex shrink-0 items-center justify-between border-b border-[var(--color-line)] bg-[var(--color-canvas)] px-3.5 py-2.5">
+          <span className="font-mono text-[11px] font-bold tracking-widest uppercase text-[var(--color-ink)]">
+            {String(stopIndex + 1).padStart(2, '0')} // {(activeStop?.name ?? '').toUpperCase()}
+          </span>
+          <button
+            type="button"
+            onClick={() => setOpen(false)}
+            aria-label="Close dossier"
+            className="flex h-6 w-6 cursor-pointer items-center justify-center rounded text-[var(--color-ink-tertiary)] transition-colors hover:bg-[var(--color-surface-subtle)] hover:text-[var(--color-ink)]"
+          >
+            <X size={14} aria-hidden="true" />
+          </button>
         </div>
 
-        {/* Body */}
-        <div className="min-h-0 flex-1 overflow-y-auto px-3.5 py-3.5">
-          {tab === 'focus' && (
-            <div className="space-y-3">
-              <p className="px-1 font-mono text-[10px] tracking-widest uppercase text-[var(--color-ink-tertiary)]">
-                {(activeStop?.name ?? '')} · {focusCitations.length} citations · {focusFeatures.length} features
-              </p>
-              {focusCitations.map((c) => (
-                <CitationCard key={c.id} citation={c} />
-              ))}
-              {focusFeatures.map((f) => (
-                <FeatureCard key={f.id} feature={f} />
-              ))}
-              {focusCitations.length === 0 && focusFeatures.length === 0 && (
-                <EmptyState>No matching entries for this stop.</EmptyState>
-              )}
-            </div>
-          )}
-
-          {tab === 'all' && (
-            <div className="space-y-3">
-              <div className="flex flex-wrap gap-1.5 px-1">
+        {/* Body: Lightweight headline-only list with inline accordion unfold */}
+        <div className="min-h-0 flex-1 overflow-y-auto divide-y divide-[var(--color-line-subtle)] px-2 py-1">
+          {/* Research Citations */}
+          {stopCitations.map((c) => {
+            const isExpanded = expandedId === c.id;
+            return (
+              <div key={c.id} className="py-1">
                 <button
                   type="button"
-                  onClick={() => setCategoryFilter(null)}
-                  className={`cursor-pointer rounded-full border px-2.5 py-1 font-mono text-[9.5px] font-bold tracking-wider uppercase transition-colors ${
-                    categoryFilter === null
-                      ? 'border-[var(--color-stroke)] text-[var(--color-stroke)]'
-                      : 'border-[var(--color-line)] text-[var(--color-ink-secondary)] hover:text-[var(--color-ink)]'
-                  }`}
+                  onClick={() => toggleItem(c.id)}
+                  aria-expanded={isExpanded}
+                  className="flex w-full cursor-pointer items-start justify-between gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-[var(--color-surface-subtle)]"
                 >
-                  All ({CITATIONS.length})
-                </button>
-                {[...citationCategories.entries()].map(([cat, count]) => (
-                  <button
-                    key={cat}
-                    type="button"
-                    onClick={() => setCategoryFilter((cur) => (cur === cat ? null : cat))}
-                    className={`cursor-pointer rounded-full border px-2.5 py-1 font-mono text-[9.5px] font-bold tracking-wider uppercase transition-colors ${
-                      categoryFilter === cat
-                        ? 'border-[var(--color-stroke)] text-[var(--color-stroke)]'
-                        : 'border-[var(--color-line)] text-[var(--color-ink-secondary)] hover:text-[var(--color-ink)]'
-                    }`}
-                  >
-                    {cat} ({count})
-                  </button>
-                ))}
-              </div>
-              {allResearch.length > 0 ? (
-                allResearch.map((c) => <CitationCard key={c.id} citation={c} />)
-              ) : (
-                <EmptyState>No citations match that filter.</EmptyState>
-              )}
-            </div>
-          )}
-
-          {tab === 'catalog' && (
-            <div className="space-y-4">
-              {[...catalogByCategory.entries()].map(([category, features]) => (
-                <section key={category}>
-                  <h3 className="mb-2 px-1 font-mono text-[10px] font-bold tracking-widest uppercase text-[var(--color-ink-tertiary)]">
-                    {category} ({features.length})
-                  </h3>
-                  <div className="space-y-3">
-                    {features.map((f) => (
-                      <FeatureCard key={f.id} feature={f} />
-                    ))}
+                  <div className="min-w-0 flex-1">
+                    <div className="mb-0.5 flex items-center gap-1.5">
+                      <span className="font-mono text-[8.5px] font-bold uppercase tracking-wider text-[var(--color-ink-tertiary)]">
+                        {TYPE_LABELS[c.type] ?? c.type.toUpperCase()}
+                      </span>
+                      {c.year && (
+                        <span className="font-mono text-[8.5px] text-[var(--color-ink-tertiary)]">
+                          · {c.year}
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-[12.5px] font-medium leading-snug text-[var(--color-ink)]">
+                      {c.title}
+                    </div>
                   </div>
-                </section>
-              ))}
-              {catalogFeatures.length === 0 && <EmptyState>No features match that filter.</EmptyState>}
-            </div>
-          )}
-        </div>
+                  <span className="mt-1 shrink-0 text-[var(--color-ink-tertiary)]">
+                    {isExpanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                  </span>
+                </button>
 
-        {/* Footer: canonical deployed reference + licence line */}
-        <div
-          className="shrink-0 border-t border-[var(--color-line)] bg-[var(--color-canvas)] px-3.5 py-2.5"
-          style={{
-            paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 0.625rem)',
-            paddingLeft: 'calc(env(safe-area-inset-left, 0px) + 0.875rem)',
-            paddingRight: 'calc(env(safe-area-inset-right, 0px) + 0.875rem)',
-          }}
-        >
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <a
-              href="https://halbert.computer/features/"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="font-mono text-[10.5px] font-bold tracking-wider uppercase text-[var(--color-ink)] underline decoration-[var(--color-line-strong)] decoration-1 underline-offset-2 transition-colors hover:decoration-[var(--color-stroke)]"
-            >
-              Open Full Architecture Dictionary →
-            </a>
-            <span className="font-mono text-[9.5px] tracking-wider uppercase text-[var(--color-ink-tertiary)]">
-              Open Source · GPL-3.0 · Zero Cloud Telemetry
-            </span>
-          </div>
+                {isExpanded && (
+                  <div className="my-1.5 ml-2 border-l-2 border-[var(--color-line-strong)] pl-2.5 pr-2 text-[11.5px] leading-relaxed text-[var(--color-ink-secondary)]">
+                    <p className="font-mono text-[10px] text-[var(--color-ink-tertiary)]">
+                      {formatCitation(c)}
+                    </p>
+                    <p className="mt-1.5 text-[var(--color-ink)]">{c.takeaway}</p>
+                    <p className="mt-1.5 text-[var(--color-ink-secondary)]">{c.howHalbertApplies}</p>
+                    {c.url && (
+                      <div className="mt-2">
+                        <a
+                          href={c.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 font-mono text-[10px] text-[var(--color-ink)] underline decoration-[var(--color-line-strong)] hover:text-[var(--color-stroke)]"
+                        >
+                          <span>Original work</span>
+                          <ExternalLink size={10} aria-hidden="true" />
+                        </a>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+
+          {/* Curated Shipped Features */}
+          {stopFeatures.map((f) => {
+            const isExpanded = expandedId === f.id;
+            return (
+              <div key={f.id} className="py-1">
+                <button
+                  type="button"
+                  onClick={() => toggleItem(f.id)}
+                  aria-expanded={isExpanded}
+                  className="flex w-full cursor-pointer items-start justify-between gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-[var(--color-surface-subtle)]"
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="mb-0.5 flex items-center gap-1.5">
+                      <span className="font-mono text-[8.5px] font-bold uppercase tracking-wider text-[var(--color-stroke)]">
+                        FEATURE
+                      </span>
+                      {f.category && (
+                        <span className="font-mono text-[8.5px] text-[var(--color-ink-tertiary)] truncate">
+                          · {f.category}
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-[12.5px] font-medium leading-snug text-[var(--color-ink)]">
+                      {f.name}
+                    </div>
+                  </div>
+                  <span className="mt-1 shrink-0 text-[var(--color-ink-tertiary)]">
+                    {isExpanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                  </span>
+                </button>
+
+                {isExpanded && (
+                  <div className="my-1.5 ml-2 border-l-2 border-[var(--color-stroke)] pl-2.5 pr-2 text-[11.5px] leading-relaxed text-[var(--color-ink-secondary)]">
+                    <p className="font-medium text-[var(--color-ink)]">{f.oneLine}</p>
+                    <p className="mt-1.5 text-[var(--color-ink-secondary)]">{f.howItWorks}</p>
+                    {f.toolingAndBackend && (
+                      <p className="mt-1.5 font-mono text-[9.5px] text-[var(--color-ink-tertiary)]">
+                        Source: {f.toolingAndBackend}
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+
+          {stopCitations.length === 0 && stopFeatures.length === 0 && (
+            <p className="px-3 py-6 text-center font-mono text-[11px] text-[var(--color-ink-tertiary)]">
+              No entries for this stop.
+            </p>
+          )}
         </div>
       </div>
     </>
