@@ -6,35 +6,56 @@
 
 ---
 
-## 1. Approved Social & Search Copy
+## 1. Unified Copy Architecture
 
-These selections are live in `marketing/web-v10/index.html`:
+To maintain complete narrative integrity across human social media previews, conversational AI queries, and structured knowledge graphs, all surfaces are derived from four canonical copy assets:
 
-### Page Title & OpenGraph/Twitter Title
+### A. Canonical Title (56 characters)
+Used identically across `<title>`, `<meta name="title">`, `og:title`, and `twitter:title`:
 ```text
 Halbert — Host Epistemology & Cognition, Smart Home + MCP
 ```
-- **Length:** 56 characters.
 - **Envelope:** Exactly fits the 56–58 character two-line envelope on mobile Twitter/X link cards without trailing ellipsis truncation.
-- **Keywords:** Names the host cognition layer, smart home integration, and native MCP capability.
+- **Signals:** Host epistemology/cognition layer, Home Assistant/smart home integration, and native Model Context Protocol (MCP) server.
 
-### Meta Description & OpenGraph/Twitter Description (Option B4)
+### B. Canonical Headline
+Used identically for Schema.org JSON-LD `headline` and the primary site hero hook:
+```text
+The mind in your computer and the smart in your home.
+```
+
+### C. Canonical Short Description (147 characters)
+Used identically across `<meta name="description">`, `og:description`, and `twitter:description`:
 ```text
 The mind in your computer and the smart in your home. Proactive system triage, Home Assistant automation, and native MCP tools for Linux, Mac & HA.
 ```
-- **Length:** 147 characters (optimal for the 140–160 search/social preview budget).
-- **Core Pillars:**
-  1. *Host identity:* "The mind in your computer and the smart in your home."
-  2. *Triage:* "Proactive system triage"
-  3. *Physical Automation:* "Home Assistant automation"
-  4. *Agent Tooling:* "native MCP tools"
-  5. *Platforms:* "for Linux, Mac & HA" (omits unreleased Windows).
+- **Envelope:** 147 characters (optimal for search engine snippets and social preview cards).
+- **Scope:** Unifies host identity, proactive triage, physical automation, native MCP tooling, and supported platforms (Linux, Mac & HA; Windows excluded until shipped).
+
+### D. Canonical Long Description
+Used identically for Schema.org JSON-LD `description` and the `llms.txt` summary blockquote:
+```text
+Halbert is an embodied host epistemology and cognition layer that bridges system administration and Home Assistant automation into one private runtime. It identifies as the computer itself, delivering proactive system triage, physical room automation, and native Model Context Protocol (MCP) tools over a 100% local architecture with zero telemetry.
+```
 
 ---
 
-## 2. Production HTML Snippet (`index.html`)
+## 2. Canonical Feature List & Core Pillars
 
-The following tags are implemented in `<head>`:
+The feature set is 100% unified across machine-readable JSON-LD structured data and the plain-text AI Agent manifest (`llms.txt`). Each item pairs an authoritative capability title with an explicit, factually grounded description:
+
+| # | Pillar Title | Canonical Description |
+|---|---|---|
+| 1 | **Embodied Host Cognition** | Speaks in the first person as the computer itself, grounded in measured telemetry from hardware sensors, system logs, and local storage. |
+| 2 | **Proactive System Triage** | Continuously diagnoses storage health (ZFS, SMART), service failures, configuration drift, and package conflicts before they cause downtime. |
+| 3 | **Home Assistant Integration** | Bridges host management with physical ambient automation, controlling lights, presence, climate, and rooms in a unified intelligence. |
+| 4 | **Native MCP Server** | Exposes structured host tools, diagnostics, and system controls to Claude, Cursor, and autonomous AI agents. |
+| 5 | **Continuous Memory & Provenance** | Indexes thousands of local system manuals and preserves the rationale and audit evidence behind every configuration change. |
+| 6 | **Private by Construction with Federated Compute** | Runs 100% locally with zero telemetry, while local peer routing allows home servers to offload heavy reasoning to desktop GPUs. |
+
+---
+
+## 3. Production HTML Implementation (`index.html`)
 
 ```html
 <!-- Primary Meta Tags -->
@@ -63,77 +84,62 @@ The following tags are implemented in `<head>`:
 <meta name="twitter:description" content="The mind in your computer and the smart in your home. Proactive system triage, Home Assistant automation, and native MCP tools for Linux, Mac &amp; HA." />
 <meta name="twitter:image" content="https://halbert.computer/og-image.png" />
 <meta name="twitter:image:alt" content="Halbert — I am the computer. And I put the smart in your home." />
-```
 
----
-
-## 3. What is AI SEO (Generative Engine Optimization)?
-
-Traditional SEO focuses on Google keywords, backlinks, and meta tags. **AI SEO (GEO)** focuses on how Large Language Models (LLMs) and conversational search engines (Perplexity, ChatGPT Search, Claude, Gemini, Apple Intelligence) ingest, understand, cite, and recommend software:
-
-1. **`llms.txt` Standard**: An emerging, cross-industry specification (originated by Answer.ai, adopted by Anthropic, Perplexity, Cursor, Cloudflare, etc.). It lives at `/llms.txt` and gives AI assistants a clean, Markdown-formatted manifest explaining what Halbert is, its capabilities, architecture, and documentation.
-2. **Schema.org Structured Data (`JSON-LD`)**: Embedded in HTML `<script type="application/ld+json">`. LLMs and knowledge graphs extract machine-readable entities (`SoftwareApplication`, `HomeAutomation`, `DeveloperApplication`, `GPL-3.0-or-later`).
-3. **Information Density & Factual Grounding**: AI engines reward concrete, authoritative declarations of architecture, constraints, and features (*"Zero telemetry"*, *"Requires local model for credentials"*, *"Native MCP server"*, *"Home Assistant integration"*).
-4. **AI Crawler Hygiene (`robots.txt`)**: Explicitly permitting AI search indexers (`GPTBot`, `ClaudeBot`, `PerplexityBot`, `Applebot-Extended`, `Google-Extended`).
-
----
-
-## 4. AI SEO (GEO) Implementation Artifacts
-
-### A. Schema.org JSON-LD Structured Data
-Implemented in `<head>` in `marketing/web-v10/index.html`:
-
-```json
-{
-  "@context": "https://schema.org",
-  "@type": "SoftwareApplication",
-  "name": "Halbert",
-  "alternateName": "Halbert Computer",
-  "headline": "I am the computer. And I put the smart in your home.",
-  "description": "Halbert is an embodied local host intelligence that bridges system administration, Home Assistant automation, and native Model Context Protocol (MCP) tool serving into a single private runtime.",
-  "url": "https://halbert.computer/",
-  "applicationCategory": "DeveloperApplication, UtilitiesApplication, HomeAutomation",
-  "operatingSystem": "Linux, macOS",
-  "license": "https://www.gnu.org/licenses/gpl-3.0.html",
-  "softwareVersion": "10.0.0",
-  "offers": {
-    "@type": "Offer",
-    "price": "0",
-    "priceCurrency": "USD"
-  },
-  "featureList": [
-    "100% local-first host intelligence with zero telemetry",
-    "Home Assistant integration for physical ambient automation",
-    "Native Model Context Protocol (MCP) server for Claude, Cursor, and AI agents",
-    "Proactive triage of storage (ZFS, SMART), service health, and configuration drift",
-    "Continuous memory and rationale tracking for system changes",
-    "Distributed peer routing and shared local GPU compute across machines"
-  ],
-  "author": {
-    "@type": "Person",
-    "name": "Eric Bintner"
+<!-- Schema.org JSON-LD (AI Search & Structured Data) -->
+<script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "Halbert",
+    "alternateName": "Halbert Computer",
+    "headline": "The mind in your computer and the smart in your home.",
+    "description": "Halbert is an embodied host epistemology and cognition layer that bridges system administration and Home Assistant automation into one private runtime. It identifies as the computer itself, delivering proactive system triage, physical room automation, and native Model Context Protocol (MCP) tools over a 100% local architecture with zero telemetry.",
+    "url": "https://halbert.computer/",
+    "applicationCategory": "DeveloperApplication, UtilitiesApplication, HomeAutomation",
+    "operatingSystem": "Linux, macOS",
+    "license": "https://www.gnu.org/licenses/gpl-3.0.html",
+    "softwareVersion": "10.0.0",
+    "offers": {
+      "@type": "Offer",
+      "price": "0",
+      "priceCurrency": "USD"
+    },
+    "featureList": [
+      "Embodied host cognition: speaks in the first person as the computer itself, grounded in measured telemetry from hardware sensors, system logs, and local storage.",
+      "Proactive system triage: continuously diagnoses storage health (ZFS, SMART), service failures, configuration drift, and package conflicts before they cause downtime.",
+      "Home Assistant integration: bridges host management with physical ambient automation, controlling lights, presence, climate, and rooms in a unified intelligence.",
+      "Native Model Context Protocol (MCP) server: exposes structured host tools, diagnostics, and system controls to Claude, Cursor, and autonomous AI agents.",
+      "Continuous memory and provenance: indexes thousands of local system manuals and preserves the rationale and audit evidence behind every configuration change.",
+      "Private by construction with federated compute: runs 100% locally with zero telemetry, while local peer routing allows home servers to offload heavy reasoning to desktop GPUs."
+    ],
+    "keywords": "host epistemology, system triage, Home Assistant, model context protocol, MCP server, local AI, ZFS monitoring, private LLM, autonomous sysadmin, home automation",
+    "author": {
+      "@type": "Person",
+      "name": "Eric Bintner"
+    }
   }
-}
+</script>
 ```
 
 ---
 
-### B. `marketing/web-v10/public/llms.txt`
-Served at `https://halbert.computer/llms.txt` for AI crawlers, Cursor, Claude Code, and autonomous agents:
+## 4. AI Agent Manifest (`public/llms.txt`)
+
+Served at `https://halbert.computer/llms.txt`:
 
 ```markdown
 # Halbert
 
-> Halbert is an embodied local host intelligence that bridges host management and home automation into one private runtime. It identifies as the computer itself, monitors its own hardware and system health, automates physical rooms via Home Assistant, and exposes native Model Context Protocol (MCP) tools to AI agents.
+> Halbert is an embodied host epistemology and cognition layer that bridges system administration and Home Assistant automation into one private runtime. It identifies as the computer itself, delivering proactive system triage, physical room automation, and native Model Context Protocol (MCP) tools over a 100% local architecture with zero telemetry.
 
 ## Core Pillars
 
-- **The Computer Itself**: Halbert speaks in the first person as the host machine, grounded in measured data from sensors, journals, and local storage.
-- **Home Automation Integration**: Bridges host sysadmin chores with Home Assistant (lights, presence, climate, physical rooms) in a single intelligence.
-- **Native MCP Server**: Exposes structured, permission-gated system tools and documentation to external AI workflows (Claude, Cursor, custom agents).
-- **Private by Construction**: Runs 100% locally with zero cloud telemetry. Supports local runtimes (Ollama, MLX, vLLM) and optional BYOK cloud keys; sensitive system credentials strictly require a private local model.
-- **Continuous Memory & Rationale**: Thousands of system manuals and references indexed locally; preserves the *why* and audit evidence behind every configuration change.
-- **Distributed Architecture (Singular Entity)**: Low-power home servers offload heavy reasoning to desktop GPUs over local peer routing, maintaining continuous memory across every machine.
+- **Embodied Host Cognition**: Speaks in the first person as the computer itself, grounded in measured telemetry from hardware sensors, system logs, and local storage.
+- **Proactive System Triage**: Continuously diagnoses storage health (ZFS, SMART), service failures, configuration drift, and package conflicts before they cause downtime.
+- **Home Automation Integration**: Bridges host management with physical ambient automation, controlling lights, presence, climate, and rooms in a unified intelligence.
+- **Native MCP Server**: Exposes structured host tools, diagnostics, and system controls to Claude, Cursor, and autonomous AI agents.
+- **Continuous Memory & Provenance**: Indexes thousands of local system manuals and preserves the rationale and audit evidence behind every configuration change.
+- **Private by Construction with Federated Compute**: Runs 100% locally with zero telemetry, while local peer routing allows home servers to offload heavy reasoning to desktop GPUs.
 
 ## Supported Platforms
 
@@ -150,8 +156,9 @@ Served at `https://halbert.computer/llms.txt` for AI crawlers, Cursor, Claude Co
 
 ---
 
-### C. `marketing/web-v10/public/robots.txt`
-Permits AI search indexers to crawl and discover `llms.txt`:
+## 5. Crawler Configuration (`public/robots.txt`)
+
+Served at `https://halbert.computer/robots.txt`:
 
 ```robots
 User-agent: *
@@ -177,11 +184,3 @@ Allow: /
 Sitemap: https://halbert.computer/sitemap.xml
 # llms.txt: https://halbert.computer/llms.txt
 ```
-
----
-
-## 5. Rationale & Decision History
-
-- **Why Title `Halbert — Host Epistemology & Cognition, Smart Home + MCP`**: Fits within 56 characters, avoiding mobile preview card clipping on Twitter/X, while packing high-intent search signals (Host Epistemology, Smart Home, MCP).
-- **Why Description Option B4**: Previous drafts spent too much character budget repeating "private local models, zero telemetry". Option B4 captures the identity hook (*"The mind in your computer and the smart in your home"*), triage capability, Home Assistant, and native MCP tools in 147 characters.
-- **Platform Scope**: Windows was intentionally excluded as it is deferred to a future milestone; platform scope is locked to `Linux, Mac & HA`.
