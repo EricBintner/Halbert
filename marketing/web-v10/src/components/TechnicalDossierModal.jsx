@@ -302,7 +302,7 @@ export function TechnicalDossierModal({ camera, stops }) {
                     aria-expanded={isSelected}
                     className={`group flex w-full items-center gap-1.5 px-2 py-1 rounded text-left transition-colors cursor-pointer ${
                       isSelected
-                        ? 'bg-[var(--color-surface-subtle)] text-[var(--color-ink)] border-l-2 border-[var(--color-stroke)]'
+                        ? 'bg-[var(--color-surface-subtle)] text-[var(--color-ink)]'
                         : 'hover:bg-[var(--color-surface-subtle)]/70 text-[var(--color-ink)]'
                     }`}
                   >
@@ -328,7 +328,7 @@ export function TechnicalDossierModal({ camera, stops }) {
 
                   {/* Mobile-only inline expansion (accordion fallback) */}
                   {isSelected && (
-                    <div className="sm:hidden my-1.5 ml-2 border-l-2 border-[var(--color-stroke)] pl-2.5 pr-2 py-1 text-[11.5px] leading-relaxed text-[var(--color-ink-secondary)] bg-[var(--color-surface-subtle)]/50 rounded-r">
+                    <div className="sm:hidden my-1.5 p-2 text-[11.5px] leading-relaxed text-[var(--color-ink-secondary)] bg-[var(--color-surface-subtle)]/60 rounded">
                       {item.fullCitation && (
                         <p className="font-mono text-[9.5px] text-[var(--color-ink-tertiary)]">
                           {item.fullCitation}
@@ -403,8 +403,8 @@ export function TechnicalDossierModal({ camera, stops }) {
               </p>
 
               {selectedItem.howHalbertApplies && (
-                <div className="border-l-2 border-[var(--color-stroke)] pl-2 pt-0.5 text-[var(--color-ink-secondary)]">
-                  <span className="font-mono text-[8.5px] font-bold uppercase tracking-wider block text-[var(--color-stroke)] mb-0.5">
+                <div className="rounded bg-[var(--color-surface-subtle)]/60 p-2 text-[var(--color-ink-secondary)]">
+                  <span className="font-mono text-[8.5px] font-bold uppercase tracking-wider block text-[var(--color-stroke)] mb-1">
                     In Halbert
                   </span>
                   {selectedItem.howHalbertApplies}
