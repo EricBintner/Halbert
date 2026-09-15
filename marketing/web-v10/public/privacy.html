@@ -59,7 +59,7 @@
       <div>
         <div class="text-xs font-mono uppercase tracking-widest text-[#D34E24] font-bold mb-2">Legal Policy</div>
         <h1 class="text-4xl md:text-5xl font-black mb-4">Privacy Policy</h1>
-        <p class="text-sm font-mono opacity-60">Effective Date: August 25, 2026 · Last Updated: August 25, 2026</p>
+        <p class="text-sm font-mono opacity-60">Effective Date: August 25, 2026 · Last Updated: September 14, 2026</p>
       </div>
 
       <section class="space-y-4">
@@ -76,17 +76,17 @@
           <li>Hardware sensor telemetry (<code>hwmon</code>, CPU/GPU temperatures, memory and disk utilization).</li>
           <li>Operating system logs (<code>systemd-journald</code>, <code>syslog</code>, <code>/var/log</code>).</li>
           <li>Configuration files (<code>/etc</code>, dotfiles in <code>$HOME</code>, <code>launchd</code> plists, systemd service units).</li>
-          <li>Shell history and environment variables (<code>$PATH</code>, shell profiles).</li>
+          <li>Environment variables (<code>$PATH</code>, and Halbert's own override variables).</li>
         </ul>
         <p class="text-sm bg-[#EFECE5] p-4 border-l-4 border-[#D34E24] font-mono">
-          <strong>All of this data remains strictly on your local machine.</strong> It is stored in standard local directories adhering to the XDG Base Directory Specification: <code>~/.config/halbert/</code>, <code>~/.local/share/halbert/</code>, and <code>~/.local/state/halbert/</code>.
+          <strong>All of this data remains strictly on your local machine.</strong> It is stored in standard local directories: on Linux, per the XDG Base Directory Specification — <code>~/.config/halbert/</code>, <code>~/.local/share/halbert/</code>, and <code>~/.local/state/halbert/</code>; on macOS — <code>~/Library/Application Support/Halbert/</code> and <code>~/Library/Caches/Halbert/</code>.
         </p>
 
         <h3 class="text-lg font-bold mt-4">2.2 Zero Telemetry, Analytics, or Crash Reporting</h3>
         <p>Halbert <strong>does not collect telemetry</strong>, event pings, or usage analytics. Halbert <strong>does not phone home</strong> on startup, execution, or shutdown. There are no background beacon scripts, tracking SDKs, or third-party diagnostic collectors embedded in Halbert.</p>
 
         <h3 class="text-lg font-bold mt-4">2.3 Optional Cloud Model Connections</h3>
-        <p>Halbert runs on local models (via Ollama or Apple Silicon MLX) by default. If you <strong>explicitly choose</strong> to configure external cloud API keys (e.g., Anthropic Claude, OpenAI GPT, Google Gemini):</p>
+        <p>Halbert runs on local models (via Ollama or Apple Silicon MLX) by default. If you <strong>explicitly choose</strong> to configure external cloud API keys (e.g., Anthropic Claude, OpenAI, or OpenRouter):</p>
         <ul class="list-disc pl-6 space-y-1 text-sm">
           <li>Only the specific prompt and relevant retrieved context snippets required to answer your query are sent to the designated cloud provider.</li>
           <li>Your data transfer is governed strictly by your direct agreement with that cloud provider.</li>
@@ -97,7 +97,7 @@
       <section class="space-y-4">
         <h2 class="text-2xl font-bold border-b border-[#1C1917]/10 pb-2">3. The Halbert Project Website</h2>
         <h3 class="text-lg font-bold">3.1 Early Access Email Collection</h3>
-        <p>On our website, we offer an early access signup form. We collect your email address solely to notify you when release builds or beta invitations become available. We do not sell, rent, trade, or share your email address with third parties or data brokers. You may unsubscribe or request permanent deletion at any time by emailing <code>privacy@halbert.net</code>.</p>
+        <p>On our website, we offer an early access signup form. We collect your email address solely to notify you when release builds or beta invitations become available. We do not sell, rent, trade, or share your email address with third parties or data brokers. You may unsubscribe or request permanent deletion at any time by emailing <code>hello@halbert.computer</code>.</p>
 
         <h3 class="text-lg font-bold mt-4">3.2 Hosting & CDN Server Logs</h3>
         <p>Our website is statically served via modern content delivery networks. Standard non-identifying request metadata (IP address, browser user-agent, referring URL, timestamp) is temporarily logged by CDN infrastructure for network security, DDoS mitigation, and reliable asset delivery.</p>
@@ -107,13 +107,13 @@
       </section>
 
       <section class="space-y-4">
-        <h2 class="text-2xl font-bold border-b border-[#1C1917]/10 pb-2">4. Commercial Purchases (LemonSqueezy)</h2>
-        <p>For paid software tiers (Halbert Pro for macOS), orders are processed by our Merchant of Record, <strong>LemonSqueezy</strong> (Lemon Squeezy LLC). Financial data (such as credit cards) is handled directly by LemonSqueezy and its payment processors and is never seen, stored, or processed by Halbert servers.</p>
+        <h2 class="text-2xl font-bold border-b border-[#1C1917]/10 pb-2">4. Commercial Purchases (Planned)</h2>
+        <p>A paid tier (Halbert Pro for macOS) is planned. When it becomes available, orders will be processed by our Merchant of Record, <strong>LemonSqueezy</strong> (Lemon Squeezy LLC). Financial data (such as credit cards) will be handled directly by LemonSqueezy and its payment processors and will never be seen, stored, or processed by Halbert servers.</p>
       </section>
 
       <section class="space-y-4">
         <h2 class="text-2xl font-bold border-b border-[#1C1917]/10 pb-2">5. Your Data Rights (GDPR & CCPA)</h2>
-        <p>You possess the right to access or delete any personal data we hold (e.g. early access email list). Halbert does not sell personal information. To exercise your rights, email: <a href="mailto:privacy@halbert.net">privacy@halbert.net</a>.</p>
+        <p>You possess the right to access or delete any personal data we hold (e.g. early access email list). Halbert does not sell personal information. To exercise your rights, email: <a href="mailto:hello@halbert.computer">hello@halbert.computer</a>.</p>
       </section>
 
       <footer class="pt-8 mt-12 border-t border-[#1C1917]/20 flex flex-wrap gap-4 text-xs font-mono opacity-80 justify-between items-center">

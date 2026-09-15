@@ -10,29 +10,64 @@
     <!-- Tint Safari's top/bottom bars with the bone canvas instead of system
          white (iOS 15+). Keep in sync with --color-canvas (#F7F4EE, bone-100). -->
     <meta name="theme-color" content="#F7F4EE" />
-    <title>Halbert — I know what’s wrong and I can help you fix it.</title>
-    <meta name="description" content="Halbert is 100% local host intelligence: it reads its own sensors and logs, remembers why you changed things, and tells you first. Linux today, macOS in beta." />
+    <title>Halbert — Host Epistemology &amp; Cognition, Smart Home + MCP</title>
+    <meta name="description" content="The mind in your computer and the smart in your home. Proactive system triage, Home Assistant automation, and native MCP tools for Linux, Mac &amp; HA." />
     <link rel="canonical" href="https://halbert.computer/" />
 
     <!-- OpenGraph / Facebook / LinkedIn / Discord -->
     <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Halbert" />
     <meta property="og:url" content="https://halbert.computer/" />
-    <meta property="og:title" content="Halbert — I know what’s wrong and I can help you fix it." />
-    <meta property="og:description" content="Halbert is 100% local host intelligence: it reads its own sensors and logs, remembers why you changed things, and tells you first. Linux today, macOS in beta." />
+    <meta property="og:title" content="Halbert — Host Epistemology &amp; Cognition, Smart Home + MCP" />
+    <meta property="og:description" content="The mind in your computer and the smart in your home. Proactive system triage, Home Assistant automation, and native MCP tools for Linux, Mac &amp; HA." />
     <meta property="og:image" content="https://halbert.computer/og-image.png" />
     <meta property="og:image:secure_url" content="https://halbert.computer/og-image.png" />
     <meta property="og:image:type" content="image/png" />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
-    <meta property="og:image:alt" content="Halbert — Hi, I'm your computer." />
+    <meta property="og:image:alt" content="Halbert — I am the computer. And I put the smart in your home." />
 
     <!-- Twitter / X Card -->
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:url" content="https://halbert.computer/" />
-    <meta name="twitter:title" content="Halbert — I know what’s wrong and I can help you fix it." />
-    <meta name="twitter:description" content="Halbert is 100% local host intelligence: it reads its own sensors and logs, remembers why you changed things, and tells you first. Linux today, macOS in beta." />
+    <meta name="twitter:title" content="Halbert — Host Epistemology &amp; Cognition, Smart Home + MCP" />
+    <meta name="twitter:description" content="The mind in your computer and the smart in your home. Proactive system triage, Home Assistant automation, and native MCP tools for Linux, Mac &amp; HA." />
     <meta name="twitter:image" content="https://halbert.computer/og-image.png" />
-    <meta name="twitter:image:alt" content="Halbert — Hi, I'm your computer." />
+    <meta name="twitter:image:alt" content="Halbert — I am the computer. And I put the smart in your home." />
+
+    <!-- Schema.org JSON-LD (AI Search & Structured Data) -->
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "SoftwareApplication",
+        "name": "Halbert",
+        "alternateName": "Halbert Computer",
+        "headline": "I am the computer. And I put the smart in your home.",
+        "description": "Halbert is an embodied local host intelligence that bridges system administration, Home Assistant automation, and native Model Context Protocol (MCP) tool serving into a single private runtime.",
+        "url": "https://halbert.computer/",
+        "applicationCategory": "DeveloperApplication, UtilitiesApplication, HomeAutomation",
+        "operatingSystem": "Linux, macOS",
+        "license": "https://www.gnu.org/licenses/gpl-3.0.html",
+        "softwareVersion": "10.0.0",
+        "offers": {
+          "@type": "Offer",
+          "price": "0",
+          "priceCurrency": "USD"
+        },
+        "featureList": [
+          "100% local-first host intelligence with zero telemetry",
+          "Home Assistant integration for physical ambient automation",
+          "Native Model Context Protocol (MCP) server for Claude, Cursor, and AI agents",
+          "Proactive triage of storage (ZFS, SMART), service health, and configuration drift",
+          "Continuous memory and rationale tracking for system changes",
+          "Distributed peer routing and shared local GPU compute across machines"
+        ],
+        "author": {
+          "@type": "Person",
+          "name": "Eric Bintner"
+        }
+      }
+    </script>
 
     <!-- Self-hosted brand typefaces. Halbert is local-first; fetching faces from
          a CDN at runtime contradicts that and fails outright in the packaged

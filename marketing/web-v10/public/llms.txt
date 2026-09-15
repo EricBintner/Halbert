@@ -1,0 +1,24 @@
+# Halbert
+
+> Halbert is an embodied local host intelligence that bridges host management and home automation into one private runtime. It identifies as the computer itself, monitors its own hardware and system health, automates physical rooms via Home Assistant, and exposes native Model Context Protocol (MCP) tools to AI agents.
+
+## Core Pillars
+
+- **The Computer Itself**: Halbert speaks in the first person as the host machine, grounded in measured data from sensors, journals, and local storage.
+- **Home Automation Integration**: Bridges host sysadmin chores with Home Assistant (lights, presence, climate, physical rooms) in a single intelligence.
+- **Native MCP Server**: Exposes structured, permission-gated system tools and documentation to external AI workflows (Claude, Cursor, custom agents).
+- **Private by Construction**: Runs 100% locally with zero cloud telemetry. Supports local runtimes (Ollama, MLX, vLLM) and optional BYOK cloud keys; sensitive system credentials strictly require a private local model.
+- **Continuous Memory & Rationale**: Over 20,000 system manuals and references indexed locally; preserves the *why* and audit evidence behind every configuration change.
+- **Distributed Architecture (Singular Entity)**: Low-power home servers offload heavy reasoning to desktop GPUs over local peer routing, maintaining continuous memory across every machine.
+
+## Supported Platforms
+
+- Linux (Ubuntu, Debian, Fedora, Arch)
+- macOS (Apple Silicon / Intel)
+- Home Assistant (Peer node & Add-on)
+
+## Open Source & Licensing
+
+- License: GNU General Public License v3.0 (GPL-3.0-or-later)
+- Repository: https://github.com/EricBintner/Halbert
+- Documentation: https://halbert.computer/
