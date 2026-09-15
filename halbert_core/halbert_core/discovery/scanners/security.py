@@ -6,7 +6,7 @@ Security Scanner - Discover security configuration and potential issues.
 Implements Phase 9 research from docs/Phase9/deep-dives/08-security-hardening.md
 
 Discovers:
-- SSH configuration
+- SSH configuration (including sshd_config.d drop-in conflicts)
 - Firewall status
 - Sudo users
 - Failed login attempts
@@ -14,16 +14,17 @@ Discovers:
 """
 
 from __future__ import annotations
-from typing import List, Optional
-import re
+from typing import List
 
 from .base import BaseScanner
+from ...findings.precedence import PrecedenceEngine
 from ..schema import (
-    Discovery, 
-    DiscoveryType, 
+    Discovery,
+    DiscoveryType,
     DiscoverySeverity,
     DiscoveryAction,
     make_discovery_id,
+    sanitize_discovery_text,
 )
 
 
@@ -31,7 +32,12 @@ class SecurityScanner(BaseScanner):
     """
     Scanner for security configuration.
     """
-    
+
+    def __init__(self, config_dir: str = "/etc"):
+        super().__init__()
+        self._precedence = PrecedenceEngine(config_dir=config_dir)
+        self._sshd_config = self._precedence.sshd_base
+
     @property
     def discovery_type(self) -> DiscoveryType:
         return DiscoveryType.SECURITY
@@ -53,38 +59,51 @@ class SecurityScanner(BaseScanner):
         return discoveries
     
     def _scan_ssh(self) -> List[Discovery]:
-        """Scan SSH configuration."""
+        """Scan SSH configuration, including sshd_config.d drop-ins.
+
+        OpenSSH on modern distros reads drop-ins from sshd_config.d/*.conf
+        (typically pulled in by an Include near the top of sshd_config)
+        and resolves FIRST-match-wins — so a drop-in can silently override
+        the main file. The effective values here account for that; the
+        conflict discoveries cite the exact drop-in path and line.
+        """
         discoveries = []
-        
-        sshd_config = "/etc/ssh/sshd_config"
+
+        sshd_config = self._sshd_config
         if not self.file_exists(sshd_config):
             return discoveries
-        
-        content = self.read_file(sshd_config)
-        if not content:
+
+        # Gate on readability of the main file, as before: an unreadable
+        # or empty sshd_config yields no discoveries rather than a
+        # defaults-based claim about a file we could not read.
+        if not self.read_file(sshd_config):
             return discoveries
-        
-        # Parse key settings
-        root_login = self._get_ssh_setting(content, "PermitRootLogin", "prohibit-password")
-        password_auth = self._get_ssh_setting(content, "PasswordAuthentication", "yes")
-        pubkey_auth = self._get_ssh_setting(content, "PubkeyAuthentication", "yes")
-        
+
+        result = self._precedence.resolve_sshd()
+        effective = result["effective"]
+
+        # Effective values for the settings this scanner tracks. Keys are
+        # the lowercase directive names the precedence engine resolves.
+        root_login = effective.get("permitrootlogin", "prohibit-password")
+        password_auth = effective.get("passwordauthentication", "yes")
+        pubkey_auth = effective.get("pubkeyauthentication", "yes")
+
         # Determine security level
         issues = []
         if root_login.lower() == "yes":
             issues.append("Root login enabled")
         if password_auth.lower() == "yes":
             issues.append("Password auth enabled")
-        
+
         if issues:
             severity = DiscoverySeverity.WARNING
             status = f"{len(issues)} issue(s)"
         else:
             severity = DiscoverySeverity.SUCCESS
             status = "Secure"
-        
+
         discovery_id = make_discovery_id(DiscoveryType.SECURITY, "ssh-config")
-        
+
         discoveries.append(Discovery(
             id=discovery_id,
             type=DiscoveryType.SECURITY,
@@ -100,6 +119,7 @@ class SecurityScanner(BaseScanner):
                 "password_auth": password_auth,
                 "pubkey_auth": pubkey_auth,
                 "issues": issues,
+                "dropins": result["dropin_files"],
             },
             actions=[
                 DiscoveryAction(id="details", label="View Config", icon="file"),
@@ -109,21 +129,76 @@ class SecurityScanner(BaseScanner):
                         f"PasswordAuthentication={password_auth}. "
                         f"Issues: {', '.join(issues) if issues else 'None'}.",
         ))
-        
-        return discoveries
-    
-    def _get_ssh_setting(self, content: str, key: str, default: str) -> str:
-        """Get an SSH config setting."""
-        for line in content.splitlines():
-            line = line.strip()
-            if line.startswith('#'):
+
+        # A drop-in overriding the main file's value for a tracked setting
+        # is its own discovery, so the conflict is visible without reading
+        # the config — shaped like the proactive-event row it feeds.
+        tracked = {
+            "permitrootlogin": "PermitRootLogin",
+            "passwordauthentication": "PasswordAuthentication",
+            "pubkeyauthentication": "PubkeyAuthentication",
+        }
+        for conflict in result["conflicts"]:
+            key = conflict["key"]
+            if key not in tracked:
                 continue
-            if line.lower().startswith(key.lower()):
-                parts = line.split()
-                if len(parts) >= 2:
-                    return parts[1]
-        return default
-    
+            directive = tracked[key]
+            # Config text comes from /etc — sanitize each fragment through
+            # the schema's choke point before it reaches a description or
+            # prompt. Paths get a larger cap than the default 64: real
+            # sshd_config.d citations fit either way, but tmp-path fixtures
+            # in tests do not.
+            effective_value = sanitize_discovery_text(conflict["effective"]) or "?"
+            eff_file, eff_line = conflict["effective_source"]
+            eff_cite = f"{sanitize_discovery_text(eff_file, max_chars=256)}:{eff_line}"
+            affected_paths = sorted({v["file"] for v in conflict["values"]})
+            # The conflict is between the main file and a drop-in only if
+            # the main file actually sets the directive.
+            base_sets_it = any(
+                v["file"] == sshd_config for v in conflict["values"]
+            )
+            where = (
+                "across sshd_config and a drop-in"
+                if base_sets_it
+                else "across drop-in files"
+            )
+
+            discoveries.append(Discovery(
+                id=make_discovery_id(DiscoveryType.SECURITY, f"ssh-dropin-conflict-{directive}"),
+                type=DiscoveryType.SECURITY,
+                name=f"ssh-dropin-conflict-{directive}",
+                title=f"sshd config conflict: {directive}",
+                description=(
+                    f"{directive} set to different values {where}. "
+                    f"Effective value is '{effective_value}' — from {eff_cite}."
+                ),
+                icon="alert-triangle",
+                severity=DiscoverySeverity.WARNING,
+                status="Drop-in override",
+                source=eff_file,
+                data={
+                    "directive": directive,
+                    "effective_value": effective_value,
+                    "effective_source": eff_cite,
+                    "values": conflict["values"],
+                    "affected_paths": affected_paths,
+                },
+                actions=[
+                    DiscoveryAction(id="details", label="View Config", icon="file"),
+                    DiscoveryAction(id="chat", label="Chat", icon="message-circle"),
+                ],
+                related_to=[discovery_id],
+                chat_context=(
+                    f"sshd config conflict: {directive} is set to different values "
+                    f"{where}. Effective value is "
+                    f"'{effective_value}' (from {eff_cite}). "
+                    f"OpenSSH uses first-match-wins, so the value the service "
+                    f"actually applies may not be the one in sshd_config."
+                ),
+            ))
+
+        return discoveries
+
     def _scan_sudo(self) -> List[Discovery]:
         """Scan sudo configuration."""
         discoveries = []
