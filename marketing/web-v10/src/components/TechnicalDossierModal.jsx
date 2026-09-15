@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { BookOpen, X, ChevronRight, ChevronDown, ExternalLink } from 'lucide-react';
+import { BookOpen, X, ChevronRight, ExternalLink } from 'lucide-react';
 import { STOPS } from '../lib/storyboard';
 import {
   citationsForStop,
@@ -10,11 +10,11 @@ import {
 /**
  * TechnicalDossierModal — ultra-minimal stop-curated research dossier.
  *
- * Triggered by a standalone graphic icon in the lower-left corner.
- * Displays only the active storyboard stop's curated research papers
- * and architectural features. No search bar, no tabs, no extra buttons,
- * and no cards inside of cards: just clean, scannable headlines with
- * inline click-to-expand details.
+ * Triggered by a standalone graphic icon in the lower-left corner that
+ * hides when the dossier is open. On desktop, list items are condensed
+ * to single-line rows, and clicking an item opens an attached detail
+ * panel that flies out to the right at the exact same height.
+ * On mobile, renders a clean full-window sheet with inline expansion.
  */
 
 const TYPE_LABELS = {
@@ -91,22 +91,28 @@ export function TechnicalDossierModal({ camera, stops }) {
   const activeStopId = activeStop?.id ?? '';
 
   const [open, setOpen] = useState(false);
-  const [expandedId, setExpandedId] = useState(null);
+  const [selectedId, setSelectedId] = useState(null);
 
   const reducedMotion = usePrefersReducedMotion();
   const triggerRef = useRef(null);
   const panelRef = useRef(null);
   useFocusTrap(open, panelRef);
 
-  // Esc closes
+  // Esc closes either the active detail fly-out or the whole popup
   useEffect(() => {
     if (!open) return undefined;
     const onKey = (e) => {
-      if (e.key === 'Escape') setOpen(false);
+      if (e.key === 'Escape') {
+        if (selectedId) {
+          setSelectedId(null);
+        } else {
+          setOpen(false);
+        }
+      }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [open]);
+  }, [open, selectedId]);
 
   // Focus management
   const prevOpen = useRef(false);
@@ -115,15 +121,15 @@ export function TechnicalDossierModal({ camera, stops }) {
     if (open) {
       if (panelRef.current) panelRef.current.focus();
     } else {
-      setExpandedId(null);
+      setSelectedId(null);
       if (triggerRef.current) triggerRef.current.focus();
     }
     prevOpen.current = open;
   }, [open]);
 
-  // Reset expanded item on stop change so view stays lightweight
+  // Reset selected item on stop change so view stays lightweight
   useEffect(() => {
-    setExpandedId(null);
+    setSelectedId(null);
   }, [activeStopId]);
 
   // Citations for the active stop
@@ -141,9 +147,37 @@ export function TechnicalDossierModal({ camera, stops }) {
     return allForStop;
   }, [activeStopId]);
 
-  const toggleItem = (id) => {
-    setExpandedId((prev) => (prev === id ? null : id));
-  };
+  // Unified items list
+  const items = useMemo(() => {
+    const citationItems = stopCitations.map((c) => ({
+      id: c.id,
+      kind: 'citation',
+      typeLabel: TYPE_LABELS[c.type] ?? c.type.toUpperCase(),
+      title: c.title,
+      meta: c.year ? `${c.authors} · ${c.year}` : c.authors,
+      fullCitation: formatCitation(c),
+      takeaway: c.takeaway,
+      howHalbertApplies: c.howHalbertApplies,
+      url: c.url,
+    }));
+
+    const featureItems = stopFeatures.map((f) => ({
+      id: f.id,
+      kind: 'feature',
+      typeLabel: 'FEATURE',
+      title: f.name,
+      meta: f.category,
+      takeaway: f.oneLine,
+      howHalbertApplies: f.howItWorks,
+      toolingAndBackend: f.toolingAndBackend,
+    }));
+
+    return [...citationItems, ...featureItems];
+  }, [stopCitations, stopFeatures]);
+
+  const selectedItem = useMemo(() => {
+    return items.find((i) => i.id === selectedId) ?? null;
+  }, [items, selectedId]);
 
   const motion = 'transform var(--duration-shutter) var(--ease-shutter), opacity var(--duration-shutter) var(--ease-shutter)';
   const panelStyle = reducedMotion
@@ -163,11 +197,11 @@ export function TechnicalDossierModal({ camera, stops }) {
 
   return (
     <>
-      {/* Graphic Icon Trigger — standalone mechanical icon button in bottom-left corner */}
+      {/* Standalone Graphic Icon Trigger — hides when popup is open */}
       <button
         ref={triggerRef}
         type="button"
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => setOpen(true)}
         aria-expanded={open}
         aria-controls={PANEL_ID}
         aria-haspopup="dialog"
@@ -177,12 +211,14 @@ export function TechnicalDossierModal({ camera, stops }) {
           bottom: 'calc(env(safe-area-inset-bottom, 0px) + 1rem)',
           left: 'calc(env(safe-area-inset-left, 0px) + 1rem)',
         }}
-        className="fixed z-40 flex h-9 w-9 items-center justify-center rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)]/95 text-[var(--color-ink)] shadow-[var(--shadow-plate)] backdrop-blur-md transition-all duration-150 hover:border-[var(--color-stroke)] hover:text-[var(--color-stroke)] active:scale-95 cursor-pointer"
+        className={`fixed z-40 flex h-9 w-9 items-center justify-center rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)]/95 text-[var(--color-ink)] shadow-[var(--shadow-plate)] backdrop-blur-md transition-all duration-200 hover:border-[var(--color-stroke)] hover:text-[var(--color-stroke)] active:scale-95 cursor-pointer ${
+          open ? 'opacity-0 pointer-events-none scale-75' : 'opacity-100 scale-100'
+        }`}
       >
         <BookOpen size={16} aria-hidden="true" />
       </button>
 
-      {/* Popup Drawer — compact, simplified, corner-anchored */}
+      {/* Popup Dialog — desktop dual-pane (fly-out right panel) / mobile full-window */}
       <div
         ref={panelRef}
         id={PANEL_ID}
@@ -195,132 +231,177 @@ export function TechnicalDossierModal({ camera, stops }) {
         inert={!open}
         tabIndex={-1}
         style={panelStyle}
-        className={`fixed z-50 flex flex-col overflow-hidden rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)]/95 text-[var(--color-ink)] shadow-[var(--shadow-popover)] backdrop-blur-xl max-sm:inset-x-3 max-sm:bottom-16 max-sm:max-h-[70vh] sm:bottom-14 sm:left-4 sm:w-[380px] sm:max-w-[calc(100vw-2rem)] sm:max-h-[62vh] sm:origin-bottom-left ${openClass}`}
+        className={`fixed z-50 flex items-stretch rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)]/95 text-[var(--color-ink)] shadow-[var(--shadow-popover)] backdrop-blur-xl origin-bottom-left max-sm:inset-0 max-sm:rounded-none max-sm:flex-col sm:bottom-4 sm:left-4 sm:max-h-[60vh] sm:origin-bottom-left ${openClass}`}
       >
-        {/* Header: Headline + Close button only */}
-        <div className="flex shrink-0 items-center justify-between border-b border-[var(--color-line)] bg-[var(--color-canvas)] px-3.5 py-2.5">
-          <span className="font-mono text-[11px] font-bold tracking-widest uppercase text-[var(--color-ink)]">
-            {String(stopIndex + 1).padStart(2, '0')} // {(activeStop?.name ?? '').toUpperCase()}
-          </span>
-          <button
-            type="button"
-            onClick={() => setOpen(false)}
-            aria-label="Close dossier"
-            className="flex h-6 w-6 cursor-pointer items-center justify-center rounded text-[var(--color-ink-tertiary)] transition-colors hover:bg-[var(--color-surface-subtle)] hover:text-[var(--color-ink)]"
-          >
-            <X size={14} aria-hidden="true" />
-          </button>
+        {/* Left Pane: Single-line item list (very compact height) */}
+        <div className="flex flex-col w-full sm:w-[320px] shrink-0 min-h-0">
+          {/* Header */}
+          <div className="flex shrink-0 items-center justify-between border-b border-[var(--color-line)] bg-[var(--color-canvas)] px-3 py-2">
+            <span className="font-mono text-[10.5px] font-bold tracking-widest uppercase text-[var(--color-ink)] truncate">
+              {String(stopIndex + 1).padStart(2, '0')} // {(activeStop?.name ?? '').toUpperCase()}
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                setOpen(false);
+                setSelectedId(null);
+              }}
+              aria-label="Close dossier"
+              className="flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded text-[var(--color-ink-tertiary)] transition-colors hover:bg-[var(--color-surface-subtle)] hover:text-[var(--color-ink)] ml-2"
+            >
+              <X size={13} aria-hidden="true" />
+            </button>
+          </div>
+
+          {/* List of single-line rows */}
+          <div className="min-h-0 flex-1 overflow-y-auto p-1.5 space-y-0.5">
+            {items.map((item) => {
+              const isSelected = selectedId === item.id;
+              return (
+                <div key={item.id}>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedId(isSelected ? null : item.id)}
+                    aria-expanded={isSelected}
+                    className={`group flex w-full items-center gap-1.5 px-2 py-1 rounded text-left transition-colors cursor-pointer ${
+                      isSelected
+                        ? 'bg-[var(--color-surface-subtle)] text-[var(--color-ink)] border-l-2 border-[var(--color-stroke)]'
+                        : 'hover:bg-[var(--color-surface-subtle)]/70 text-[var(--color-ink)]'
+                    }`}
+                  >
+                    <span
+                      className={`shrink-0 font-mono text-[8px] font-bold uppercase tracking-wider px-1 py-0.5 rounded-xs border ${
+                        item.kind === 'feature'
+                          ? 'border-[var(--color-stroke)] text-[var(--color-stroke)]'
+                          : 'border-[var(--color-line-strong)] text-[var(--color-ink-tertiary)]'
+                      }`}
+                    >
+                      {item.typeLabel}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate text-[11.5px] font-medium leading-tight">
+                      {item.title}
+                    </span>
+                    <ChevronRight
+                      size={12}
+                      className={`shrink-0 text-[var(--color-ink-tertiary)] group-hover:text-[var(--color-ink)] transition-transform ${
+                        isSelected ? 'rotate-90 sm:rotate-0 text-[var(--color-stroke)]' : ''
+                      }`}
+                    />
+                  </button>
+
+                  {/* Mobile-only inline expansion (accordion fallback) */}
+                  {isSelected && (
+                    <div className="sm:hidden my-1.5 ml-2 border-l-2 border-[var(--color-stroke)] pl-2.5 pr-2 py-1 text-[11.5px] leading-relaxed text-[var(--color-ink-secondary)] bg-[var(--color-surface-subtle)]/50 rounded-r">
+                      {item.fullCitation && (
+                        <p className="font-mono text-[9.5px] text-[var(--color-ink-tertiary)]">
+                          {item.fullCitation}
+                        </p>
+                      )}
+                      <p className="mt-1 text-[var(--color-ink)]">{item.takeaway}</p>
+                      {item.howHalbertApplies && (
+                        <p className="mt-1 text-[var(--color-ink-secondary)]">{item.howHalbertApplies}</p>
+                      )}
+                      {item.toolingAndBackend && (
+                        <p className="mt-1 font-mono text-[9px] text-[var(--color-ink-tertiary)]">
+                          Source: {item.toolingAndBackend}
+                        </p>
+                      )}
+                      {item.url && (
+                        <div className="mt-1.5">
+                          <a
+                            href={item.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 font-mono text-[10px] text-[var(--color-ink)] underline decoration-[var(--color-line-strong)] hover:text-[var(--color-stroke)]"
+                          >
+                            <span>Original work</span>
+                            <ExternalLink size={9} aria-hidden="true" />
+                          </a>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+
+            {items.length === 0 && (
+              <p className="px-2 py-4 text-center font-mono text-[10.5px] text-[var(--color-ink-tertiary)]">
+                No entries for this stop.
+              </p>
+            )}
+          </div>
         </div>
 
-        {/* Body: Lightweight headline-only list with inline accordion unfold */}
-        <div className="min-h-0 flex-1 overflow-y-auto divide-y divide-[var(--color-line-subtle)] px-2 py-1">
-          {/* Research Citations */}
-          {stopCitations.map((c) => {
-            const isExpanded = expandedId === c.id;
-            return (
-              <div key={c.id} className="py-1">
+        {/* Right Pane (Desktop Fly-Out): exact same height as left pane */}
+        <div
+          className={`hidden sm:flex flex-col border-l border-[var(--color-line)] bg-[var(--color-canvas)] transition-all duration-200 ease-out overflow-hidden ${
+            selectedItem ? 'w-[350px] opacity-100' : 'w-0 opacity-0 pointer-events-none'
+          }`}
+        >
+          {selectedItem && (
+            <>
+              {/* Detail Header */}
+              <div className="flex shrink-0 items-center justify-between border-b border-[var(--color-line)] px-3 py-2">
+                <span className="font-mono text-[9px] font-bold uppercase tracking-wider text-[var(--color-ink-tertiary)] truncate">
+                  {selectedItem.typeLabel} {selectedItem.meta ? `· ${selectedItem.meta}` : ''}
+                </span>
                 <button
                   type="button"
-                  onClick={() => toggleItem(c.id)}
-                  aria-expanded={isExpanded}
-                  className="flex w-full cursor-pointer items-start justify-between gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-[var(--color-surface-subtle)]"
+                  onClick={() => setSelectedId(null)}
+                  aria-label="Close detail pane"
+                  className="flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded text-[var(--color-ink-tertiary)] transition-colors hover:bg-[var(--color-surface-subtle)] hover:text-[var(--color-ink)]"
                 >
-                  <div className="min-w-0 flex-1">
-                    <div className="mb-0.5 flex items-center gap-1.5">
-                      <span className="font-mono text-[8.5px] font-bold uppercase tracking-wider text-[var(--color-ink-tertiary)]">
-                        {TYPE_LABELS[c.type] ?? c.type.toUpperCase()}
-                      </span>
-                      {c.year && (
-                        <span className="font-mono text-[8.5px] text-[var(--color-ink-tertiary)]">
-                          · {c.year}
-                        </span>
-                      )}
-                    </div>
-                    <div className="text-[12.5px] font-medium leading-snug text-[var(--color-ink)]">
-                      {c.title}
-                    </div>
-                  </div>
-                  <span className="mt-1 shrink-0 text-[var(--color-ink-tertiary)]">
-                    {isExpanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-                  </span>
+                  <X size={12} aria-hidden="true" />
                 </button>
+              </div>
 
-                {isExpanded && (
-                  <div className="my-1.5 ml-2 border-l-2 border-[var(--color-line-strong)] pl-2.5 pr-2 text-[11.5px] leading-relaxed text-[var(--color-ink-secondary)]">
-                    <p className="font-mono text-[10px] text-[var(--color-ink-tertiary)]">
-                      {formatCitation(c)}
-                    </p>
-                    <p className="mt-1.5 text-[var(--color-ink)]">{c.takeaway}</p>
-                    <p className="mt-1.5 text-[var(--color-ink-secondary)]">{c.howHalbertApplies}</p>
-                    {c.url && (
-                      <div className="mt-2">
-                        <a
-                          href={c.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1 font-mono text-[10px] text-[var(--color-ink)] underline decoration-[var(--color-line-strong)] hover:text-[var(--color-stroke)]"
-                        >
-                          <span>Original work</span>
-                          <ExternalLink size={10} aria-hidden="true" />
-                        </a>
-                      </div>
-                    )}
+              {/* Detail Body */}
+              <div className="min-h-0 flex-1 overflow-y-auto p-3 text-[11.5px] leading-relaxed text-[var(--color-ink-secondary)] space-y-2">
+                <h4 className="text-[13px] font-semibold leading-snug text-[var(--color-ink)]">
+                  {selectedItem.title}
+                </h4>
+
+                {selectedItem.fullCitation && (
+                  <p className="font-mono text-[9.5px] text-[var(--color-ink-tertiary)] leading-normal">
+                    {selectedItem.fullCitation}
+                  </p>
+                )}
+
+                <p className="text-[var(--color-ink)] leading-normal">
+                  {selectedItem.takeaway}
+                </p>
+
+                {selectedItem.howHalbertApplies && (
+                  <div className="border-l-2 border-[var(--color-stroke)] pl-2 pt-0.5 text-[var(--color-ink-secondary)]">
+                    <span className="font-mono text-[8.5px] font-bold uppercase tracking-wider block text-[var(--color-stroke)] mb-0.5">
+                      In Halbert
+                    </span>
+                    {selectedItem.howHalbertApplies}
+                  </div>
+                )}
+
+                {selectedItem.toolingAndBackend && (
+                  <p className="font-mono text-[9px] text-[var(--color-ink-tertiary)]">
+                    Source: {selectedItem.toolingAndBackend}
+                  </p>
+                )}
+
+                {selectedItem.url && (
+                  <div className="pt-1">
+                    <a
+                      href={selectedItem.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 font-mono text-[10px] text-[var(--color-ink)] underline decoration-[var(--color-line-strong)] hover:text-[var(--color-stroke)]"
+                    >
+                      <span>Original work</span>
+                      <ExternalLink size={10} aria-hidden="true" />
+                    </a>
                   </div>
                 )}
               </div>
-            );
-          })}
-
-          {/* Curated Shipped Features */}
-          {stopFeatures.map((f) => {
-            const isExpanded = expandedId === f.id;
-            return (
-              <div key={f.id} className="py-1">
-                <button
-                  type="button"
-                  onClick={() => toggleItem(f.id)}
-                  aria-expanded={isExpanded}
-                  className="flex w-full cursor-pointer items-start justify-between gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-[var(--color-surface-subtle)]"
-                >
-                  <div className="min-w-0 flex-1">
-                    <div className="mb-0.5 flex items-center gap-1.5">
-                      <span className="font-mono text-[8.5px] font-bold uppercase tracking-wider text-[var(--color-stroke)]">
-                        FEATURE
-                      </span>
-                      {f.category && (
-                        <span className="font-mono text-[8.5px] text-[var(--color-ink-tertiary)] truncate">
-                          · {f.category}
-                        </span>
-                      )}
-                    </div>
-                    <div className="text-[12.5px] font-medium leading-snug text-[var(--color-ink)]">
-                      {f.name}
-                    </div>
-                  </div>
-                  <span className="mt-1 shrink-0 text-[var(--color-ink-tertiary)]">
-                    {isExpanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-                  </span>
-                </button>
-
-                {isExpanded && (
-                  <div className="my-1.5 ml-2 border-l-2 border-[var(--color-stroke)] pl-2.5 pr-2 text-[11.5px] leading-relaxed text-[var(--color-ink-secondary)]">
-                    <p className="font-medium text-[var(--color-ink)]">{f.oneLine}</p>
-                    <p className="mt-1.5 text-[var(--color-ink-secondary)]">{f.howItWorks}</p>
-                    {f.toolingAndBackend && (
-                      <p className="mt-1.5 font-mono text-[9.5px] text-[var(--color-ink-tertiary)]">
-                        Source: {f.toolingAndBackend}
-                      </p>
-                    )}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-
-          {stopCitations.length === 0 && stopFeatures.length === 0 && (
-            <p className="px-3 py-6 text-center font-mono text-[11px] text-[var(--color-ink-tertiary)]">
-              No entries for this stop.
-            </p>
+            </>
           )}
         </div>
       </div>

@@ -363,22 +363,6 @@
       "howHalbertApplies": "Halbert coordinates distributed tasks across paired nodes using lightweight HTTP offload and remote tool execution proxies in halbert_core/halbert_core/federation/, providing reliable execution across clustered devices without heavyweight external runtimes."
     },
     {
-      "id": "gplv3-section-7",
-      "stopId": "reveal",
-      "title": "GNU General Public License Version 3",
-      "authors": "Free Software Foundation, Inc.",
-      "venue": "gnu.org/licenses (Free Software Foundation \u2014 canonical licence text)",
-      "year": 2007,
-      "url": "https://www.gnu.org/licenses/gpl-3.0.en.html",
-      "identifier": "GPL-3.0-or-later (SPDX)",
-      "type": "licence",
-      "peerReviewed": false,
-      "category": "licensing",
-      "applied": "shipped",
-      "takeaway": "A free copyleft licence, copyright 2007 Free Software Foundation, Inc., whose Section 7 defines \u201cadditional permissions\u201d as terms that supplement the licence by making exceptions from one or more of its conditions, grantable by anyone who has or can give appropriate copyright permission for material added to a covered work.",
-      "howHalbertApplies": "Halbert's core ships under the GNU GPL v3 with a single operative Section 7 additional permission, held verbatim at LICENSE-EXCEPTION-APPSTORE and scoped to conveyance through the Apple App Store (macOS, iOS, iPadOS, and visionOS), with a third-party carve-out and a downstream fork-freedom clause (FDR-02/FDR-02b in DECISIONS.md). The remaining distribution-side obligations \u2014 copying both licence texts into a built application bundle and completing the wider header rewrite \u2014 are recorded as open work in the roadmap (DIST-1) rather than done."
-    },
-    {
       "id": "ed25519",
       "stopId": "reveal",
       "title": "High-speed high-security signatures",
