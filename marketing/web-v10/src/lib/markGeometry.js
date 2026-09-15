@@ -6,8 +6,10 @@
  *   - a vertical spine at x = 512 from y = 80 down to y = 512
  *   - six concentric U-shaped lanes, radius R_i = 72 * i, each drawn as
  *     left leg (down) -> bottom semicircle -> right leg (up)
- *   - every stroke is 40 wide with round caps; lanes are pitched 72 apart,
- *     so the *gap* between neighbouring strokes is exactly 32 units
+ *   - every stroke is 48 wide with round caps; lanes are pitched 72 apart,
+ *     so the *gap* between neighbouring strokes is exactly 24 units
+ *     (2:1 stroke:gap — the proportion of the retired 10-line display
+ *     mark, where sw 32 sat on pitch 48)
  *   - the leg tops sit on a circle of radius 432 around (512, 512), which is
  *     also the radius of lane 6 (a pure semicircle with no legs)
  *
@@ -22,13 +24,13 @@ export const MARK = Object.freeze({
   cy: 512,
   outerR: 432,
   laneStep: 72,
-  strokeWidth: 40,
-  halfStroke: 20,
+  strokeWidth: 48,
+  halfStroke: 24,
   lanes: 6,
   spine: { x: 512, top: 80, bottom: 512 },
 });
 
-export const GAP = MARK.laneStep - MARK.strokeWidth; // 32
+export const GAP = MARK.laneStep - MARK.strokeWidth; // 24
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 export const lerp = (a, b, t) => a + (b - a) * t;
@@ -141,8 +143,8 @@ export function edgeU(edge, at) {
 
 /**
  * Distance (in mark units) from this edge to the nearest *other* colour
- * boundary, measured along the normal. Normally the 32-unit gap; the outside
- * of the mark is open, so the far side of the stroke (40) governs there.
+ * boundary, measured along the normal. Normally the 24-unit gap; the outside
+ * of the mark is open, so the far side of the stroke (48) governs there.
  */
 export function edgeClearance(edge, u) {
   if (edge.side === 'outer') {
@@ -169,7 +171,7 @@ export function capPoint(which) {
       x: MARK.spine.x,
       y: MARK.spine.top - MARK.halfStroke,
       toStroke: { x: 0, y: 1 },
-      // lane 1's inner edges sit 52 units either side of the spine centre
+      // lane 1's inner edges sit 48 units either side of the spine centre
       clearanceX: MARK.laneStep - MARK.halfStroke,
       clearanceY: Infinity,
     };
