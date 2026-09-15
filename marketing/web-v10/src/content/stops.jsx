@@ -82,12 +82,10 @@ export const STOP_CONTENT = {
           And I put the smart in your home.
         </Headline>
         <Body>
-          I monitor my own hardware, help automate your home, and give your AI tools MCP access to your systems,
-          their configs and their hardware. And I run locally.
+          Halbert bridges host management and home automation into one local intelligence. I monitor my own
+          hardware, help automate your home, and give your AI tools MCP access to your systems, their configs
+          and their hardware. And I run locally.
         </Body>
-        <div className="font-display font-normal text-[clamp(1.05rem,1.5vw,1.4rem)] mt-6 opacity-85 max-w-[38ch]">
-          Halbert bridges host management and home automation into one local intelligence.
-        </div>
       </>
     ),
     stroke: (
