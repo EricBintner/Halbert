@@ -1,6 +1,14 @@
 import React from 'react';
 import { Mic, Keyboard } from 'lucide-react';
-import { AudioReactiveHalbertMark } from '@halbert/design-system';
+import { AudioReactiveHalbertMark, SyntheticEnergySource } from '@halbert/design-system';
+
+/** Simulated voice energy source for the landing page kiosk demo. */
+const voiceEnergySource = new SyntheticEnergySource((t, out) => {
+  for (let k = 0; k < out.length; k++) {
+    const center = 2.5 + 2 * Math.sin(t * 0.9);
+    out[k] = Math.exp(-((k - center) ** 2) / 3) * (0.55 + 0.45 * Math.sin(t * 6 + k));
+  }
+});
 
 /**
  * Placeholder app surfaces.
@@ -254,6 +262,15 @@ export function KnowledgePlate() {
  * band on the horizontal one.
  */
 export function VoiceModePlate() {
+  const [mode, setMode] = React.useState('speaking');
+
+  React.useEffect(() => {
+    const timer = setInterval(() => {
+      setMode((prev) => (prev === 'speaking' ? 'thinking' : 'speaking'));
+    }, 4000);
+    return () => clearInterval(timer);
+  }, []);
+
   const glassEdge = 'color-mix(in srgb, var(--color-canvas) 20%, transparent)';
   return (
     <div
@@ -283,14 +300,21 @@ export function VoiceModePlate() {
           <span>10:47 AM</span>
         </div>
 
-        {/* the mark — the shipped component, mid-thought */}
+        {/* the mark — looping between voice and thinking with shrink/grow spring */}
         <div className="flex min-h-0 flex-1 items-center justify-center">
           <div className="aspect-square w-[52%]">
-            <AudioReactiveHalbertMark size="100%" state="thinking" density="medium" tone="accent" />
+            <AudioReactiveHalbertMark
+              size="100%"
+              state={mode}
+              source={voiceEnergySource}
+              density="medium"
+              tone="accent"
+              sensitivity={1.2}
+            />
           </div>
         </div>
 
-        {/* thinking caption */}
+        {/* caption */}
         <p
           className="px-[8%] pb-[2%] text-center text-[0.6875em] leading-snug"
           style={{ color: 'color-mix(in srgb, var(--color-canvas) 90%, transparent)' }}

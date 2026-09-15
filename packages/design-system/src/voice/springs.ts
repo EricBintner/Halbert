@@ -70,9 +70,24 @@ export class ResonatorBank {
     this.mass = mass
   }
 
-  private readonly stiffness: number
-  private readonly damping: number
-  private readonly mass: number
+  private stiffness: number
+  private damping: number
+  private mass: number
+
+  /** Update spring constants without disturbing resonator states. */
+  setSpring({
+    stiffness,
+    damping,
+    mass,
+  }: {
+    stiffness: number
+    damping: number
+    mass?: number
+  }): void {
+    this.stiffness = stiffness
+    this.damping = damping
+    if (mass !== undefined) this.mass = mass
+  }
 
   get size(): number {
     return this.drift.length

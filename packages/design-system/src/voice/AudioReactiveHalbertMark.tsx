@@ -94,6 +94,10 @@ export const AudioReactiveHalbertMark = React.forwardRef<
 ) {
   const pathRefs = React.useRef<Array<SVGPathElement | null>>([])
   const groupRef = React.useRef<SVGGElement | null>(null)
+  const stateRef = React.useRef(state)
+  stateRef.current = state
+  const contractRef = React.useRef(0)
+  const contractVRef = React.useRef(0)
   const count = tineCount(density)
   const staticPaths = React.useMemo(() => staticTinePaths(density), [density])
 
@@ -112,9 +116,10 @@ export const AudioReactiveHalbertMark = React.forwardRef<
 
     // Speaking uses the underdamped plucked-string spring; every onset
     // strikes its tine. Listening/idle uses the smooth well-damped spring.
+    let currentState = stateRef.current
     const bank = new ResonatorBank(
       TINE_DRIFT[density],
-      state === 'speaking' ? PLUCK_SPRING : SPRING_DEFAULTS,
+      currentState === 'speaking' ? PLUCK_SPRING : SPRING_DEFAULTS,
     )
     const amplitudes = TINE_AMPLITUDES[density]
     const raw = new Float32Array(count)
@@ -127,8 +132,8 @@ export const AudioReactiveHalbertMark = React.forwardRef<
     let nextSpawn: number | null = null
     const bulgesByTine: TravelingBulge[][] = Array.from({ length: count }, () => [])
 
-    let contract = 0 // 0 = full size, 1 = thinking contraction
-    let contractV = 0
+    let contract = contractRef.current // 0 = full size, 1 = thinking contraction
+    let contractV = contractVRef.current
     let last = performance.now()
     let raf = 0
 
@@ -138,9 +143,15 @@ export const AudioReactiveHalbertMark = React.forwardRef<
       last = nowMs
       const t = nowMs / 1000
 
+      const targetState = stateRef.current
+      if (targetState !== currentState) {
+        bank.setSpring(targetState === 'speaking' ? PLUCK_SPRING : SPRING_DEFAULTS)
+        currentState = targetState
+      }
+
       active.readEnergies(raw, t)
-      if (state === 'thinking') raw.fill(THINKING_BASELINE)
-      if (state === 'speaking') {
+      if (currentState === 'thinking') raw.fill(THINKING_BASELINE)
+      if (currentState === 'speaking') {
         for (let k = 0; k < count; k++) {
           const dv = raw[k] - prevRaw[k]
           if (dv > PLUCK_ONSET_DELTA) bank.injectVelocity(k, dv * PLUCK_GAIN)
@@ -152,7 +163,7 @@ export const AudioReactiveHalbertMark = React.forwardRef<
 
       // Thinking: spawn traveling bulges on random tines (sequential,
       // 2-3 alive at once); cull them on state exit or journey end.
-      if (state === 'thinking') {
+      if (currentState === 'thinking') {
         if (nextSpawn === null) nextSpawn = t + 0.3
         if (t >= nextSpawn && bulges.length < 3) {
           const busy = new Set(bulges.map((b) => b.tine))
@@ -181,10 +192,12 @@ export const AudioReactiveHalbertMark = React.forwardRef<
       }
 
       // Thinking contraction (spec §4.1 state 4): gentle spring scale 1 -> 0.94
-      const contractTarget = state === 'thinking' ? 1 : 0
+      const contractTarget = currentState === 'thinking' ? 1 : 0
       const ca = 60 * (contractTarget - contract) - 14 * contractV
       contractV += ca * dt
       contract += contractV * dt
+      contractRef.current = contract
+      contractVRef.current = contractV
 
       for (let k = 0; k < count; k++) {
         const el = pathRefs.current[k]
@@ -215,7 +228,7 @@ export const AudioReactiveHalbertMark = React.forwardRef<
         /* stop is best-effort */
       }
     }
-  }, [source, state, sensitivity, density, count])
+  }, [source, sensitivity, density, count])
 
   const stroke =
     state === 'error'

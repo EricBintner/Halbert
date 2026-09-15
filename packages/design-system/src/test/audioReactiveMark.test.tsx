@@ -134,6 +134,24 @@ describe('AudioReactiveHalbertMark', () => {
     }
   })
 
+  it('smoothly contracts when entering thinking and grows when exiting thinking', () => {
+    const { container, rerender } = render(<AudioReactiveHalbertMark state="thinking" />)
+    pump(30)
+    const g = container.querySelector('g')!
+    expect(g.getAttribute('transform')).toMatch(/scale\(0\.9\d/)
+
+    // Exit thinking into speaking
+    rerender(<AudioReactiveHalbertMark state="speaking" />)
+    // On the immediate next frame, the spring has not popped to 1.0; it grows smoothly
+    pump(1)
+    expect(g.getAttribute('transform')).toMatch(/scale\(0\.9\d/)
+
+    // After the spring settles (~0.5s), it has grown back to ~1.0
+    pump(60)
+    const scale = Number(g.getAttribute('transform')!.match(/scale\(([^)]+)\)/)![1])
+    expect(scale).toBeGreaterThan(0.999)
+  })
+
   it('starts and stops the source with mount lifecycle', () => {
     const src = constSource(0.5)
     const { unmount } = render(<AudioReactiveHalbertMark source={src} />)
