@@ -56,7 +56,7 @@ SEARCH_SUFFIXES = {".md", ".txt", ".rst", ".py", ".rs", ".ts", ".tsx", ".toml", 
 #                    editing history to satisfy a test is the wrong direction.
 SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv", "dist", "build",
              "storybook-static", ".handoff", "target", ".pytest_cache",
-             "data", "site-packages", ".mypy_cache", "htmlcov"}
+             "data", "site-packages", ".mypy_cache", "htmlcov", ".claude", ".devin"}
 
 SELF = Path(__file__).resolve()
 
@@ -81,7 +81,7 @@ def test_exception_file_exists_and_is_scope_limited():
     assert OPERATIVE_PHRASE in text
     # The three clauses that keep this an *additional permission* rather than a
     # restriction. Losing any one of them changes what was granted.
-    assert "applies only to conveyance through the Apple Mac" in text, "scope limitation lost"
+    assert "applies only to conveyance through the Apple App" in text, "scope limitation lost"
     assert "does not extend to any third-party code" in text, "third-party carve-out lost"
     assert "you are not obliged to do so" in text, "downstream fork-freedom clause lost"
 

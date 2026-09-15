@@ -43,18 +43,20 @@ instrument, used by projects that ship copyleft code through Apple's channels.
 
 ### 2.1 Proposed exception text
 
-> **Apple Mac App Store Exception**
+> **Apple App Store Exception**
 >
 > As a special exception, the copyright holders of Halbert grant you additional
 > permission under GNU GPL version 3 section 7 to convey the resulting object
-> code of this work through the Apple Mac App Store, notwithstanding sections 6
-> and 10 of the GNU General Public License version 3, and to accept the Apple
-> Media Services Terms and Conditions insofar as they apply to that conveyance.
+> code of this work through the Apple App Store (including macOS, iOS, iPadOS,
+> and visionOS), notwithstanding sections 6 and 10 of the GNU General Public
+> License version 3, and to accept the Apple Media Services Terms and Conditions
+> insofar as they apply to that conveyance.
 >
-> This additional permission applies only to conveyance through the Apple Mac
-> App Store. It does not apply to any other means of conveying this work, and it
-> does not extend to any third-party code incorporated into this work whose
-> copyright holders have not granted an equivalent permission.
+> This additional permission applies only to conveyance through the Apple App
+> Store (including macOS, iOS, iPadOS, and visionOS). It does not apply to any
+> other means of conveying this work, and it does not extend to any third-party
+> code incorporated into this work whose copyright holders have not granted an
+> equivalent permission.
 >
 > If you modify this work, you may extend this exception to your version, but you
 > are not obliged to do so. If you do not wish to extend it, delete this

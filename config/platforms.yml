@@ -251,12 +251,38 @@ build:
         - homelab
         - developer tools
       marketing:
-        tagline: "AI System Assistant & Remote Linux Companion"
+        tagline: "The AI that is your computer — Remote Companion"
         description: |
-          Halbert is an intelligent system assistant and multi-session companion
-          that connects to your local Mac and remote Linux servers, home labs,
-          and dev machines with natural language.
-          
-          🐧 For the full unsandboxed macOS and Linux experience,
-          visit halbert.ai
+          Halbert is a remote companion client that connects to your local Mac
+          and remote Linux servers, home labs, and dev machines with natural language.
+
+  ios:
+    # iOS Companion (Remote Client, Voice & Approval Desk)
+    companion:
+      bundle_id: "ai.halbert.ios.free"
+      app_name: "Halbert"
+      channel: "ios_app_store"
+      sandboxed: true
+      price: "free"
+      category: "utilities"
+      capabilities:
+        - voice_ingress
+        - approval_desk
+        - cluster_vitals
+        - vision_camera
+
+  visionos:
+    # visionOS Spatial Companion (Ambient Presence & Voice)
+    companion:
+      bundle_id: "ai.halbert.visionos.free"
+      app_name: "Halbert Spatial"
+      channel: "visionos_app_store"
+      sandboxed: true
+      price: "free"
+      category: "utilities"
+      capabilities:
+        - ambient_presence
+        - spatial_voice
+        - cluster_vitals
+
 
