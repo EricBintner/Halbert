@@ -1,8 +1,14 @@
 User-agent: *
 Allow: /
 
-# Explicitly welcome AI Search & Reasoning engines
+# Explicitly welcome AI Search & Reasoning engines.
+# GPTBot = OpenAI model training; OAI-SearchBot = ChatGPT search results;
+# ClaudeBot = Anthropic crawling; PerplexityBot = Perplexity search;
+# Applebot-Extended / Google-Extended = AI training flags for Apple / Google.
 User-agent: GPTBot
+Allow: /
+
+User-agent: OAI-SearchBot
 Allow: /
 
 User-agent: ClaudeBot
@@ -17,5 +23,6 @@ Allow: /
 User-agent: Google-Extended
 Allow: /
 
-# LLM Discovery Manifest
-# llms.txt: https://halbert.computer/llms.txt
+# Discovery
+Sitemap: https://halbert.computer/sitemap.xml
+# LLM manifest: https://halbert.computer/llms.txt

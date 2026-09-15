@@ -5,7 +5,7 @@
 ## Core Pillars
 
 - **Embodied Host Cognition**: Speaks in the first person as the computer itself, grounded in measured telemetry from hardware sensors, system logs, and local storage.
-- **Proactive System Triage**: Continuously diagnoses storage health (ZFS, SMART), service failures, configuration drift, and package conflicts before they cause downtime.
+- **Proactive System Triage**: Continuously diagnoses storage health (ZFS, SMART), service failures, configuration drift, held packages, and stale package-manager locks before they cause downtime.
 - **Home Automation Integration**: Bridges host management with physical ambient automation, controlling lights, presence, climate, and rooms in a unified intelligence.
 - **Native MCP Server**: Exposes structured host tools, diagnostics, and system controls to Claude, Cursor, and autonomous AI agents.
 - **Continuous Memory & Provenance**: Indexes thousands of local system manuals and preserves the rationale and audit evidence behind every configuration change.
@@ -14,8 +14,8 @@
 ## Supported Platforms
 
 - Linux (Ubuntu, Debian, Fedora, Arch)
-- macOS (Apple Silicon / Intel)
-- Home Assistant (Peer node & Add-on)
+- macOS (Apple Silicon; Intel supported via local runtimes)
+- Home Assistant (peer node)
 
 ## Open Source & Licensing
 

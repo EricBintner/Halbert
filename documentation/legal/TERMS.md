@@ -1,8 +1,8 @@
 # Halbert Terms of Service & Terms of Use
 
 **Effective Date:** 2026-08-25  
-**Last Updated:** 2026-08-25  
-**Applies to:** The Halbert Project Website (`halbert.net` / marketing web), early access beta programs, and binary/source distributions of the Halbert software.
+**Last Updated:** 2026-09-14  
+**Applies to:** The Halbert Project Website (`halbert.computer` / marketing web), early access beta programs, and binary/source distributions of the Halbert software.
 
 ---
 
@@ -21,9 +21,9 @@ The core Halbert software engine, command-line interface, and open-source packag
 - The full terms and conditions of the GPL-3.0 govern your rights to copy, study, modify, and redistribute the open-source software.
 - Nothing in these website Terms overrides, restricts, or supersedes your freedoms under the GPL-3.0 for components licensed under it.
 
-### 2.2 Halbert Pro (macOS Direct Edition) & Mac App Store Edition
-- **Halbert Pro**: Delivered via our Merchant of Record (LemonSqueezy) subject to an individual license key grant (allowing execution on up to 3 personal devices per license).
-- **Mac App Store Edition**: Distributed subject to Apple Media Services Terms and Conditions and our GPLv3 Section 7 Additional Permission.
+### 2.2 Halbert Pro (macOS Direct Edition) & Apple App Store Editions
+- **Halbert Pro**: Delivered via our Merchant of Record (LemonSqueezy) as a one-time perpetual license ($29 standard, $24 launch promo) granting execution rights on up to 10 machines or nodes administered by the licensee, with 12 months of official Sparkle updates and an optional $19/year renewal. Lapsed licenses remain fully functional forever. Governed by [`HALBERT-PRO-COMMERCIAL-TERMS.md`](HALBERT-PRO-COMMERCIAL-TERMS.md).
+- **Apple App Store Editions (macOS, iOS, iPadOS, visionOS)**: Free companion applications distributed subject to Apple Media Services Terms and Conditions and our GPLv3 Section 7 Additional Permission ([`LICENSE-EXCEPTION-APPSTORE`](../../LICENSE-EXCEPTION-APPSTORE)).
 
 ---
 
@@ -100,5 +100,5 @@ If any provision of these Terms is found to be unlawful, void, or unenforceable,
 ## 9. Contact Us
 
 If you have questions regarding these Terms:
-- **Email**: `legal@halbert.net`
+- **Email**: `hello@halbert.computer`
 - **Project Repository**: `https://github.com/EricBintner/Halbert`
