@@ -3,12 +3,12 @@
 import * as React from 'react'
 import type { Meta, StoryObj } from '@storybook/react'
 import { AudioReactiveHalbertMark } from '../voice/AudioReactiveHalbertMark'
-import {
-  SyntheticEnergySource,
-  createMediaStreamAnalyserSource,
-  createNodeAnalyserSource,
-} from '../voice/spectrum'
+import type { VoiceVisualState } from '../voice/AudioReactiveHalbertMark'
+import { createMediaStreamAnalyserSource, createNodeAnalyserSource } from '../voice/spectrum'
 import type { AudioEnergySource } from '../voice/spectrum'
+import { createSpeechBurstSource } from '../voice/demo'
+import { STRING_LADDER } from '../voice/springs'
+import { tineCount } from '../voice/geometry'
 
 const meta: Meta<typeof AudioReactiveHalbertMark> = {
   title: 'Voice/AudioReactiveHalbertMark',
@@ -29,29 +29,41 @@ const meta: Meta<typeof AudioReactiveHalbertMark> = {
 export default meta
 type Story = StoryObj<typeof AudioReactiveHalbertMark>
 
-/** Vowel-ish formant sweep: energy walks from chest (outer) to air (inner).
- * Tuned for the 6-tine medium mark (center sweeps tines 0.5-4.5). */
-const formantSweep = new SyntheticEnergySource((t, out) => {
-  for (let k = 0; k < out.length; k++) {
-    const center = 2.5 + 2 * Math.sin(t * 0.9)
-    out[k] = Math.exp(-((k - center) ** 2) / 3) * (0.55 + 0.45 * Math.sin(t * 6 + k))
-  }
-})
+/** The shared demo voice (design doc 17): seeded syllable bursts with a
+ * breath between phrases — the same source the marketing plate plays, so
+ * the strings pluck here exactly as they do there. */
+const speech = createSpeechBurstSource()
 
 export const IdleBreathing: Story = { args: { size: 512, state: 'idle' } }
 
 export const Listening: Story = {
-  args: { size: 512, state: 'listening', source: formantSweep },
+  args: { size: 512, state: 'listening', source: speech },
 }
 
 export const Speaking: Story = {
-  args: { size: 512, state: 'speaking', source: formantSweep, sensitivity: 1.2 },
+  args: { size: 512, state: 'speaking', source: speech, sensitivity: 1.2 },
+}
+
+/** Entering `recognized` strums every string, spine first. Loops so the
+ * strum repeats every couple of seconds. */
+export const Recognized: Story = {
+  render: () => {
+    const [state, setState] = React.useState<VoiceVisualState>('listening')
+    React.useEffect(() => {
+      const timer = setInterval(
+        () => setState((s) => (s === 'listening' ? 'recognized' : 'listening')),
+        1500,
+      )
+      return () => clearInterval(timer)
+    }, [])
+    return <AudioReactiveHalbertMark size={512} state={state} source={speech} />
+  },
 }
 
 export const Thinking: Story = { args: { size: 512, state: 'thinking' } }
 export const ErrorState: Story = { args: { size: 512, state: 'error' } }
 export const OnDarkCanvas: Story = {
-  args: { size: 512, state: 'listening', source: formantSweep },
+  args: { size: 512, state: 'listening', source: speech },
   decorators: [
     (StoryFn) => (
       <div style={{ background: '#000', padding: 48 }}>
@@ -59,6 +71,93 @@ export const OnDarkCanvas: Story = {
       </div>
     ),
   ],
+}
+
+/** The kiosk conversation as a loop: listening, recognized (strum),
+ * thinking (contract + bulges), speaking — 2.5 s each. */
+export const VoiceModeLoop: Story = {
+  render: () => {
+    const cycle: VoiceVisualState[] = ['listening', 'recognized', 'thinking', 'speaking']
+    const [index, setIndex] = React.useState(0)
+    React.useEffect(() => {
+      const timer = setInterval(() => setIndex((i) => (i + 1) % cycle.length), 2500)
+      return () => clearInterval(timer)
+    }, [])
+    const state = cycle[index]
+    return (
+      <div style={{ display: 'grid', gap: 16, justifyItems: 'center' }}>
+        <AudioReactiveHalbertMark size={512} state={state} source={speech} />
+        <p style={{ fontFamily: 'monospace', textTransform: 'uppercase', opacity: 0.6 }}>{state}</p>
+      </div>
+    )
+  },
+}
+
+/** A level burst on one tine: silent, then `level` for `holdMs`. Each
+ * button strikes a string through the same onset path a voice uses. */
+class ManualPluckSource implements AudioEnergySource {
+  private readonly until: number[]
+  private readonly level: number[]
+  constructor(count: number) {
+    this.until = new Array(count).fill(-1)
+    this.level = new Array(count).fill(0)
+  }
+  strike(k: number, level = 0.4, holdMs = 60): void {
+    this.level[k] = level
+    this.until[k] = performance.now() + holdMs
+  }
+  start(): void {}
+  stop(): void {}
+  readEnergies(out: Float32Array): number {
+    const now = performance.now()
+    for (let k = 0; k < out.length; k++) out[k] = now < this.until[k] ? this.level[k] : 0
+    return out.length
+  }
+}
+
+/** Pluck one string at a time and watch its pitch and sustain: the spine
+ * quivers fast and dies in a quarter second, the outer arc swings slowly
+ * for over a second. Strum walks all of them spine-first. */
+export const PluckLab: Story = {
+  render: () => {
+    const count = tineCount('medium')
+    const source = React.useMemo(() => new ManualPluckSource(count), [count])
+    const [state, setState] = React.useState<VoiceVisualState>('speaking')
+    const [level, setLevel] = React.useState(0.4)
+    const ladder = STRING_LADDER.medium
+    const label = (k: number) =>
+      k === 0 ? 'spine' : k === count - 1 ? 'outer arc' : `lane ${k}`
+    const strumOnce = () => {
+      setState('recognized')
+      setTimeout(() => setState('speaking'), 400)
+    }
+    return (
+      <div style={{ display: 'grid', gap: 16, justifyItems: 'center' }}>
+        <AudioReactiveHalbertMark size={512} state={state} source={source} />
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'center' }}>
+          {ladder.map((s, k) => (
+            <button key={k} type="button" onClick={() => source.strike(k, level)}>
+              {label(k)} {s.frequencyHz.toFixed(1)} Hz / {s.decaySeconds.toFixed(2)} s
+            </button>
+          ))}
+          <button type="button" onClick={strumOnce}>
+            Strum
+          </button>
+        </div>
+        <label>
+          Strike level {level.toFixed(2)}{' '}
+          <input
+            type="range"
+            min={0.05}
+            max={1}
+            step={0.05}
+            value={level}
+            onChange={(e) => setLevel(Number(e.target.value))}
+          />
+        </label>
+      </div>
+    )
+  },
 }
 
 /** Live microphone (user gesture starts the AudioContext). */

@@ -6,6 +6,7 @@ import {
   tineCount,
   TINE_AMPLITUDES,
   TINE_MODES,
+  MAX_DISPLACEMENT_MULTIPLIER,
   laneRadius,
   laneTop,
   tinePathD,
@@ -66,9 +67,7 @@ describe('mark voice geometry — medium density (6 tines, the Voice Mode defaul
 
   it('pins all junctions under displacement on every lane', () => {
     for (let lane = 1; lane <= 5; lane++) {
-      const displaced = tinePathD(lane, TINE_AMPLITUDES.medium[lane], 1.234, {
-        density: 'medium',
-      })
+      const displaced = tinePathD(lane, TINE_AMPLITUDES.medium[lane], { density: 'medium' })
       const pts = points(displaced)
       const statik = points(staticTinePaths('medium')[lane])
       expect(pts[0]).toEqual(statik[0])
@@ -80,15 +79,42 @@ describe('mark voice geometry — medium density (6 tines, the Voice Mode defaul
     }
   })
 
-  it('keeps adjacent tine excursions inside the inter-lane gap', () => {
-    // medium tier: 86.4 pitch − 48 stroke = 38.4 gap; display: 21.33
+  it('has stationary nodes: the mode shape depends on displacement alone', () => {
+    // A plucked string's nodes never move (design doc 17). The same
+    // displacement must always draw the same path — there is no phase input.
+    const a = tinePathD(2, 9, { density: 'medium' })
+    const b = tinePathD(2, 9, { density: 'medium' })
+    expect(a).toBe(b)
+    expect(tinePathD).toHaveLength(2) // (lane, displacement[, opts])
+  })
+
+  it('positive displacement bows the legs outward (the strum direction)', () => {
+    const statik = points(staticTinePaths('medium')[2])
+    const bowed = points(tinePathD(2, 9, { density: 'medium' }))
+    expect(bowed[12][0]).toBeLessThan(statik[12][0] - 5) // left-leg midpoint moves left
+    const n = statik.length
+    expect(bowed[n - 13][0]).toBeGreaterThan(statik[n - 13][0] + 5) // right-leg midpoint moves right
+    // spine (mode 2): upper half bows right, lower half left. Sampled near
+    // the antinodes of sin(2πu)·hann(u) (u ≈ 0.34 and 0.66 of 32 samples).
+    const spine = points(tinePathD(0, 9, { density: 'medium' }))
+    const spineStatic = points(staticTinePaths('medium')[0])
+    expect(spine[11][0]).toBeGreaterThan(spineStatic[11][0] + 4)
+    expect(spine[21][0]).toBeLessThan(spineStatic[21][0] - 4)
+  })
+
+  it('keeps adjacent tine excursions inside the inter-lane gap at the multiplier ceiling', () => {
+    // The engine bounds each tine's multiplier at MAX_DISPLACEMENT_MULTIPLIER
+    // (ring <= 1 plus swell <= 0.3). Two neighbours bowing toward each other
+    // at that ceiling must still clear the gap between stroke edges:
+    // medium tier 86.4 pitch − 48 stroke = 38.4; display 21.33.
+    expect(MAX_DISPLACEMENT_MULTIPLIER).toBe(1.3)
     for (const [density, gap] of [
       ['medium', 38.4],
       ['display', 21.33],
     ] as const) {
       const amps = TINE_AMPLITUDES[density]
       for (let k = 0; k < amps.length - 1; k++) {
-        expect(amps[k] + amps[k + 1]).toBeLessThan(gap)
+        expect(MAX_DISPLACEMENT_MULTIPLIER * (amps[k] + amps[k + 1])).toBeLessThan(gap)
       }
       expect(TINE_MODES[density]).toHaveLength(amps.length)
     }
@@ -99,7 +125,7 @@ describe('traveling bulges (thinking state — "snake ate a ball")', () => {
   const bulge = [{ center: 0.5, width: 0.07, height: 8 }]
 
   it('moves the arc apex outward at the bulge center', () => {
-    const d = tinePathD(2, 0, 0, { density: 'medium', bulges: bulge })
+    const d = tinePathD(2, 0, { density: 'medium', bulges: bulge })
     const pts = points(d)
     const statik = points(staticTinePaths('medium')[2])
     const apexY = (arr: Array<[number, number]>) => Math.max(...arr.map(([, y]) => y))
@@ -109,7 +135,7 @@ describe('traveling bulges (thinking state — "snake ate a ball")', () => {
 
   it('pins both path endpoints while a bulge travels', () => {
     for (const center of [0.05, 0.3, 0.5, 0.7, 0.95]) {
-      const d = tinePathD(2, 0, 0, {
+      const d = tinePathD(2, 0, {
         density: 'medium',
         bulges: [{ center, width: 0.07, height: 8 }],
       })
@@ -121,7 +147,7 @@ describe('traveling bulges (thinking state — "snake ate a ball")', () => {
   })
 
   it('leaves points far from the bulge untouched', () => {
-    const d = tinePathD(2, 0, 0, { density: 'medium', bulges: bulge })
+    const d = tinePathD(2, 0, { density: 'medium', bulges: bulge })
     const pts = points(d)
     const statik = points(staticTinePaths('medium')[2])
     // left-leg top quarter (u < 0.05 path-normalized) is untouched to the cent
@@ -132,7 +158,7 @@ describe('traveling bulges (thinking state — "snake ate a ball")', () => {
   })
 
   it('sums stacked bulges on one tine', () => {
-    const d = tinePathD(2, 0, 0, {
+    const d = tinePathD(2, 0, {
       density: 'medium',
       bulges: [
         { center: 0.5, width: 0.07, height: 8 },
@@ -146,10 +172,10 @@ describe('traveling bulges (thinking state — "snake ate a ball")', () => {
   })
 
   it('bulges work on the spine and the bare outermost arc', () => {
-    const spine = points(tinePathD(0, 0, 0, { density: 'medium', bulges: bulge }))
+    const spine = points(tinePathD(0, 0, { density: 'medium', bulges: bulge }))
     const midXs = spine.slice(4, -4).map(([x]) => x)
     expect(Math.max(...midXs)).toBeGreaterThan(512 + 6)
-    const outer = points(tinePathD(5, 0, 0, { density: 'medium', bulges: bulge }))
+    const outer = points(tinePathD(5, 0, { density: 'medium', bulges: bulge }))
     const apexY = Math.max(...outer.map(([, y]) => y))
     expect(apexY).toBeGreaterThan(944 + 6)
   })

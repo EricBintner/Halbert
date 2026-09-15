@@ -117,6 +117,9 @@ $$\Delta r_k(\theta, t) = B_k \cdot E_k(t) \cdot \cos\left(m_k \theta + \psi_k(t
 Where $\theta \in [0, \pi]$ sweeps the semi-circular base from left leg to right leg.
 
 ### 3.3 Physics-Based Damping & Smoothing
+
+> **Revised 2026-09-15 — see design doc 17, *Voice mark: plucked-string motion model*.** The single spring below survives only as the *swell* follower. Motion is now one lightly damped string per tine at its own pitch and sustain (8 Hz / 0.2 s at the spine down to 2 Hz / 1.1 s at the outer arc), struck by band-level onsets; the standing-wave phase drift is gone (nodes are stationary). The constants in this section are the 2026-08-31 tuning and are superseded.
+
 To prevent harsh strobe-like jitter when processing noisy mic inputs, raw FFT bin amplitudes pass through a 2nd-order damped spring oscillator:
 
 $$m \frac{d^2 x}{dt^2} + c \frac{dx}{dt} + k_s (x - x_{\text{target}}) = 0$$

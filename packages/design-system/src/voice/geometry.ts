@@ -12,10 +12,13 @@
  * bottom semicircle -> right-leg-up; leg tops sit on the 432-radius circle
  * around (512, 512); the outermost lane is a bare semicircle.
  *
- * Deformation models (design doc 15 §3, revised 2026-08-31):
- *  - standing waves on the legs with Hann pinning at both ends;
+ * Deformation models (design doc 15 §3, revised by doc 17 on 2026-09-15):
+ *  - string mode shapes on the legs with Hann pinning at both ends. The
+ *    shape is fixed in space — a plucked string's nodes never move — and
+ *    the time behaviour (the damped cosine) is entirely the caller's
+ *    signed `displacement`, supplied per frame by springs.ts;
  *  - radial cosine flex on the arcs, Hann-windowed over theta so leg/arc
- *    junctions never tear (spec §3.2 lacked the window);
+ *    junctions never tear;
  *  - traveling bulges: a gaussian "ball" that slides along the tine's arc
  *    length in the outward-normal direction — the thinking-state signature,
  *    "a snake that ate a ball". A global Hann window over normalized path
@@ -52,27 +55,31 @@ export function laneTop(lane: number, density: VoiceDensity = 'medium'): number 
   return MARK.cy - Math.sqrt(Math.max(0, MARK.outerR ** 2 - r ** 2))
 }
 
-/** Spatial harmonic mode per tine (n_k): inner structures ripple, outer legs
- * use the fundamental to avoid visible kinks. */
+/** Spatial harmonic mode per tine (n_k): the inner, higher-pitched strings
+ * ring in their second mode (an S on the legs); outer legs use the
+ * fundamental to avoid visible kinks. */
 export const TINE_MODES: Record<VoiceDensity, readonly number[]> = {
   medium: [2, 2, 1, 1, 1, 1],
   display: [2, 2, 2, 1, 1, 1, 1, 1, 1, 1],
 }
 
 /**
- * Max lateral excursion per tine (mark units) at full spectral energy.
- * Invariant: neighboring sums stay below the inter-lane gap (medium 38.4,
- * display 21.33) so strokes can never visually collide (test-enforced).
+ * The engine never asks a tine for more than this multiple of its A_k:
+ * ring <= 1 (RING_MAX in springs.ts) plus swell <= 0.3 (excitation.ts).
+ * TINE_AMPLITUDES is tuned against it below.
+ */
+export const MAX_DISPLACEMENT_MULTIPLIER = 1.3
+
+/**
+ * Max lateral excursion per tine (mark units) at multiplier 1.
+ * Invariant: MAX_DISPLACEMENT_MULTIPLIER * (neighbouring sum) stays below the
+ * inter-lane gap (medium 38.4, display 21.33) so strokes can never visually
+ * collide even with both neighbours bowing toward each other at the ceiling
+ * (test-enforced).
  */
 export const TINE_AMPLITUDES: Record<VoiceDensity, readonly number[]> = {
-  medium: [5, 8, 11, 13, 15, 13],
-  display: [4, 6, 7, 8, 9, 9, 10, 10, 10, 8],
-}
-
-/** Phase drift rates (rad/s) — inner tines shimmer faster than outer ones. */
-export const TINE_DRIFT: Record<VoiceDensity, readonly number[]> = {
-  medium: [1.4, 1.2, 1.0, 0.85, 0.7, 0.55],
-  display: [1.4, 1.2, 1.0, 0.9, 0.8, 0.7, 0.6, 0.55, 0.5, 0.45],
+  medium: [9, 11, 13, 14, 15, 13],
+  display: [4, 5, 6, 7, 7, 8, 8, 8, 8, 7],
 }
 
 /** A localized bump traveling along a tine, in normalized path position. */
@@ -87,7 +94,7 @@ export interface TravelingBulge {
 
 export interface TinePathOptions {
   density?: VoiceDensity
-  /** Traveling bulges layered on top of the standing-wave deformation. */
+  /** Traveling bulges layered on top of the mode-shape deformation. */
   bulges?: readonly TravelingBulge[]
 }
 
@@ -122,14 +129,14 @@ function pt(x: number, y: number): string {
 /**
  * Build the `d` string for one tine.
  * @param lane 0 = spine, 1..laneCount = U-lanes (outermost is a bare arc)
- * @param displacement signed crest displacement in mark units; the caller
- *        passes A_k * E_k(t) where E is the spring-smoothed band energy
- * @param phase current phase drift phi_k(t) in radians
+ * @param displacement signed crest displacement in mark units; positive bows
+ *        the legs outward (and the spine's upper half to the right). The
+ *        caller passes A_k * m_k(t) where m is the per-tine multiplier from
+ *        the string and swell oscillators.
  */
 export function tinePathD(
   lane: number,
   displacement: number,
-  phase: number,
   opts: TinePathOptions = {},
 ): string {
   const density = opts.density ?? 'medium'
@@ -145,8 +152,7 @@ export function tinePathD(
     for (let i = 0; i <= SPINE_SAMPLES; i++) {
       const u = i / SPINE_SAMPLES
       const y = top + u * len
-      const dx =
-        displacement * Math.sin(mode * Math.PI * u + phase) * hann(u) + bo(u)
+      const dx = displacement * Math.sin(mode * Math.PI * u) * hann(u) + bo(u)
       pts.push(pt(MARK.cx + dx, y))
     }
     return `M ${pts.join(' L ')}`
@@ -162,8 +168,7 @@ export function tinePathD(
     for (let i = 0; i <= ARC_SAMPLES; i++) {
       const u = i / ARC_SAMPLES
       const th = u * Math.PI
-      const rr =
-        r + displacement * Math.cos(mode * th + phase) * hann(u) + bo(u)
+      const rr = r + displacement * Math.cos(mode * th) * hann(u) + bo(u)
       pts.push(pt(MARK.cx - rr * Math.cos(th), MARK.cy + rr * Math.sin(th)))
     }
     return `M ${pts.join(' L ')}`
@@ -180,9 +185,7 @@ export function tinePathD(
     const uLeg = i / LEG_SAMPLES
     const u = (uLeg * legLen) / total
     const y = top + uLeg * legLen
-    const dx =
-      -displacement * Math.sin(mode * Math.PI * uLeg + phase) * hann(uLeg) -
-      bo(u)
+    const dx = -displacement * Math.sin(mode * Math.PI * uLeg) * hann(uLeg) - bo(u)
     pts.push(pt(MARK.cx - r + dx, y))
   }
 
@@ -191,8 +194,7 @@ export function tinePathD(
     const uArc = i / ARC_SAMPLES
     const u = (legLen + uArc * arcLen) / total
     const th = uArc * Math.PI
-    const rr =
-      r + displacement * Math.cos(mode * th + phase) * hann(uArc) + bo(u)
+    const rr = r + displacement * Math.cos(mode * th) * hann(uArc) + bo(u)
     pts.push(pt(MARK.cx - rr * Math.cos(th), MARK.cy + rr * Math.sin(th)))
   }
 
@@ -201,9 +203,7 @@ export function tinePathD(
     const uLeg = 1 - i / LEG_SAMPLES
     const u = (legLen + arcLen + (i / LEG_SAMPLES) * legLen) / total
     const y = top + uLeg * legLen
-    const dx =
-      displacement * Math.sin(mode * Math.PI * uLeg + phase) * hann(uLeg) +
-      bo(u)
+    const dx = displacement * Math.sin(mode * Math.PI * uLeg) * hann(uLeg) + bo(u)
     pts.push(pt(MARK.cx + r + dx, y))
   }
 
@@ -212,7 +212,5 @@ export function tinePathD(
 
 /** The exact static mark for a density, one path per tine (first paint/SSR). */
 export function staticTinePaths(density: VoiceDensity = 'medium'): string[] {
-  return Array.from({ length: tineCount(density) }, (_, k) =>
-    tinePathD(k, 0, 0, { density }),
-  )
+  return Array.from({ length: tineCount(density) }, (_, k) => tinePathD(k, 0, { density }))
 }
