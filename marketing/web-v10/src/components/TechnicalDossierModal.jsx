@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { BookOpen, X, ChevronRight, ExternalLink } from 'lucide-react';
+import { BookOpen, X, ChevronRight, ExternalLink, ArrowLeft } from 'lucide-react';
 import { STOPS } from '../lib/storyboard';
 import {
   citationsForStop,
@@ -265,10 +265,14 @@ export function TechnicalDossierModal({ camera, stops }) {
           ...panelStyle,
           overscrollBehavior: 'contain',
         }}
-        className={`fixed z-50 flex items-stretch rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)]/95 text-[var(--color-ink)] shadow-[var(--shadow-popover)] backdrop-blur-xl origin-bottom-left max-sm:inset-0 max-sm:rounded-none max-sm:flex-col max-sm:h-full sm:bottom-4 sm:left-4 sm:h-[285px] sm:origin-bottom-left ${openClass}`}
+        className={`fixed z-50 flex items-stretch rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)]/95 text-[var(--color-ink)] shadow-[var(--shadow-popover)] backdrop-blur-xl origin-bottom-left bottom-4 left-4 right-4 sm:right-auto sm:bottom-4 sm:left-4 h-[285px] sm:origin-bottom-left overflow-hidden ${openClass}`}
       >
-        {/* Left Pane: Single-line item list (fixed compact height) */}
-        <div className="flex flex-col w-full sm:w-[320px] shrink-0 h-full min-h-0">
+        {/* Left Pane: Single-line item list (fixed compact height, hidden on mobile when detail is active) */}
+        <div
+          className={`flex flex-col h-full min-h-0 shrink-0 w-full sm:w-[320px] ${
+            selectedItem ? 'max-sm:hidden' : ''
+          }`}
+        >
           {/* Header */}
           <div className="flex shrink-0 items-center justify-between border-b border-[var(--color-line)] bg-[var(--color-canvas)] px-3 py-2">
             <span className="font-mono text-[10.5px] font-bold tracking-widest uppercase text-[var(--color-ink)] truncate">
@@ -320,44 +324,11 @@ export function TechnicalDossierModal({ camera, stops }) {
                     </span>
                     <ChevronRight
                       size={12}
-                      className={`shrink-0 text-[var(--color-ink-tertiary)] group-hover:text-[var(--color-ink)] transition-transform ${
-                        isSelected ? 'rotate-90 sm:rotate-0 text-[var(--color-stroke)]' : ''
+                      className={`shrink-0 text-[var(--color-ink-tertiary)] group-hover:text-[var(--color-ink)] transition-colors ${
+                        isSelected ? 'text-[var(--color-stroke)]' : ''
                       }`}
                     />
                   </button>
-
-                  {/* Mobile-only inline expansion (accordion fallback) */}
-                  {isSelected && (
-                    <div className="sm:hidden my-1.5 p-2 text-[11.5px] leading-relaxed text-[var(--color-ink-secondary)] bg-[var(--color-surface-subtle)]/60 rounded break-words [overflow-wrap:anywhere]">
-                      {item.fullCitation && (
-                        <p className="font-mono text-[9.5px] text-[var(--color-ink-tertiary)] break-words">
-                          {item.fullCitation}
-                        </p>
-                      )}
-                      <p className="mt-1 text-[var(--color-ink)] break-words">{item.takeaway}</p>
-                      {item.howHalbertApplies && (
-                        <p className="mt-1 text-[var(--color-ink-secondary)] break-words">{item.howHalbertApplies}</p>
-                      )}
-                      {item.toolingAndBackend && (
-                        <p className="mt-1 font-mono text-[9px] text-[var(--color-ink-tertiary)] break-all">
-                          Source: {item.toolingAndBackend}
-                        </p>
-                      )}
-                      {item.url && (
-                        <div className="mt-1.5">
-                          <a
-                            href={item.url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="inline-flex items-center gap-1 font-mono text-[10px] text-[var(--color-ink)] underline decoration-[var(--color-line-strong)] hover:text-[var(--color-stroke)] break-all"
-                          >
-                            <span>Original work</span>
-                            <ExternalLink size={9} aria-hidden="true" />
-                          </a>
-                        </div>
-                      )}
-                    </div>
-                  )}
                 </div>
               );
             })}
@@ -370,70 +341,100 @@ export function TechnicalDossierModal({ camera, stops }) {
           </div>
         </div>
 
-        {/* Right Pane (Desktop Fly-Out): exact same locked height as left pane, headerless, fully scrollable */}
+        {/* Right Pane (Desktop Fly-Out / Mobile In-Container Detail View) */}
         <div
-          className={`hidden sm:flex flex-col h-full min-h-0 border-l border-[var(--color-line)] bg-[var(--color-canvas)] transition-all duration-200 ease-out overflow-hidden ${
-            selectedItem ? 'w-[360px] opacity-100' : 'w-0 opacity-0 pointer-events-none'
+          className={`flex flex-col h-full min-h-0 sm:border-l sm:border-[var(--color-line)] bg-[var(--color-canvas)] transition-all duration-200 ease-out overflow-hidden ${
+            selectedItem
+              ? 'w-full sm:w-[360px] opacity-100'
+              : 'hidden sm:flex sm:w-0 opacity-0 pointer-events-none'
           }`}
         >
           {selectedItem && (
-            /* Detail Body — takes full panel height without a duplicate header or close button */
-            <div
-              key={selectedItem.id}
-              tabIndex={0}
-              className="h-full min-w-0 overflow-x-hidden overflow-y-auto overscroll-contain p-3.5 text-[11.5px] leading-relaxed text-[var(--color-ink-secondary)] space-y-2 focus:outline-none break-words [overflow-wrap:anywhere]"
-              style={{ overscrollBehavior: 'contain' }}
-            >
-              <div className="flex items-center gap-1.5 font-mono text-[9px] font-bold uppercase tracking-wider text-[var(--color-ink-tertiary)]">
-                <span>{selectedItem.typeLabel}</span>
-                {selectedItem.meta && <span>· {selectedItem.meta}</span>}
+            <>
+              {/* Mobile-only header with Back button on left, Close button on right */}
+              <div className="flex shrink-0 items-center justify-between border-b border-[var(--color-line)] bg-[var(--color-canvas)] px-3 py-2 sm:hidden">
+                <button
+                  type="button"
+                  onClick={() => setSelectedId(null)}
+                  aria-label="Back to item list"
+                  className="flex items-center gap-1.5 cursor-pointer rounded text-[var(--color-ink-secondary)] transition-colors hover:text-[var(--color-ink)]"
+                >
+                  <ArrowLeft size={13} aria-hidden="true" />
+                  <span className="font-mono text-[10px] font-bold uppercase tracking-wider">
+                    Back
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setOpen(false);
+                    setSelectedId(null);
+                  }}
+                  aria-label="Close dossier"
+                  className="flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded text-[var(--color-ink-tertiary)] transition-colors hover:bg-[var(--color-surface-subtle)] hover:text-[var(--color-ink)] ml-2"
+                >
+                  <X size={13} aria-hidden="true" />
+                </button>
               </div>
 
-              <h4 className="text-[13px] font-semibold leading-snug text-[var(--color-ink)] break-words">
-                {selectedItem.title}
-              </h4>
+              {/* Detail Body — scrollable independently, isolated from background page scroll */}
+              <div
+                key={selectedItem.id}
+                tabIndex={0}
+                className="flex-1 min-h-0 min-w-0 overflow-x-hidden overflow-y-auto overscroll-contain p-3.5 text-[11.5px] leading-relaxed text-[var(--color-ink-secondary)] space-y-2 focus:outline-none break-words [overflow-wrap:anywhere]"
+                style={{ overscrollBehavior: 'contain' }}
+              >
+                <div className="flex items-center gap-1.5 font-mono text-[9px] font-bold uppercase tracking-wider text-[var(--color-ink-tertiary)]">
+                  <span>{selectedItem.typeLabel}</span>
+                  {selectedItem.meta && <span>· {selectedItem.meta}</span>}
+                </div>
 
-              {selectedItem.fullCitation && (
-                <p className="font-mono text-[9.5px] text-[var(--color-ink-tertiary)] leading-normal break-words">
-                  {selectedItem.fullCitation}
+                <h4 className="text-[13px] font-semibold leading-snug text-[var(--color-ink)] break-words">
+                  {selectedItem.title}
+                </h4>
+
+                {selectedItem.fullCitation && (
+                  <p className="font-mono text-[9.5px] text-[var(--color-ink-tertiary)] leading-normal break-words">
+                    {selectedItem.fullCitation}
+                  </p>
+                )}
+
+                <p className="text-[var(--color-ink)] leading-normal break-words">
+                  {selectedItem.takeaway}
                 </p>
-              )}
 
-              <p className="text-[var(--color-ink)] leading-normal break-words">
-                {selectedItem.takeaway}
-              </p>
-
-              {selectedItem.howHalbertApplies && (
-                <div className="rounded bg-[var(--color-surface-subtle)]/60 p-2 text-[var(--color-ink-secondary)] break-words [overflow-wrap:anywhere]">
-                  <span className="font-mono text-[8.5px] font-bold uppercase tracking-wider block text-[var(--color-stroke)] mb-1">
-                    In Halbert
-                  </span>
-                  <div className="break-words [overflow-wrap:anywhere]">
-                    {selectedItem.howHalbertApplies}
+                {selectedItem.howHalbertApplies && (
+                  <div className="rounded bg-[var(--color-surface-subtle)]/60 p-2 text-[var(--color-ink-secondary)] break-words [overflow-wrap:anywhere]">
+                    <span className="font-mono text-[8.5px] font-bold uppercase tracking-wider block text-[var(--color-stroke)] mb-1">
+                      In Halbert
+                    </span>
+                    <div className="break-words [overflow-wrap:anywhere]">
+                      {selectedItem.howHalbertApplies}
+                    </div>
                   </div>
-                </div>
-              )}
+                )}
 
-              {selectedItem.toolingAndBackend && (
-                <p className="font-mono text-[9px] text-[var(--color-ink-tertiary)] break-all">
-                  Source: {selectedItem.toolingAndBackend}
-                </p>
-              )}
+                {selectedItem.toolingAndBackend && (
+                  <p className="font-mono text-[9px] text-[var(--color-ink-tertiary)] break-all">
+                    Source: {selectedItem.toolingAndBackend}
+                  </p>
+                )}
 
-              {selectedItem.url && (
-                <div className="pt-1">
-                  <a
-                    href={selectedItem.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1 font-mono text-[10px] text-[var(--color-ink)] underline decoration-[var(--color-line-strong)] hover:text-[var(--color-stroke)] break-all"
-                  >
-                    <span>Original work</span>
-                    <ExternalLink size={10} aria-hidden="true" />
-                  </a>
-                </div>
-              )}
-            </div>
+                {selectedItem.url && (
+                  <div className="pt-1">
+                    <a
+                      href={selectedItem.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 font-mono text-[10px] text-[var(--color-ink)] underline decoration-[var(--color-line-strong)] hover:text-[var(--color-stroke)] break-all"
+                    >
+                      <span>Original work</span>
+                      <ExternalLink size={10} aria-hidden="true" />
+                    </a>
+                  </div>
+                )}
+              </div>
+            </>
           )}
         </div>
       </div>
