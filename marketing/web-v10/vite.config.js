@@ -21,9 +21,7 @@ export default defineConfig({
     },
   },
   server: {
-    // launch.json runs this dev server on 5189 via CLI override; the config
-    // port matters only for a bare `npm run dev` without the override.
-    port: 5189,
+    port: 5188,
     host: true,
   },
 });

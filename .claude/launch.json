@@ -4,8 +4,8 @@
     {
       "name": "marketing-v10",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev", "--prefix", "marketing/web-v10", "--", "--port", "5189"],
-      "port": 5189
+      "runtimeArgs": ["run", "dev", "--prefix", "marketing/web-v10", "--", "--port", "5188"],
+      "port": 5188
     }
   ]
 }
