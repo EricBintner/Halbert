@@ -35,12 +35,12 @@ changes (see the generation script in the RESULTS doc §7).
 
 To maintain complete narrative integrity across human social media previews, conversational AI queries, and structured knowledge graphs, all surfaces are derived from four canonical copy assets:
 
-### A. Canonical Title (57 characters)
+### A. Canonical Title (60 characters)
 Used identically across `<title>`, `og:title`, and `twitter:title` (there is deliberately no `<meta name="title">` — it is non-standard and `<title>` is the only title search engines read):
 ```text
-Halbert — Host Epistemology & Cognition, Smart Home + MCP
+Meet Halbert: Host Epistemology & Cognition, Smart Home + MCP
 ```
-- **Envelope:** 57 characters; fits the 56–58 character two-line envelope on mobile Twitter/X link cards without trailing ellipsis truncation.
+- **Envelope:** 60 characters; fits the two-line envelope on mobile Twitter/X and iOS Messages link cards without trailing ellipsis truncation. Retains "Meet Halbert" across link crawlers that deduplicate simple site names.
 - **Signals:** Host epistemology/cognition layer, Home Assistant/smart home integration, and native Model Context Protocol (MCP) server.
 
 ### B. Canonical Headline
@@ -84,7 +84,7 @@ The feature set is 100% unified across machine-readable JSON-LD structured data 
 
 ```html
 <!-- Primary Meta Tags -->
-<title>Halbert — Host Epistemology &amp; Cognition, Smart Home + MCP</title>
+<title>Meet Halbert: Host Epistemology &amp; Cognition, Smart Home + MCP</title>
 <meta name="description" content="The mind in your computer and the smart in your home. Proactive system triage, Home Assistant automation, and native MCP tools for Linux, Mac &amp; HA." />
 <link rel="canonical" href="https://halbert.computer/" />
 
@@ -92,7 +92,7 @@ The feature set is 100% unified across machine-readable JSON-LD structured data 
 <meta property="og:type" content="website" />
 <meta property="og:site_name" content="Halbert" />
 <meta property="og:url" content="https://halbert.computer/" />
-<meta property="og:title" content="Halbert — Host Epistemology &amp; Cognition, Smart Home + MCP" />
+<meta property="og:title" content="Meet Halbert: Host Epistemology &amp; Cognition, Smart Home + MCP" />
 <meta property="og:description" content="The mind in your computer and the smart in your home. Proactive system triage, Home Assistant automation, and native MCP tools for Linux, Mac &amp; HA." />
 <meta property="og:image" content="https://halbert.computer/og-image.png" />
 <meta property="og:image:secure_url" content="https://halbert.computer/og-image.png" />
@@ -104,7 +104,7 @@ The feature set is 100% unified across machine-readable JSON-LD structured data 
 <!-- Twitter / X Card -->
 <meta name="twitter:card" content="summary_large_image" />
 <meta name="twitter:url" content="https://halbert.computer/" />
-<meta name="twitter:title" content="Halbert — Host Epistemology &amp; Cognition, Smart Home + MCP" />
+<meta name="twitter:title" content="Meet Halbert: Host Epistemology &amp; Cognition, Smart Home + MCP" />
 <meta name="twitter:description" content="The mind in your computer and the smart in your home. Proactive system triage, Home Assistant automation, and native MCP tools for Linux, Mac &amp; HA." />
 <meta name="twitter:image" content="https://halbert.computer/og-image.png" />
 <meta name="twitter:image:alt" content="Halbert — I am the computer. And I put the smart in your home." />
