@@ -11,9 +11,11 @@ import {
  * TechnicalDossierModal — ultra-minimal stop-curated research dossier.
  *
  * Triggered by a standalone graphic icon in the lower-left corner that
- * hides when the dossier is open. On desktop, list items are condensed
- * to single-line rows, and clicking an item opens an attached detail
- * panel that flies out to the right at the exact same height.
+ * hides when the dossier is open. On desktop, the panel maintains a
+ * fixed, constant height (never jumps when selecting items) and list
+ * items are condensed to single lines. Selecting an item expands an
+ * attached right fly-out detail pane of the exact same height with
+ * isolated, smooth internal scrolling that never leaks to the parallax.
  * On mobile, renders a clean full-window sheet with inline expansion.
  */
 
@@ -113,6 +115,35 @@ export function TechnicalDossierModal({ camera, stops }) {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [open, selectedId]);
+
+  // Prevent wheel events inside the modal from leaking to window and scrolling the parallax
+  useEffect(() => {
+    const panel = panelRef.current;
+    if (!panel || !open) return undefined;
+
+    const onWheel = (e) => {
+      // Find the scrollable container under the cursor
+      const scrollable = e.target.closest('.overflow-y-auto');
+      if (!scrollable) {
+        // If not directly over a scrollable area (e.g. header, borders), isolate window from wheel
+        e.preventDefault();
+        return;
+      }
+
+      // If over a scrollable container, allow smooth native scrolling within bounds,
+      // but prevent window scroll chaining when hitting top or bottom edges
+      const { scrollTop, scrollHeight, clientHeight } = scrollable;
+      const isAtTop = scrollTop <= 0 && e.deltaY < 0;
+      const isAtBottom = scrollTop + clientHeight >= scrollHeight - 1 && e.deltaY > 0;
+
+      if (isAtTop || isAtBottom) {
+        e.preventDefault();
+      }
+    };
+
+    panel.addEventListener('wheel', onWheel, { passive: false });
+    return () => panel.removeEventListener('wheel', onWheel);
+  }, [open]);
 
   // Focus management
   const prevOpen = useRef(false);
@@ -218,7 +249,7 @@ export function TechnicalDossierModal({ camera, stops }) {
         <BookOpen size={16} aria-hidden="true" />
       </button>
 
-      {/* Popup Dialog — desktop dual-pane (fly-out right panel) / mobile full-window */}
+      {/* Popup Dialog — fixed constant height on desktop with fly-out detail pane */}
       <div
         ref={panelRef}
         id={PANEL_ID}
@@ -230,11 +261,14 @@ export function TechnicalDossierModal({ camera, stops }) {
         data-active-stop={activeStopId}
         inert={!open}
         tabIndex={-1}
-        style={panelStyle}
-        className={`fixed z-50 flex items-stretch rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)]/95 text-[var(--color-ink)] shadow-[var(--shadow-popover)] backdrop-blur-xl origin-bottom-left max-sm:inset-0 max-sm:rounded-none max-sm:flex-col sm:bottom-4 sm:left-4 sm:max-h-[60vh] sm:origin-bottom-left ${openClass}`}
+        style={{
+          ...panelStyle,
+          overscrollBehavior: 'contain',
+        }}
+        className={`fixed z-50 flex items-stretch rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)]/95 text-[var(--color-ink)] shadow-[var(--shadow-popover)] backdrop-blur-xl origin-bottom-left max-sm:inset-0 max-sm:rounded-none max-sm:flex-col max-sm:h-full sm:bottom-4 sm:left-4 sm:h-[285px] sm:origin-bottom-left ${openClass}`}
       >
-        {/* Left Pane: Single-line item list (very compact height) */}
-        <div className="flex flex-col w-full sm:w-[320px] shrink-0 min-h-0">
+        {/* Left Pane: Single-line item list (fixed compact height) */}
+        <div className="flex flex-col w-full sm:w-[320px] shrink-0 h-full min-h-0">
           {/* Header */}
           <div className="flex shrink-0 items-center justify-between border-b border-[var(--color-line)] bg-[var(--color-canvas)] px-3 py-2">
             <span className="font-mono text-[10.5px] font-bold tracking-widest uppercase text-[var(--color-ink)] truncate">
@@ -253,8 +287,11 @@ export function TechnicalDossierModal({ camera, stops }) {
             </button>
           </div>
 
-          {/* List of single-line rows */}
-          <div className="min-h-0 flex-1 overflow-y-auto p-1.5 space-y-0.5">
+          {/* List of single-line rows — scrollable with overscroll-contain */}
+          <div
+            className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-1.5 space-y-0.5"
+            style={{ overscrollBehavior: 'contain' }}
+          >
             {items.map((item) => {
               const isSelected = selectedId === item.id;
               return (
@@ -333,10 +370,10 @@ export function TechnicalDossierModal({ camera, stops }) {
           </div>
         </div>
 
-        {/* Right Pane (Desktop Fly-Out): exact same height as left pane */}
+        {/* Right Pane (Desktop Fly-Out): exact same locked height as left pane, fully scrollable */}
         <div
-          className={`hidden sm:flex flex-col border-l border-[var(--color-line)] bg-[var(--color-canvas)] transition-all duration-200 ease-out overflow-hidden ${
-            selectedItem ? 'w-[350px] opacity-100' : 'w-0 opacity-0 pointer-events-none'
+          className={`hidden sm:flex flex-col h-full min-h-0 border-l border-[var(--color-line)] bg-[var(--color-canvas)] transition-all duration-200 ease-out overflow-hidden ${
+            selectedItem ? 'w-[360px] opacity-100' : 'w-0 opacity-0 pointer-events-none'
           }`}
         >
           {selectedItem && (
@@ -356,8 +393,12 @@ export function TechnicalDossierModal({ camera, stops }) {
                 </button>
               </div>
 
-              {/* Detail Body */}
-              <div className="min-h-0 flex-1 overflow-y-auto p-3 text-[11.5px] leading-relaxed text-[var(--color-ink-secondary)] space-y-2">
+              {/* Detail Body — scrollable independently, isolated from background page scroll */}
+              <div
+                tabIndex={0}
+                className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-3 text-[11.5px] leading-relaxed text-[var(--color-ink-secondary)] space-y-2 focus:outline-none"
+                style={{ overscrollBehavior: 'contain' }}
+              >
                 <h4 className="text-[13px] font-semibold leading-snug text-[var(--color-ink)]">
                   {selectedItem.title}
                 </h4>
