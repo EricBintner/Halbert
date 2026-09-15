@@ -108,11 +108,14 @@ function FullLayout({ content, portrait, viewport }) {
   // the shorter side in landscape; portrait's ×2 capped so the enlarged
   // mark never claims more than maxSpanFor's height budget — the spacer
   // mirrors the same clamp the camera engine applies to the mark itself.
+  // The portrait value is the mark's fraction of frame HEIGHT (vmin is
+  // the width on a tall phone — it under-reserves and the bands collide
+  // with the mark); landscape keeps vmin, the shorter side.
   let markSpan = '44vmin';
   if (portrait) {
     const aspect = viewport.width / viewport.height;
     const span = Math.min(2.0, maxSpanFor(aspect));
-    markSpan = `${(44 * Math.min(1, aspect) * span).toFixed(1)}vmin`;
+    markSpan = `${(44 * Math.min(1, aspect) * span).toFixed(1)}vh`;
   }
   return (
     <div className="absolute inset-0 grid grid-rows-[1fr_auto_1fr] pt-14 pb-14">
