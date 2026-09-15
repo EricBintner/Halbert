@@ -69,23 +69,44 @@
   animation-delay: calc(var(--duration-shutter) * 0.6);
 }
 
-/* Voice Mode kiosk plate — width is budgeted from its slot's own content
-   height, so the 3:4 device adapts to whichever colour field it lands in
-   (full-height column on the vertical split, half-height band on the
-   horizontal one) with no layout-kind branching and no vh guesswork. Slot
-   elements are stretched by fixed / 1fr grid tracks, so their size is
-   content-independent and they are safe size containers. The first width is
-   the no-container-query fallback: an unsupported cqh unit would drop the
-   whole declaration, so browsers without container queries keep the width
-   cap and lose only the height budget. */
+/* Voice Mode kiosk plate — a scale model, not a reflowing layout. The
+   internals are authored in em against .voice-screen's font-size (1em =
+   16px at the 30rem desktop cap), so the whole device grows and shrinks
+   as one unit. The max() on the font-size is the phone floor: strict
+   uniform scale of the 480px model is unreadable at a 230px render, so
+   small plates hold text at a legible size and only the device geometry
+   keeps scaling. The plate is its own inline-size container; the cqh on
+   its width resolves against the slot (a safe size container — stretched
+   by fixed / 1fr grid tracks). Every cq declaration keeps a
+   no-container-query fallback first: an unsupported cq unit would drop
+   the whole min() it appears in. */
 [data-slot] {
   container-type: size;
 }
 
 .voice-plate {
+  container-type: inline-size;
   width: min(100%, 30rem);
   width: min(100%, 30rem, 75cqh);
   aspect-ratio: 3 / 4;
+  margin-inline: auto; /* phones: centered in the horizontal band */
+}
+
+.voice-screen {
+  font-size: 1rem; /* fallback: authored size */
+  /* cqw measures the plate's *content box* — 480px visual width minus
+     the 4% bezel padding each side = 415px at the desktop cap — so the
+     factor is authored against that box for exactly 16px there. */
+  font-size: max(3.855cqw, 12px);
+}
+
+/* Desktop (vertical split): match the other plates — flush with the
+   slot's padding inset, no centering, no pull toward the colour line.
+   Scoped to the intro stop; other vertical-split stops inherit only the
+   shared margin-inline rule above (phones center in their band). */
+[data-stop='intro'][data-layout='vertical'] .voice-plate {
+  margin-left: 0;
+  margin-right: 0;
 }
 
 /* Custom Scrollbar */

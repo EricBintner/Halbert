@@ -1,5 +1,5 @@
 {
-  "version": 3,
+  "version": 4,
   "categories": [
     {
       "id": "right-brain",
@@ -57,7 +57,10 @@
       "howItWorks": "Incoming messages are scored for intent and complexity by the intake pipeline. The TierRouter checks available hardware capabilities and configuration before selecting the optimal endpoint. Debug mode surfaces the routing decision for every turn so you can see exactly why a query went where it did.",
       "toolingAndBackend": "model/tier_router.py, model/llm_config.py, intake/pipeline.py",
       "limitsAndInvariants": "If a configured endpoint goes down, routing gracefully degrades to the next available tier rather than failing silently.",
-      "subFeatures": []
+      "subFeatures": [],
+      "citationIds": [
+        "distserve"
+      ]
     },
     {
       "id": "air-gapped-private-execution",
@@ -73,7 +76,14 @@
       "howItWorks": "The secure context evaluator in the agent state machine detects sensitive tokens and system file paths. When triggered, execution locks to local loopback endpoints (Ollama, Metal, vLLM). If no local model is available, the turn halts and informs the user rather than silently downgrading to a cloud model.",
       "toolingAndBackend": "agents/states.py (secure_context), model/tier_router.py",
       "limitsAndInvariants": "Fails closed: absence of a local model means the query is refused, never silently sent to the cloud.",
-      "subFeatures": []
+      "subFeatures": [],
+      "citationIds": [
+        "nist-sp-800-207",
+        "saltzer-schroeder"
+      ],
+      "stopIds": [
+        "diagonal"
+      ]
     },
     {
       "id": "hot-swap-providers",
@@ -89,7 +99,10 @@
       "howItWorks": "The @halbert/model-picker package is fully headless: zero I/O, zero hardcoded class names. It defines a ModelPickerTransport interface that the host implements. Endpoint discovery probes each configured provider's API for available models. The picker supports 8 provider types: Ollama, LM Studio, OpenAI, OpenAI-compatible, Anthropic, Google, Azure OpenAI, and Apple Foundation.",
       "toolingAndBackend": "packages/model-picker/src/useModelPicker.ts, packages/model-picker/src/types.ts",
       "limitsAndInvariants": "The picker never performs fetch calls directly — all I/O goes through the injected transport, so it works identically in tests, Tauri IPC, and REST contexts.",
-      "subFeatures": []
+      "subFeatures": [],
+      "stopIds": [
+        "diagonal"
+      ]
     },
     {
       "id": "context-compression",
@@ -105,7 +118,15 @@
       "howItWorks": "The lingua compressor removes syntactic filler and redundancy. The semantic compressor identifies and merges duplicate information across turns. Together they maintain a sliding window of full-fidelity recent turns backed by compressed summaries of older context.",
       "toolingAndBackend": "compression/lingua_compressor.py, compression/semantic_compressor.py",
       "limitsAndInvariants": "Compression never discards tool outputs or system-state observations — only conversational filler and redundant explanations are candidates for reduction.",
-      "subFeatures": []
+      "subFeatures": [],
+      "citationIds": [
+        "context-length-hurts",
+        "context-rot",
+        "lost-in-the-middle"
+      ],
+      "stopIds": [
+        "hop"
+      ]
     },
     {
       "id": "agent-lifecycle",
@@ -137,7 +158,13 @@
       "howItWorks": "The crypto storage module handles encryption at rest, key derivation, and secure retrieval. Secrets are never logged, never included in debug output, and never transmitted to the model as part of conversation context.",
       "toolingAndBackend": "crypto/storage.py",
       "limitsAndInvariants": "Keys are never rendered in debug logs or included in model prompts. The picker UI masks API keys in the provider card display.",
-      "subFeatures": []
+      "subFeatures": [],
+      "citationIds": [
+        "saltzer-schroeder"
+      ],
+      "stopIds": [
+        "diagonal"
+      ]
     },
     {
       "id": "37-system-scanners",
@@ -152,7 +179,13 @@
       "howItWorks": "Scanners run concurrently under an execution budget, parsing native OS data (sysfs, procfs, systemctl, ioreg, system_profiler) into strongly-typed Discovery records. Results feed both the dashboard pages and the agent's contextual awareness.",
       "toolingAndBackend": "discovery/engine.py, discovery/scanners/ (24 files), discovery/scanners/apps/ (3 files), discovery/scanners/macos/ (10 files)",
       "limitsAndInvariants": "Read-only non-destructive operations: discovery scanners never mutate system state or modify filesystem configuration.",
-      "subFeatures": []
+      "subFeatures": [],
+      "citationIds": [
+        "donut-telemetry-anomaly"
+      ],
+      "stopIds": [
+        "open"
+      ]
     },
     {
       "id": "gpu-accelerator-diagnostics",
@@ -167,7 +200,10 @@
       "howItWorks": "GPU tools probe nvidia-smi, rocm-smi, intel_gpu_top, and Metal system profiler. Accelerator tools detect Coral Edge TPUs, Hailo-8/8L/10H, MemryX MX3, Intel NPU, AMD XDNA NPU, and Apple Neural Engine through platform-specific APIs and device enumeration.",
       "toolingAndBackend": "tools/gpu_tools.py, tools/accelerator_tools.py, discovery/scanners/gpu.py, discovery/scanners/ai_accelerator.py, routes/gpu.py",
       "limitsAndInvariants": "GPU analysis is cached to YAML with a 7-day TTL to avoid redundant expensive probes.",
-      "subFeatures": []
+      "subFeatures": [],
+      "stopIds": [
+        "open"
+      ]
     },
     {
       "id": "four-whys-findings",
@@ -183,7 +219,14 @@
       "howItWorks": "Detector sweeps (acoustic anomaly detection, permissions hygiene checks, and more) aggregate low-level scanner anomalies. When an anomaly breaches thresholds, a Finding record is generated with four justification fields and queued in the attention ledger. Dashboard routes expose the findings list and allow proposing fixes.",
       "toolingAndBackend": "findings/store.py, findings/precedence.py, findings/detectors/ (acoustic_anomaly.py, permissions_hygiene.py), routes/findings.py",
       "limitsAndInvariants": "Zero vanity notifications: findings respect user-defined quiet hours and the proactivity dial.",
-      "subFeatures": []
+      "subFeatures": [],
+      "citationIds": [
+        "donut-telemetry-anomaly",
+        "log-anomaly"
+      ],
+      "stopIds": [
+        "open"
+      ]
     },
     {
       "id": "notification-attunement",
@@ -215,7 +258,13 @@
       "howItWorks": "The SomaticLifecycle orchestrator drives each block through its phases: SENSORY gathers scanner data, DELIBERATION evaluates severity and blast radius, PROPOSAL generates a config change through the ProposalGenerator, ACTION executes through the approval engine (if approved), and REFLECTION logs the outcome and adjusts future detection thresholds.",
       "toolingAndBackend": "somatic/lifecycle.py, somatic/block.py, somatic/store.py",
       "limitsAndInvariants": "Every action phase routes through the approval engine — somatic blocks cannot bypass human-in-the-loop authorization for state-mutating operations.",
-      "subFeatures": []
+      "subFeatures": [],
+      "citationIds": [
+        "donut-telemetry-anomaly"
+      ],
+      "stopIds": [
+        "open"
+      ]
     },
     {
       "id": "morning-reports-reflexes",
@@ -231,7 +280,14 @@
       "howItWorks": "The morning report aggregates overnight findings, scanner deltas, and pending items into a briefing. Reflexes subscribe to event streams and trigger the agent when predefined conditions are met. The acoustic bridge connects audio pipeline anomaly detections to the reflex system.",
       "toolingAndBackend": "proactive/morning_report.py, proactive/reflexes.py, proactive/acoustic_bridge.py",
       "limitsAndInvariants": "Reflexes respect the attunement withdrawal state — they will not interrupt during withdrawal periods unless the event is classified as critical.",
-      "subFeatures": []
+      "subFeatures": [],
+      "citationIds": [
+        "donut-telemetry-anomaly",
+        "log-anomaly"
+      ],
+      "stopIds": [
+        "open"
+      ]
     },
     {
       "id": "computer-vision-suite",
@@ -262,7 +318,10 @@
       "howItWorks": "The container scanner probes Docker and Podman sockets for running containers, images, and resource usage. App scanners enumerate installed Flatpak, Snap, and AppImage applications. The dashboard routes expose these through REST APIs consumed by the frontend panel.",
       "toolingAndBackend": "discovery/scanners/container.py, discovery/scanners/apps/ (flatpak.py, snap.py, appimage.py), routes/containers.py",
       "limitsAndInvariants": "Container lifecycle operations (start, stop, remove) require approval for destructive actions.",
-      "subFeatures": []
+      "subFeatures": [],
+      "stopIds": [
+        "apex"
+      ]
     },
     {
       "id": "blast-radius",
@@ -277,7 +336,10 @@
       "howItWorks": "The ConfigEdgeExtractor builds a dependency graph by parsing systemd unit dependencies, config file Include/Import directives, fstab device-to-mountpoint mappings, and absolute-path file references. The BlastRadiusCalculator traverses this graph to return shallow (direct) dependents for any given config path.",
       "toolingAndBackend": "config/edge_extractor.py, findings/blast_radius.py",
       "limitsAndInvariants": "Currently returns shallow (direct) dependents only — deep transitive traversal is a future enhancement.",
-      "subFeatures": []
+      "subFeatures": [],
+      "stopIds": [
+        "rise"
+      ]
     },
     {
       "id": "diff-proposals-rollback",
@@ -292,7 +354,13 @@
       "howItWorks": "The WriteConfig tool generates unified diffs for proposed changes, saves a .bak copy before modification, and supports a do_rollback flag to immediately restore from backup. The editor API route adds full backup listing and restore capabilities on top.",
       "toolingAndBackend": "tools/write_config.py, routes/editor.py, dashboard/frontend/src/components/editor/",
       "limitsAndInvariants": "Atomic file writing: failures abort cleanly without leaving partial or corrupted configuration on disk.",
-      "subFeatures": []
+      "subFeatures": [],
+      "citationIds": [
+        "concurrency-recovery"
+      ],
+      "stopIds": [
+        "rise"
+      ]
     },
     {
       "id": "why-brain",
@@ -307,7 +375,10 @@
       "howItWorks": "Clicking the brain icon records or shows a user-authored explanation for why an item is configured a certain way. Rationales are served by get_self_knowledge() and injected into future chat context, so the agent remembers your reasoning when you ask about that configuration again.",
       "toolingAndBackend": "dashboard/frontend/src/components/ui/why-brain.tsx, routes/settings.py (get_self_knowledge)",
       "limitsAndInvariants": "Rationales are user-curated, never auto-generated — the agent may suggest a reason, but the user confirms it.",
-      "subFeatures": []
+      "subFeatures": [],
+      "stopIds": [
+        "rise"
+      ]
     },
     {
       "id": "memory-vault",
@@ -323,7 +394,15 @@
       "howItWorks": "The StateStore maintains a ledger of machine-state triples (subject, predicate, value) with timestamps and actor attribution. The Consolidator merges redundant entries at idle time. The VaultProjector exports the ledger into a vault directory of plain Markdown files, maintaining byte-identity and unlinking orphans during rebuilds.",
       "toolingAndBackend": "continuity/vault.py, continuity/state_store.py, continuity/consolidation.py, continuity/recall.py",
       "limitsAndInvariants": "The vault projection has no authority — it is a human-readable view, not the source of truth. The StateStore ledger is canonical.",
-      "subFeatures": []
+      "subFeatures": [],
+      "citationIds": [
+        "concurrency-recovery",
+        "context-rot",
+        "dynamo-store"
+      ],
+      "stopIds": [
+        "rise"
+      ]
     },
     {
       "id": "provenance-tracking",
@@ -338,7 +417,13 @@
       "howItWorks": "The provenance module hooks into the WriteConfig tool and records file mode changes, content modifications, and actor attributions. Each record links back to the state ledger and can be queried to reconstruct the complete history of a file.",
       "toolingAndBackend": "continuity/provenance.py, continuity/ownership.py",
       "limitsAndInvariants": "Provenance records are append-only — they cannot be retroactively modified or deleted.",
-      "subFeatures": []
+      "subFeatures": [],
+      "citationIds": [
+        "concurrency-recovery"
+      ],
+      "stopIds": [
+        "rise"
+      ]
     },
     {
       "id": "approval-queue",
@@ -354,7 +439,10 @@
       "howItWorks": "The ApprovalEngine receives tool call requests, creates ApprovalRequest records (PENDING), and routes them to the dashboard. The Approvals page polls for pending requests and lets the user approve or reject with a reason. Approved actions execute through the standard tool pipeline; rejected actions are recorded with the rejection reason.",
       "toolingAndBackend": "approval/engine.py, routes/approvals.py, dashboard/frontend/src/pages/Approvals.tsx",
       "limitsAndInvariants": "AI Rules filter conflicting approvals. The approval engine never auto-approves — user interaction is always required for state-mutating operations.",
-      "subFeatures": []
+      "subFeatures": [],
+      "stopIds": [
+        "rise"
+      ]
     },
     {
       "id": "dry-run-simulation",
@@ -386,7 +474,18 @@
       "howItWorks": "Queries are dispatched concurrently to BM25 and dense vector indices. Results are merged using RRF scoring. The top candidates are optionally reranked by a cross-encoder for maximum precision before being injected into the agent's prompt context.",
       "toolingAndBackend": "rag/pipeline.py, rag/retriever.py, rag/embeddings.py, integrations/sourceprep_retrieval_backend.py",
       "limitsAndInvariants": "Strict licensing compliance: indices only ingest documentation with verified open licenses.",
-      "subFeatures": []
+      "subFeatures": [],
+      "citationIds": [
+        "bm25-beyond",
+        "context-length-hurts",
+        "contextual-retrieval",
+        "lost-in-the-middle",
+        "rag-vs-graphrag",
+        "reciprocal-rank-fusion"
+      ],
+      "stopIds": [
+        "hop"
+      ]
     },
     {
       "id": "indexed-documents",
@@ -402,7 +501,13 @@
       "howItWorks": "Scrapers acquire content from man pages (Linux and macOS), Arch Wiki, Stack Exchange (Stack Overflow, Server Fault, Unix & Linux, Ask Different), FreeBSD Handbook, Homebrew formulae, TLDR pages, and vendor documentation. The index builder processes, chunks, and embeds each document for retrieval.",
       "toolingAndBackend": "rag/scrapers/ (20+ scrapers), rag/index_builder.py, documentation/RAG-DATA-SOURCES-2026-08-24.md",
       "limitsAndInvariants": "No scraping of paywalled or copyrighted content without explicit license verification.",
-      "subFeatures": []
+      "subFeatures": [],
+      "citationIds": [
+        "contextual-retrieval"
+      ],
+      "stopIds": [
+        "hop"
+      ]
     },
     {
       "id": "cite-verify",
@@ -418,7 +523,10 @@
       "howItWorks": "RAG retrieval results include source metadata (document title, section, origin URL or man page reference). These citations are preserved through prompt injection and surfaced in the agent's response alongside the recommendation.",
       "toolingAndBackend": "rag/pipeline.py (source metadata propagation)",
       "limitsAndInvariants": "Citations reference the locally indexed copy, not external URLs — they work offline.",
-      "subFeatures": []
+      "subFeatures": [],
+      "stopIds": [
+        "hop"
+      ]
     },
     {
       "id": "web-search-fallback",
@@ -434,7 +542,10 @@
       "howItWorks": "The web search tool dispatches queries to search APIs and extracts relevant snippets. Results are injected into the agent's context alongside local RAG results, with clear attribution distinguishing local documentation from web sources.",
       "toolingAndBackend": "web/search.py, tools/web_search.py",
       "limitsAndInvariants": "Off by default. Cloud models and web search are switches that must be explicitly enabled — no telemetry, ever.",
-      "subFeatures": []
+      "subFeatures": [],
+      "stopIds": [
+        "diagonal"
+      ]
     },
     {
       "id": "three-panel-shell",
@@ -450,7 +561,10 @@
       "howItWorks": "Built as a Tauri 2 desktop app wrapping a React SPA. Keyboard shortcuts (Cmd+D for domain rail, Cmd+J for conversation, Cmd+B for context stage) toggle panel focus. The conversation panel maintains contextual awareness of whichever domain page you're currently inspecting.",
       "toolingAndBackend": "dashboard/frontend/src/components/shell/HostShell.tsx, dashboard/frontend/src-tauri/",
       "limitsAndInvariants": "Responsive: on small screens, gracefully transitions from three side-by-side panels to stacked drawer views.",
-      "subFeatures": []
+      "subFeatures": [],
+      "stopIds": [
+        "reveal"
+      ]
     },
     {
       "id": "terminal-tiles-sandbox",
@@ -465,7 +579,14 @@
       "howItWorks": "Terminal output streams via WebSocket from the backend PTY session into xterm.js-backed inline tiles. The sandbox module isolates command execution. The redact filter scrubs sensitive patterns (API keys, passwords) from streamed output before it reaches the frontend.",
       "toolingAndBackend": "dashboard/frontend/src/components/agent/TerminalTile.tsx, streaming/sandbox.py, streaming/pty.py, streaming/session_manager.py, routes/terminal.py",
       "limitsAndInvariants": "Destructive commands require explicit user approval before execution.",
-      "subFeatures": []
+      "subFeatures": [],
+      "citationIds": [
+        "apple-sandbox",
+        "saltzer-schroeder"
+      ],
+      "stopIds": [
+        "reveal"
+      ]
     },
     {
       "id": "at-mentions",
@@ -496,7 +617,10 @@
       "howItWorks": "Indexes all navigation targets, settings labels, and discovered items. Opens on / keypress (when no input is focused), filters in real-time as you type, and navigates on selection.",
       "toolingAndBackend": "dashboard/frontend/src/components/CommandPalette.tsx (feature-reference), dashboard/frontend/src/components/ (dashboard)",
       "limitsAndInvariants": "Does not trigger when typing in input fields or text areas.",
-      "subFeatures": []
+      "subFeatures": [],
+      "stopIds": [
+        "reveal"
+      ]
     },
     {
       "id": "shell-integration",
@@ -511,7 +635,10 @@
       "howItWorks": "Shell integration modules generate configuration snippets for bash and zsh that register Halbert helper commands. These snippets are appended to the user's shell RC files on opt-in.",
       "toolingAndBackend": "shell/bashrc.py, shell/zsh/",
       "limitsAndInvariants": "Shell modifications require explicit user opt-in — Halbert never modifies shell configuration files without permission.",
-      "subFeatures": []
+      "subFeatures": [],
+      "stopIds": [
+        "reveal"
+      ]
     },
     {
       "id": "skill-registry",
@@ -527,7 +654,10 @@
       "howItWorks": "The skill registry discovers and loads skill definitions. The parser validates skill schemas. The composer resolves dependencies between skills and assembles the active skill set for each agent turn based on context (e.g., a home automation skill is only composed when HA is configured).",
       "toolingAndBackend": "skills/registry.py, skills/composer.py",
       "limitsAndInvariants": "Skills cannot override core safety policies — the policy engine evaluates all tool calls regardless of their skill origin.",
-      "subFeatures": []
+      "subFeatures": [],
+      "stopIds": [
+        "reveal"
+      ]
     },
     {
       "id": "design-language",
@@ -543,7 +673,10 @@
       "howItWorks": "Design tokens are defined once in shared-tokens/ and consumed by both Tailwind CSS v4 and the @halbert/design-system package. The design system ships plain CSS backed by these tokens — no Tailwind in library source — so it works under any CSS framework version.",
       "toolingAndBackend": "shared-tokens/tokens.css, shared-tokens/tailwind-v4.css, packages/design-system/",
       "limitsAndInvariants": "The design system declares react ^18.2.0 || ^19.0.0 as a peer dependency, enabling a React 19 upgrade without republishing.",
-      "subFeatures": []
+      "subFeatures": [],
+      "stopIds": [
+        "reveal"
+      ]
     },
     {
       "id": "local-voice-pipeline",
@@ -559,7 +692,13 @@
       "howItWorks": "Audio ingress adapters capture PCM from local microphones, Wyoming protocol satellites, RTSP streams, and WebRTC. Chunks feed into an async ring buffer. The speech track processes voice activity detection, wake word spotting, streaming transcription, and speaker identification in sequence. Results emit as VoiceTurnObservation events.",
       "toolingAndBackend": "audio/pipeline.py, audio/speech/, audio/ingress/, audio/buffer.py, audio/config.py",
       "limitsAndInvariants": "Push-to-talk by default: continuous ambient listening requires explicit owner opt-in. Gracefully degrades if sherpa-onnx is not installed.",
-      "subFeatures": []
+      "subFeatures": [],
+      "citationIds": [
+        "wyoming-protocol"
+      ],
+      "stopIds": [
+        "intro"
+      ]
     },
     {
       "id": "acoustic-sensing",
@@ -574,7 +713,13 @@
       "howItWorks": "The ambient track runs an energy gate to filter silence, an audio tagger to classify sound events, and an anomaly detector to identify deviations from the learned ambient baseline. Detections emit as AcousticEventObservation events that feed into the findings system.",
       "toolingAndBackend": "audio/pipeline.py (ambient track), audio/acoustic/, findings/detectors/acoustic_anomaly.py",
       "limitsAndInvariants": "Audio is never recorded or stored — only event metadata (type, confidence, timestamp) is persisted.",
-      "subFeatures": []
+      "subFeatures": [],
+      "citationIds": [
+        "donut-telemetry-anomaly"
+      ],
+      "stopIds": [
+        "intro"
+      ]
     },
     {
       "id": "screenshot-analysis",
@@ -605,7 +750,10 @@
       "howItWorks": "The AudioState enum (IDLE, LISTENING, RECOGNIZED, THINKING, SPEAKING, ERROR) is published via SSE to the frontend. The VoiceHUD component renders the corresponding aura animation. State transitions are smooth and non-jarring.",
       "toolingAndBackend": "audio/pipeline.py (AudioState), dashboard/frontend/src/pages/VoiceHud.tsx",
       "limitsAndInvariants": "The aura never obscures content or demand attention — it sits at the periphery of the interface.",
-      "subFeatures": []
+      "subFeatures": [],
+      "stopIds": [
+        "intro"
+      ]
     },
     {
       "id": "peer-pairing",
@@ -621,7 +769,22 @@
       "howItWorks": "Step 1: Satellite POSTs to /api/peers/pair → Desktop returns a PIN. Step 2: User confirms. Step 3: Satellite sends PIN to /api/peers/verify → Desktop validates and returns a bearer token. Each satellite gets its own token. Revocation is surgical: DELETE /api/peers/{node_id}. Token rotation = revoke + re-pair. Federation also includes Wake-on-LAN for sleeping peers.",
       "toolingAndBackend": "routes/peers.py, federation/ (mDNS discovery, compute routing, WoL)",
       "limitsAndInvariants": "Unauthorized devices on the local network cannot execute remote commands — pairing requires physical confirmation.",
-      "subFeatures": []
+      "subFeatures": [],
+      "citationIds": [
+        "distserve",
+        "ed25519",
+        "mdns-dns-sd",
+        "nist-sp-800-207",
+        "petals-collaborative-inference",
+        "ray-osdi-2018",
+        "rfc-9383-spake2",
+        "splitwise",
+        "swim-protocol",
+        "tls13-rfc9846"
+      ],
+      "stopIds": [
+        "cap"
+      ]
     },
     {
       "id": "canonical-host-satellites",
@@ -637,7 +800,23 @@
       "howItWorks": "The federation middleware routes requests between host and satellites. Satellites register their local capabilities (scanners, hardware, microphones) with the host. The host's agent can request tool execution on any paired satellite, and results return through the authenticated peer channel.",
       "toolingAndBackend": "federation/, agents/peer_conversation_store.py",
       "limitsAndInvariants": "Memory is centralized on the Canonical Host — satellites do not maintain independent conversation history.",
-      "subFeatures": []
+      "subFeatures": [],
+      "citationIds": [
+        "distserve",
+        "dynamo-store",
+        "ed25519",
+        "lamport-clocks",
+        "linearizability",
+        "mdns-dns-sd",
+        "petals-collaborative-inference",
+        "ray-osdi-2018",
+        "splitwise",
+        "swim-protocol",
+        "tls13-rfc9846"
+      ],
+      "stopIds": [
+        "cap"
+      ]
     },
     {
       "id": "remote-tool-proxy",
@@ -653,7 +832,15 @@
       "howItWorks": "The proxy routes MCP tool calls (tools/list, tools/call) to the paired peer's MCP server over HTTP JSON-RPC 2.0. Authentication uses the per-peer bearer token established during pairing. Results are returned to the host agent's turn context.",
       "toolingAndBackend": "agents/peer_tool_proxy.py",
       "limitsAndInvariants": "Remote tool calls are subject to the same approval policies as local calls — no privilege escalation through federation.",
-      "subFeatures": []
+      "subFeatures": [],
+      "citationIds": [
+        "petals-collaborative-inference",
+        "ray-osdi-2018",
+        "tls13-rfc9846"
+      ],
+      "stopIds": [
+        "cap"
+      ]
     },
     {
       "id": "mcp-server",
@@ -669,7 +856,13 @@
       "howItWorks": "The MCP server module implements the tools/list and tools/call endpoints, exposing Halbert's tool registry to external consumers. A camera gate module controls which vision-related resources are exposed based on privacy configuration.",
       "toolingAndBackend": "mcp/server.py, mcp/camera_gate.py",
       "limitsAndInvariants": "The MCP server respects the same policy engine as internal tool calls — external agents cannot bypass permission boundaries.",
-      "subFeatures": []
+      "subFeatures": [],
+      "citationIds": [
+        "mcp-specification-2024-11-05"
+      ],
+      "stopIds": [
+        "intro"
+      ]
     },
     {
       "id": "home-assistant-control",
@@ -684,7 +877,14 @@
       "howItWorks": "The HA client syncs entity states via the Home Assistant WebSocket API. Dashboard routes expose status, entity listing, service calls, area mapping, and connection configuration. The agent's HA tool enables natural-language control (\"turn off the living room lights\") with the autonomy gate enforcing authorization for security entities.",
       "toolingAndBackend": "integrations/home_assistant/ (ha_client.py, ha_event_mapper.py, ha_governance.py, ha_tool.py), routes/home.py",
       "limitsAndInvariants": "Lock and security boundaries require explicit secondary confirmation — the agent cannot toggle locks or arm/disarm alarms without approval.",
-      "subFeatures": []
+      "subFeatures": [],
+      "citationIds": [
+        "matter-core-specification",
+        "mcp-specification-2024-11-05"
+      ],
+      "stopIds": [
+        "apex"
+      ]
     },
     {
       "id": "cognitive-loop",
@@ -714,7 +914,13 @@
       "howItWorks": "The OccupancyModel ingests PresenceSignal events with confidence weights and TTL decay. It maintains a PersonPresence record for each identified individual. The PatternInferrer scans the SQLite-backed timeline to learn time-of-day, day-of-week, device usage, and guest patterns, then predicts upcoming actions.",
       "toolingAndBackend": "home/occupancy.py, home/behavior.py, home/timeline.py",
       "limitsAndInvariants": "Occupancy data stays strictly local — no presence or behavior patterns are ever transmitted externally.",
-      "subFeatures": []
+      "subFeatures": [],
+      "citationIds": [
+        "lamport-clocks"
+      ],
+      "stopIds": [
+        "apex"
+      ]
     },
     {
       "id": "frigate-nvr",
@@ -729,7 +935,10 @@
       "howItWorks": "The Frigate routes query the local Frigate instance for camera configurations, recent events and review segments, event snapshots, and latest frames. A vision authorization gate controls which camera feeds the agent can access based on privacy configuration.",
       "toolingAndBackend": "routes/frigate.py, integrations/home_assistant/frigate_client.py",
       "limitsAndInvariants": "Video never leaves the local network. The vision authorization gate prevents the agent from accessing cameras in sensitive areas unless explicitly permitted.",
-      "subFeatures": []
+      "subFeatures": [],
+      "stopIds": [
+        "apex"
+      ]
     }
   ]
 }

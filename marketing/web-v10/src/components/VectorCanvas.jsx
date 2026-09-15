@@ -8,7 +8,10 @@ import { MARK, MARK_PATH_D, viewBoxFor } from '../lib/markGeometry';
  * vertically — edges stay straight and angles stay true on any screen.
  */
 export function VectorCanvas({ camera, viewport }) {
-  const aspect = viewport.width / Math.max(1, viewport.height);
+  // Degenerate viewports (a hidden tab collapsing to 0x0) produce a 0 aspect,
+  // which zeroes the viewBox width and yields NaN in the mask matrix below.
+  // Floor the aspect — anything under 10% of height only happens off-screen.
+  const aspect = Math.max(0.1, viewport.width / Math.max(1, viewport.height));
   const { minX, minY, w, h } = viewBoxFor(camera, aspect);
 
   const scaleX = viewport.width / w;
