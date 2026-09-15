@@ -4,8 +4,23 @@ import type { Meta, StoryObj } from '@storybook/react'
 
 import { HalbertMark } from '../primitives/HalbertMark'
 
+/**
+ * DRAFTS — the line-count exploration that produced the ratified brand.
+ *
+ * This page is kept deliberately as design thinking residue: it shows the
+ * candidate comparison and the full line ladder as they looked while the
+ * primary (7-line) and micro (4-line) marks were being chosen. It is a
+ * record of the reasoning, not a menu of approved marks — the official
+ * system is two marks only (Brand/BrandMark):
+ *
+ *   Primary — 7-line (sw 48) · Micro — 4-line (sw 80)
+ *
+ * Nothing here should be used in new work; the candidate badges below say
+ * "Proposed" because they were written before the founder's 2026-09-10
+ * (MD-04) and 2026-09-15 rulings landed.
+ */
 const meta: Meta<typeof HalbertMark> = {
-  title: 'Primitives/HalbertMark',
+  title: 'Drafts/HalbertMarkTiers',
   component: HalbertMark,
   args: {
     size: 64,
@@ -34,6 +49,14 @@ const meta: Meta<typeof HalbertMark> = {
       description: 'Rendered pixel size',
     },
   },
+  parameters: {
+    docs: {
+      description: {
+        story:
+          'Design thinking residue, frozen as of the 2026-09 candidate stage. The ratified system is Brand/BrandMark (7-line primary, 4-line micro).',
+      },
+    },
+  },
 }
 export default meta
 
@@ -53,7 +76,25 @@ export const OpticalTiers: StoryObj = {
 
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 48, fontFamily: 'var(--font-sans)', maxWidth: 1200 }}>
-        
+
+        {/* Ratification notice — this page predates the founder's rulings */}
+        <div
+          style={{
+            background: 'var(--color-surface-subtle, #EFECE4)',
+            border: '1px solid var(--color-hairline, rgba(26,25,24,0.12))',
+            borderLeft: '4px solid var(--color-accent, #D34E24)',
+            borderRadius: 8,
+            padding: '16px 20px',
+            fontSize: 13,
+            color: 'var(--color-ink-secondary, #5E5B56)',
+          }}
+        >
+          <strong style={{ color: 'var(--color-ink, #1A1918)' }}>Drafts page — kept for design thinking residue.</strong>{' '}
+          The candidates below were superseded by the founder's rulings: 7-line primary + 4-line micro (2026-09-10,
+          MD-04), primary stroke 48 (2026-09-15). The official reference is{' '}
+          <span style={{ fontFamily: 'var(--font-mono)' }}>Brand/BrandMark</span>. Do not pick marks from this ladder for
+          new work.
+        </div>
         {/* Section 1: Candidate Head-to-Head Comparison */}
         <div style={{ background: 'var(--color-surface, #FFFFFF)', padding: 24, borderRadius: 12, border: '1px solid var(--color-hairline, rgba(26,25,24,0.08))' }}>
           <h3 style={{ margin: '0 0 4px 0', fontSize: 18, fontWeight: 700, color: 'var(--color-ink, #1A1918)' }}>

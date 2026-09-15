@@ -43,7 +43,7 @@ const preview: Preview = {
     backgrounds: { disable: true },
     options: {
       storySort: {
-        order: ['Design Tokens', 'Primitives', 'Surfaces', 'Modules'],
+        order: ['Brand', 'Design Tokens', 'Primitives', 'Surfaces', 'Modules', 'Voice', 'Drafts'],
       },
     },
   },
