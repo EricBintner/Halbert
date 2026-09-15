@@ -115,7 +115,17 @@ function FullLayout({ content, portrait, viewport }) {
   if (portrait) {
     const aspect = viewport.width / viewport.height;
     const span = Math.min(2.0, maxSpanFor(aspect));
-    markSpan = `${(44 * Math.min(1, aspect) * span).toFixed(1)}vh`;
+    const spanVh = 44 * Math.min(1, aspect) * span;
+    // Tall frames leave the 1fr bands more height than their content needs
+    // and the surplus pools at the frame edges. Spend part of it as
+    // breathing room around the mark instead: rowH is the band height the
+    // plain span leaves (the frame's own padding is 112px), 150px is a
+    // band's working minimum (form + links below, kicker + headline above)
+    // — frames with no slack (short phones, squares) get nothing and keep
+    // the committed layout.
+    const rowH = (viewport.height * (1 - spanVh / 100) - 112) / 2;
+    const pad = Math.round(Math.min(Math.max(0, (rowH - 150) * 0.75), 72));
+    markSpan = pad > 0 ? `calc(${spanVh.toFixed(1)}vh + ${pad * 2}px)` : `${spanVh.toFixed(1)}vh`;
   }
   return (
     <div className="absolute inset-0 grid grid-rows-[1fr_auto_1fr] pt-14 pb-14">
