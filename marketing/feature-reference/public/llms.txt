@@ -1,0 +1,88 @@
+# Halbert Feature Reference
+
+> The reference details page for Halbert: all 44 features, how each works, which files implement it, and its safety boundaries. Companion to the main site at https://halbert.computer/ — the mind in your computer and the smart in your home, documented end to end.
+
+Halbert is an embodied host epistemology and cognition layer that bridges system administration and Home Assistant automation into one private runtime: proactive system triage, physical room automation, and native Model Context Protocol (MCP) tools over a 100% local architecture with zero telemetry.
+
+## Feature Catalog (44 features, 8 categories)
+
+### Picks the Right Brain for the Job
+
+- **Right-Sized Intelligence**: Automatically routes simple queries to fast local models and reserves deep reasoning for complex system diffs.
+- **Air-Gapped Private Execution**: Sensitive credentials and system configs never egress to cloud APIs. Fail-closed, not fail-open.
+- **Hot-Swap Any Provider**: Switch between Ollama, LM Studio, Apple Foundation Models, OpenAI, Anthropic, Google, and Azure without restarting.
+- **Context Window Compression**: Level-of-Detail memory management keeping long conversations from blowing the context ceiling.
+- **Structured Agent Lifecycle**: Every turn moves through formal states with strict tool-call budgets and CRAG verification.
+- **Secure Credential Storage**: Encrypted vault for API keys and provider secrets — never stored in plaintext config files.
+
+### Knows What's Wrong Before You Do
+
+- **37 Pluggable System Scanners**: Live probing across Linux and macOS: disks, SMART, thermal, USB, network, services, packages, wifi, boot, display, containers, processes, and more.
+- **GPU & AI Accelerator Diagnostics**: Dedicated hardware inspection for GPUs (NVIDIA, AMD, Intel, Apple Metal) and AI accelerators (Coral TPU, Hailo, MemryX, NPUs).
+- **The Four Whys**: Every finding explains why now, why care, why so, and why trust — with real detector evidence, not raw error dumps.
+- **Calm Notification Attunement** (unlisted in the UI): Push (voice, auto-open panels), Ambient (badges, tray indicator), Pull (findings page, timeline) — three attention tiers.
+- **Autonomous Self-Management Cycles**: 5-phase background loops (Sense → Deliberate → Propose → Act → Reflect) driving autonomous issue resolution.
+- **Proactive Morning Reports & Reflexes**: Autonomous daily briefing and reflexive responses to significant events without waiting for user prompting.
+- **Full Computer Vision Suite**: Screen capture (Wayland-aware), ambient webcam monitoring, OCR text extraction, and motion detection.
+- **Apps & Container Management**: Docker, Podman, Flatpak, Snap, and AppImage lifecycle management with a dedicated dashboard panel.
+
+### Safe Surgery on System Files
+
+- **Blast Radius Before You Edit**: Config dependency graph showing exactly which services break if you change a file, before you touch it.
+- **AI Diff Proposals with Instant Rollback**: SEARCH/REPLACE proposals rendered as visual diffs in Monaco, with mandatory pre-save snapshots and one-click restore.
+- **Intent Kept Next to the Change**: The "Why Brain" captures the human rationale alongside config changes and restores it into future conversation context.
+- **Cross-Session Memory Vault**: Threads, receipts, and machine-state history survive reboots without polluting active prompts with stale context.
+- **Change Provenance Tracking**: Who changed a file, when, and why — linked to the state ledger with actor, reason, and content digest.
+- **Human-in-the-Loop Approval Queue**: Mandatory user authorization gate for state-mutating actions with a dedicated dashboard page.
+- **Pre-Execution Dry-Run Simulation** (unlisted in the UI): Simulates file writes, service restarts, and tool calls before touching disk — preview the impact without the risk.
+
+### Answers Grounded in Real Documentation
+
+- **Offline Hybrid Retrieval**: Sparse BM25 keyword matching merged with dense semantic embeddings via Reciprocal Rank Fusion — no cloud search needed.
+- **Thousands of Indexed Documents**: Man pages, Arch Wiki, FreeBSD Handbook, Homebrew, and TLDR pages — all indexed locally.
+- **Cite-and-Verify Links**: Every suggested command cites the local on-disk manual page — no hallucinated flags.
+- **Web Search Fallback**: When local knowledge is insufficient, the agent can search the web — off by default, explicit opt-in.
+
+### A Workspace, Not Another Chat Window
+
+- **Unified Three-Panel Shell**: System domain rail, context stage, and agent conversation visible simultaneously — no modal context-switching.
+- **Inline Terminal Tiles with Sandbox**: Commands the agent runs stream live stdout/stderr directly inside chat turns, with sandbox isolation and redact filters.
+- **Direct @Mentions for Hardware & Services**: Reference a live disk, service, or network interface directly in chat — the agent gets the full discovery context.
+- **Keyboard-First Command Palette**: Press / to open instant fuzzy search across every feature, domain, and setting.
+- **Shell Integration**: Injects Halbert helpers into .bashrc and .zshrc so the agent is available from any terminal session.
+- **Dynamic Skill Registry**: Agent loads and composes skill extensions at runtime — new capabilities without redeployment.
+- **Olivetti Design Language**: Vermilion & Bone tokens, display serif typography, and a calm editorial aesthetic across the entire system.
+
+### Speaks and Listens Without the Cloud
+
+- **Instant Local Voice Pipeline**: On-device streaming ASR and TTS with sub-second latency, wake-word detection, barge-in, and speaker identification.
+- **Acoustic Environment Sensing**: Ambient sound monitoring that detects anomalies: fan bearing failures, alarms, sudden noise spikes.
+- **Screenshot & Diagram Analysis**: Paste, drag, or capture an image for the vision model to analyze and explain — Wayland-aware screen capture included.
+- **Visual Aura State Indicator**: A non-intrusive ambient pulse reflecting voice pipeline state: idle, listening, thinking, speaking.
+
+### One Mind Across Every Machine
+
+- **Zero-Friction Peer Pairing**: Secure 4-digit PIN handshake over mDNS or direct IP, with per-peer tokens and surgical revocation.
+- **Canonical Host + Satellite Bodies**: One primary memory store; satellite machines proxy tool execution and local sensors. Shared context, distributed hardware.
+- **Remote Tool Execution Proxy**: Run tools on a peer machine from the primary dashboard — results return through the authenticated channel.
+- **Built-in MCP Server**: Halbert exposes its own tools and resources for external agents to consume via the Model Context Protocol.
+
+### A Home That Pays Attention
+
+- **Home Assistant Entity Control**: Lights, climate, sensors, switches — direct local API integration, no vendor cloud, no subscription.
+- **Autonomous Cognitive Loop** (deferred): Perceive → Reason → Act → Observe → Reflect — runs on a configurable timer, only invokes the LLM when something novel happens.
+- **Occupancy & Behavior Learning**: Multi-signal presence correlation and pattern prediction — learns routines without explicit schedules.
+- **Frigate NVR Event Ingestion**: Local object-detection events and snapshots from cameras, no cloud streaming.
+
+## Supported Platforms
+
+- Linux (Ubuntu, Debian, Fedora, Arch)
+- macOS (Apple Silicon; Intel supported via local runtimes)
+- Home Assistant (peer node)
+
+## Open Source & Licensing
+
+- License: GNU General Public License v3.0 (GPL-3.0-or-later)
+- Repository: https://github.com/EricBintner/Halbert
+- Main site: https://halbert.computer/
+- This reference: https://halbert.computer/features/

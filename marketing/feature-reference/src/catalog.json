@@ -47,7 +47,10 @@
       "id": "right-sized-intelligence",
       "name": "Right-Sized Intelligence",
       "category": "Picks the Right Brain for the Job",
-      "scope": ["workstation", "home"],
+      "scope": [
+        "workstation",
+        "home"
+      ],
       "oneLine": "Automatically routes simple queries to fast local models and reserves deep reasoning for complex system diffs.",
       "status": "shipped",
       "whatItIs": "Halbert does not route every turn to a single monolithic cloud model. It maintains dedicated tiers — Guide (fast conversational triage), Specialist (complex sysadmin synthesis and code diffing), and Vision (image and diagram analysis) — each backed by independently configurable endpoints.",
@@ -60,7 +63,10 @@
       "id": "air-gapped-private-execution",
       "name": "Air-Gapped Private Execution",
       "category": "Picks the Right Brain for the Job",
-      "scope": ["workstation", "home"],
+      "scope": [
+        "workstation",
+        "home"
+      ],
       "oneLine": "Sensitive credentials and system configs never egress to cloud APIs. Fail-closed, not fail-open.",
       "status": "shipped",
       "whatItIs": "A safety boundary that prevents queries involving SSH keys, firewall rules, or private configuration files from ever being evaluated by remote third-party cloud endpoints. When sensitive context is detected, the agent latches to strictly local inference.",
@@ -73,7 +79,10 @@
       "id": "hot-swap-providers",
       "name": "Hot-Swap Any Provider",
       "category": "Picks the Right Brain for the Job",
-      "scope": ["workstation", "home"],
+      "scope": [
+        "workstation",
+        "home"
+      ],
       "oneLine": "Switch between Ollama, LM Studio, Apple Foundation Models, OpenAI, Anthropic, Google, and Azure without restarting.",
       "status": "shipped",
       "whatItIs": "A headless model picker package that renders provider cards, discovers local models, and lets you assign any discovered model to any tier slot — all without restarting the daemon or losing conversation context.",
@@ -86,7 +95,10 @@
       "id": "context-compression",
       "name": "Context Window Compression",
       "category": "Picks the Right Brain for the Job",
-      "scope": ["workstation", "home"],
+      "scope": [
+        "workstation",
+        "home"
+      ],
       "oneLine": "Level-of-Detail memory management keeping long conversations from blowing the context ceiling.",
       "status": "shipped",
       "whatItIs": "As conversations grow, raw token counts can exceed the model's context window. The compression subsystem applies lingua and semantic compressors to distill earlier turns into denser representations while preserving critical facts and tool outputs.",
@@ -99,7 +111,10 @@
       "id": "agent-lifecycle",
       "name": "Structured Agent Lifecycle",
       "category": "Picks the Right Brain for the Job",
-      "scope": ["workstation", "home"],
+      "scope": [
+        "workstation",
+        "home"
+      ],
       "oneLine": "Every turn moves through formal states with strict tool-call budgets and CRAG verification.",
       "status": "shipped",
       "whatItIs": "The cognitive lifecycle engine that orchestrates turns through a deterministic finite state machine: IDLE → PLANNING → SEARCHING → READING → EXECUTING → OBSERVING → REFLECTING → RESPONDING. Each state transition is logged and auditable.",
@@ -112,7 +127,10 @@
       "id": "secure-credential-storage",
       "name": "Secure Credential Storage",
       "category": "Picks the Right Brain for the Job",
-      "scope": ["workstation", "home"],
+      "scope": [
+        "workstation",
+        "home"
+      ],
       "oneLine": "Encrypted vault for API keys and provider secrets — never stored in plaintext config files.",
       "status": "shipped",
       "whatItIs": "Provider API keys, Home Assistant tokens, and other secrets are stored in an encrypted credential vault rather than plaintext YAML. The vault is keyed to the local machine identity.",
@@ -125,7 +143,9 @@
       "id": "37-system-scanners",
       "name": "37 Pluggable System Scanners",
       "category": "Knows What's Wrong Before You Do",
-      "scope": ["workstation"],
+      "scope": [
+        "workstation"
+      ],
       "oneLine": "Live probing across Linux and macOS: disks, SMART, thermal, USB, network, services, packages, wifi, boot, display, containers, processes, and more.",
       "status": "shipped",
       "whatItIs": "An extensible discovery engine that inspects every measurable dimension of a running system. 24 core scanners cover storage, services, network, security, sharing, backups, thermal, GPU, USB, display, containers, processes, boot, and more. 3 app scanners handle Flatpak, Snap, and AppImage. 10 macOS-specific scanners cover Homebrew, launchd, Time Machine, Mac App Store, and platform-native network/security/sharing/storage/thermal interfaces.",
@@ -138,7 +158,9 @@
       "id": "gpu-accelerator-diagnostics",
       "name": "GPU & AI Accelerator Diagnostics",
       "category": "Knows What's Wrong Before You Do",
-      "scope": ["workstation"],
+      "scope": [
+        "workstation"
+      ],
       "oneLine": "Dedicated hardware inspection for GPUs (NVIDIA, AMD, Intel, Apple Metal) and AI accelerators (Coral TPU, Hailo, MemryX, NPUs).",
       "status": "shipped",
       "whatItIs": "Specialized deep inspection for compute hardware that goes beyond basic discovery. Detects GPU architecture, driver versions, VRAM allocation, thermal state, and active workloads. For AI accelerators, identifies attached edge TPUs and neural processing units with their firmware and runtime status.",
@@ -151,7 +173,10 @@
       "id": "four-whys-findings",
       "name": "The Four Whys",
       "category": "Knows What's Wrong Before You Do",
-      "scope": ["workstation", "home"],
+      "scope": [
+        "workstation",
+        "home"
+      ],
       "oneLine": "Every finding explains why now, why care, why so, and why trust — with real detector evidence, not raw error dumps.",
       "status": "shipped",
       "whatItIs": "Replaces raw discovery alerts with curated Findings. Before Halbert interrupts you, it must justify why the issue matters right now, why you should care, what evidence supports the claim, and why the detection is trustworthy. The FindingStore persists these records with full provenance.",
@@ -164,7 +189,10 @@
       "id": "notification-attunement",
       "name": "Calm Notification Attunement",
       "category": "Knows What's Wrong Before You Do",
-      "scope": ["workstation", "home"],
+      "scope": [
+        "workstation",
+        "home"
+      ],
       "oneLine": "Push (voice, auto-open panels), Ambient (badges, tray indicator), Pull (findings page, timeline) — three attention tiers.",
       "status": "hidden",
       "whatItIs": "A surface taxonomy that classifies every way Halbert can reach a person by its attention cost. Push surfaces (voice, satellite audio, panel auto-open) arrive unbidden and spend attention — they're suppressed during withdrawal periods. Ambient surfaces (bell badge, presence pill, tray indicator) change without being asked but demand nothing. Pull surfaces (findings page, events API, timeline) persist for the user to navigate to and are never suppressed.",
@@ -177,7 +205,10 @@
       "id": "somatic-self-management",
       "name": "Autonomous Self-Management Cycles",
       "category": "Knows What's Wrong Before You Do",
-      "scope": ["workstation", "home"],
+      "scope": [
+        "workstation",
+        "home"
+      ],
       "oneLine": "5-phase background loops (Sense → Deliberate → Propose → Act → Reflect) driving autonomous issue resolution.",
       "status": "shipped",
       "whatItIs": "A somatic block is the wrapper that drives a single self-management cycle through five phases. It references — but does not absorb — the existing Finding, Proposal, ApprovalRequest, Action, and Reflection models by ID, composing them into a complete autonomous resolution arc.",
@@ -190,7 +221,10 @@
       "id": "morning-reports-reflexes",
       "name": "Proactive Morning Reports & Reflexes",
       "category": "Knows What's Wrong Before You Do",
-      "scope": ["workstation", "home"],
+      "scope": [
+        "workstation",
+        "home"
+      ],
       "oneLine": "Autonomous daily briefing and reflexive responses to significant events without waiting for user prompting.",
       "status": "shipped",
       "whatItIs": "The proactive subsystem generates a structured morning report summarizing overnight findings, scanner anomalies, and pending approval requests. Reflexes respond to significant events (security alerts, hardware failures, acoustic anomalies) in near-real-time without requiring the user to ask.",
@@ -203,7 +237,10 @@
       "id": "computer-vision-suite",
       "name": "Full Computer Vision Suite",
       "category": "Knows What's Wrong Before You Do",
-      "scope": ["workstation", "home"],
+      "scope": [
+        "workstation",
+        "home"
+      ],
       "oneLine": "Screen capture (Wayland-aware), ambient webcam monitoring, OCR text extraction, and motion detection.",
       "status": "shipped",
       "whatItIs": "A comprehensive local vision subsystem that extends far beyond simple image pasting. Screen capture works on both X11 and Wayland compositors. Ambient webcam monitoring detects environmental changes. OCR extracts text from screenshots and documents. Motion detection identifies physical movement in camera feeds.",
@@ -216,7 +253,9 @@
       "id": "apps-container-management",
       "name": "Apps & Container Management",
       "category": "Knows What's Wrong Before You Do",
-      "scope": ["workstation"],
+      "scope": [
+        "workstation"
+      ],
       "oneLine": "Docker, Podman, Flatpak, Snap, and AppImage lifecycle management with a dedicated dashboard panel.",
       "status": "shipped",
       "whatItIs": "A dedicated dashboard panel for managing containerized and packaged applications. Scans for running Docker and Podman containers, installed Flatpak apps and remotes, Snap packages and channels, and AppImage files. Provides inspection, status monitoring, and lifecycle controls.",
@@ -229,7 +268,9 @@
       "id": "blast-radius",
       "name": "Blast Radius Before You Edit",
       "category": "Safe Surgery on System Files",
-      "scope": ["workstation"],
+      "scope": [
+        "workstation"
+      ],
       "oneLine": "Config dependency graph showing exactly which services break if you change a file, before you touch it.",
       "status": "shipped",
       "whatItIs": "Before modifying any system configuration file, Halbert can calculate its blast radius — the set of services, mount points, and other config files that directly depend on it. This turns a blind edit into an informed decision.",
@@ -242,7 +283,9 @@
       "id": "diff-proposals-rollback",
       "name": "AI Diff Proposals with Instant Rollback",
       "category": "Safe Surgery on System Files",
-      "scope": ["workstation"],
+      "scope": [
+        "workstation"
+      ],
       "oneLine": "SEARCH/REPLACE proposals rendered as visual diffs in Monaco, with mandatory pre-save snapshots and one-click restore.",
       "status": "shipped",
       "whatItIs": "Halbert generates structured SEARCH/REPLACE edit blocks for system configuration files. The Monaco editor renders a visual side-by-side diff so you see exactly what will change. Applying a change automatically creates a timestamped .bak backup. If anything goes wrong, the editor route provides a one-click /backup/restore endpoint.",
@@ -255,7 +298,9 @@
       "id": "why-brain",
       "name": "Intent Kept Next to the Change",
       "category": "Safe Surgery on System Files",
-      "scope": ["workstation"],
+      "scope": [
+        "workstation"
+      ],
       "oneLine": "The \"Why Brain\" captures the human rationale alongside config changes and restores it into future conversation context.",
       "status": "shipped",
       "whatItIs": "You moved SSH to port 2222 on July 14th because the auth log was filling with scans. Halbert keeps the reason beside the change, with the evidence, so six months from now neither of you has to guess. The Why Brain UI is a clickable brain icon on discovery pages (GPU, Services, Storage, Containers, Network).",
@@ -268,7 +313,10 @@
       "id": "memory-vault",
       "name": "Cross-Session Memory Vault",
       "category": "Safe Surgery on System Files",
-      "scope": ["workstation", "home"],
+      "scope": [
+        "workstation",
+        "home"
+      ],
       "oneLine": "Threads, receipts, and machine-state history survive reboots without polluting active prompts with stale context.",
       "status": "shipped",
       "whatItIs": "Halbert's cross-session continuity system preserves conversation threads, tool execution receipts, and machine-state ledger entries across reboots. The VaultProjector reconciles the internal change ledger into human-readable Markdown notes that you can browse and edit on disk.",
@@ -281,7 +329,9 @@
       "id": "provenance-tracking",
       "name": "Change Provenance Tracking",
       "category": "Safe Surgery on System Files",
-      "scope": ["workstation"],
+      "scope": [
+        "workstation"
+      ],
       "oneLine": "Who changed a file, when, and why — linked to the state ledger with actor, reason, and content digest.",
       "status": "shipped",
       "whatItIs": "Every configuration file modification made through Halbert is recorded with full provenance: which actor (user or system) made the change, the reason given, a content digest of the file before and after, and a timestamp. This creates a complete audit trail.",
@@ -294,7 +344,10 @@
       "id": "approval-queue",
       "name": "Human-in-the-Loop Approval Queue",
       "category": "Safe Surgery on System Files",
-      "scope": ["workstation", "home"],
+      "scope": [
+        "workstation",
+        "home"
+      ],
       "oneLine": "Mandatory user authorization gate for state-mutating actions with a dedicated dashboard page.",
       "status": "shipped",
       "whatItIs": "Every destructive or state-mutating action the agent proposes — config writes, service restarts, package installations — must pass through the approval queue. The dashboard's Approvals page displays pending requests with exact proposed commands and affected paths.",
@@ -307,7 +360,10 @@
       "id": "dry-run-simulation",
       "name": "Pre-Execution Dry-Run Simulation",
       "category": "Safe Surgery on System Files",
-      "scope": ["workstation", "home"],
+      "scope": [
+        "workstation",
+        "home"
+      ],
       "oneLine": "Simulates file writes, service restarts, and tool calls before touching disk — preview the impact without the risk.",
       "status": "hidden",
       "whatItIs": "The simulation engine lets you preview the effects of a proposed action before committing. File writes show the resulting file content, service restarts show dependent services that would be affected, and command simulations show expected output patterns.",
@@ -320,7 +376,10 @@
       "id": "hybrid-retrieval",
       "name": "Offline Hybrid Retrieval",
       "category": "Answers Grounded in Real Documentation",
-      "scope": ["workstation", "home"],
+      "scope": [
+        "workstation",
+        "home"
+      ],
       "oneLine": "Sparse BM25 keyword matching merged with dense semantic embeddings via Reciprocal Rank Fusion — no cloud search needed.",
       "status": "shipped",
       "whatItIs": "Halbert's knowledge retrieval combines two complementary search strategies. BM25 sparse retrieval excels at exact keyword matches (specific flag names, error codes). Dense embedding retrieval finds semantically similar content even when the exact words differ. Reciprocal Rank Fusion merges both result sets, and optional cross-encoder reranking provides final precision.",
@@ -331,10 +390,13 @@
     },
     {
       "id": "indexed-documents",
-      "name": "14,000+ Indexed Documents",
+      "name": "Thousands of Indexed Documents",
       "category": "Answers Grounded in Real Documentation",
-      "scope": ["workstation", "home"],
-      "oneLine": "Man pages, Arch Wiki, FreeBSD Handbook, Homebrew, Stack Exchange, and TLDR pages — all indexed locally.",
+      "scope": [
+        "workstation",
+        "home"
+      ],
+      "oneLine": "Man pages, Arch Wiki, FreeBSD Handbook, Homebrew, and TLDR pages — all indexed locally.",
       "status": "shipped",
       "whatItIs": "The RAG corpus is built from 20+ specialized scrapers that acquire system administration documentation from diverse sources. Every document is verified, deduplicated, and indexed on disk. The full source list and licensing details are maintained in a dedicated data sources document.",
       "howItWorks": "Scrapers acquire content from man pages (Linux and macOS), Arch Wiki, Stack Exchange (Stack Overflow, Server Fault, Unix & Linux, Ask Different), FreeBSD Handbook, Homebrew formulae, TLDR pages, and vendor documentation. The index builder processes, chunks, and embeds each document for retrieval.",
@@ -346,7 +408,10 @@
       "id": "cite-verify",
       "name": "Cite-and-Verify Links",
       "category": "Answers Grounded in Real Documentation",
-      "scope": ["workstation", "home"],
+      "scope": [
+        "workstation",
+        "home"
+      ],
       "oneLine": "Every suggested command cites the local on-disk manual page — no hallucinated flags.",
       "status": "shipped",
       "whatItIs": "When Halbert recommends a command or configuration directive, it cites the specific documentation source. You can open the referenced man page or wiki article yourself to verify the suggestion before running it.",
@@ -359,7 +424,10 @@
       "id": "web-search-fallback",
       "name": "Web Search Fallback",
       "category": "Answers Grounded in Real Documentation",
-      "scope": ["workstation", "home"],
+      "scope": [
+        "workstation",
+        "home"
+      ],
       "oneLine": "When local knowledge is insufficient, the agent can search the web — off by default, explicit opt-in.",
       "status": "shipped",
       "whatItIs": "For queries that fall outside the local RAG corpus (new software, recent CVEs, niche hardware), the agent can perform a web search to supplement its local knowledge. This capability is disabled by default and requires explicit user opt-in.",
@@ -372,7 +440,10 @@
       "id": "three-panel-shell",
       "name": "Unified Three-Panel Shell",
       "category": "A Workspace, Not Another Chat Window",
-      "scope": ["workstation", "home"],
+      "scope": [
+        "workstation",
+        "home"
+      ],
       "oneLine": "System domain rail, context stage, and agent conversation visible simultaneously — no modal context-switching.",
       "status": "shipped",
       "whatItIs": "The primary desktop workspace. A navigation rail on the left lets you browse system domains (Storage, Services, Network, GPU, etc.). The center stage shows the active domain's inventory and controls. The right panel holds the agent conversation. All three are visible simultaneously — you never lose context by switching tabs.",
@@ -385,7 +456,9 @@
       "id": "terminal-tiles-sandbox",
       "name": "Inline Terminal Tiles with Sandbox",
       "category": "A Workspace, Not Another Chat Window",
-      "scope": ["workstation"],
+      "scope": [
+        "workstation"
+      ],
       "oneLine": "Commands the agent runs stream live stdout/stderr directly inside chat turns, with sandbox isolation and redact filters.",
       "status": "shipped",
       "whatItIs": "When Halbert runs a shell command, it executes inside an inline terminal tile within the conversation turn — not in a hidden background process. You see live stdout/stderr, return codes, and can kill or re-run commands. The streaming subsystem provides sandbox isolation, PTY management, and automatic redaction of sensitive output.",
@@ -398,7 +471,9 @@
       "id": "at-mentions",
       "name": "Direct @Mentions for Hardware & Services",
       "category": "A Workspace, Not Another Chat Window",
-      "scope": ["workstation"],
+      "scope": [
+        "workstation"
+      ],
       "oneLine": "Reference a live disk, service, or network interface directly in chat — the agent gets the full discovery context.",
       "status": "shipped",
       "whatItIs": "Type @ in a chat message to reference a specific discovered item — a disk volume, a running service, a network interface, a GPU. The agent receives the full discovery context for that item, so it can reason about its current state without you having to copy and paste system output.",
@@ -411,7 +486,10 @@
       "id": "command-palette",
       "name": "Keyboard-First Command Palette",
       "category": "A Workspace, Not Another Chat Window",
-      "scope": ["workstation", "home"],
+      "scope": [
+        "workstation",
+        "home"
+      ],
       "oneLine": "Press / to open instant fuzzy search across every feature, domain, and setting.",
       "status": "shipped",
       "whatItIs": "A fast modal search that lets keyboard-oriented users jump to any dashboard page, setting, or discovered item without touching the mouse. Fuzzy matching means partial keywords work.",
@@ -424,7 +502,9 @@
       "id": "shell-integration",
       "name": "Shell Integration",
       "category": "A Workspace, Not Another Chat Window",
-      "scope": ["workstation"],
+      "scope": [
+        "workstation"
+      ],
       "oneLine": "Injects Halbert helpers into .bashrc and .zshrc so the agent is available from any terminal session.",
       "status": "shipped",
       "whatItIs": "Halbert can inject helper functions and aliases into your shell configuration, making the agent accessible from any terminal session without opening the dashboard. This bridges the gap between the GUI workspace and the command line.",
@@ -437,7 +517,10 @@
       "id": "skill-registry",
       "name": "Dynamic Skill Registry",
       "category": "A Workspace, Not Another Chat Window",
-      "scope": ["workstation", "home"],
+      "scope": [
+        "workstation",
+        "home"
+      ],
       "oneLine": "Agent loads and composes skill extensions at runtime — new capabilities without redeployment.",
       "status": "shipped",
       "whatItIs": "The skill system allows Halbert's capabilities to be extended through composable skill definitions. Skills are parsed, validated, and registered at runtime. The composer assembles skills into the agent's active tool set based on the current context and user configuration.",
@@ -450,7 +533,10 @@
       "id": "design-language",
       "name": "Olivetti Design Language",
       "category": "A Workspace, Not Another Chat Window",
-      "scope": ["workstation", "home"],
+      "scope": [
+        "workstation",
+        "home"
+      ],
       "oneLine": "Vermilion & Bone tokens, display serif typography, and a calm editorial aesthetic across the entire system.",
       "status": "shipped",
       "whatItIs": "Every surface in Halbert — dashboard, marketing site, feature reference, design system package — shares a unified visual identity inspired by Olivetti's mid-century industrial design. The Vermilion & Bone palette, display serif headings, and monospace technical text create a calm, intentional aesthetic.",
@@ -463,7 +549,10 @@
       "id": "local-voice-pipeline",
       "name": "Instant Local Voice Pipeline",
       "category": "Speaks and Listens Without the Cloud",
-      "scope": ["workstation", "home"],
+      "scope": [
+        "workstation",
+        "home"
+      ],
       "oneLine": "On-device streaming ASR and TTS with sub-second latency, wake-word detection, barge-in, and speaker identification.",
       "status": "shipped",
       "whatItIs": "The entire speech pipeline runs locally on Sherpa-ONNX neural models. The system runs two concurrent tracks: a Speech Track (VAD → Wake Word Spotter → Streaming ASR → Speaker ID) and an Ambient Track (Energy Gate → Audio Tagger → Anomaly Detector). TTS with rapid barge-in support means Halbert stops speaking the instant you start.",
@@ -476,7 +565,9 @@
       "id": "acoustic-sensing",
       "name": "Acoustic Environment Sensing",
       "category": "Speaks and Listens Without the Cloud",
-      "scope": ["home"],
+      "scope": [
+        "home"
+      ],
       "oneLine": "Ambient sound monitoring that detects anomalies: fan bearing failures, alarms, sudden noise spikes.",
       "status": "shipped",
       "whatItIs": "The ambient track of the audio pipeline continuously monitors environmental sounds for anomalies. This goes beyond speech recognition — it detects physical events like fan bearing failures, smoke alarms, glass breaking, and sudden noise spikes that may indicate emergencies.",
@@ -489,7 +580,9 @@
       "id": "screenshot-analysis",
       "name": "Screenshot & Diagram Analysis",
       "category": "Speaks and Listens Without the Cloud",
-      "scope": ["workstation"],
+      "scope": [
+        "workstation"
+      ],
       "oneLine": "Paste, drag, or capture an image for the vision model to analyze and explain — Wayland-aware screen capture included.",
       "status": "shipped",
       "whatItIs": "Image analysis via the vision model tier — paste, drag-and-drop, or screen-capture an image into a turn for the agent to analyze. The screen capture module works on both X11 and Wayland compositors, and on macOS via ScreenCaptureKit.",
@@ -502,7 +595,10 @@
       "id": "voice-aura",
       "name": "Visual Aura State Indicator",
       "category": "Speaks and Listens Without the Cloud",
-      "scope": ["workstation", "home"],
+      "scope": [
+        "workstation",
+        "home"
+      ],
       "oneLine": "A non-intrusive ambient pulse reflecting voice pipeline state: idle, listening, thinking, speaking.",
       "status": "shipped",
       "whatItIs": "The VoiceHUD presents a subtle visual indicator that reflects the current audio pipeline state. Instead of a blinking microphone icon, the aura provides ambient awareness of whether Halbert is idle, actively listening, processing speech, or speaking a response.",
@@ -515,7 +611,10 @@
       "id": "peer-pairing",
       "name": "Zero-Friction Peer Pairing",
       "category": "One Mind Across Every Machine",
-      "scope": ["workstation", "home"],
+      "scope": [
+        "workstation",
+        "home"
+      ],
       "oneLine": "Secure 4-digit PIN handshake over mDNS or direct IP, with per-peer tokens and surgical revocation.",
       "status": "shipped",
       "whatItIs": "Link multiple machines running Halbert into a unified fleet. The satellite discovers the desktop via mDNS, requests pairing, and the desktop displays a 4-digit PIN. Once confirmed, both nodes exchange cryptographic tokens. For Tailscale networks (where mDNS doesn't cross), manual IP pairing works identically.",
@@ -528,7 +627,10 @@
       "id": "canonical-host-satellites",
       "name": "Canonical Host + Satellite Bodies",
       "category": "One Mind Across Every Machine",
-      "scope": ["workstation", "home"],
+      "scope": [
+        "workstation",
+        "home"
+      ],
       "oneLine": "One primary memory store; satellite machines proxy tool execution and local sensors. Shared context, distributed hardware.",
       "status": "shipped",
       "whatItIs": "The 'One Mind, Many Bodies' architecture. A Canonical Host (e.g., an always-on Mac Studio or home server) acts as the primary memory store, conversation history, and identity. Satellite bodies (laptop, Raspberry Pi, etc.) proxy their local sensors and tool execution capabilities to the host.",
@@ -541,7 +643,10 @@
       "id": "remote-tool-proxy",
       "name": "Remote Tool Execution Proxy",
       "category": "One Mind Across Every Machine",
-      "scope": ["workstation", "home"],
+      "scope": [
+        "workstation",
+        "home"
+      ],
       "oneLine": "Run tools on a peer machine from the primary dashboard — results return through the authenticated channel.",
       "status": "shipped",
       "whatItIs": "The peer tool proxy allows the agent on the Canonical Host to invoke MCP tools on any paired satellite. This enables scenarios like running GPU diagnostics on a remote workstation or checking sensor data on a Raspberry Pi — all from the primary dashboard.",
@@ -554,7 +659,10 @@
       "id": "mcp-server",
       "name": "Built-in MCP Server",
       "category": "One Mind Across Every Machine",
-      "scope": ["workstation", "home"],
+      "scope": [
+        "workstation",
+        "home"
+      ],
       "oneLine": "Halbert exposes its own tools and resources for external agents to consume via the Model Context Protocol.",
       "status": "shipped",
       "whatItIs": "Halbert doesn't just consume MCP tools — it exposes its own capabilities as an MCP server. External agents (Claude, other Halbert instances, custom tooling) can discover and invoke Halbert's tools, access its discovered resources, and query its knowledge base through the standard MCP JSON-RPC interface.",
@@ -567,7 +675,9 @@
       "id": "home-assistant-control",
       "name": "Home Assistant Entity Control",
       "category": "A Home That Pays Attention",
-      "scope": ["home"],
+      "scope": [
+        "home"
+      ],
       "oneLine": "Lights, climate, sensors, switches — direct local API integration, no vendor cloud, no subscription.",
       "status": "shipped",
       "whatItIs": "Halbert connects directly to a local Home Assistant instance, providing entity control, area mapping, and service calls without any vendor cloud dependency. An autonomy gate prevents unauthorized control of security-critical entities like locks and alarm systems.",
@@ -580,7 +690,9 @@
       "id": "cognitive-loop",
       "name": "Autonomous Cognitive Loop",
       "category": "A Home That Pays Attention",
-      "scope": ["home"],
+      "scope": [
+        "home"
+      ],
       "oneLine": "Perceive → Reason → Act → Observe → Reflect — runs on a configurable timer, only invokes the LLM when something novel happens.",
       "status": "deferred",
       "whatItIs": "The cognitive loop is the autonomous perception-reason-action tick that would run on a configurable interval (default 5-15 minutes). It gathers state from HA entities, Frigate events, scanner findings, the occupancy model, and behavior predictions. It uses cheap heuristics for routine checks and only invokes the LLM when something novel happens.",
@@ -593,7 +705,9 @@
       "id": "occupancy-behavior",
       "name": "Occupancy & Behavior Learning",
       "category": "A Home That Pays Attention",
-      "scope": ["home"],
+      "scope": [
+        "home"
+      ],
       "oneLine": "Multi-signal presence correlation and pattern prediction — learns routines without explicit schedules.",
       "status": "shipped",
       "whatItIs": "The occupancy model correlates multiple presence signals — Frigate face detection, smart lock events, WiFi device presence, Bluetooth proximity — to determine who is home, where they are, and how confident the estimate is. The behavior inferrer learns recurring patterns from timeline history and predicts upcoming routines.",
@@ -606,7 +720,9 @@
       "id": "frigate-nvr",
       "name": "Frigate NVR Event Ingestion",
       "category": "A Home That Pays Attention",
-      "scope": ["home"],
+      "scope": [
+        "home"
+      ],
       "oneLine": "Local object-detection events and snapshots from cameras, no cloud streaming.",
       "status": "shipped",
       "whatItIs": "Halbert ingests events from a local Frigate NVR installation — person detection, vehicle detection, pet detection — without streaming video to any cloud service. You get real-time awareness of what's happening on your property through local processing only.",

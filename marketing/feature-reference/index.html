@@ -2,16 +2,342 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=4" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png?v=4" />
+    <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png?v=4" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png?v=4" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Halbert — Feature Reference & Architecture Inventory</title>
-    <meta name="description" content="Formal feature reference and engineering inventory for Halbert: the local-first sovereign host intelligence system." />
+    <title>Halbert Feature Reference — the details behind every capability</title>
+    <meta name="description" content="The reference details page for Halbert: all 44 features, how each works, which files implement it, and its safety boundaries. Linux, Mac &amp; Home Assistant." />
+    <link rel="canonical" href="https://halbert.computer/features/" />
+
+    <!-- OpenGraph / Facebook / LinkedIn / Discord -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Halbert" />
+    <meta property="og:url" content="https://halbert.computer/features/" />
+    <meta property="og:title" content="Halbert Feature Reference — the details behind every capability" />
+    <meta property="og:description" content="The reference details page for Halbert: all 44 features, how each works, which files implement it, and its safety boundaries. Linux, Mac &amp; Home Assistant." />
+    <meta property="og:image" content="https://halbert.computer/og-image.png" />
+    <meta property="og:image:secure_url" content="https://halbert.computer/og-image.png" />
+    <meta property="og:image:type" content="image/png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="Halbert — I am the computer. And I put the smart in your home." />
+
+    <!-- Twitter / X Card -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Halbert Feature Reference — the details behind every capability" />
+    <meta name="twitter:description" content="The reference details page for Halbert: all 44 features, how each works, which files implement it, and its safety boundaries. Linux, Mac &amp; Home Assistant." />
+    <meta name="twitter:image" content="https://halbert.computer/og-image.png" />
+    <meta name="twitter:image:alt" content="Halbert — I am the computer. And I put the smart in your home." />
+
+    <!-- Schema.org JSON-LD: this page is a details/reference page about the
+         Halbert SoftwareApplication (the product entity lives on the site
+         root; this page describes the catalog itself). -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "ItemPage",
+      "name": "Halbert Feature Reference",
+      "headline": "The details behind every capability.",
+      "description": "The reference details page for Halbert: all 44 features, how each works, which files implement it, and its safety boundaries.",
+      "url": "https://halbert.computer/features/",
+      "isPartOf": {
+        "@type": "WebSite",
+        "name": "Halbert",
+        "url": "https://halbert.computer/"
+      },
+      "about": {
+        "@type": "SoftwareApplication",
+        "name": "Halbert",
+        "url": "https://halbert.computer/",
+        "operatingSystem": "Linux, macOS",
+        "license": "https://www.gnu.org/licenses/gpl-3.0.html",
+        "author": {
+          "@type": "Person",
+          "name": "Eric Bintner"
+        }
+      },
+      "mainEntity": {
+        "@type": "ItemList",
+        "numberOfItems": 44,
+        "itemListElement": [
+          {
+            "@type": "ListItem",
+            "position": 1,
+            "name": "Right-Sized Intelligence",
+            "description": "Automatically routes simple queries to fast local models and reserves deep reasoning for complex system diffs."
+          },
+          {
+            "@type": "ListItem",
+            "position": 2,
+            "name": "Air-Gapped Private Execution",
+            "description": "Sensitive credentials and system configs never egress to cloud APIs. Fail-closed, not fail-open."
+          },
+          {
+            "@type": "ListItem",
+            "position": 3,
+            "name": "Hot-Swap Any Provider",
+            "description": "Switch between Ollama, LM Studio, Apple Foundation Models, OpenAI, Anthropic, Google, and Azure without restarting."
+          },
+          {
+            "@type": "ListItem",
+            "position": 4,
+            "name": "Context Window Compression",
+            "description": "Level-of-Detail memory management keeping long conversations from blowing the context ceiling."
+          },
+          {
+            "@type": "ListItem",
+            "position": 5,
+            "name": "Structured Agent Lifecycle",
+            "description": "Every turn moves through formal states with strict tool-call budgets and CRAG verification."
+          },
+          {
+            "@type": "ListItem",
+            "position": 6,
+            "name": "Secure Credential Storage",
+            "description": "Encrypted vault for API keys and provider secrets — never stored in plaintext config files."
+          },
+          {
+            "@type": "ListItem",
+            "position": 7,
+            "name": "37 Pluggable System Scanners",
+            "description": "Live probing across Linux and macOS: disks, SMART, thermal, USB, network, services, packages, wifi, boot, display, containers, processes, and more."
+          },
+          {
+            "@type": "ListItem",
+            "position": 8,
+            "name": "GPU & AI Accelerator Diagnostics",
+            "description": "Dedicated hardware inspection for GPUs (NVIDIA, AMD, Intel, Apple Metal) and AI accelerators (Coral TPU, Hailo, MemryX, NPUs)."
+          },
+          {
+            "@type": "ListItem",
+            "position": 9,
+            "name": "The Four Whys",
+            "description": "Every finding explains why now, why care, why so, and why trust — with real detector evidence, not raw error dumps."
+          },
+          {
+            "@type": "ListItem",
+            "position": 10,
+            "name": "Calm Notification Attunement",
+            "description": "Push (voice, auto-open panels), Ambient (badges, tray indicator), Pull (findings page, timeline) — three attention tiers."
+          },
+          {
+            "@type": "ListItem",
+            "position": 11,
+            "name": "Autonomous Self-Management Cycles",
+            "description": "5-phase background loops (Sense → Deliberate → Propose → Act → Reflect) driving autonomous issue resolution."
+          },
+          {
+            "@type": "ListItem",
+            "position": 12,
+            "name": "Proactive Morning Reports & Reflexes",
+            "description": "Autonomous daily briefing and reflexive responses to significant events without waiting for user prompting."
+          },
+          {
+            "@type": "ListItem",
+            "position": 13,
+            "name": "Full Computer Vision Suite",
+            "description": "Screen capture (Wayland-aware), ambient webcam monitoring, OCR text extraction, and motion detection."
+          },
+          {
+            "@type": "ListItem",
+            "position": 14,
+            "name": "Apps & Container Management",
+            "description": "Docker, Podman, Flatpak, Snap, and AppImage lifecycle management with a dedicated dashboard panel."
+          },
+          {
+            "@type": "ListItem",
+            "position": 15,
+            "name": "Blast Radius Before You Edit",
+            "description": "Config dependency graph showing exactly which services break if you change a file, before you touch it."
+          },
+          {
+            "@type": "ListItem",
+            "position": 16,
+            "name": "AI Diff Proposals with Instant Rollback",
+            "description": "SEARCH/REPLACE proposals rendered as visual diffs in Monaco, with mandatory pre-save snapshots and one-click restore."
+          },
+          {
+            "@type": "ListItem",
+            "position": 17,
+            "name": "Intent Kept Next to the Change",
+            "description": "The \"Why Brain\" captures the human rationale alongside config changes and restores it into future conversation context."
+          },
+          {
+            "@type": "ListItem",
+            "position": 18,
+            "name": "Cross-Session Memory Vault",
+            "description": "Threads, receipts, and machine-state history survive reboots without polluting active prompts with stale context."
+          },
+          {
+            "@type": "ListItem",
+            "position": 19,
+            "name": "Change Provenance Tracking",
+            "description": "Who changed a file, when, and why — linked to the state ledger with actor, reason, and content digest."
+          },
+          {
+            "@type": "ListItem",
+            "position": 20,
+            "name": "Human-in-the-Loop Approval Queue",
+            "description": "Mandatory user authorization gate for state-mutating actions with a dedicated dashboard page."
+          },
+          {
+            "@type": "ListItem",
+            "position": 21,
+            "name": "Pre-Execution Dry-Run Simulation",
+            "description": "Simulates file writes, service restarts, and tool calls before touching disk — preview the impact without the risk."
+          },
+          {
+            "@type": "ListItem",
+            "position": 22,
+            "name": "Offline Hybrid Retrieval",
+            "description": "Sparse BM25 keyword matching merged with dense semantic embeddings via Reciprocal Rank Fusion — no cloud search needed."
+          },
+          {
+            "@type": "ListItem",
+            "position": 23,
+            "name": "Thousands of Indexed Documents",
+            "description": "Man pages, Arch Wiki, FreeBSD Handbook, Homebrew, and TLDR pages — all indexed locally."
+          },
+          {
+            "@type": "ListItem",
+            "position": 24,
+            "name": "Cite-and-Verify Links",
+            "description": "Every suggested command cites the local on-disk manual page — no hallucinated flags."
+          },
+          {
+            "@type": "ListItem",
+            "position": 25,
+            "name": "Web Search Fallback",
+            "description": "When local knowledge is insufficient, the agent can search the web — off by default, explicit opt-in."
+          },
+          {
+            "@type": "ListItem",
+            "position": 26,
+            "name": "Unified Three-Panel Shell",
+            "description": "System domain rail, context stage, and agent conversation visible simultaneously — no modal context-switching."
+          },
+          {
+            "@type": "ListItem",
+            "position": 27,
+            "name": "Inline Terminal Tiles with Sandbox",
+            "description": "Commands the agent runs stream live stdout/stderr directly inside chat turns, with sandbox isolation and redact filters."
+          },
+          {
+            "@type": "ListItem",
+            "position": 28,
+            "name": "Direct @Mentions for Hardware & Services",
+            "description": "Reference a live disk, service, or network interface directly in chat — the agent gets the full discovery context."
+          },
+          {
+            "@type": "ListItem",
+            "position": 29,
+            "name": "Keyboard-First Command Palette",
+            "description": "Press / to open instant fuzzy search across every feature, domain, and setting."
+          },
+          {
+            "@type": "ListItem",
+            "position": 30,
+            "name": "Shell Integration",
+            "description": "Injects Halbert helpers into .bashrc and .zshrc so the agent is available from any terminal session."
+          },
+          {
+            "@type": "ListItem",
+            "position": 31,
+            "name": "Dynamic Skill Registry",
+            "description": "Agent loads and composes skill extensions at runtime — new capabilities without redeployment."
+          },
+          {
+            "@type": "ListItem",
+            "position": 32,
+            "name": "Olivetti Design Language",
+            "description": "Vermilion & Bone tokens, display serif typography, and a calm editorial aesthetic across the entire system."
+          },
+          {
+            "@type": "ListItem",
+            "position": 33,
+            "name": "Instant Local Voice Pipeline",
+            "description": "On-device streaming ASR and TTS with sub-second latency, wake-word detection, barge-in, and speaker identification."
+          },
+          {
+            "@type": "ListItem",
+            "position": 34,
+            "name": "Acoustic Environment Sensing",
+            "description": "Ambient sound monitoring that detects anomalies: fan bearing failures, alarms, sudden noise spikes."
+          },
+          {
+            "@type": "ListItem",
+            "position": 35,
+            "name": "Screenshot & Diagram Analysis",
+            "description": "Paste, drag, or capture an image for the vision model to analyze and explain — Wayland-aware screen capture included."
+          },
+          {
+            "@type": "ListItem",
+            "position": 36,
+            "name": "Visual Aura State Indicator",
+            "description": "A non-intrusive ambient pulse reflecting voice pipeline state: idle, listening, thinking, speaking."
+          },
+          {
+            "@type": "ListItem",
+            "position": 37,
+            "name": "Zero-Friction Peer Pairing",
+            "description": "Secure 4-digit PIN handshake over mDNS or direct IP, with per-peer tokens and surgical revocation."
+          },
+          {
+            "@type": "ListItem",
+            "position": 38,
+            "name": "Canonical Host + Satellite Bodies",
+            "description": "One primary memory store; satellite machines proxy tool execution and local sensors. Shared context, distributed hardware."
+          },
+          {
+            "@type": "ListItem",
+            "position": 39,
+            "name": "Remote Tool Execution Proxy",
+            "description": "Run tools on a peer machine from the primary dashboard — results return through the authenticated channel."
+          },
+          {
+            "@type": "ListItem",
+            "position": 40,
+            "name": "Built-in MCP Server",
+            "description": "Halbert exposes its own tools and resources for external agents to consume via the Model Context Protocol."
+          },
+          {
+            "@type": "ListItem",
+            "position": 41,
+            "name": "Home Assistant Entity Control",
+            "description": "Lights, climate, sensors, switches — direct local API integration, no vendor cloud, no subscription."
+          },
+          {
+            "@type": "ListItem",
+            "position": 42,
+            "name": "Autonomous Cognitive Loop",
+            "description": "Perceive → Reason → Act → Observe → Reflect — runs on a configurable timer, only invokes the LLM when something novel happens."
+          },
+          {
+            "@type": "ListItem",
+            "position": 43,
+            "name": "Occupancy & Behavior Learning",
+            "description": "Multi-signal presence correlation and pattern prediction — learns routines without explicit schedules."
+          },
+          {
+            "@type": "ListItem",
+            "position": 44,
+            "name": "Frigate NVR Event Ingestion",
+            "description": "Local object-detection events and snapshots from cameras, no cloud streaming."
+          }
+        ]
+      }
+    }
+    </script>
+
+    <!-- Self-hosted brand typefaces. Halbert is local-first; fetching faces from
+         a CDN at runtime contradicts that and fails outright in the packaged
+         app. Synced from /shared-tokens/fonts by scripts/sync_fonts.py. -->
     <link rel="preload" href="/fonts/files/space-grotesk-latin-normal.woff2" as="font" type="font/woff2" crossorigin>
     <link rel="preload" href="/fonts/files/jetbrains-mono-latin-normal.woff2" as="font" type="font/woff2" crossorigin>
+    <link rel="preload" href="/fonts/files/fraunces-latin-normal.woff2" as="font" type="font/woff2" crossorigin>
     <link rel="stylesheet" href="/fonts/fonts.css">
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..800;1,9..144,300..800&family=JetBrains+Mono:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
   </head>
   <body class="min-h-screen antialiased">
     <div id="root"></div>

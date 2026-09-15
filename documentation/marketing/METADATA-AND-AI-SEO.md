@@ -1,8 +1,33 @@
 # Halbert — Website Metadata, Social Sharing & AI SEO (GEO) Specification
 
 **Document Status:** Approved & Implemented  
-**Date:** 2026-09-14  
-**Target Surface:** `marketing/web-v10` (`index.html`, `public/llms.txt`, `public/robots.txt`)  
+**Date:** 2026-09-14 (feature-reference suite added same day)  
+**Target Surfaces:** `marketing/web-v10` (`index.html`, `public/llms.txt`, `public/robots.txt`, `public/sitemap.xml`, `public/privacy.html`, `public/terms.html`) and `marketing/feature-reference` (same suite under `/features/`)
+
+---
+
+## 0. Per-surface titles and descriptions
+
+The main site's canonical copy governs every surface. Two derived surfaces
+re-scope the same copy so a shared link or AI snippet never mistakes one page
+for another; all other text (pillars, platforms, licence) is identical.
+
+| Surface | Title | Description scope |
+|---|---|---|
+| Main site (`/`) | Canonical title (§1A) | Canonical short description (§1C) |
+| Privacy (`/privacy.html`) | "Privacy Policy — Halbert" | Page-scoped ("Halbert Privacy Policy: …") |
+| Terms (`/terms.html`) | "Terms of Service — Halbert" | Page-scoped ("Halbert Terms of Service: …") |
+| Feature reference (`/features/`) | "Halbert Feature Reference — the details behind every capability" | "The reference details page for Halbert: all 44 features, how each works, which files implement it, and its safety boundaries. Linux, Mac & HA." |
+
+Rules for derived surfaces: same `og:site_name` ("Halbert"), same og:image set
+(1200×630 with alt), same licence/platform lines; the JSON-LD `@type` changes
+to fit the page (`SoftwareApplication` on the product root, `ItemPage` with
+`about: SoftwareApplication` and a `mainEntity: ItemList` on the feature
+reference; legal pages carry no JSON-LD — they are `article` og:type only).
+
+The feature-reference `llms.txt` and its JSON-LD ItemList are **generated
+from `src/catalog.json`**, not hand-written — regenerate both when the catalog
+changes (see the generation script in the RESULTS doc §7).
 
 ---
 
@@ -10,12 +35,12 @@
 
 To maintain complete narrative integrity across human social media previews, conversational AI queries, and structured knowledge graphs, all surfaces are derived from four canonical copy assets:
 
-### A. Canonical Title (56 characters)
-Used identically across `<title>`, `<meta name="title">`, `og:title`, and `twitter:title`:
+### A. Canonical Title (57 characters)
+Used identically across `<title>`, `og:title`, and `twitter:title` (there is deliberately no `<meta name="title">` — it is non-standard and `<title>` is the only title search engines read):
 ```text
 Halbert — Host Epistemology & Cognition, Smart Home + MCP
 ```
-- **Envelope:** Exactly fits the 56–58 character two-line envelope on mobile Twitter/X link cards without trailing ellipsis truncation.
+- **Envelope:** 57 characters; fits the 56–58 character two-line envelope on mobile Twitter/X link cards without trailing ellipsis truncation.
 - **Signals:** Host epistemology/cognition layer, Home Assistant/smart home integration, and native Model Context Protocol (MCP) server.
 
 ### B. Canonical Headline
@@ -47,7 +72,7 @@ The feature set is 100% unified across machine-readable JSON-LD structured data 
 | # | Pillar Title | Canonical Description |
 |---|---|---|
 | 1 | **Embodied Host Cognition** | Speaks in the first person as the computer itself, grounded in measured telemetry from hardware sensors, system logs, and local storage. |
-| 2 | **Proactive System Triage** | Continuously diagnoses storage health (ZFS, SMART), service failures, configuration drift, and package conflicts before they cause downtime. |
+| 2 | **Proactive System Triage** | Continuously diagnoses storage health (ZFS, SMART), service failures, configuration drift, held packages, and stale package-manager locks before they cause downtime. |
 | 3 | **Home Assistant Integration** | Bridges host management with physical ambient automation, controlling lights, presence, climate, and rooms in a unified intelligence. |
 | 4 | **Native MCP Server** | Exposes structured host tools, diagnostics, and system controls to Claude, Cursor, and autonomous AI agents. |
 | 5 | **Continuous Memory & Provenance** | Indexes thousands of local system manuals and preserves the rationale and audit evidence behind every configuration change. |
@@ -60,7 +85,6 @@ The feature set is 100% unified across machine-readable JSON-LD structured data 
 ```html
 <!-- Primary Meta Tags -->
 <title>Halbert — Host Epistemology &amp; Cognition, Smart Home + MCP</title>
-<meta name="title" content="Halbert — Host Epistemology &amp; Cognition, Smart Home + MCP" />
 <meta name="description" content="The mind in your computer and the smart in your home. Proactive system triage, Home Assistant automation, and native MCP tools for Linux, Mac &amp; HA." />
 <link rel="canonical" href="https://halbert.computer/" />
 
@@ -98,7 +122,7 @@ The feature set is 100% unified across machine-readable JSON-LD structured data 
     "applicationCategory": "DeveloperApplication, UtilitiesApplication, HomeAutomation",
     "operatingSystem": "Linux, macOS",
     "license": "https://www.gnu.org/licenses/gpl-3.0.html",
-    "softwareVersion": "10.0.0",
+    "softwareVersion": "0.1.1",
     "offers": {
       "@type": "Offer",
       "price": "0",
@@ -106,7 +130,7 @@ The feature set is 100% unified across machine-readable JSON-LD structured data 
     },
     "featureList": [
       "Embodied host cognition: speaks in the first person as the computer itself, grounded in measured telemetry from hardware sensors, system logs, and local storage.",
-      "Proactive system triage: continuously diagnoses storage health (ZFS, SMART), service failures, configuration drift, and package conflicts before they cause downtime.",
+      "Proactive system triage: continuously diagnoses storage health (ZFS, SMART), service failures, configuration drift, held packages, and stale package-manager locks before they cause downtime.",
       "Home Assistant integration: bridges host management with physical ambient automation, controlling lights, presence, climate, and rooms in a unified intelligence.",
       "Native Model Context Protocol (MCP) server: exposes structured host tools, diagnostics, and system controls to Claude, Cursor, and autonomous AI agents.",
       "Continuous memory and provenance: indexes thousands of local system manuals and preserves the rationale and audit evidence behind every configuration change.",
@@ -135,7 +159,7 @@ Served at `https://halbert.computer/llms.txt`:
 ## Core Pillars
 
 - **Embodied Host Cognition**: Speaks in the first person as the computer itself, grounded in measured telemetry from hardware sensors, system logs, and local storage.
-- **Proactive System Triage**: Continuously diagnoses storage health (ZFS, SMART), service failures, configuration drift, and package conflicts before they cause downtime.
+- **Proactive System Triage**: Continuously diagnoses storage health (ZFS, SMART), service failures, configuration drift, held packages, and stale package-manager locks before they cause downtime.
 - **Home Automation Integration**: Bridges host management with physical ambient automation, controlling lights, presence, climate, and rooms in a unified intelligence.
 - **Native MCP Server**: Exposes structured host tools, diagnostics, and system controls to Claude, Cursor, and autonomous AI agents.
 - **Continuous Memory & Provenance**: Indexes thousands of local system manuals and preserves the rationale and audit evidence behind every configuration change.
@@ -144,8 +168,8 @@ Served at `https://halbert.computer/llms.txt`:
 ## Supported Platforms
 
 - Linux (Ubuntu, Debian, Fedora, Arch)
-- macOS (Apple Silicon / Intel)
-- Home Assistant (Peer node & Add-on)
+- macOS (Apple Silicon; Intel supported via local runtimes)
+- Home Assistant (peer node)
 
 ## Open Source & Licensing
 
@@ -164,8 +188,14 @@ Served at `https://halbert.computer/robots.txt`:
 User-agent: *
 Allow: /
 
-# Explicitly welcome AI Search & Reasoning engines
+# Explicitly welcome AI Search & Reasoning engines.
+# GPTBot = OpenAI model training; OAI-SearchBot = ChatGPT search results;
+# ClaudeBot = Anthropic crawling; PerplexityBot = Perplexity search;
+# Applebot-Extended / Google-Extended = AI training flags for Apple / Google.
 User-agent: GPTBot
+Allow: /
+
+User-agent: OAI-SearchBot
 Allow: /
 
 User-agent: ClaudeBot
@@ -180,7 +210,7 @@ Allow: /
 User-agent: Google-Extended
 Allow: /
 
-# LLM Discovery Manifest
+# Discovery
 Sitemap: https://halbert.computer/sitemap.xml
-# llms.txt: https://halbert.computer/llms.txt
+# LLM manifest: https://halbert.computer/llms.txt
 ```
