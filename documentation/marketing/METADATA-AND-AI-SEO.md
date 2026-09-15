@@ -1,88 +1,54 @@
 # Halbert — Website Metadata, Social Sharing & AI SEO (GEO) Specification
 
-**Document Status:** Proposal / Draft for Review (Rev 2)  
+**Document Status:** Approved & Implemented  
 **Date:** 2026-09-14  
 **Target Surface:** `marketing/web-v10` (`index.html`, `public/llms.txt`, `public/robots.txt`)  
 
 ---
 
-## 1. Executive Summary & Problem Statement
+## 1. Approved Social & Search Copy
 
-The live metadata in `marketing/web-v10/index.html` was written before the v10 content overhaul:
-- It still uses the old triage headline (*"Halbert — I know what’s wrong and I can help you fix it."*).
-- It completely omits **Home Assistant** integration and home automation.
-- It completely omits **Native Model Context Protocol (MCP)** tool serving.
-- It omits the **distributed multi-machine** ("Singular Entity") architecture.
-- It states *"Linux today, macOS in beta"* instead of the updated platform lineup (*"Linux · Mac · Home Assistant"*).
-- It lacks any **AI SEO / Generative Engine Optimization (GEO)** structure (no `llms.txt`, no JSON-LD structured data, no AI search engine indexing hooks).
+These selections are live in `marketing/web-v10/index.html`:
 
-When shared on Twitter/X, Discord, Slack, iMessage, or LinkedIn, or when crawled by AI search engines (Perplexity, ChatGPT Search, Claude, Gemini, Apple Intelligence), Halbert currently presents as a generic Linux log monitor rather than what it is: **an embodied local host intelligence that is your computer, automates your smart home, and serves native MCP tools to your AI agents.**
+### Page Title & OpenGraph/Twitter Title
+```text
+Halbert — Host Epistemology & Cognition, Smart Home + MCP
+```
+- **Length:** 56 characters.
+- **Envelope:** Exactly fits the 56–58 character two-line envelope on mobile Twitter/X link cards without trailing ellipsis truncation.
+- **Keywords:** Names the host cognition layer, smart home integration, and native MCP capability.
 
----
-
-## 2. What is "AI SEO" (Generative Engine Optimization)?
-
-Traditional SEO focuses on Google keywords, backlinks, and meta tags. **AI SEO (GEO)** focuses on how Large Language Models (LLMs) and conversational search engines ingest, understand, cite, and recommend software:
-
-1. **`llms.txt` Standard**: An emerging, cross-industry specification (originated by Answer.ai, adopted by Anthropic, Perplexity, Cursor, Cloudflare, etc.). It lives at `/llms.txt` and gives AI assistants a clean, Markdown-formatted manifest explaining what Halbert is, its capabilities, architecture, and documentation.
-2. **Schema.org Structured Data (`JSON-LD`)**: Embedded in HTML `<script type="application/ld+json">`. LLMs and knowledge graphs (Google Knowledge Graph, Perplexity entity models) extract machine-readable entities (`SoftwareApplication`, `HomeAutomation`, `DeveloperApplication`, `GPL-3.0-or-later`).
-3. **Information Density & Factual Grounding**: AI engines penalize vague marketing fluff and reward concrete, authoritative declarations of architecture, constraints, and features (e.g. *"Zero telemetry"*, *"Requires local model for credentials"*, *"Native MCP server"*).
-4. **AI Crawler Hygiene (`robots.txt`)**: Explicitly permitting AI search indexers (`GPTBot`, `ClaudeBot`, `PerplexityBot`, `Applebot-Extended`) while protecting non-production assets.
-
----
-
-## 3. Title (A) Analysis & Options (Target: 50–60 characters)
-
-Twitter/X card previews (as measured on mobile) comfortably fit **55–58 characters** across 2 lines before truncating. 
-
-* **Option A1 (Your Proposed Line — Full)**:  
-  `Halbert — Local Host Epistemology & Cognition, Smart Home & Native MCP`  
-  *Length: 68 characters*  
-  *Fit:* Fits desktop nicely, but on small mobile Twitter cards the last word (`Native MCP`) may wrap to a 3rd line or truncate to `Native...`.
-* **Option A2 (Your Proposed Line — Tightened for Mobile Preview — Recommended)**:  
-  `Halbert — Host Epistemology & Cognition, Smart Home & MCP`  
-  *Length: 56 characters*  
-  *Fit:* **Exact match for the 56–58 character two-line envelope** shown in the Twitter card screenshot!
-* **Option A3 (Local Focus — Tightened)**:  
-  `Halbert — Local Epistemology & Cognition, Smart Home & MCP`  
-  *Length: 57 characters*  
-  *Fit:* Fits 2 lines cleanly.
-* **Option A4 (Original Option 2 — Standard Tech Keywords)**:  
-  `Halbert — Local Host Intelligence, Smart Home & Native MCP`  
-  *Length: 58 characters*  
-  *Fit:* Fits 2 lines cleanly.
+### Meta Description & OpenGraph/Twitter Description (Option B4)
+```text
+The mind in your computer and the smart in your home. Proactive system triage, Home Assistant automation, and native MCP tools for Linux, Mac & HA.
+```
+- **Length:** 147 characters (optimal for the 140–160 search/social preview budget).
+- **Core Pillars:**
+  1. *Host identity:* "The mind in your computer and the smart in your home."
+  2. *Triage:* "Proactive system triage"
+  3. *Physical Automation:* "Home Assistant automation"
+  4. *Agent Tooling:* "native MCP tools"
+  5. *Platforms:* "for Linux, Mac & HA" (omits unreleased Windows).
 
 ---
 
-## 4. Description (B) Rewrites (Target: 145–160 characters)
-*Refined to remove Windows and reallocate character budget from privacy repetitiveness to rich capabilities (triage, 20k docs, MCP, Home Assistant).*
+## 2. Production HTML Snippet (`index.html`)
 
-* **Option B1 (Cognition + Triage + MCP + Home Assistant — Recommended)**:  
-  `Embodied host cognition and home automation. Proactive triage, native MCP tools, and continuous memory for Linux, Mac & Home Assistant. Runs locally.`  
-  *(147 characters)*
-* **Option B2 (Capabilities-Dense: Triage, 20k Docs, MCP, HA)**:  
-  `Halbert bridges host management and home automation into one local intelligence. Proactive triage, 20,000 local docs, and native MCP for Linux, Mac & HA.`  
-  *(154 characters)*
-* **Option B3 (Action-Oriented: Hardware Vitals + Smart Home + Tools)**:  
-  `Monitors hardware vitals, automates your home, and gives AI tools native MCP access to your system. Proactive triage for Linux, Mac & Home Assistant.`  
-  *(149 characters)*
-* **Option B4 (Hero Phrasing + Multi-Feature)**:  
-  `The mind in your computer and the smart in your home. Proactive system triage, Home Assistant automation, and native MCP tools for Linux, Mac & HA.`  
-  *(147 characters)*
-
----
-
-## 5. OpenGraph & Twitter Cards (Social Previews)
-
-When links to `https://halbert.computer/` are pasted into Slack, Discord, iMessage, X/Twitter, or LinkedIn:
+The following tags are implemented in `<head>`:
 
 ```html
-<!-- OpenGraph / Social Meta -->
+<!-- Primary Meta Tags -->
+<title>Halbert — Host Epistemology &amp; Cognition, Smart Home + MCP</title>
+<meta name="title" content="Halbert — Host Epistemology &amp; Cognition, Smart Home + MCP" />
+<meta name="description" content="The mind in your computer and the smart in your home. Proactive system triage, Home Assistant automation, and native MCP tools for Linux, Mac &amp; HA." />
+<link rel="canonical" href="https://halbert.computer/" />
+
+<!-- OpenGraph / Facebook / LinkedIn / Discord -->
 <meta property="og:type" content="website" />
 <meta property="og:site_name" content="Halbert" />
 <meta property="og:url" content="https://halbert.computer/" />
-<meta property="og:title" content="Halbert — Host Epistemology & Cognition, Smart Home & MCP" />
-<meta property="og:description" content="Embodied host cognition and home automation. Proactive triage, native MCP tools, and continuous memory for Linux, Mac & Home Assistant. Runs locally." />
+<meta property="og:title" content="Halbert — Host Epistemology &amp; Cognition, Smart Home + MCP" />
+<meta property="og:description" content="The mind in your computer and the smart in your home. Proactive system triage, Home Assistant automation, and native MCP tools for Linux, Mac &amp; HA." />
 <meta property="og:image" content="https://halbert.computer/og-image.png" />
 <meta property="og:image:secure_url" content="https://halbert.computer/og-image.png" />
 <meta property="og:image:type" content="image/png" />
@@ -93,18 +59,29 @@ When links to `https://halbert.computer/` are pasted into Slack, Discord, iMessa
 <!-- Twitter / X Card -->
 <meta name="twitter:card" content="summary_large_image" />
 <meta name="twitter:url" content="https://halbert.computer/" />
-<meta name="twitter:title" content="Halbert — Host Epistemology & Cognition, Smart Home & MCP" />
-<meta name="twitter:description" content="Embodied host cognition and home automation. Proactive triage, native MCP tools, and continuous memory for Linux, Mac & Home Assistant. Runs locally." />
+<meta name="twitter:title" content="Halbert — Host Epistemology &amp; Cognition, Smart Home + MCP" />
+<meta name="twitter:description" content="The mind in your computer and the smart in your home. Proactive system triage, Home Assistant automation, and native MCP tools for Linux, Mac &amp; HA." />
 <meta name="twitter:image" content="https://halbert.computer/og-image.png" />
 <meta name="twitter:image:alt" content="Halbert — I am the computer. And I put the smart in your home." />
 ```
 
 ---
 
-## 6. AI SEO (GEO) Implementation Artifacts
+## 3. What is AI SEO (Generative Engine Optimization)?
+
+Traditional SEO focuses on Google keywords, backlinks, and meta tags. **AI SEO (GEO)** focuses on how Large Language Models (LLMs) and conversational search engines (Perplexity, ChatGPT Search, Claude, Gemini, Apple Intelligence) ingest, understand, cite, and recommend software:
+
+1. **`llms.txt` Standard**: An emerging, cross-industry specification (originated by Answer.ai, adopted by Anthropic, Perplexity, Cursor, Cloudflare, etc.). It lives at `/llms.txt` and gives AI assistants a clean, Markdown-formatted manifest explaining what Halbert is, its capabilities, architecture, and documentation.
+2. **Schema.org Structured Data (`JSON-LD`)**: Embedded in HTML `<script type="application/ld+json">`. LLMs and knowledge graphs extract machine-readable entities (`SoftwareApplication`, `HomeAutomation`, `DeveloperApplication`, `GPL-3.0-or-later`).
+3. **Information Density & Factual Grounding**: AI engines reward concrete, authoritative declarations of architecture, constraints, and features (*"Zero telemetry"*, *"Requires local model for credentials"*, *"Native MCP server"*, *"Home Assistant integration"*).
+4. **AI Crawler Hygiene (`robots.txt`)**: Explicitly permitting AI search indexers (`GPTBot`, `ClaudeBot`, `PerplexityBot`, `Applebot-Extended`, `Google-Extended`).
+
+---
+
+## 4. AI SEO (GEO) Implementation Artifacts
 
 ### A. Schema.org JSON-LD Structured Data
-Place inside `<head>` in `index.html`. This directly feeds the knowledge bases of Google AI Overviews, Perplexity, and ChatGPT Search.
+Implemented in `<head>` in `marketing/web-v10/index.html`:
 
 ```json
 {
@@ -141,8 +118,8 @@ Place inside `<head>` in `index.html`. This directly feeds the knowledge bases o
 
 ---
 
-### B. `public/llms.txt` (The AI Agent Manifest)
-An official Markdown file served at `https://halbert.computer/llms.txt` that AI crawlers, Cursor, Claude Code, and autonomous agents read when researching Halbert:
+### B. `marketing/web-v10/public/llms.txt`
+Served at `https://halbert.computer/llms.txt` for AI crawlers, Cursor, Claude Code, and autonomous agents:
 
 ```markdown
 # Halbert
@@ -155,7 +132,7 @@ An official Markdown file served at `https://halbert.computer/llms.txt` that AI 
 - **Home Automation Integration**: Bridges host sysadmin chores with Home Assistant (lights, presence, climate, physical rooms) in a single intelligence.
 - **Native MCP Server**: Exposes structured, permission-gated system tools and documentation to external AI workflows (Claude, Cursor, custom agents).
 - **Private by Construction**: Runs 100% locally with zero cloud telemetry. Supports local runtimes (Ollama, MLX, vLLM) and optional BYOK cloud keys; sensitive system credentials strictly require a private local model.
-- **Continuous Memory & Rationale**: Over 20,000 system manuals and references indexed locally; preserves the *why* and audit evidence behind every configuration change.
+- **Continuous Memory & Rationale**: Thousands of system manuals and references indexed locally; preserves the *why* and audit evidence behind every configuration change.
 - **Distributed Architecture (Singular Entity)**: Low-power home servers offload heavy reasoning to desktop GPUs over local peer routing, maintaining continuous memory across every machine.
 
 ## Supported Platforms
@@ -173,8 +150,8 @@ An official Markdown file served at `https://halbert.computer/llms.txt` that AI 
 
 ---
 
-### C. `public/robots.txt` (AI Discovery & Crawlers)
-Ensure modern AI search bots index the site and locate `llms.txt`:
+### C. `marketing/web-v10/public/robots.txt`
+Permits AI search indexers to crawl and discover `llms.txt`:
 
 ```robots
 User-agent: *
@@ -200,3 +177,11 @@ Allow: /
 Sitemap: https://halbert.computer/sitemap.xml
 # llms.txt: https://halbert.computer/llms.txt
 ```
+
+---
+
+## 5. Rationale & Decision History
+
+- **Why Title `Halbert — Host Epistemology & Cognition, Smart Home + MCP`**: Fits within 56 characters, avoiding mobile preview card clipping on Twitter/X, while packing high-intent search signals (Host Epistemology, Smart Home, MCP).
+- **Why Description Option B4**: Previous drafts spent too much character budget repeating "private local models, zero telemetry". Option B4 captures the identity hook (*"The mind in your computer and the smart in your home"*), triage capability, Home Assistant, and native MCP tools in 147 characters.
+- **Platform Scope**: Windows was intentionally excluded as it is deferred to a future milestone; platform scope is locked to `Linux, Mac & HA`.
