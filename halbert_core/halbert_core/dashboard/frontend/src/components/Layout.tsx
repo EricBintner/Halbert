@@ -255,7 +255,14 @@ export function Layout({ children }: { children: React.ReactNode }) {
   // "whatever limited IT tools exist," so gating is capability-only via the
   // fine-grained features.gpu / features.home / features.development flags.
   const features: InstanceFeatures | null = instanceInfo
-    ? { home: instanceInfo.features.home, gpu: instanceInfo.features.gpu, development: instanceInfo.features.development }
+    ? {
+        home: instanceInfo.features.home,
+        gpu: instanceInfo.features.gpu,
+        development: instanceInfo.features.development,
+        // Older responses predate the containers/development split — fall
+        // back so a missing key can't hide the Containers tab.
+        containers: instanceInfo.features.containers ?? instanceInfo.features.development,
+      }
     : null
 
   const showSharedCompute = linkedNodeCount === null || linkedNodeCount > 0

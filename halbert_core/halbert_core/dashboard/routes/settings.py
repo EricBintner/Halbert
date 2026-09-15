@@ -1047,48 +1047,86 @@ async def get_onboarding_status() -> Dict[str, Any]:
 
 
 class OnboardingData(BaseModel):
-    """Onboarding configuration."""
+    """Onboarding configuration.
+
+    ``roles`` is the multi-select replacement for the dead ``user_type``
+    single-select (the four persona cards were stored three places and read
+    by none). Values come from ``identity.VALID_MACHINE_ROLES``; an empty or
+    all-invalid list falls back to ``["workstation"]``. ``notes`` is the
+    optional free-text "anything else?" — it becomes being.yml ``purpose``,
+    which the prompt already renders.
+    """
     computer_name: str
-    admin_name: str = "Admin"  # IT Admin/user's name
-    user_type: str = "casual"  # casual, it_admin, developer, ai_professional
+    admin_name: str = "Admin"  # the operator's name
+    roles: List[str] = ["workstation"]
+    notes: Optional[str] = None
+
+
+@router.get("/onboarding/probe")
+async def probe_onboarding() -> Dict[str, Any]:
+    """Fast pre-scan that feeds the role suggestion on the configure step.
+
+    Runs the lightweight subset of the profiler (hardware, desktop,
+    services, containers, development, boot — never packages, security or
+    scheduled tasks) in a worker thread and returns both the raw signals
+    and the inferred role suggestion. Read-only: nothing here writes the
+    system profile; the full scan still runs at /onboarding/complete.
+    """
+    try:
+        from ...discovery.role_inference import collect_probe_signals, infer_roles
+
+        signals = await asyncio.to_thread(collect_probe_signals)
+        return {
+            "signals": signals,
+            "suggestion": infer_roles(signals),
+        }
+    except Exception as e:
+        logger.error(f"Error probing system for onboarding: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/onboarding/complete")
 async def complete_onboarding(data: OnboardingData) -> Dict[str, Any]:
     """
     Complete the onboarding process.
-    
+
     1. Run deep system scan
-    2. Save computer name and user type
+    2. Save computer name, admin name and the machine's roles
     3. Mark onboarding as complete
     """
     try:
         from ...discovery.scanners.system_profile import get_system_profiler
-        
-        logger.info(f"Starting onboarding for {data.computer_name} ({data.user_type})")
-        
+        from ...identity import VALID_MACHINE_ROLES
+
+        roles = [r for r in data.roles if r in VALID_MACHINE_ROLES] \
+            or ["workstation"]
+        notes = (data.notes or "").strip()
+
+        logger.info(f"Starting onboarding for {data.computer_name} (roles={roles})")
+
         # Run deep scan
         profiler = get_system_profiler()
         profile = profiler.scan_all()
-        
+
         # Add user preferences to profile
         profile["user_settings"] = {
             "computer_name": data.computer_name,
             "admin_name": data.admin_name,
-            "user_type": data.user_type,
+            "roles": roles,
             "onboarding_date": datetime.now().isoformat() if 'datetime' in dir() else None,
         }
-        
+
         # Save profile
         profiler.save_profile()
-        
-        # Mark onboarding complete
+
+        # Mark onboarding complete. The marker only needs to prove setup
+        # ran — roles live in preferences.yml and the profile, not here.
         config_dir = get_config_dir()
         config_dir.mkdir(parents=True, exist_ok=True)
-        
+
         onboarding_file = config_dir / "onboarding_complete"
-        onboarding_file.write_text(f"{data.computer_name}\n{data.admin_name}\n{data.user_type}")
-        
+        onboarding_file.write_text(f"{data.computer_name}\n{data.admin_name}")
+
         # Save to preferences.yml so chat can read the AI name and user name
         preferences_path = config_dir / "preferences.yml"
         try:
@@ -1097,33 +1135,97 @@ async def complete_onboarding(data: OnboardingData) -> Dict[str, Any]:
                     prefs = yaml.safe_load(f) or {}
             else:
                 prefs = {}
-            
+
             # Set the AI name from onboarding (this is the "computer name" the user chose)
             prefs["ai_name"] = data.computer_name
             prefs["user_name"] = data.admin_name
-            prefs["user_type"] = data.user_type
-            
+            prefs["roles"] = roles
+
             # Remove deprecated persona_names if present
             prefs.pop("persona_names", None)
             prefs.pop("computer_name", None)  # Use ai_name instead
-            
+
             with open(preferences_path, 'w') as f:
                 yaml.dump(prefs, f, default_flow_style=False, sort_keys=False)
-            
-            logger.info(f"Saved preferences: ai_name={data.computer_name}, user_name={data.admin_name}")
+
+            logger.info(f"Saved preferences: ai_name={data.computer_name}, user_name={data.admin_name}, roles={roles}")
         except Exception as e:
             logger.warning(f"Failed to save preferences: {e}")
         await _mirror_name_to_being(data.computer_name)
-        
+
+        # The optional "anything else?" note is the machine's purpose — the
+        # BeingConfig field the prompt builder already renders. Set it only
+        # when the field is empty, so a re-run never clobbers an edit made
+        # in Settings > Being after onboarding.
+        if notes:
+            try:
+                from ...config.being_config import update_being_config
+                async with _being_config_lock:
+                    def _set_purpose(cfg):
+                        if not (cfg.purpose or "").strip():
+                            cfg.purpose = notes
+                    update_being_config(_set_purpose)
+            except Exception as e:
+                logger.warning(f"Could not record the machine's purpose: {e}")
+
         return {
             "status": "complete",
             "computer_name": data.computer_name,
-            "user_type": data.user_type,
+            "roles": roles,
             "profile_summary": profiler.get_summary(),
         }
-    
+
     except Exception as e:
         logger.error(f"Error completing onboarding: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class MachineRolesUpdate(BaseModel):
+    """The machine's declared roles (Settings > Being > Machine Role)."""
+    roles: List[str]
+
+
+@router.get("/machine-roles")
+async def get_machine_roles() -> Dict[str, Any]:
+    """The roles this machine was set up with ([] when never declared)."""
+    from ...identity import VALID_MACHINE_ROLES, resolve_machine_roles
+
+    return {
+        "roles": resolve_machine_roles(),
+        "valid": list(VALID_MACHINE_ROLES),
+    }
+
+
+@router.post("/machine-roles")
+async def set_machine_roles(data: MachineRolesUpdate) -> Dict[str, Any]:
+    """Update the machine's roles after onboarding.
+
+    Same write site as onboarding (preferences.yml ``roles``); an empty or
+    all-invalid list falls back to ``["workstation"]``, matching the wizard.
+    """
+    try:
+        from ...identity import VALID_MACHINE_ROLES
+
+        roles = [r for r in data.roles if r in VALID_MACHINE_ROLES] \
+            or ["workstation"]
+
+        config_dir = get_config_dir()
+        config_dir.mkdir(parents=True, exist_ok=True)
+        preferences_path = config_dir / "preferences.yml"
+        if preferences_path.exists():
+            with open(preferences_path) as f:
+                prefs = yaml.safe_load(f) or {}
+        else:
+            prefs = {}
+        if not isinstance(prefs, dict):
+            prefs = {}
+        prefs["roles"] = roles
+        with open(preferences_path, 'w') as f:
+            yaml.dump(prefs, f, default_flow_style=False, sort_keys=False)
+
+        return {"roles": roles}
+    except Exception as e:
+        logger.error(f"Error updating machine roles: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

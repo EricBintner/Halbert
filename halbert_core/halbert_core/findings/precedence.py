@@ -10,9 +10,11 @@ sshd semantics: sshd_config is FIRST-match-wins for most keywords, and
 drop-ins are pulled in by an `Include` directive — so a drop-in included
 near the top of the base file wins over the base file's own directives.
 When no matching `Include` directive is present in the base file, we fall
-back to appending drop-ins after the base (last wins) — this assumes the
-drop-in directory is pulled in by a mechanism we cannot see from here
-(e.g. a distribution-level include in a packaged default file).
+back to appending drop-ins after the base, where they override it (the
+last drop-in match wins) — this assumes the drop-in directory is pulled
+in by a mechanism we cannot see from here (e.g. a distribution-level
+include in a packaged default file). Within the base file itself the
+first match still wins in both modes, per OpenSSH.
 
 systemd semantics: later files override earlier ones; within a single
 file, last directive wins. Exception: ADDITIVE directives (e.g.
@@ -172,8 +174,10 @@ class PrecedenceEngine:
         default), drop-in values therefore win.
 
         If no matching Include exists in the base file, drop-ins are
-        appended after the base and the LAST occurrence wins (documented
-        assumption — see module docstring).
+        appended after the base, where a drop-in value overrides the base
+        (last drop-in match wins; documented assumption — see module
+        docstring). Within the base file itself the FIRST match wins in
+        both modes, per OpenSSH.
 
         Returns a dict with:
           - effective: dict of key -> value
@@ -181,12 +185,18 @@ class PrecedenceEngine:
           - conflicts: list of dicts describing conflicting directives
           - include_aware: whether an `Include` for the drop-in dir was
             found (determines the resolution order used)
+          - dropin_files: sorted list of drop-in file paths enumerated
         """
         base_lines = _parse_sshd_directives(self.sshd_base)
 
         dropin_files: List[str] = []
         if os.path.isdir(self.sshd_dropin_dir):
-            for fname in sorted(os.listdir(self.sshd_dropin_dir)):
+            try:
+                dropin_names = sorted(os.listdir(self.sshd_dropin_dir))
+            except OSError as e:
+                logger.warning(f"Cannot list {self.sshd_dropin_dir}: {e}")
+                dropin_names = []
+            for fname in dropin_names:
                 if fname.endswith(".conf"):
                     dropin_files.append(os.path.join(self.sshd_dropin_dir, fname))
 
@@ -231,6 +241,13 @@ class PrecedenceEngine:
                     effective[key] = value
                     sources[key] = (fpath, line_no)
             else:
+                # Fallback (no matching Include): a drop-in value
+                # overrides the base, and a later drop-in overrides an
+                # earlier one. Within any single file the FIRST match
+                # still wins, per OpenSSH — a later duplicate in the same
+                # file resolves to nothing.
+                if key in effective and sources[key][0] == fpath:
+                    continue
                 effective[key] = value
                 sources[key] = (fpath, line_no)
 
@@ -255,6 +272,7 @@ class PrecedenceEngine:
             "sources": sources,
             "conflicts": conflicts,
             "include_aware": include_line is not None,
+            "dropin_files": dropin_files,
         }
 
     def resolve_systemd_unit(self, unit_name: str) -> Dict[str, Any]:

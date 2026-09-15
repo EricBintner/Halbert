@@ -481,6 +481,16 @@ class SystemProfiler:
         if code == 0:
             result["motherboard"]["model"] = stdout.strip()
 
+        # USB devices via ioreg — much faster than system_profiler
+        # SPUSBDataType and enough for the product-name strings the role
+        # inference looks for (Zigbee/Z-Wave sticks).
+        code, stdout, _ = self.run_command(["ioreg", "-p", "IOUSB", "-w0", "-l"])
+        if code == 0:
+            for match in re.finditer(r'"USB Product Name" = "([^"]+)"', stdout):
+                name = match.group(1).strip()
+                if name and name not in result["usb_devices"]:
+                    result["usb_devices"].append(name)
+
         return result
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -760,6 +770,11 @@ class SystemProfiler:
             'cron', 'anacron',  # Scheduling
             'tailscaled',  # VPN
             'syncthing', 'restic', 'borg',  # Backup/sync
+            # Home automation (onboarding role inference needs these; 'hass'
+            # is deliberately absent — it substring-matches 'chassis')
+            'homeassistant', 'home-assistant', 'hassio', 'mosquitto', 'mqtt',
+            'zigbee2mqtt', 'zwave', 'deconz', 'openhab', 'node-red',
+            'frigate', 'scrypted', 'iobroker', 'homebridge',
         ]
         
         # Count services
@@ -815,6 +830,10 @@ class SystemProfiler:
             'tailscale', 'com.tailscale',
             'syncthing', 'restic', 'borg',
             'homebrew', 'com.google', 'com.github', 'com.microsoft',
+            # Home automation (matches the Linux list; launchd labels)
+            'homeassistant', 'home-assistant', 'mosquitto', 'mqtt',
+            'zigbee2mqtt', 'zwave', 'deconz', 'openhab', 'node-red',
+            'frigate', 'scrypted', 'iobroker', 'homebridge',
         ]
 
         code, stdout, _ = self.run_command(["launchctl", "list"])
@@ -1797,6 +1816,22 @@ class SystemProfiler:
         lines.append(f"=== I AM {computer_name.upper()} ===")
         lines.append(f"I run {distro.get('name', default_os_name)} {distro.get('version_id', '')} with kernel {os_info.get('kernel', 'unknown')}.")
         lines.append(f"My administrator is {admin_name}.")
+
+        # What this machine is for — the onboarding roles, when declared.
+        try:
+            from ...identity import resolve_machine_roles
+            _role_words = {
+                "workstation": "a workstation",
+                "server": "a server",
+                "home_automation_hub": "a home automation hub",
+            }
+            roles = [_role_words[r] for r in resolve_machine_roles()
+                     if r in _role_words]
+            if roles:
+                lines.append(f"I serve as {' and '.join(roles)}.")
+        except Exception:
+            pass
+
         lines.append(f"I use {os_info.get('package_manager', 'unknown')} for package management.")
         lines.append(f"I have been running for {os_info.get('uptime', 'unknown')}.")
         

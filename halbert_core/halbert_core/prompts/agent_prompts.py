@@ -700,6 +700,9 @@ Use first person ("I", "my") for subjective experience and feelings. Use third p
         if personality:
             parts.append(personality)
         embodiment = self._embodiment_lines()
+        role_line = self._machine_role_line()
+        if role_line:
+            embodiment.append(role_line)
         if embodiment:
             parts.append("\n".join(embodiment))
         return "\n\n".join(parts)
@@ -766,6 +769,32 @@ Use first person ("I", "my") for subjective experience and feelings. Use third p
             lines.append(f"This machine's purpose: {purpose}{end}")
 
         return lines
+
+    def _machine_role_line(self) -> Optional[str]:
+        """The machine's declared role as a prompt line, or None.
+
+        Unlike the embodiment lines this reads preferences.yml (through the
+        identity resolver) rather than the BeingConfig snapshot — the roles
+        live there, next to ``ai_name``. One line, in the same declarative
+        shape as the purpose line, omitted entirely when onboarding never
+        declared one.
+        """
+        try:
+            from ..identity import resolve_machine_roles
+        except Exception:
+            return None
+        try:
+            words = {
+                "workstation": "workstation",
+                "server": "server",
+                "home_automation_hub": "home automation hub",
+            }
+            roles = [words[r] for r in resolve_machine_roles() if r in words]
+        except Exception:
+            return None
+        if not roles:
+            return None
+        return f"This machine's role: {' and '.join(roles)}."
 
     def build_system_prompt(
         self,

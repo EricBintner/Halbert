@@ -16,6 +16,7 @@ from ...identity import (
     resolve_body_name,
     resolve_entity_name,
     resolve_entity_role,
+    resolve_machine_roles,
     resolve_persona_id,
 )
 
@@ -51,11 +52,27 @@ async def get_instance_info() -> Dict[str, Any]:
     variant = _get_variant()
     role = "home" if variant == "home" else "host"
 
-    # Feature flags — which tabs/pages should be visible
+    # The machine's declared roles (onboarding multi-select; [] when the
+    # question was never answered — undeclared reads as "workstation").
+    machine_roles = resolve_machine_roles()
+    is_workstation = not machine_roles or "workstation" in machine_roles
+
+    # Feature flags — which tabs/pages should be visible. Declared roles
+    # feed these (a declared home hub gets the Home tab even without the
+    # home variant; a machine declared server-or-hub-only drops the
+    # Development and GPU tabs) but never remove what the variant grants:
+    # capabilities are presence probes, roles are intent, and intent may
+    # only widen the nav or hide intent-mismatched tabs it introduced.
     features = {
-        "home": role == "home" or os.environ.get("HALBERT_ENABLE_HOME_TAB", "").lower() in ("1", "true", "yes"),
-        "gpu": os.environ.get("HALBERT_ENABLE_GPU_TAB", "").lower() in ("1", "true", "yes") or role == "host",
-        "development": role == "host",
+        "home": (role == "home"
+                 or "home_automation_hub" in machine_roles
+                 or os.environ.get("HALBERT_ENABLE_HOME_TAB", "").lower() in ("1", "true", "yes")),
+        "gpu": (os.environ.get("HALBERT_ENABLE_GPU_TAB", "").lower() in ("1", "true", "yes")
+                or (role == "host" and is_workstation)),
+        "development": role == "host" and is_workstation,
+        # Containers stay visible on servers (primary view there) even
+        # though they used to ride on the development flag.
+        "containers": role == "host",
         "wyoming_port": int(os.environ.get("WYOMING_PORT", "10400")),
     }
 
@@ -102,4 +119,5 @@ async def get_instance_info() -> Dict[str, Any]:
         "body_name": body_name,
         "entity_role": entity_role,
         "singular": singular,
+        "machine_roles": machine_roles,
     }

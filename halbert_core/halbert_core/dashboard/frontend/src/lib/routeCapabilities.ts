@@ -27,13 +27,17 @@ export interface InstanceFeatures {
   home: boolean
   gpu: boolean
   development: boolean
+  /** Split from `development` when machine roles landed: a machine
+   * declared server-or-hub-only drops the Development tab but keeps
+   * Containers, which the role table calls a primary server view. */
+  containers: boolean
 }
 
 /** Routes that demand a capability. Unlisted routes are always allowed. */
 export const ROUTE_REQUIREMENTS: Readonly<Record<string, keyof InstanceFeatures>> = {
   '/home': 'home',
   '/gpu': 'gpu',
-  '/containers': 'development',
+  '/containers': 'containers',
   '/development': 'development',
 }
 
@@ -69,4 +73,21 @@ export function safeRouteAfterSwitch(
 function normalize(pathname: string): string {
   const p = pathname.replace(/\/+$/, '')
   return p === '' ? '/' : p
+}
+
+/**
+ * Where onboarding should land once setup finishes, given the declared
+ * machine roles (HANDOFF-ONBOARDING-ROLE-INFERENCE §6.1). A machine that is
+ * only a server opens on Services (service health is its centre of
+ * gravity); a machine that is only a home hub opens on the Home panel;
+ * anything with a workstation side — and anything undeclared — opens on
+ * the overview. Used for the post-onboarding navigation only; `/` stays
+ * reachable from the rail either way.
+ */
+export function landingRoute(roles: readonly string[] | null | undefined): string {
+  const set = new Set(roles ?? [])
+  if (set.has('workstation') || set.size === 0) return '/'
+  if (set.has('server')) return '/services'
+  if (set.has('home_automation_hub')) return '/home'
+  return '/'
 }

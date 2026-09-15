@@ -28,6 +28,7 @@ import { ScanProvider } from './contexts/ScanContext'
 import { PageContextProvider } from './contexts/PageContext'
 import { ShellModeProvider, useShellMode } from './contexts/ShellModeContext'
 import { apiUrl } from '@/lib/apiBase'
+import { landingRoute } from '@/lib/routeCapabilities'
 
 /**
  * The /voice route element (O8). Voice Mode is a route of the same SPA
@@ -90,11 +91,17 @@ function App() {
     initializeApp()
   }, [])
 
-  const handleOnboardingComplete = () => {
+  const handleOnboardingComplete = (roles: string[]) => {
     setShowOnboarding(false)
-    // The onboarding already ran a deep scan, so profile data is available
-    // Force a page reload to ensure all components pick up the fresh data
-    window.location.reload()
+    // The onboarding already ran a deep scan, so profile data is available.
+    // Reload onto the role's landing page (a declared server opens on
+    // Services, a declared hub on Home, anything else on the overview).
+    const target = landingRoute(roles)
+    if (target !== '/' && window.location.pathname === '/') {
+      window.location.href = target
+    } else {
+      window.location.reload()
+    }
   }
 
   // Show nothing while checking onboarding status — except on the floating

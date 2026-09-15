@@ -16,9 +16,123 @@ import {
   Bell,
   Sparkles,
   Eye,
+  Monitor,
+  Server,
+  Home as HomeIcon,
 } from 'lucide-react'
 
 const API_BASE = apiUrl('/api')
+
+// The three machine roles, matching the onboarding multi-select and
+// identity.VALID_MACHINE_ROLES. API value `home_automation_hub` renders as
+// "Home Hub" (the handoff's Q8 ruling).
+const MACHINE_ROLES = [
+  { id: 'workstation', label: 'Workstation', icon: Monitor, hint: 'A computer someone sits at day to day' },
+  { id: 'server', label: 'Server', icon: Server, hint: 'Headless, serves other machines' },
+  { id: 'home_automation_hub', label: 'Home Hub', icon: HomeIcon, hint: 'Runs home automation' },
+] as const
+
+/**
+ * What this machine is for — the post-onboarding edit surface for the
+ * roles the wizard asked about (HANDOFF-ONBOARDING-ROLE-INFERENCE Q7).
+ * Changing them steers the nav (a hub gains the Home panel; a
+ * server-or-hub-only machine loses Development) and the prompt's
+ * embodiment line. Writes preferences.yml roles through
+ * POST /api/settings/machine-roles.
+ */
+function MachineRoleCard() {
+  const [roles, setRoles] = useState<string[] | null>(null)
+  const [dirty, setDirty] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [toast, setToast] = useState<string | null>(null)
+
+  useEffect(() => {
+    fetch(`${API_BASE}/settings/machine-roles`)
+      .then(r => r.ok ? r.json() : null)
+      .then(data => setRoles(data?.roles ?? []))
+      .catch(() => setRoles([]))
+  }, [])
+
+  const toggle = (id: string) => {
+    setDirty(true)
+    setRoles(prev => {
+      const cur = prev ?? []
+      return cur.includes(id) ? cur.filter(r => r !== id) : [...cur, id]
+    })
+  }
+
+  const save = async () => {
+    if (!roles || roles.length === 0) return
+    setSaving(true)
+    try {
+      const resp = await fetch(`${API_BASE}/settings/machine-roles`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ roles }),
+      })
+      if (resp.ok) {
+        setDirty(false)
+        setToast('Machine role updated')
+        setTimeout(() => setToast(null), 2000)
+      } else {
+        setToast('Error: failed to save')
+        setTimeout(() => setToast(null), 3000)
+      }
+    } catch {
+      setToast('Error: network failure')
+      setTimeout(() => setToast(null), 3000)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (roles === null) return null
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Monitor className="h-5 w-5" />
+          Machine Role
+        </CardTitle>
+        <CardDescription>
+          What this computer is for. It steers which panels appear and how
+          the machine describes itself. Pick all that apply.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="flex flex-wrap gap-3">
+          {MACHINE_ROLES.map((role) => (
+            <button
+              key={role.id}
+              onClick={() => toggle(role.id)}
+              className={`rounded-lg border p-3 text-left transition-colors min-w-[150px] ${
+                roles.includes(role.id)
+                  ? 'border-primary bg-primary/5 ring-1 ring-primary'
+                  : 'border-input hover:border-primary/50'
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                <role.icon className={`h-4 w-4 ${roles.includes(role.id) ? 'text-primary' : 'text-muted-foreground'}`} />
+                <span className="font-medium text-sm">{role.label}</span>
+              </div>
+              <p className="text-xs text-muted-foreground mt-1">{role.hint}</p>
+            </button>
+          ))}
+        </div>
+        {roles.length === 0 && (
+          <p className="text-xs text-muted-foreground">Pick at least one.</p>
+        )}
+        <div className="flex items-center gap-3">
+          <Button size="sm" onClick={save} disabled={!dirty || saving || roles.length === 0}>
+            {saving ? 'Saving…' : 'Save'}
+          </Button>
+          {toast && <span className="text-xs text-muted-foreground">{toast}</span>}
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Being Settings (Phase 6 / T6c.1)
@@ -226,6 +340,9 @@ function BeingSettings() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Machine Role — what this computer is for */}
+      <MachineRoleCard />
 
       {/* Character (Phase 3) */}
       <Card>

@@ -37,10 +37,16 @@ export interface InstanceInfo {
     home: boolean
     gpu: boolean
     development: boolean
+    /** Split from `development` when machine roles landed — optional so a
+     * pre-roles backend (a paired peer on older code) still typechecks;
+     * callers fall back to `development`. */
+    containers?: boolean
     wyoming_port: number
   }
   data_dir: string
   config_dir: string
   body_name: string
   singular: boolean
+  /** What this machine was set up as — [] when never declared. */
+  machine_roles?: string[]
 }

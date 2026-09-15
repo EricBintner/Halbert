@@ -47,6 +47,11 @@ ENTITY_ROLE_CANONICAL = "canonical"
 ENTITY_ROLE_BODY = "body"
 ENTITY_ROLE_INDEPENDENT = "independent"
 
+# What this machine is for, as declared at onboarding (the multi-select
+# replacement for the dead single-select ``user_type``). One list shared by
+# the API validator, the role-inference scorer, the prompt and the UI.
+VALID_MACHINE_ROLES = ("workstation", "server", "home_automation_hub")
+
 
 def _clean(value: Any) -> Optional[str]:
     """A non-blank string, or None — blank and whitespace are not names."""
@@ -156,6 +161,34 @@ def resolve_persona_id() -> str:
     from .integrations.cognition_wiring import _get_persona_id
 
     return _get_persona_id()
+
+
+def resolve_machine_roles() -> list:
+    """What this machine is for — the roles picked at onboarding.
+
+    Reads preferences.yml ``roles`` (written by ``POST
+    /api/settings/onboarding/complete`` and ``POST /api/settings/machine-
+    roles``). Returns the subset that is still a valid role, in declared
+    order, or ``[]`` when nothing was ever picked — an empty list means
+    "undeclared", which callers treat as the workstation default rather
+    than as "this machine is nothing".
+    """
+    try:
+        import yaml
+
+        config_path = _preferences_path()
+        if not config_path.exists():
+            return []
+        with open(config_path, "r", encoding="utf-8") as fh:
+            prefs = yaml.safe_load(fh) or {}
+        if not isinstance(prefs, dict):
+            return []
+        roles = prefs.get("roles")
+        if not isinstance(roles, list):
+            return []
+        return [r for r in roles if r in VALID_MACHINE_ROLES]
+    except Exception:
+        return []
 
 
 def resolve_entity_role(peers: Optional[Iterable[Any]] = None) -> str:
