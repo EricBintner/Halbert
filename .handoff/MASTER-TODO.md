@@ -7,7 +7,7 @@
 **Living task list & AI review directory.** Items move here from session handoffs so nothing gets
 lost between sessions. Strike through and date when done.
 
-**Updated:** 2026-09-02 (SONNET-05: §0/§3 resync against RESULTS-* docs, review remediation backlog, CI/branch-hygiene/voice-visual-UI/singular-entity rows, Rust HA-01 deferral note)
+**Updated:** 2026-09-14 (§4 resync: uncommitted work, unmerged branches, ROADMAP §3/SECURITY-TODO open rows, DECISIONS queue, designed-but-unstarted handoffs — see §4; earlier sections resynced 2026-09-02 by SONNET-05)
 **Master Review Portfolio:** 11 Comprehensive Review Packets (`.handoff/REVIEW-PACKET-*.md`) — remediation status: §2a below
 **Active Incomplete Task Packets:** 10 Actionable Implementation Packets (`.handoff/TASK-PACKET-*.md`) — superseded by the 2026-09-01 dispatch packets (OPUS-01..05, SONNET-01..05); kept as an index of the original handoff docs, not as open work
 
@@ -276,3 +276,96 @@ Separate living TODO with **72 tasks across 8 phases (R0–R7)** — 56 in the R
 **Architectural principle:** Rewrite stable system API interfaces (eBPF, Btrfs, Landlock, MQTT) in Rust. Keep application logic (scanners, state machine, prompts, device registry) in Python. Rust crates are thin native layers; Python is the brain that calls them.
 
 **Explicitly deferred (D7):** Custom kernel, Wayland compositor, PID 1, initramfs sentinel, dm-verity, native Matter controller, BLE, Windows platform, APFS snapshot SPIs; Z-Wave JS native client (trivial, ~3 days — re-enters L0 planning once R1 proves the native-device pattern; plan §11/§16.4a).
+
+---
+
+## 4. Resync — 2026-09-14: unfinished work across every thread
+
+Captured by auditing `git status`/`git branch --no-merged`/`git worktree list`, `ROADMAP.md`, `SECURITY-TODO.md`, `DECISIONS.md` pending rows, and the post-2026-09-02 `.handoff/` corpus. `ROADMAP.md` §3 remains the only now/next/deferred source — this section is capture, not priority. Strike and date when done.
+
+### 4.1 Uncommitted in the main checkout (working tree)
+
+- [ ] **Onboarding machine-role inference** — scan-first onboarding replacing dead `user_type`: `discovery/role_inference.py` (new), `GET /api/settings/onboarding/probe`, `roles: list[str]` + optional `notes` on `POST /onboarding/complete`, `GET/POST /api/settings/machine-roles`, roles in prompt identity block + `get_summary()` + `/api/instance/info` + `routeCapabilities` + `landingRoute`, Being-tab role editor, HA/MQTT/Zigbee/Z-Wave scanner signals incl. macOS `usb_devices` population. 26 new Python tests + 5 frontend; suites green. `RESULTS-ONBOARDING-ROLE-INFERENCE-2026-09-13.md`. Deferred half (§6.3 role feature-gating — needs ruling on whether declared intent may remove hardware capability — §6.4 scan emphasis, §6.5 proactivity mode) is designed, not built.
+- [ ] **Marketing v10 factual-review copy fixes + legal doc sync** — `marketing/web-v10/{index.html,App.jsx,stops.jsx,ScrollHUD.jsx,LayoutStage.jsx,privacy.html,terms.html}` + `documentation/legal/{PRIVACY,TERMS}.md` modified by another session; `RESULTS-MARKETING-V10-FACTUAL-REVIEW-2026-09-14.md` says LANDED (copy applied) but nothing is committed. `HANDOFF-VOICE-INFLECTION-AND-HARDWARE-SCALING-2026-09-13.md` also modified (+48/−21) — check which session owns it before committing.
+- [ ] **Untracked**: `web/` (contains `feature-reference-old`), `AGENTS.md.backup-2026-09-10`, `CLAUDE.md.backup-2026-09-10` — decide commit/delete; AGENTS says `web/feature-reference` is a reference viewer, and `feature-reference-old` may be superseded.
+- [ ] One stash: `stash@{0}` WIP on `feat/lift-03a-scheduler` (monitor-hash suppress/diff gate) — confirm whether it landed via merge before dropping.
+
+### 4.2 Unmerged branches (only three; 87 merged)
+
+- [ ] **`fix/remediation-opus-batch-2`** — 13 commits, 173 behind. The *competing* R-12 continuity implementation: main has the sonnet batch's R-12 Phase A (`98fbbb17`); this branch carries a fuller session-tree wiring plus extras — `A07-G8` yield primitive (`e7bcd05f`), utility-slot locality gate (`9e000ab3`), eval-matrix hardening (`275d9a39`, `54e05f81`, `a3cbc598`), entitlement-spike evidence doc (`5a1248cc`). Head commit `bb16bf49` names **three required rulings** (which R-12 impl, rotation threshold, `move_leaf` BEGIN IMMEDIATE) + one smaller call (cancelled-turn marker). Reconcile-or-close decision pending; do not let it rot silently.
+- [ ] **`feat/data-viz-slice-1`** — 9 commits, 129 behind. Design-system instrument work: Tufte dataviz palette, categorical hues, TactileMeter/SegmentedBar, DataGridRow unigrid, StorageTierGroup + DriveCassette multi-tier storage visualizer w/ Storybook templates. No handoff doc found; live worktree at `.claude/worktrees/data-viz-slice-1`. Decide merge-vs-abandon before token drift makes it unrecoverable.
+- [ ] **`worktree-sec-1-one-door`** — `git cherry` shows 6/7 commits patch-equivalent on main; the only non-equivalent (`71c7b88b`, SEC-D10) is already reflected in DECISIONS.md content. Effectively absorbed → verify once and delete branch + worktree.
+- [ ] **~40 stale worktrees** under `.claude/worktrees/` (all `feat/lift-*`, merge-train worktrees, `remediation-*`, `sec-merge*`, `feat-app-ui-access`, `feat-guest-persona`, `feat-kokoro-tts`, `interest`, `multi-node-phase-1`) — all merged; cleanup pass pending (prior cleanup reclaimed ~11 GB, SONNET-02).
+
+### 4.3 ROADMAP §3 rows still open (state as audited)
+
+Rows with unresolved portions, one line each — see ROADMAP for definitions of done:
+
+- [ ] **CI-1** — CI green: vision-extra + SPDX + ratchet state unverified since SONNET-05; `gh` absent so remote Actions status never confirmed.
+- [ ] **ID-1** — open residual: prompt name still reads `BeingConfig.name` not the resolver (`C1-02`); `identity.xml` perspective tag vs the_computer voice.
+- [ ] **ATTN-1** — proof slice joints still missing (`J3-7`, `J3-10`, `C2-02`, `C2-11`, `J3-12`); sshd drop-in scanner filed 2026-09-14 as the F7 proof target.
+- [ ] **ATTN-2** — `/findings` still lists discovery scans not findings (`C2-03`); dashboard triage (`C2-14`); attention state on pill in every layout (`C2-08`); report persistence (`C2-10`).
+- [ ] **MIND-1** — no unprompted cognitive tick (`C4-02`); Eyes→mind partial (DetectorRunner→`add_event`, retention job, occupancy erasure open under `C4-04`); cognition persistence (`C4-05`).
+- [ ] **STATE-1** — grounding still opportunistic (`J2-2`, `J2-3`, `P1-02`).
+- [ ] **LEDGER-1** — `run_command` outside the ledger entirely (largest hole); diff-apply route unreachable in production.
+- [ ] **TRUST-1** — `C3-01/02/04/05/19`; model-issued `web_search` routes to SEARCHING but never executes; per-body peer identity blocked on Haloysius Phase 1.
+- [ ] **LD-1** — `NodeFleetCockpit` written/tested/mounted nowhere (no route or nav); two-machine hardware run outstanding.
+- [ ] **SHELL-1** — stubs: `W5-CONV-02/03`, `W5-PROACT-01`, `W5-TERM-01`, `W5-KEYS-01/02`, `W5-BUG-01`.
+- [ ] **TERM-1** — watched user shell: `YourShellRegion` mounted nowhere, mount div never filled (`9-4-todo` §C1); legacy `/terminal` page still routed, reports connected to nothing (§C2).
+- [ ] **VOICE-1** — 0 real-audio runs ever (`VM-27`, `VM-15`); `/voice` on appliance; N150 matrix; Kokoro TTS + inflection work merged from `feat/kokoro-tts` but untested on hardware.
+- [ ] **HOME-1** — `W3-S01/S02/S07/S08/S11/S12/S13`, `U6-BUG-03/04` (Frigate queue cap, snapshot→vision routing).
+- [ ] **CFG-1** — `A2-01/03/04/08/19`; `A2-05` being.yml split after P0s.
+- [ ] **GATE-1** — `feature_flags.py` deletion + `is_home_variant()` callers (`A1-05`) still open.
+- [ ] **MCP-1** — standalone-process discoveries empty (`MCP-03/04`); macOS snapshot path (`SEC-05`).
+- [ ] **CLI-1** — `CLI-01..04`.
+- [ ] **KNOW-1** — `P1-05/11/12`, `RAG-01/06/13/14`, `U4-08/14`; corpus number vs fresh-clone reality.
+- [ ] **SKILL-1** — matcher unwired at `routes/agent.py:223`, `composed.prompt` unconsumed, `set_skill_safety` test-only, `allowed_tools` unread (DEFECT-1 verified).
+- [ ] **FENCE-1** — `A1-06/08/10/11/12/13/14/15`, `PICK-04`, `PERS-02`.
+- [ ] **SURF-1** — `C2-12/13`, `W3-C04`.
+- [ ] **BIRTH-1** — first-conversation onboarding; the role-inference slice landed 2026-09-13 (uncommitted); the conversation-shaped flow + real progress remains, and SEC-6's design absorbs it.
+- [ ] **DOCS-1** — `A4-09/21`, `A1-16`, `C4-08`, `T1-02/03/16`, `P1-08/09`.
+- [ ] **GPU-1** — research done (`RESEARCH-MAC-GPU-SUPPORT-2026-09-07`); Phases 1–6 not started.
+- [ ] **DIST-1** — legal cleared; code half open: entitlements plists, per-channel injection, private-API feature split, category reconcile, LICENSE-in-bundle. `FDR-09` external enrollments outstanding.
+- [ ] **APPLE-1** — `secure_model` points at a never-built HTTP sidecar (`127.0.0.1:11435`); FoundationModels is native Swift, no `fm` CLI exists; every secure turn falls back — feeds the cloud-suffix path.
+- [ ] **SEC-15 naming collision** — ROADMAP `SEC-15` (:cloud suffix bypass) was **fixed 2026-09-08** under the audit's `SEC-21` numbering (`is_local_model()` at five sites); ROADMAP row is stale. SECURITY-TODO `SEC-15` is a different item (prompt-injection containment) still open. Renumber the ROADMAP row.
+
+### 4.4 SECURITY-TODO train — open items
+
+- [ ] **SEC-1 residual** — non-loopback bind guard partial: `guard_bind` runs only in `python -m halbert_core.dashboard`; shipped `deploy/*.service` units, `packaging/systemd` unit, `cmd_dashboard_serve` don't hit it.
+- [ ] **SEC-4** — policy-engine deletion (`SEC-D11`), scheduler must not execute `approval_required` jobs, safe-mode flag off CWD-relative path, approval re-read + expiry at execution. Not started.
+- [ ] **SEC-5** — capability/consent split, `Lease` object on capture/exec/egress primitives, chokepoint lint + deny-all canary. Was blocked on `SEC-D10` — that call is now recorded (platforms.yml canonical, 2026-09-08), so **unblocked**.
+- [ ] **SEC-8** — one halt action + `halt.json` + six doors + live indicators from open leases. Ships with SEC-5.
+- [ ] **SEC-6** — two-phase boot + first-run consent review (absorbs BIRTH-1; deletes `user_type` + marker eventually — the role work composes with it). Not started.
+- [ ] **SEC-9 residual** — per-entity opt-in for L2 domains (deferred to SEC-5 consent model); HA→Halbert direction still relays any HA caller's text into a full turn (SEC-12 + SEC-10 scope).
+- [ ] **P1 rows** — SEC-7 consent ledger, SEC-10 speaker authority, SEC-11 egress chokepoint, SEC-12 remote-propose-only, SEC-14 self-modification fence/skills, SEC-15 prompt-injection containment, SEC-17 settings IA.
+- [ ] **P2 rows** — SEC-13 data-at-rest/erasure/export, SEC-16 packaging/signing/install chain, SEC-20 threat model + honest docs.
+- [ ] **P3 rows** — SEC-18 Windows empty ceiling (~1 day, scheduled early), SEC-19 sensor trust/retention.
+
+### 4.5 DECISIONS queue (~30 unresolved rows)
+
+- [ ] **Pending ratifications** (implemented-per-default, awaiting founder): `FD-24`, `FD-15`, `FD-16`, `FD-5/6/7`, `FD-3`, `FD-1`, `FD-19`, `FD-20`, `FD-22`, `FD-11` (revised — packaging call `ENV-01`: ship newer SQLite), `A13-G5`, `U6 D2/D4/Q3/Q4`, `R9-F01`, `R10-F1`, `VM-STT`, `R04-F1..F13`, `RNC-06`, voice `is_speech` flush, `U6-DESIGN-01`, `STUB-01`, `CC-02`, `INTEG-03..10`, `C1-02`/`W4-06` phrasing, `C2-10`, `C3-08`, `J3-7`, `C4-01`, `SEC-TLS`, `REPL-CACHE`, `COMP-STREAM`.
+- [ ] **Open founder rulings table** (DECISIONS tail): `C1-02`, `W4-01`, `C2-03`/`T1-11`, `C4-10`/`C4-01`, `C4-07`, `A2-05`, `C3-14`, `C3-08`, `C3-19` (due *now* — shipped units bind off-loopback), `SEC-05`.
+- [ ] **SECURITY-TODO founder calls**: `SEC-D10` done; still open `SEC-D1` (App Store channel), `SEC-D2` (X11 capture), `SEC-D3` (voiceprint retention), `SEC-D4` (bystander), `SEC-D5` (Windows target), `SEC-D11` (delete-or-repair policy engine), plus non-blocking `SEC-D6..D9`, `SEC-D12`.
+- [ ] **Memory boundary — five ordered decisions** (`DESIGN-MEMORY-BOUNDARY-2026-09-10` §8): two-store split ratification; curated core → ranked claim keys; partition by acquisition mode; merge-type declaration (`LWW`/`SET`/`ASK`); disagreement meter before provenance column.
+- [ ] **`FDR-04` monetization** — ACTIVE review: `HANDOFF-MONETIZATION-PLAN-REVIEW-2026-09-14.md` (device count ≥5–10, price re-derivation, MoR check, Ardour-model constraint) — awaiting a review session producing a written recommendation back to founder.
+- [ ] **F-3 Phase B** — Halbert curated-core executor: R1 elision rule, R2 `messages[0]` two-tenant split, four-signal-site set (`F3-JOINT-SESSION-AGENDA-2026-09-08`); `FD-22` keeps ranker consumer unwired until then.
+
+### 4.6 Designed-but-unstarted handoff work (post-2026-09-02 corpus)
+
+- [ ] **Runtime + SQLite pinning** — `HANDOFF-RUNTIME-AND-SQLITE-PINNING-2026-09-10.md`, dispatchable, *highest value open*: signed app's sidecar execs `~/.local/share/halbert/repo/.venv/bin/python` from a user-writable path — anything writing there runs with all of Halbert's TCC grants. Fix = uv-pinned frozen interpreter inside the bundle + SQLite pin (closes FD-11's `ENV-01`).
+- [ ] **Secure Enclave entitlement spike** — an afternoon; kill-or-confirm for the local re-auth route before any re-auth code (per STATE-OF-WORK-2026-09-10 §2).
+- [ ] **Held queue (attunement F6) — go-live blocker** — nothing calls `ledger.release(...)`; every non-SPEAK outcome is a `HOLD` that silently drops. Tripwire test pins it. Unblocks a lower daily cap.
+- [ ] **Disagreement meter Phase 0** — decisions then vectors, five contract items (`DISAGREEMENT-METER-SPEC` §5.1–5.4); no memory-boundary dependency.
+- [ ] **Chat UI modernization plans** — `PLAN-CHAT-UI-MODERNIZATION-AND-STACKED-TERMINAL-2026-09-11.md`, `PLAN-CHAT-UI-REFINED`, `PLAN-CHAT-UI-FABLE-LEVEL-DESIGN`, `HANDOFF-CHAT-UI-PHASES-1-3-5-2FE-2026-09-11.md` — designed 2026-09-11, no implementation commits found on main.
+- [ ] **oss-pass-3 blueprint lifts** (`oss-pass-3/03`): `@pierre/diffs` DiffBlock upgrade, `/btw` ephemeral side-queries, git-worktree task isolation, Swift FFI into `crates/halbert-ffi`, out-of-process ptyHostWorker pattern.
+- [ ] **Phase 4 follow-ups** (`HANDOFF-PHASE-4-FOLLOWUPS-2026-09-11.md`): zero tests for `_run_command_background`/`task_started`/`port_discovered` chain; port-sniff guard is per-chunk not per-match (narrow edge case).
+- [ ] **Multi-node deferred** (dispatch §7): upstream model→endpoint streaming deltas, DAG branch grafting, PAKE, Root CA, SWIM, CRDT replication; `SlidingWindowRedactor` multi-line-secret residual.
+- [ ] **Marketing open items** (`RESULTS-MARKETING-V10` §6): early-access form is fake — the only remaining untruthful element (pre-launch treatment + post-launch wiring); email ecosystem session (contacts, MX, unsubscribe); KnowledgePlate corpus number regen; `halbert.net` domain keep/lapse.
+- [ ] **Proposed DECISIONS rows awaiting ratification** (RESULTS §7): sharpened model-naming rule (unversioned client names OK, versioned never), "thousands" corpus headline until RAG-13, device-count floor ≥5.
+- [ ] **`iOS companion` open items** (from multi-node thread): talk-door decision, WKWebView audio spike, ingress sharing, credential-header fix — verify against `DISPATCH-MULTI-NODE-SYSTEMS-v2` before scheduling.
+- [ ] **Voice**: 0 real-audio hardware runs (VOICE-1 above) — the Kokoro/inflection chain on `feat/kokoro-tts` is merged but never heard.
+- [ ] **Rung-3 characterisation** — unbuilt joint build across applications; wants a decision that it *is* joint (STATE-OF-WORK-2026-09-10 §3).
+
+### 4.7 Convention note for the next resync
+
+`git branch --no-merged main` + `git worktree list` + `git status` is the three-command floor; ROADMAP §3 rows move only on RESULTS/commit evidence; any handoff claiming LANDED whose files are still `M`/`??` in `git status` is uncommitted, not landed.
