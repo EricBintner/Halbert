@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { StatusIndicator } from './StatusIndicator';
+import { CitationBlock } from './CitationBlock';
 import { ChevronDown, ChevronUp } from 'lucide-react';
 
 function SubFeatureItem({ feature }) {
@@ -33,9 +34,14 @@ function SubFeatureItem({ feature }) {
   );
 }
 
-export function FeatureDossier({ feature, forceOpen = false }) {
+export function FeatureDossier({ feature, citations = [], forceOpen = false }) {
   const [expanded, setExpanded] = useState(false);
   const isExpanded = forceOpen || expanded;
+
+  // Cited research, sorted by year then title (plan §6 Step 3).
+  const featureCitations = React.useMemo(() => {
+    return [...citations].sort((a, b) => a.year - b.year || a.title.localeCompare(b.title));
+  }, [citations]);
 
   return (
     <article
@@ -99,6 +105,20 @@ export function FeatureDossier({ feature, forceOpen = false }) {
           <p className="pl-3 border-l-2 border-[var(--color-line-strong)] leading-relaxed">
             {feature.limitsAndInvariants}
           </p>
+        </div>
+      )}
+
+      {/* Academic Foundations & Standards: cited research (plan §5.1) */}
+      {featureCitations.length > 0 && (
+        <div className="mt-5 pt-4 border-t border-[var(--color-line-subtle)]">
+          <span className="font-mono uppercase tracking-wider text-[10px] text-[var(--color-ink-tertiary)] font-semibold block mb-2.5">
+            Academic Foundations &amp; Standards ({featureCitations.length})
+          </span>
+          <div className="grid gap-3">
+            {featureCitations.map((citation) => (
+              <CitationBlock key={citation.id} citation={citation} />
+            ))}
+          </div>
         </div>
       )}
 

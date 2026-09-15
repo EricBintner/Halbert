@@ -1,7 +1,7 @@
 import React from 'react';
 import { FeatureDossier } from './FeatureDossier';
 
-export function CategoryBlock({ category, index, features, forceOpen }) {
+export function CategoryBlock({ category, index, features, forceOpen, citationsByCitationId }) {
   const catId = category.id || category.name.toLowerCase().replace(/[^a-z0-9]+/g, '-');
   const indexNumber = String(index + 1).padStart(2, '0');
 
@@ -30,6 +30,9 @@ export function CategoryBlock({ category, index, features, forceOpen }) {
           <FeatureDossier
             key={feature.id}
             feature={feature}
+            citations={(feature.citationIds || [])
+              .map((id) => citationsByCitationId?.[id])
+              .filter(Boolean)}
             forceOpen={forceOpen}
           />
         ))}

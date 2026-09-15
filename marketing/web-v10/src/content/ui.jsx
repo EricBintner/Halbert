@@ -261,17 +261,17 @@ export function VoiceModePlate() {
       style={{
         aspectRatio: '3 / 4',
         padding: '4%',
-        borderRadius: '1.5em',
+        borderRadius: 24,
         backgroundColor: PAPER.ink,
         boxShadow: 'var(--shadow-plate)',
       }}
     >
       <div
-        className="relative flex h-full w-full flex-col overflow-hidden"
+        className="voice-screen relative flex h-full w-full flex-col overflow-hidden"
         style={{
-          borderRadius: '1.125em',
+          borderRadius: 18,
           backgroundColor: 'color-mix(in srgb, var(--color-ink) 93%, var(--color-canvas))',
-          border: `0.0625em solid ${glassEdge}`,
+          border: `1px solid ${glassEdge}`,
         }}
       >
         {/* status strip */}
@@ -299,33 +299,33 @@ export function VoiceModePlate() {
         </p>
 
         {/* touch-bar hint */}
-        <div className="flex items-center justify-center gap-2 pb-[6%]">
+        <div className="flex items-center justify-center gap-[0.5em] pb-[6%]">
           <span
-            className="inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-[10px] font-medium"
+            className="inline-flex items-center gap-[0.6em] rounded-full border px-[1.2em] py-[0.4em] text-[0.625em] font-medium"
             style={{
               color: 'var(--color-canvas)',
               borderColor: 'color-mix(in srgb, var(--color-accent) 45%, transparent)',
               backgroundColor: 'color-mix(in srgb, var(--color-accent) 16%, transparent)',
             }}
           >
-            <Mic className="h-3 w-3" aria-hidden="true" style={{ color: 'var(--color-accent)' }} />
+            <Mic className="h-[1.2em] w-[1.2em]" aria-hidden="true" style={{ color: 'var(--color-accent)' }} />
             Tap to speak
           </span>
           <span
-            className="inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-[10px] font-medium"
+            className="inline-flex items-center gap-[0.6em] rounded-full border px-[1.2em] py-[0.4em] text-[0.625em] font-medium"
             style={{
               color: 'color-mix(in srgb, var(--color-canvas) 40%, transparent)',
               borderColor: glassEdge,
             }}
           >
-            <Keyboard className="h-3 w-3" aria-hidden="true" />
+            <Keyboard className="h-[1.2em] w-[1.2em]" aria-hidden="true" />
             Keyboard
           </span>
         </div>
 
         {/* home indicator */}
         <span
-          className="absolute bottom-[1.5%] left-1/2 h-[3px] w-[26%] -translate-x-1/2 rounded-full"
+          className="absolute bottom-[1.5%] left-1/2 h-[0.1875em] w-[26%] -translate-x-1/2 rounded-full"
           style={{ backgroundColor: 'color-mix(in srgb, var(--color-canvas) 35%, transparent)' }}
         />
       </div>

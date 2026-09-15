@@ -4,6 +4,7 @@ export function CategorySidebar({
   categories,
   activeCategory,
   onSelectCategory,
+  categoryCounts,
   statusFilter,
   onStatusFilterChange,
   statusCounts,
@@ -12,6 +13,7 @@ export function CategorySidebar({
   scopeCounts,
   expandAll,
   onToggleExpandAll,
+  researchCount = 0,
 }) {
   const STATUSES = [
     { id: 'all', label: 'All' },
@@ -70,16 +72,42 @@ export function CategorySidebar({
               key={catId}
               href={`#category-${catId}`}
               onClick={() => onSelectCategory(cat.id || cat.name)}
-              className={`px-2.5 py-1.5 rounded text-xs font-mono transition-colors block ${
+              className={`flex items-center justify-between gap-2 px-2.5 py-1.5 rounded text-xs font-mono transition-colors block ${
                 isActive
                   ? 'text-[var(--color-accent)] font-semibold bg-[var(--color-surface-subtle)]'
                   : 'text-[var(--color-ink-secondary)] hover:text-[var(--color-ink)]'
               }`}
             >
-              {indexNumber}. {cat.name}
+              <span>
+                {indexNumber}. {cat.name}
+              </span>
+              <span className="text-[10px] text-[var(--color-ink-tertiary)] shrink-0">
+                {categoryCounts?.[cat.name] ?? 0}
+              </span>
             </a>
           );
         })}
+
+        {/* Research & Foundations: all citations, count derived from the JSON
+            (plan §5.3 — never a typed literal). */}
+        <a
+          href="#category-research-foundations"
+          onClick={(e) => {
+            e.preventDefault();
+            onSelectCategory('research-foundations');
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+          }}
+          className={`flex items-center justify-between gap-2 px-2.5 py-1.5 rounded text-xs font-mono transition-colors block ${
+            activeCategory === 'research-foundations'
+              ? 'text-[var(--color-accent)] font-semibold bg-[var(--color-surface-subtle)]'
+              : 'text-[var(--color-ink-secondary)] hover:text-[var(--color-ink)]'
+          }`}
+        >
+          <span>{String(categories.length + 1).padStart(2, '0')}. Research &amp; Foundations</span>
+          <span className="text-[10px] text-[var(--color-ink-tertiary)] shrink-0">
+            {researchCount}
+          </span>
+        </a>
       </nav>
 
       {/* Scope Filter */}
