@@ -3,7 +3,11 @@ import { STOPS } from '../lib/storyboard';
 
 export function ScrollHUD({ currentStop, onSelectStop, scrollProgress }) {
   return (
-    <nav aria-label="Stop navigation" className="fixed right-6 top-1/2 -translate-y-1/2 z-30 font-mono select-none hidden sm:flex flex-col items-end space-y-3 text-[var(--color-ink)]">
+    <nav
+      aria-label="Stop navigation"
+      style={{ paddingRight: 'env(safe-area-inset-right)' }}
+      className="fixed right-6 top-1/2 -translate-y-1/2 z-30 font-mono select-none hidden sm:flex flex-col items-end space-y-3 text-[var(--color-ink)]"
+    >
       {STOPS.map((stop, i) => {
         const isActive = currentStop === i;
         return (

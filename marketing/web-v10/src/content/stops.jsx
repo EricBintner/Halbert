@@ -14,8 +14,13 @@ import { ProactiveEventsPlate, VitalsPlate, RationalePlate, KnowledgePlate, Intr
  * stop has something real to show.
  */
 
+// max-sm variants compress the copy rhythm on phones only: the top-field copy
+// is bottom-anchored to the colour boundary (see LayoutStage), so a stack too
+// tall for half a phone screen rides up behind the folio bar. Tighter leading,
+// smaller gaps and a slightly wider measure keep it inside the field — desktop
+// (>=640px) is untouched.
 export const Kicker = ({ children, className = '' }) => (
-  <div className={`text-[13px] font-mono font-bold tracking-[0.2em] uppercase opacity-80 mb-4 ${className}`}>{children}</div>
+  <div className={`text-[13px] font-mono font-bold tracking-[0.2em] uppercase opacity-80 mb-4 max-sm:mb-2 max-sm:tracking-[0.12em] ${className}`}>{children}</div>
 );
 
 export const Headline = ({ children, size = 'lg' }) => {
@@ -24,11 +29,23 @@ export const Headline = ({ children, size = 'lg' }) => {
     lg: 'text-[clamp(2.25rem,5.5vw,5.5rem)]',
     md: 'text-[clamp(1.75rem,3.8vw,3.75rem)]',
   }[size];
-  return <h2 className={`font-display font-black tracking-tight leading-[0.95] ${cls}`}>{children}</h2>;
+  // Phones: the 36px floor wraps long lines to 3 each in a half-width column,
+  // blowing the top field's budget. The phone step also carries a vh term so
+  // short viewports (SE-class heights, Safari's insecure-connection banner
+  // stealing height) scale the type down with the field. The caps keep every
+  // viewport >= ~812px at full size; >=640px wide is untouched entirely.
+  // md runs only on the full-mark reveal stop, whose band is full-width and
+  // centered — not a half column — so it carries more size than lg/xl.
+  const phone = {
+    xl: 'max-sm:text-[clamp(1.6rem,4.2vh,2.4rem)]',
+    lg: 'max-sm:text-[clamp(1.3rem,3.7vh,1.9rem)]',
+    md: 'max-sm:text-[clamp(1.25rem,4vh,1.85rem)]',
+  }[size];
+  return <h2 className={`font-display font-black tracking-tight leading-[0.95] ${cls} ${phone}`}>{children}</h2>;
 };
 
 export const Body = ({ children }) => (
-  <p className="text-[clamp(0.95rem,1.25vw,1.2rem)] leading-relaxed max-w-[38ch] mt-5 opacity-90">{children}</p>
+  <p className="text-[clamp(0.95rem,1.25vw,1.2rem)] leading-relaxed max-w-[38ch] mt-5 opacity-90 max-sm:mt-3 max-sm:text-[0.9rem] max-sm:leading-snug max-sm:max-w-[44ch]">{children}</p>
 );
 
 export const Cue = ({ children }) => (
@@ -153,7 +170,7 @@ export const STOP_CONTENT = {
         <div className="text-[clamp(0.95rem,1.25vw,1.2rem)] opacity-90 mt-2 mb-3">
           Open source, GPL-3.0
         </div>
-        <Kicker>Linux · Mac · Win · Home Assistant</Kicker>
+        <Kicker>Linux · Mac · Home Assistant</Kicker>
       </>
     ),
   },
@@ -181,7 +198,7 @@ export const STOP_CONTENT = {
     stroke: (
       <>
         <Kicker>// Grounded, not guessed</Kicker>
-        <Headline>I know over 20,000 system references and docs.</Headline>
+        <Headline>I know thousands of system references and docs.</Headline>
         <Body>
           Man pages, the Arch Wiki, Homebrew formulae, TLDR pages — indexed on this disk and searched before I answer.
           No invented flags. When I cite a source, you can open it.

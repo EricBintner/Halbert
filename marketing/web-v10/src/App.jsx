@@ -61,14 +61,17 @@ function FolioBar({ camera, reticle, isOverlay = false }) {
           ? 'text-[var(--color-ink-on-stroke)] select-none'
           : 'text-[var(--color-ink)]'
       }`}
-      style={
-        isOverlay
+      style={{
+        // py-4 base stays; add the notch inset on top so unnotched displays
+        // (env() = 0) keep the original 16px padding.
+        paddingTop: 'calc(1rem + env(safe-area-inset-top))',
+        ...(isOverlay
           ? {
               WebkitMaskImage: 'url(#stroke-intersection-mask)',
               maskImage: 'url(#stroke-intersection-mask)',
             }
-          : undefined
-      }
+          : null),
+      }}
       aria-hidden={isOverlay ? 'true' : undefined}
     >
       <div className="flex items-center space-x-3">
