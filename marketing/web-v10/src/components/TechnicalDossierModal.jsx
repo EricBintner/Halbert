@@ -370,79 +370,67 @@ export function TechnicalDossierModal({ camera, stops }) {
           </div>
         </div>
 
-        {/* Right Pane (Desktop Fly-Out): exact same locked height as left pane, fully scrollable */}
+        {/* Right Pane (Desktop Fly-Out): exact same locked height as left pane, headerless, fully scrollable */}
         <div
           className={`hidden sm:flex flex-col h-full min-h-0 border-l border-[var(--color-line)] bg-[var(--color-canvas)] transition-all duration-200 ease-out overflow-hidden ${
             selectedItem ? 'w-[360px] opacity-100' : 'w-0 opacity-0 pointer-events-none'
           }`}
         >
           {selectedItem && (
-            <>
-              {/* Detail Header */}
-              <div className="flex shrink-0 items-center justify-between border-b border-[var(--color-line)] px-3 py-2">
-                <span className="font-mono text-[9px] font-bold uppercase tracking-wider text-[var(--color-ink-tertiary)] truncate">
-                  {selectedItem.typeLabel} {selectedItem.meta ? `· ${selectedItem.meta}` : ''}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setSelectedId(null)}
-                  aria-label="Close detail pane"
-                  className="flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded text-[var(--color-ink-tertiary)] transition-colors hover:bg-[var(--color-surface-subtle)] hover:text-[var(--color-ink)]"
-                >
-                  <X size={12} aria-hidden="true" />
-                </button>
+            /* Detail Body — takes full panel height without a duplicate header or close button */
+            <div
+              tabIndex={0}
+              className="h-full overflow-y-auto overscroll-contain p-3.5 text-[11.5px] leading-relaxed text-[var(--color-ink-secondary)] space-y-2 focus:outline-none"
+              style={{ overscrollBehavior: 'contain' }}
+            >
+              <div className="flex items-center gap-1.5 font-mono text-[9px] font-bold uppercase tracking-wider text-[var(--color-ink-tertiary)]">
+                <span>{selectedItem.typeLabel}</span>
+                {selectedItem.meta && <span>· {selectedItem.meta}</span>}
               </div>
 
-              {/* Detail Body — scrollable independently, isolated from background page scroll */}
-              <div
-                tabIndex={0}
-                className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-3 text-[11.5px] leading-relaxed text-[var(--color-ink-secondary)] space-y-2 focus:outline-none"
-                style={{ overscrollBehavior: 'contain' }}
-              >
-                <h4 className="text-[13px] font-semibold leading-snug text-[var(--color-ink)]">
-                  {selectedItem.title}
-                </h4>
+              <h4 className="text-[13px] font-semibold leading-snug text-[var(--color-ink)]">
+                {selectedItem.title}
+              </h4>
 
-                {selectedItem.fullCitation && (
-                  <p className="font-mono text-[9.5px] text-[var(--color-ink-tertiary)] leading-normal">
-                    {selectedItem.fullCitation}
-                  </p>
-                )}
-
-                <p className="text-[var(--color-ink)] leading-normal">
-                  {selectedItem.takeaway}
+              {selectedItem.fullCitation && (
+                <p className="font-mono text-[9.5px] text-[var(--color-ink-tertiary)] leading-normal">
+                  {selectedItem.fullCitation}
                 </p>
+              )}
 
-                {selectedItem.howHalbertApplies && (
-                  <div className="border-l-2 border-[var(--color-stroke)] pl-2 pt-0.5 text-[var(--color-ink-secondary)]">
-                    <span className="font-mono text-[8.5px] font-bold uppercase tracking-wider block text-[var(--color-stroke)] mb-0.5">
-                      In Halbert
-                    </span>
-                    {selectedItem.howHalbertApplies}
-                  </div>
-                )}
+              <p className="text-[var(--color-ink)] leading-normal">
+                {selectedItem.takeaway}
+              </p>
 
-                {selectedItem.toolingAndBackend && (
-                  <p className="font-mono text-[9px] text-[var(--color-ink-tertiary)]">
-                    Source: {selectedItem.toolingAndBackend}
-                  </p>
-                )}
+              {selectedItem.howHalbertApplies && (
+                <div className="border-l-2 border-[var(--color-stroke)] pl-2 pt-0.5 text-[var(--color-ink-secondary)]">
+                  <span className="font-mono text-[8.5px] font-bold uppercase tracking-wider block text-[var(--color-stroke)] mb-0.5">
+                    In Halbert
+                  </span>
+                  {selectedItem.howHalbertApplies}
+                </div>
+              )}
 
-                {selectedItem.url && (
-                  <div className="pt-1">
-                    <a
-                      href={selectedItem.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1 font-mono text-[10px] text-[var(--color-ink)] underline decoration-[var(--color-line-strong)] hover:text-[var(--color-stroke)]"
-                    >
-                      <span>Original work</span>
-                      <ExternalLink size={10} aria-hidden="true" />
-                    </a>
-                  </div>
-                )}
-              </div>
-            </>
+              {selectedItem.toolingAndBackend && (
+                <p className="font-mono text-[9px] text-[var(--color-ink-tertiary)]">
+                  Source: {selectedItem.toolingAndBackend}
+                </p>
+              )}
+
+              {selectedItem.url && (
+                <div className="pt-1">
+                  <a
+                    href={selectedItem.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 font-mono text-[10px] text-[var(--color-ink)] underline decoration-[var(--color-line-strong)] hover:text-[var(--color-stroke)]"
+                  >
+                    <span>Original work</span>
+                    <ExternalLink size={10} aria-hidden="true" />
+                  </a>
+                </div>
+              )}
+            </div>
           )}
         </div>
       </div>
