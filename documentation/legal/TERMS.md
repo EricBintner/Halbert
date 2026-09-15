@@ -21,9 +21,9 @@ The core Halbert software engine, command-line interface, and open-source packag
 - The full terms and conditions of the GPL-3.0 govern your rights to copy, study, modify, and redistribute the open-source software.
 - Nothing in these website Terms overrides, restricts, or supersedes your freedoms under the GPL-3.0 for components licensed under it.
 
-### 2.2 Halbert Pro (macOS Direct Edition) & Apple App Store Editions
-- **Halbert Pro**: Delivered via our Merchant of Record (LemonSqueezy) as a one-time perpetual license ($29 standard, $24 launch promo) granting execution rights on up to 10 machines or nodes administered by the licensee, with 12 months of official Sparkle updates and an optional $19/year renewal. Lapsed licenses remain fully functional forever. Governed by [`HALBERT-PRO-COMMERCIAL-TERMS.md`](HALBERT-PRO-COMMERCIAL-TERMS.md).
-- **Apple App Store Editions (macOS, iOS, iPadOS, visionOS)**: Free companion applications distributed subject to Apple Media Services Terms and Conditions and our GPLv3 Section 7 Additional Permission ([`LICENSE-EXCEPTION-APPSTORE`](../../LICENSE-EXCEPTION-APPSTORE)).
+### 2.2 Halbert for Mac & Apple App Store Editions (Halbert Node)
+- **Halbert (macOS Direct Edition)**: Delivered via our Merchant of Record (LemonSqueezy) as a one-time perpetual license ($29 standard, $24 launch promo) granting execution rights on unlimited personal machines or nodes owned or administered by the licensee, with 12 months of official Sparkle updates and an optional $19/year renewal. Lapsed licenses remain fully functional forever. Governed by [`HALBERT-PRO-COMMERCIAL-TERMS.md`](HALBERT-PRO-COMMERCIAL-TERMS.md).
+- **Halbert Node (macOS, iOS, iPadOS, visionOS)**: Free remote companion applications distributed through Apple App Stores subject to Apple Media Services Terms and Conditions and our GPLv3 Section 7 Additional Permission ([`LICENSE-EXCEPTION-APPSTORE`](../../LICENSE-EXCEPTION-APPSTORE)).
 
 ---
 

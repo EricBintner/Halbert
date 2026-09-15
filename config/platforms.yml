@@ -221,10 +221,10 @@ build:
       - common
   
   macos:
-    # LemonSqueezy Pro (Direct Distribution / Unsandboxed)
+    # LemonSqueezy Direct Edition (Direct Distribution / Unsandboxed)
     pro:
       bundle_id: "ai.halbert.macos.pro"
-      app_name: "Halbert Pro"
+      app_name: "Halbert"
       channel: "lemonsqueezy"
       sandboxed: false
       multi_session: true
@@ -237,7 +237,7 @@ build:
     # Mac App Store (Companion / Remote Client)
     app_store:
       bundle_id: "ai.halbert.macos.free"
-      app_name: "Halbert"
+      app_name: "Halbert Node"
       channel: "mac_app_store"
       sandboxed: true
       multi_session: true
@@ -246,21 +246,21 @@ build:
       keywords:
         - system administration
         - remote terminal
-        - AI assistant
+        - cluster node
         - linux companion
         - homelab
         - developer tools
       marketing:
-        tagline: "The AI that is your computer — Remote Companion"
+        tagline: "Remote Companion & Sensory Node for Halbert"
         description: |
-          Halbert is a remote companion client that connects to your local Mac
-          and remote Linux servers, home labs, and dev machines with natural language.
+          Halbert Node connects your Mac into your Halbert personal cluster,
+          providing ambient voice interaction, cluster vitals, and remote action approvals.
 
   ios:
     # iOS Companion (Remote Client, Voice & Approval Desk)
     companion:
       bundle_id: "ai.halbert.ios.free"
-      app_name: "Halbert"
+      app_name: "Halbert Node"
       channel: "ios_app_store"
       sandboxed: true
       price: "free"
@@ -275,7 +275,7 @@ build:
     # visionOS Spatial Companion (Ambient Presence & Voice)
     companion:
       bundle_id: "ai.halbert.visionos.free"
-      app_name: "Halbert Spatial"
+      app_name: "Halbert Node"
       channel: "visionos_app_store"
       sandboxed: true
       price: "free"

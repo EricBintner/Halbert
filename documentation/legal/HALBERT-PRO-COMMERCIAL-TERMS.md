@@ -1,4 +1,4 @@
-# Halbert Pro — Commercial Terms & End User License Agreement (EULA)
+# Halbert (macOS Direct) — Commercial Terms & End User License Agreement (EULA)
 
 **Effective Date:** 2026-09-14  
 **Status:** Ratified (`DECISIONS.md` `FDR-04`, 2026-09-14)  
@@ -12,21 +12,21 @@
 
 Halbert Core is free software licensed under the **GNU General Public License Version 3.0 or later** (`GPL-3.0-or-later`). Nothing in these Commercial Terms limits, restricts, or overrides your rights to inspect, modify, compile, or redistribute the open-source source code under the terms of the GPL-3.0.
 
-These Commercial Terms govern your purchase, licensing, and receipt of official, pre-compiled, Developer ID-signed, and Apple-notarized binary releases of **Halbert Pro** for macOS distributed through our Merchant of Record.
+These Commercial Terms govern your purchase, licensing, and receipt of official, pre-compiled, Developer ID-signed, and Apple-notarized binary releases of **Halbert** for macOS distributed through our Merchant of Record.
 
 Pursuant to the binding mechanism constraint ratified in `DECISIONS.md` (2026-09-04):
-> Halbert Pro does not enforce artificial feature paywalls or functional restrictions within the shared GPL core engine. The commercial product conveyed is the hardened, Apple-notarized, unsandboxed macOS binary release, accompanied by automated Sparkle background updates and official maintenance support.
+> Halbert does not enforce artificial feature paywalls or functional restrictions within the shared GPL core engine. The commercial product conveyed is the hardened, Apple-notarized, unsandboxed macOS binary release, accompanied by automated Sparkle background updates and official maintenance support.
 
 ---
 
 ## 2. License Grant (Personal Custodian License)
 
-Upon receipt of payment and issuance of a cryptographic license key, Magnetic Anomaly LLC grants you a personal, non-exclusive, non-transferable commercial license to execute official Halbert Pro binaries under the following terms:
+Upon receipt of payment and issuance of a cryptographic license key, Magnetic Anomaly LLC grants you a personal, non-exclusive, non-transferable commercial license to execute official Halbert binaries under the following terms:
 
 1. **Named Licensee:** The license is granted to a single designated individual (the "Custodian").
-2. **Device Allowance:** You may install, activate, and run official Halbert Pro binaries on up to **ten (10) physical or virtual computing machines** owned, leased, or directly administered by you for personal, domestic, or professional use.
+2. **Unlimited Personal Machines:** You may install, activate, and run official Halbert binaries on **any number of physical or virtual machines** owned, leased, or directly administered by you for personal, domestic, or individual professional use. There is no artificial numerical machine cap or activation ceiling.
 3. **Multi-Node Cluster Operation:** Concurrent execution across your personal multi-node cluster (e.g. primary workstation, laptop, homelab servers, and appliance nodes) is explicitly permitted and encouraged under a single license.
-4. **Organizational / Multi-User Teams:** If Halbert Pro is deployed across multiple users within a commercial team or organization, one separate license must be acquired per active administrator/custodian.
+4. **Organizational / Multi-User Teams:** If Halbert is deployed across multiple users within a commercial team or organization, one separate license must be acquired per active administrator/custodian.
 
 ---
 
@@ -87,16 +87,16 @@ All orders, payment processing, invoicing, and order delivery are fulfilled by o
 
 ---
 
-## 8. Companion Applications (Apple App Stores)
+## 8. Companion Applications — Halbert Node (Apple App Stores)
 
-In addition to Halbert Pro for macOS, the Halbert project distributes companion applications:
-* **Platforms:** Apple Mac App Store, iOS, iPadOS, and visionOS.
+In addition to the host applications (Halbert for Linux, Halbert for Mac), the Halbert project distributes free remote companion applications under the name **Halbert Node**:
+* **Platforms & Offerings:** Halbert Node for Mac (Mac App Store), Halbert Node for iOS (iOS App Store), and Halbert Node for visionOS (visionOS App Store).
 * **Pricing:** **100% Free** (zero in-app purchases, zero recurring subscription fees).
 * **Functionality:** Sandboxed remote companion clients providing ambient voice interaction, cluster vitals monitoring, FaceID action approval, and camera/vision ingestion.
-* **Legal Terms:** Companion builds are distributed pursuant to Apple Media Services Terms and Conditions and our single-sourced **GPLv3 Section 7 Additional Permission** ([`LICENSE-EXCEPTION-APPSTORE`](../../LICENSE-EXCEPTION-APPSTORE)). Companion clients pair seamlessly with both self-hosted open-source nodes and Halbert Pro installations.
+* **Legal Terms:** Companion builds are distributed pursuant to Apple Media Services Terms and Conditions and our single-sourced **GPLv3 Section 7 Additional Permission** ([`LICENSE-EXCEPTION-APPSTORE`](../../LICENSE-EXCEPTION-APPSTORE)). Halbert Node clients pair seamlessly with both self-hosted open-source nodes (Halbert for Linux) and direct macOS host installations (Halbert for Mac).
 
 ---
 
 ## 9. Disclaimer of Operational Liability
 
-Halbert Pro executes administrative commands and monitors live operating system environments. You acknowledge and agree that you are solely responsible for reviewing staged system actions and maintaining verified backups of all critical systems, as set forth in [`DISCLAIMER.md`](DISCLAIMER.md) and [`TERMS.md`](TERMS.md).
+Halbert executes administrative commands and monitors live operating system environments. You acknowledge and agree that you are solely responsible for reviewing staged system actions and maintaining verified backups of all critical systems, as set forth in [`DISCLAIMER.md`](DISCLAIMER.md) and [`TERMS.md`](TERMS.md).

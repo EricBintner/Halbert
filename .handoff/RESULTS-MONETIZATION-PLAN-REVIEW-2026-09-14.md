@@ -102,15 +102,14 @@ Because this wording explicitly says "Mac App Store", shipping an iOS build unde
 
 ## 5. The Eight Required Deliverables
 
-### Deliverable 1: Device Count & Rationale
-- **Recommendation:** **10 devices per personal license**.
+### Deliverable 1: Device Count & Personal Custodian Allowance
+- **Recommendation:** **Unlimited Personal Devices / Machines (No Arbitrary Numerical Cap)**.
 - **Rationale:** 
-  - 3 devices was obsolete legacy thinking from single-workstation desktop utilities.
-  - A modern Halbert custodian operates in a multi-node federation (Mac Studio + MacBook + 2 Linux servers + N150 appliance = 5 devices minimum). 
-  - A 10-node limit gives comfortable headroom for personal homelabs while preventing commercial studio/enterprise abuse.
-  - It aligns with the v10 message: *"Independent nodes. Shared intelligence."*
+  - An arbitrary cap of 10 (like the earlier 3) introduces friction, tracking paranoia, and counter headaches into what is inherently a zero-telemetry, offline-verified tool.
+  - All other releases (Linux, Mac App Store, iOS, visionOS) are unlimited. Putting an arbitrary limit only on the sole paid edition penalizes paying supporters.
+  - Aligns with the Ardour, Sublime Text, and JetBrains personal licensing model: a license is tied to a single human custodian, who may run it across any number of personal workstations, laptops, homelab servers, or test VMs they own or administer.
 - **Exact Licence-Grant Wording (for `HALBERT-PRO-COMMERCIAL-TERMS.md` & `TERMS.md`):**
-  > *"A Halbert Pro license grants a single designated individual a non-exclusive, non-transferable license to install, activate, and execute official signed Halbert Pro binaries on up to ten (10) computing devices owned, leased, or directly administered by the licensee for personal, domestic, or professional use. Concurrent execution across the licensee's personal multi-node cluster is explicitly authorized."*
+  > *"A Halbert license grants a single designated individual a non-exclusive, non-transferable license to install, activate, and execute official signed Halbert binaries on any number of computing devices or virtual environments owned, leased, or directly administered by the licensee for personal, domestic, or individual professional use. Concurrent execution across the licensee's personal multi-node cluster is explicitly authorized."*
 
 ---
 
