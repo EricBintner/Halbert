@@ -289,7 +289,7 @@ export function TechnicalDossierModal({ camera, stops }) {
 
           {/* List of single-line rows — scrollable with overscroll-contain */}
           <div
-            className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-1.5 space-y-0.5"
+            className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain p-1.5 space-y-0.5"
             style={{ overscrollBehavior: 'contain' }}
           >
             {items.map((item) => {
@@ -328,18 +328,18 @@ export function TechnicalDossierModal({ camera, stops }) {
 
                   {/* Mobile-only inline expansion (accordion fallback) */}
                   {isSelected && (
-                    <div className="sm:hidden my-1.5 p-2 text-[11.5px] leading-relaxed text-[var(--color-ink-secondary)] bg-[var(--color-surface-subtle)]/60 rounded">
+                    <div className="sm:hidden my-1.5 p-2 text-[11.5px] leading-relaxed text-[var(--color-ink-secondary)] bg-[var(--color-surface-subtle)]/60 rounded break-words [overflow-wrap:anywhere]">
                       {item.fullCitation && (
-                        <p className="font-mono text-[9.5px] text-[var(--color-ink-tertiary)]">
+                        <p className="font-mono text-[9.5px] text-[var(--color-ink-tertiary)] break-words">
                           {item.fullCitation}
                         </p>
                       )}
-                      <p className="mt-1 text-[var(--color-ink)]">{item.takeaway}</p>
+                      <p className="mt-1 text-[var(--color-ink)] break-words">{item.takeaway}</p>
                       {item.howHalbertApplies && (
-                        <p className="mt-1 text-[var(--color-ink-secondary)]">{item.howHalbertApplies}</p>
+                        <p className="mt-1 text-[var(--color-ink-secondary)] break-words">{item.howHalbertApplies}</p>
                       )}
                       {item.toolingAndBackend && (
-                        <p className="mt-1 font-mono text-[9px] text-[var(--color-ink-tertiary)]">
+                        <p className="mt-1 font-mono text-[9px] text-[var(--color-ink-tertiary)] break-all">
                           Source: {item.toolingAndBackend}
                         </p>
                       )}
@@ -349,7 +349,7 @@ export function TechnicalDossierModal({ camera, stops }) {
                             href={item.url}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="inline-flex items-center gap-1 font-mono text-[10px] text-[var(--color-ink)] underline decoration-[var(--color-line-strong)] hover:text-[var(--color-stroke)]"
+                            className="inline-flex items-center gap-1 font-mono text-[10px] text-[var(--color-ink)] underline decoration-[var(--color-line-strong)] hover:text-[var(--color-stroke)] break-all"
                           >
                             <span>Original work</span>
                             <ExternalLink size={9} aria-hidden="true" />
@@ -379,8 +379,9 @@ export function TechnicalDossierModal({ camera, stops }) {
           {selectedItem && (
             /* Detail Body — takes full panel height without a duplicate header or close button */
             <div
+              key={selectedItem.id}
               tabIndex={0}
-              className="h-full overflow-y-auto overscroll-contain p-3.5 text-[11.5px] leading-relaxed text-[var(--color-ink-secondary)] space-y-2 focus:outline-none"
+              className="h-full min-w-0 overflow-x-hidden overflow-y-auto overscroll-contain p-3.5 text-[11.5px] leading-relaxed text-[var(--color-ink-secondary)] space-y-2 focus:outline-none break-words [overflow-wrap:anywhere]"
               style={{ overscrollBehavior: 'contain' }}
             >
               <div className="flex items-center gap-1.5 font-mono text-[9px] font-bold uppercase tracking-wider text-[var(--color-ink-tertiary)]">
@@ -388,31 +389,33 @@ export function TechnicalDossierModal({ camera, stops }) {
                 {selectedItem.meta && <span>· {selectedItem.meta}</span>}
               </div>
 
-              <h4 className="text-[13px] font-semibold leading-snug text-[var(--color-ink)]">
+              <h4 className="text-[13px] font-semibold leading-snug text-[var(--color-ink)] break-words">
                 {selectedItem.title}
               </h4>
 
               {selectedItem.fullCitation && (
-                <p className="font-mono text-[9.5px] text-[var(--color-ink-tertiary)] leading-normal">
+                <p className="font-mono text-[9.5px] text-[var(--color-ink-tertiary)] leading-normal break-words">
                   {selectedItem.fullCitation}
                 </p>
               )}
 
-              <p className="text-[var(--color-ink)] leading-normal">
+              <p className="text-[var(--color-ink)] leading-normal break-words">
                 {selectedItem.takeaway}
               </p>
 
               {selectedItem.howHalbertApplies && (
-                <div className="rounded bg-[var(--color-surface-subtle)]/60 p-2 text-[var(--color-ink-secondary)]">
+                <div className="rounded bg-[var(--color-surface-subtle)]/60 p-2 text-[var(--color-ink-secondary)] break-words [overflow-wrap:anywhere]">
                   <span className="font-mono text-[8.5px] font-bold uppercase tracking-wider block text-[var(--color-stroke)] mb-1">
                     In Halbert
                   </span>
-                  {selectedItem.howHalbertApplies}
+                  <div className="break-words [overflow-wrap:anywhere]">
+                    {selectedItem.howHalbertApplies}
+                  </div>
                 </div>
               )}
 
               {selectedItem.toolingAndBackend && (
-                <p className="font-mono text-[9px] text-[var(--color-ink-tertiary)]">
+                <p className="font-mono text-[9px] text-[var(--color-ink-tertiary)] break-all">
                   Source: {selectedItem.toolingAndBackend}
                 </p>
               )}
@@ -423,7 +426,7 @@ export function TechnicalDossierModal({ camera, stops }) {
                     href={selectedItem.url}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1 font-mono text-[10px] text-[var(--color-ink)] underline decoration-[var(--color-line-strong)] hover:text-[var(--color-stroke)]"
+                    className="inline-flex items-center gap-1 font-mono text-[10px] text-[var(--color-ink)] underline decoration-[var(--color-line-strong)] hover:text-[var(--color-stroke)] break-all"
                   >
                     <span>Original work</span>
                     <ExternalLink size={10} aria-hidden="true" />
