@@ -24,9 +24,9 @@
  *             wide (`at` is replaced wholesale)
  *
  * Which lane we ride sets how much curve is visible: the zoom needed for a
- * single line is the same on every lane (it is fixed by the 16-unit gap), so
+ * single line is the same on every lane (it is fixed by the 32-unit gap), so
  * a tighter lane shows more curvature at the same zoom. Lane 2 (inner edge,
- * r = 80) gives a clearly curved apex/diagonal while the legs stay straight.
+ * r = 124) gives a clearly curved apex/diagonal while the legs stay straight.
  */
 
 const RIDE = { lane: 2, side: 'inner' };
@@ -118,13 +118,21 @@ export const STOPS = [
     via: 'fly',
     dip: 0.25,
     dwell: 0.6,
-    // rounded cap: canvas TOP half, stroke dome rising to the centre
+    // rounded cap: canvas TOP half, stroke dome rising to the centre.
+    // The derived cap zoom is set by the spine-to-lane-1 clearance
+    // (52 units), which in the 7-line mark is wider than the stroke — the
+    // dome would shrink to 44% of the frame and the tagline would spill
+    // onto bone. 1.3 restores the framing the 10-line mark got for free
+    // when its clearance equalled its stroke: dome 57% of the width,
+    // dome base at the screen's bottom edge.
+    zoom: 1.3,
     portrait: {
-      // phones: same spine-cap stage, zoomed in so the dome's 32-unit
-      // stroke fills the full phone width — the white tagline stays on
-      // red instead of spilling onto bone. 1.8 puts the viewport
-      // half-width at 15.7 units, inside the stroke (aspect-independent).
-      zoom: 1.8,
+      // phones: zoomed in so the dome's 40-unit stroke fills the full
+      // phone width — the white tagline stays on red instead of spilling
+      // onto bone. 2.34 puts the viewport half-width at 19.6 units, just
+      // inside the 20-unit half-stroke (aspect-independent), matching the
+      // margin the 10-line mark had at zoom 1.8.
+      zoom: 2.34,
     },
   },
   {

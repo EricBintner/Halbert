@@ -25,7 +25,7 @@ The point of v2 is that this is a *system*, not a choreography:
 │  { edge:{lane:5,side:'inner'},    focal (288, 330)       stroke ▌ canvas │
 │    leg:'left', y:330 }            normal → stroke = −x   (left)  (right) │
 │                                   split: vertical                        │
-│                                   zoom: 6465% @16:9                      │
+│                                   zoom: 3232% @16:9                      │
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -38,10 +38,10 @@ The point of v2 is that this is a *system*, not a choreography:
 | Element | Definition |
 |---|---|
 | Spine | vertical, x = 512, y ∈ [80, 512] |
-| Lane *i* (1‥9) | U-shape of radius **R = 48 i**: left leg down, bottom semicircle, right leg up |
-| Leg tops | on the circle of radius 432 around C: `y_top = 512 − √(432² − R²)` (lane 9 has no legs) |
-| Stroke | width **32**, round caps |
-| Gap between strokes | **16** (pitch 48 − width 32) |
+| Lane *i* (1‥6) | U-shape of radius **R = 72 i**: left leg down, bottom semicircle, right leg up |
+| Leg tops | on the circle of radius 432 around C: `y_top = 512 − √(432² − R²)` (lane 6 has no legs) |
+| Stroke | width **40**, round caps |
+| Gap between strokes | **32** (pitch 72 − width 40) |
 
 `MARK_PATH_D` is generated from this model and reproduces the original hand-written path to the same precision; `HalbertMark` and `VectorCanvas` both use it.
 
@@ -57,9 +57,9 @@ The point of v2 is that this is a *system*, not a choreography:
 scale ≥ 512 · (aspect·|nₓ| + |n_y|) / (clearance · 0.88)
 ```
 
-This is what keeps **exactly one line on screen**, and why the numbers are large: at 16:9 a vertical split needs ~6465%, a horizontal one ~3636%, a 45° diagonal ~7142%, the cap ~3232%; on a portrait phone the vertical split drops to ~1818%. Nothing is hard-coded — a stop may still pin `scale` explicitly or apply a `zoom` multiplier.
+This is what keeps **exactly one line on screen**, and why the numbers are large: at 16:9 a vertical split needs ~3232%, a horizontal one ~1818%, a 45° diagonal ~3571%, the cap ~1989%; on a portrait phone the vertical split drops to ~909%. Nothing is hard-coded — a stop may still pin `scale` explicitly or apply a `zoom` multiplier.
 
-**Curvature is a lane choice, not a zoom choice.** Because the single-line zoom is fixed by the 16-unit gap, it is the same on every lane; what changes with the lane is how much of the curve you see at that zoom. Sag at the frame's side edges is `(w/2)² / 2r` — on lane 5 (r = 224) the apex bows only ~5% of the screen height and follows look like a straight line rotating; on lane 2 (r = 80) the apex bows ~14% and the arc follows read as real curves, while the legs stay dead straight. The storyboard rides lane 2's inner edge for this reason (`RIDE` in `storyboard.js`).
+**Curvature is a lane choice, not a zoom choice.** Because the single-line zoom is fixed by the 32-unit gap, it is the same on every lane; what changes with the lane is how much of the curve you see at that zoom. Sag at the frame's side edges is `(w/2)² / 2r` — on lane 5 (r = 340) the apex bows only ~4% of the screen height and follows look like a straight line rotating; on lane 2 (r = 124) the apex bows ~18% and the arc follows read as real curves, while the legs stay dead straight. The storyboard rides lane 2's inner edge for this reason (`RIDE` in `storyboard.js`).
 
 ---
 
@@ -111,15 +111,16 @@ Ink colours: `--color-ink` on the canvas field, `--color-ink-on-stroke` on the s
 
 | # | id | at (landscape) | via | resulting split | portrait |
 |---|---|---|---|---|---|
-| 01 | `open` | lane 2 inner edge, left leg, y 330 | — | vertical · stroke left / canvas right | **starts sideways**: lane 1 outer edge, 90° → horizontal · stroke top / canvas bottom |
-| 02 | `apex` | lane 2 inner edge, 90° | follow | horizontal · canvas top / stroke bottom | fly 16 units straight down from the portrait open — the gap slides up, colours flip |
-| 03 | `diagonal` | lane 2 inner edge, 135° | follow | 45° · canvas top-left / stroke bottom-right | same |
-| 04 | `rise` | lane 2 inner edge, right leg, y 330 | follow | vertical · canvas left / stroke right | same split, straddled single-column type |
-| 05 | `hop` | lane 5 outer edge, right leg, y 330 | fly, dip 0.6 | vertical · stroke left / canvas right | same split, straddled single-column type |
-| 06 | `cap` | crest of the spine's cap (512, 64) | fly, dip 0.25 | dome rising to the centre | same |
-| 07 | `reveal` | whole mark (50% of the short side) | fly | headline above, CTA below | same |
+| 01 | `intro` | lane 2 outer edge, left leg, y 330 | — | vertical · canvas left / stroke right | lane 1 inner edge, 90° → horizontal · canvas top / stroke bottom |
+| 02 | `open` | lane 2 inner edge, left leg, y 330 | fly | vertical · stroke left / canvas right | **starts sideways**: lane 1 outer edge, 90° → horizontal · stroke top / canvas bottom |
+| 03 | `apex` | lane 2 inner edge, 90° | follow | horizontal · canvas top / stroke bottom | fly 32 units straight down from the portrait open — the gap slides up, colours flip |
+| 04 | `diagonal` | lane 2 inner edge, 135° | follow | 45° · canvas top-left / stroke bottom-right | same |
+| 05 | `rise` | lane 2 inner edge, right leg, y 330 | follow | vertical · canvas left / stroke right | lane 3 inner apex, 90° → horizontal · canvas top / stroke bottom |
+| 06 | `hop` | lane 5 outer edge, right leg, y 330 | fly, dip 0.6 | vertical · stroke left / canvas right | lane 5 outer apex, 90° → horizontal · stroke top / canvas bottom |
+| 07 | `cap` | crest of the spine's cap (512, 60) | fly, dip 0.25 | dome rising to the centre | same, zoom 2.34 so the dome fills the phone width |
+| 08 | `reveal` | whole mark (50% of the short side) | fly | headline above, CTA below | same, zoom ×2 |
 
-In landscape, stops 01→04 are one continuous ride along a single edge (lane 2, inner); 05 is the perpendicular hop outward (three lanes sweep past); 06 and 07 are the two deliberate departures from path-following. In portrait only the vertical-split stops needed rethinking: the opener becomes a top/bottom split that the first scroll animates out of, and the two remaining vertical splits keep the geometry but change the type treatment.
+In landscape, stops 02→05 are one continuous ride along a single edge (lane 2, inner); 06 is the perpendicular hop outward (three lanes sweep past); 07 and 08 are the two deliberate departures from path-following. In portrait only the vertical-split stops needed rethinking: the opener becomes a top/bottom split that the first scroll animates out of, and the two remaining vertical splits keep the geometry but change the type treatment.
 
 ---
 
@@ -127,7 +128,7 @@ In landscape, stops 01→04 are one continuous ride along a single edge (lane 2,
 
 - **Add a stop:** append to `STOPS`. Choose `at`, choose `via` (`follow` if it is on the same lane & side as the previous stop), optionally `dwell`, `travel`, `dip`, `scale`. Add content under the same `id` in `content/stops.jsx` using the slots the resulting layout exposes.
 - **Diagonal stops** should sit at 45° or 135° along the arc so the corner-quadrant placement stays inside the triangles.
-- **More or less curve:** change `RIDE.lane` (smaller = curvier at the same zoom). Lane 1's inner edge (r = 32) is too tight — the apex stops reading as a split.
+- **More or less curve:** change `RIDE.lane` (smaller = curvier at the same zoom). Lane 1's inner edge (r = 52) is too tight — the apex stops reading as a split.
 - **Portrait:** add a `portrait: { … }` block to a stop for anything that should differ on phones; leave it off when the landscape layout already works there (apex, diagonal, cap, reveal all do).
 - **Reticle:** press **D** in the browser to show the screen-centre crosshair with the live focal point, zoom, and layout — the quickest way to verify that a new stop splits through the centre.
 - **Verification:** `node --input-type=module -e 'import {getCameraState,stopPose} from "./src/lib/cameraEngine.js"; …'` runs the engine headlessly (it has no DOM dependency); `npx vite build` type-checks the wiring.

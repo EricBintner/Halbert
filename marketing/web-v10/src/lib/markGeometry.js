@@ -1,14 +1,15 @@
 /**
  * Halbert mark — parametric geometry model.
  *
- * The brand mark lives in a 1024 x 1024 coordinate space:
+ * The brand mark (7-line: spine + six U-lanes) lives in a 1024 x 1024
+ * coordinate space:
  *   - a vertical spine at x = 512 from y = 80 down to y = 512
- *   - nine concentric U-shaped lanes, radius R_i = 48 * i, each drawn as
+ *   - six concentric U-shaped lanes, radius R_i = 72 * i, each drawn as
  *     left leg (down) -> bottom semicircle -> right leg (up)
- *   - every stroke is 32 wide with round caps; lanes are pitched 48 apart,
- *     so the *gap* between neighbouring strokes is exactly 16 units
+ *   - every stroke is 40 wide with round caps; lanes are pitched 72 apart,
+ *     so the *gap* between neighbouring strokes is exactly 32 units
  *   - the leg tops sit on a circle of radius 432 around (512, 512), which is
- *     also the radius of lane 9 (a pure semicircle with no legs)
+ *     also the radius of lane 6 (a pure semicircle with no legs)
  *
  * Everything the camera engine needs is derived from this model:
  * edge paths (the *boundary* between stroke colour and canvas colour), the
@@ -20,14 +21,14 @@ export const MARK = Object.freeze({
   cx: 512,
   cy: 512,
   outerR: 432,
-  laneStep: 48,
-  strokeWidth: 32,
-  halfStroke: 16,
-  lanes: 9,
+  laneStep: 72,
+  strokeWidth: 40,
+  halfStroke: 20,
+  lanes: 6,
   spine: { x: 512, top: 80, bottom: 512 },
 });
 
-export const GAP = MARK.laneStep - MARK.strokeWidth; // 16
+export const GAP = MARK.laneStep - MARK.strokeWidth; // 32
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 export const lerp = (a, b, t) => a + (b - a) * t;
@@ -140,14 +141,14 @@ export function edgeU(edge, at) {
 
 /**
  * Distance (in mark units) from this edge to the nearest *other* colour
- * boundary, measured along the normal. Normally the 16-unit gap; the outside
- * of the mark is open, so the far side of the stroke (32) governs there.
+ * boundary, measured along the normal. Normally the 32-unit gap; the outside
+ * of the mark is open, so the far side of the stroke (40) governs there.
  */
 export function edgeClearance(edge, u) {
   if (edge.side === 'outer') {
     if (edge.lane === MARK.lanes) return MARK.strokeWidth;
     const p = edgePointAt(edge, u);
-    if (edge.lane === MARK.lanes - 1 && !p.onArc) return MARK.strokeWidth; // lane 9 has no legs
+    if (edge.lane === MARK.lanes - 1 && !p.onArc) return MARK.strokeWidth; // lane 6 has no legs
   }
   return GAP;
 }
@@ -168,7 +169,7 @@ export function capPoint(which) {
       x: MARK.spine.x,
       y: MARK.spine.top - MARK.halfStroke,
       toStroke: { x: 0, y: 1 },
-      // lane 1's inner edges sit 32 units either side of the spine centre
+      // lane 1's inner edges sit 52 units either side of the spine centre
       clearanceX: MARK.laneStep - MARK.halfStroke,
       clearanceY: Infinity,
     };
