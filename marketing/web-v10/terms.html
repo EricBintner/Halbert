@@ -1,9 +1,15 @@
 <!doctype html>
-<html lang="en" class="bg-[#F7F4EE] text-[#1C1917]">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=4" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png?v=4" />
+    <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png?v=4" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png?v=4" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <!-- Tint Safari's top/bottom bars with the bone canvas instead of system
+         white (iOS 15+). Keep in sync with --color-canvas (#F7F4EE, bone-100). -->
+    <meta name="theme-color" content="#F7F4EE" />
     <title>Terms of Service — Halbert</title>
     <meta name="description" content="Halbert Terms of Service: Website use, software licensing, warranty exclusions, and autonomous system disclaimers." />
     <link rel="canonical" href="https://halbert.computer/terms.html" />
@@ -25,68 +31,49 @@
     <meta name="twitter:description" content="Halbert Terms of Service: Website use, software licensing, warranty exclusions, and autonomous system disclaimers." />
     <meta name="twitter:image" content="https://halbert.computer/og-image.png" />
     <meta name="twitter:image:alt" content="Halbert — I am the computer. And I put the smart in your home." />
-    <!-- Self-hosted brand typefaces. These pages are served verbatim from
-         public/ and never touch the bundler, so they carry their own link. -->
+    <!-- Self-hosted brand typefaces, and the legal-page stylesheet, which
+         imports the canonical token dictionary. These pages are Vite entries
+         (see vite.config.js), not files served verbatim from public/. -->
     <link rel="stylesheet" href="/fonts/fonts.css" />
-    <style>
-      body {
-        font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, sans-serif;
-        background-color: #F7F4EE;
-        color: #1C1917;
-        line-height: 1.6;
-      }
-      h1, h2, h3 {
-        font-family: 'Fraunces', Georgia, serif;
-        letter-spacing: -0.035em;
-      }
-      code, pre, .font-mono {
-        font-family: 'JetBrains Mono', monospace;
-      }
-      a {
-        color: #D34E24;
-        text-decoration: underline;
-        text-underline-offset: 3px;
-      }
-      a:hover {
-        opacity: 0.8;
-      }
-    </style>
+    <link rel="stylesheet" href="/src/legal.css" />
   </head>
-  <body class="max-w-3xl mx-auto px-6 py-12">
-    <header class="mb-12 pb-6 border-b border-[#1C1917]/20 flex items-center justify-between">
-      <a href="/" class="text-xs font-mono font-bold uppercase tracking-wider text-[#1C1917] no-underline hover:text-[#D34E24]">
-        ← Back to Halbert
+  <body>
+    <div class="legal">
+    <header class="legal-header">
+      <a class="legal-home" href="/" aria-label="Halbert home">
+        <svg viewBox="0 0 1024 1024" fill="none" stroke="currentColor" stroke-width="48" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M 512.00 80.00 V 512.00 M 425.60 88.73 V 512.00 A 86.40 86.40 0 0 0 598.40 512.00 V 88.73 M 339.20 116.07 V 512.00 A 172.80 172.80 0 0 0 684.80 512.00 V 116.07 M 252.80 166.40 V 512.00 A 259.20 259.20 0 0 0 771.20 512.00 V 166.40 M 166.40 252.80 V 512.00 A 345.60 345.60 0 0 0 857.60 512.00 V 252.80 M 80.00 512.00 A 432.00 432.00 0 0 0 944.00 512.00"/></svg>
+        <span>HALBERT</span>
       </a>
-      <span class="text-xs font-mono opacity-60 uppercase">Legal / Terms</span>
+      <span class="legal-crumb">Legal / Terms</span>
     </header>
 
-    <main class="space-y-8">
-      <div>
-        <div class="text-xs font-mono uppercase tracking-widest text-[#D34E24] font-bold mb-2">Legal Terms</div>
-        <h1 class="text-4xl md:text-5xl font-black mb-4">Terms of Service</h1>
-        <p class="text-sm font-mono opacity-60">Effective Date: August 25, 2026 · Last Updated: September 14, 2026</p>
+    <main>
+      <div class="legal-title">
+        <p class="legal-kicker">Legal terms</p>
+        <h1>Terms of Service</h1>
+        <p class="legal-meta">Effective Date: August 25, 2026 · Last Updated: September 14, 2026</p>
       </div>
 
-      <section class="space-y-4">
-        <h2 class="text-2xl font-bold border-b border-[#1C1917]/10 pb-2">1. Acceptance of Terms</h2>
+      <section>
+        <h2>1. Acceptance of Terms</h2>
         <p>By visiting our website, signing up for early access, or downloading, installing, or running Halbert, you agree to be bound by these Terms of Service. If you do not agree to these Terms, do not access our website or use the Halbert software.</p>
       </section>
 
-      <section class="space-y-4">
-        <h2 class="text-2xl font-bold border-b border-[#1C1917]/10 pb-2">2. Software Licensing & Distribution</h2>
-        <h3 class="text-lg font-bold">2.1 Open-Source Core Edition</h3>
+      <section>
+        <h2>2. Software Licensing & Distribution</h2>
+        <h3>2.1 Open-Source Core Edition</h3>
         <p>The core Halbert software engine, CLI, and open-source packages are licensed under the <strong>GNU General Public License Version 3.0 (or later)</strong> (<code>GPL-3.0-or-later</code>). Nothing in these website Terms overrides, restricts, or supersedes your freedoms under the GPL-3.0 for covered components.</p>
 
-        <h3 class="text-lg font-bold mt-4">2.2 Halbert Pro (macOS Direct) & App Store Companion</h3>
+        <h3>2.2 Halbert Pro (macOS Direct) & App Store Companion</h3>
         <p>Halbert Pro for macOS is delivered via our Merchant of Record (LemonSqueezy): a one-time perpetual license ($29 standard, $24 launch promo) granting execution rights on up to 10 machines or nodes administered by the licensee, with 12 months of signed official updates. Lapsed licenses remain fully functional forever; an optional $19/year renewal extends updates. See the full terms in the repository's <code>HALBERT-PRO-COMMERCIAL-TERMS.md</code>. The App Store companion is free, and is distributed under Apple Media Services Terms and our GPLv3 Section 7 Additional Permission.</p>
       </section>
 
-      <section class="space-y-4">
-        <h2 class="text-2xl font-bold border-b border-[#1C1917]/10 pb-2">3. Autonomous Operational Risk & Administrative Waiver</h2>
-        <div class="p-4 bg-[#EFECE5] rounded space-y-2 text-sm">
-          <div class="font-bold font-mono uppercase text-[#D34E24]">Critical Administrative Warning</div>
+      <section>
+        <h2>3. Autonomous Operational Risk & Administrative Waiver</h2>
+        <div class="legal-callout">
+          <p class="legal-callout-label">Critical Administrative Warning</p>
           <p>Halbert modifies live operating system configurations, system logs, hardware sensors, systemd service units, and launchd daemons. You acknowledge and agree that:</p>
-          <ul class="list-disc pl-5 space-y-1">
+          <ul>
             <li>You are an authorized administrator of any system where Halbert executes.</li>
             <li>You are solely responsible for reviewing and verifying all proposed diffs and service actions before granting approval.</li>
             <li>You are solely responsible for maintaining verified offline backups of mission-critical filesystems.</li>
@@ -95,32 +82,33 @@
         </div>
       </section>
 
-      <section class="space-y-4">
-        <h2 class="text-2xl font-bold border-b border-[#1C1917]/10 pb-2">4. Disclaimer of Warranties</h2>
-        <p class="text-sm font-mono opacity-80 uppercase leading-relaxed">
+      <section>
+        <h2>4. Disclaimer of Warranties</h2>
+        <p class="legal-caps">
           TO THE MAXIMUM EXTENT PERMITTED BY LAW: THE WEBSITE, EARLY ACCESS BUILDS, AND HALBERT SOFTWARE ARE PROVIDED "AS IS" AND "AS AVAILABLE", WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO IMPLIED WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, TITLE, AND NON-INFRINGEMENT.
         </p>
       </section>
 
-      <section class="space-y-4">
-        <h2 class="text-2xl font-bold border-b border-[#1C1917]/10 pb-2">5. Limitation of Liability</h2>
-        <p class="text-sm font-mono opacity-80 uppercase leading-relaxed">
+      <section>
+        <h2>5. Limitation of Liability</h2>
+        <p class="legal-caps">
           IN NO EVENT SHALL THE MAINTAINERS, CONTRIBUTORS, COPYRIGHT HOLDERS, OR DISTRIBUTORS OF HALBERT BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, OR PUNITIVE DAMAGES ARISING OUT OF YOUR USE OF THE WEBSITE OR SOFTWARE, DATA LOSS, CORRUPTION OF BOOT VOLUMES, OR SERVICE OUTAGES, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGES.
         </p>
       </section>
 
-      <section class="space-y-4">
-        <h2 class="text-2xl font-bold border-b border-[#1C1917]/10 pb-2">6. Third-Party Trademarks & Fair Use</h2>
-        <p class="text-sm">Linux® is the registered trademark of Linus Torvalds. macOS®, Apple®, and Apple Silicon® are trademarks of Apple Inc. Ubuntu® is a trademark of Canonical Ltd. Docker® is a trademark of Docker, Inc. All other product names, logos, and brands are property of their respective owners. Halbert is an independent open-source project and is not affiliated with or endorsed by these trademark holders.</p>
+      <section>
+        <h2>6. Third-Party Trademarks & Fair Use</h2>
+        <p>Linux® is the registered trademark of Linus Torvalds. macOS®, Apple®, and Apple Silicon® are trademarks of Apple Inc. Ubuntu® is a trademark of Canonical Ltd. Docker® is a trademark of Docker, Inc. All other product names, logos, and brands are property of their respective owners. Halbert is an independent open-source project and is not affiliated with or endorsed by these trademark holders.</p>
       </section>
 
-      <footer class="pt-8 mt-12 border-t border-[#1C1917]/20 flex flex-wrap gap-4 text-xs font-mono opacity-80 justify-between items-center">
+      <footer class="legal-footer">
         <div>© 2024–2026 Eric Bintner and Halbert Contributors</div>
-        <div class="flex gap-4">
+        <nav aria-label="Legal">
           <a href="/privacy.html">Privacy Policy</a>
           <a href="https://github.com/EricBintner/Halbert">GitHub (GPL-3.0)</a>
-        </div>
+        </nav>
       </footer>
     </main>
+    </div>
   </body>
 </html>

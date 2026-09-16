@@ -20,6 +20,17 @@ export default defineConfig({
       '@halbert/catalog': path.resolve(__dirname, '../feature-reference/src/catalog.json'),
     },
   },
+  build: {
+    rollupOptions: {
+      // The legal pages are entries, not public/ files: they import the token
+      // dictionary through src/legal.css, so they must go through the build.
+      input: {
+        main: path.resolve(__dirname, 'index.html'),
+        privacy: path.resolve(__dirname, 'privacy.html'),
+        terms: path.resolve(__dirname, 'terms.html'),
+      },
+    },
+  },
   server: {
     port: 5188,
     host: true,
