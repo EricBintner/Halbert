@@ -28,6 +28,7 @@ const ArrowLeftIcon = Icon('M19 12H5M12 19l-7-7 7-7')
 
 const meta: Meta<typeof NavRail> = {
   title: 'Surfaces/NavRail',
+  tags: ['autodocs'],
   component: NavRail,
   parameters: { layout: 'fullscreen' },
 }

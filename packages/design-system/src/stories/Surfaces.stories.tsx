@@ -8,6 +8,7 @@ import { MetricCard } from '../surfaces/MetricCard'
 
 const meta: Meta<typeof AppWindow> = {
   title: 'Surfaces/AppWindow',
+  tags: ['autodocs'],
   component: AppWindow,
 }
 export default meta

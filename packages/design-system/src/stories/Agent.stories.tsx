@@ -15,6 +15,7 @@ import { Button } from '../primitives/Button'
 
 const whyChipMeta: Meta<typeof WhyChip> = {
   title: 'Agent/WhyChip',
+  tags: ['autodocs'],
   component: WhyChip,
 }
 export default whyChipMeta

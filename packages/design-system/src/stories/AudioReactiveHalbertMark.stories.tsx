@@ -12,6 +12,7 @@ import type { AudioEnergySource } from '../voice/spectrum'
 
 const meta: Meta<typeof AudioReactiveHalbertMark> = {
   title: 'Voice/AudioReactiveHalbertMark',
+  tags: ['autodocs'],
   component: AudioReactiveHalbertMark,
   parameters: { layout: 'centered', backgrounds: { default: 'dark' } },
   argTypes: {

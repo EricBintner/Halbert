@@ -21,6 +21,7 @@ import { HalbertMark } from '../primitives/HalbertMark'
  */
 const meta: Meta<typeof HalbertMark> = {
   title: 'Drafts/HalbertMarkTiers',
+  tags: ['autodocs'],
   component: HalbertMark,
   args: {
     size: 64,

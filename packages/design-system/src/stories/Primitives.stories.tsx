@@ -21,6 +21,7 @@ const Note = ({ children }: { children: React.ReactNode }) => (
 
 const buttonMeta: Meta<typeof Button> = {
   title: 'Primitives/Button',
+  tags: ['autodocs'],
   component: Button,
   args: { children: 'Run SMART test', variant: 'primary', size: 'md' },
   argTypes: {
