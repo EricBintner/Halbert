@@ -115,7 +115,7 @@ describe('Onboarding machine roles', () => {
   })
 
   it('still completes when the probe fails — the chips just start empty', async () => {
-    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
       if (url.includes('/api/settings/onboarding/probe')) throw new Error('probe down')
       if (url.includes('/api/settings/onboarding/status')) {
         return jsonResponse({ onboarding_complete: false, suggested_name: 'Macky-Mac' })
