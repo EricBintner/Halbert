@@ -340,12 +340,12 @@ describe('AudioReactiveHalbertMark', () => {
       <AudioReactiveHalbertMark size={512} state="listening" density="display" source={source} />,
     )
     pump(1)
-    // the new engine starts with listening's full retraction weight, not
-    // speaking's zero ramping up from nothing
-    const d2 = container.querySelectorAll('path')[2].getAttribute('d')!
-    const top = laneTop(2, 'display')
-    const total = 2 * (MARK.cy - top) + Math.PI * laneRadius(2, 'display')
-    expect(first(d2)[1]).toBeGreaterThan(top + 0.05 * total)
+    // the new engine starts with listening's full retraction weight and the
+    // carried attention, not speaking's zero ramping up from nothing. The
+    // vowel sat on brand bands 2-3 (700-2000 Hz); by register that is display
+    // tine 3 (1000-1500 Hz), whose tips must already be well in.
+    const d3 = container.querySelectorAll('path')[3].getAttribute('d')!
+    expect(first(d3)[1]).toBeGreaterThan(laneTop(3, 'display') + 30)
   })
 
   it('a density change while recognized does not strum again', () => {
@@ -379,23 +379,25 @@ describe('AudioReactiveHalbertMark', () => {
         <AudioReactiveHalbertMark size={512} state="listening" source={speech()} />,
       )
       const paths = container.querySelectorAll('path')
-      pump(45) // ~0.75 s: attention is up, presence 10-15 % per end
-      // lane 2: tips have slid down both legs; every point still on the U
+      pump(45) // ~0.75 s: attention is up
+      // lane 2 (the vowel's own register): tips have slid a fixed 45-70
+      // units down both legs; every point still on the U
       const d2 = paths[2].getAttribute('d')!
-      const total2 = 2 * (MARK.cy - laneTop(2)) + Math.PI * laneRadius(2)
-      expect(first(d2)[1]).toBeGreaterThan(laneTop(2) + 0.08 * total2)
-      expect(first(d2)[1]).toBeLessThan(laneTop(2) + 0.2 * total2)
-      expect(last(d2)[1]).toBeGreaterThan(laneTop(2) + 0.08 * total2)
+      expect(first(d2)[1]).toBeGreaterThan(laneTop(2) + 40)
+      expect(first(d2)[1]).toBeLessThan(laneTop(2) + 75)
+      expect(last(d2)[1]).toBeGreaterThan(laneTop(2) + 40)
       for (const p of points(d2)) expect(offStatic(2, p)).toBeLessThan(0.05)
-      // spine: withdrawn from the top, its base still at the mark's centre
+      // spine (a register the vowel does not reach): withdrawn a little from
+      // the top, the whole mark listens; its base still at the mark's centre
       const d0 = paths[0].getAttribute('d')!
       expect(first(d0)[0]).toBe(512)
-      expect(first(d0)[1]).toBeGreaterThan(80 + 0.08 * 432)
+      expect(first(d0)[1]).toBeGreaterThan(80 + 8)
+      expect(first(d0)[1]).toBeLessThan(80 + 25)
       expect(last(d0)).toEqual([512, 512])
-      // outer arc: tips have slid along the arc, still at radius 432
+      // outer arc: tips have slid a little along the arc, still at radius 432
       const d6 = paths[OUTER].getAttribute('d')!
-      expect(first(d6)[0]).toBeGreaterThan(80 + 20)
-      expect(first(d6)[1]).toBeGreaterThan(512 + 20)
+      expect(Math.hypot(first(d6)[0] - 80, first(d6)[1] - 512)).toBeGreaterThan(8)
+      expect(Math.hypot(first(d6)[0] - 80, first(d6)[1] - 512)).toBeLessThan(25)
       for (const [x, y] of points(d6)) {
         expect(Math.abs(Math.hypot(x - 512, y - 512) - 432)).toBeLessThan(0.05)
       }

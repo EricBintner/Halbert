@@ -6,12 +6,16 @@
  * While the mark listens, each line withdraws its ends along its own path.
  * Two things drive how far, and neither is a level meter:
  *
- *   presence — any sustained sound raises an attention envelope quickly
- *              (150 ms) and lets it go slowly (1.8 s), so the mark keeps
- *              listening for a moment after you stop. At full attention each
- *              end drifts on its own slow curve between presenceMin and
- *              presenceMax, ends and lines out of phase, so speech reads as
- *              "it is listening", not as syllables.
+ *   presence — any sustained sound raises attention quickly (150 ms) and
+ *              lets it go slowly (1.8 s), so the mark keeps listening for a
+ *              moment after you stop. At full attention each tip travels a
+ *              FIXED distance, 45–70 mark units (about 3–5 % of an outer
+ *              ring, more of the short spine), drifting slowly on its own
+ *              curve, ends and lines out of phase, so speech reads as "it is
+ *              listening", not as syllables. Each ring's attention follows
+ *              its own register three parts in four and the whole sound one
+ *              part in four: high sounds draw the inner rings in, low sounds
+ *              the outer, and the whole mark always listens a little.
  *   impact   — only a broadband transient (a clap, a door) drives a quick,
  *              critically damped retraction that scales with the hit, up to
  *              impactMax on the outer lines, then relaxes. "Broadband" is
@@ -29,13 +33,19 @@
 export const LISTENING = Object.freeze({
   /** Loudest band above this counts as sound. */
   soundFloor: 0.04,
+  /** A band this loud is fully attended; between the floor and this, in proportion. */
+  attendedLevel: 0.25,
   /** Attention rises with this time constant… */
   attackSeconds: 0.15,
   /** …and releases with this one: the "still listening" afterglow. */
   releaseSeconds: 1.8,
-  /** Retraction per end at full attention: the low and high of the drift. */
-  presenceMin: 0.1,
-  presenceMax: 0.15,
+  /** Ambient travel of a tip at full attention, in mark units: the low and
+   * high of the drift. About 3–5 % of an outer ring; the same distance on
+   * every line, whatever its length. */
+  presenceUnits: [45, 70] as readonly [number, number],
+  /** Share of a ring's ambient travel that follows the whole sound; the rest
+   * follows the ring's own register. */
+  globalShare: 0.25,
   /** The slow organic drift; outer lines drift a little slower than inner. */
   driftHz: 0.35,
   /** A band's rise is measured against its level this long ago. */
@@ -72,23 +82,30 @@ function clamp01(v: number): number {
 }
 
 export class Listener {
+  private readonly count: number
+  private readonly lengths: Float64Array
   private readonly history: Float32Array[]
   private readonly historyElapsed: Float64Array
   private historyHead = -1
   private historyFilled = 0
   private elapsed = 0
   private attentionLevel = 0
+  private readonly attentionBands: Float64Array
   private impactTarget = 0
   private impactLevel = 0
   private impactHoldLeft = 0
   private now = 0
 
-  constructor(private readonly count: number) {
-    this.history = Array.from({ length: HISTORY }, () => new Float32Array(count))
+  /** @param lengths each tine's length in mark units (geometry.tineLengths) */
+  constructor(lengths: readonly number[]) {
+    this.count = lengths.length
+    this.lengths = Float64Array.from(lengths)
+    this.history = Array.from({ length: HISTORY }, () => new Float32Array(this.count))
     this.historyElapsed = new Float64Array(HISTORY)
+    this.attentionBands = new Float64Array(this.count)
   }
 
-  /** 0 (silence for a while) … 1 (sound now). */
+  /** 0 (silence for a while) … 1 (sound now), for the sound as a whole. */
   get attention(): number {
     return this.attentionLevel
   }
@@ -99,13 +116,20 @@ export class Listener {
   }
 
   /** Carry the envelopes over from another listener (a density change
-   * rebuilds the engine; the posture must not restart from silence). */
+   * rebuilds the engine; the posture must not restart from silence). Band
+   * attention is resampled by register position. */
   adopt(other: Listener): void {
     this.attentionLevel = other.attentionLevel
     this.impactTarget = other.impactTarget
     this.impactLevel = other.impactLevel
     this.impactHoldLeft = other.impactHoldLeft
     this.now = other.now
+    const m = other.count
+    for (let k = 0; k < this.count; k++) {
+      const u = this.count > 1 ? k / (this.count - 1) : 0
+      const j = Math.min(m - 1, Math.max(0, Math.round(u * (m - 1))))
+      this.attentionBands[k] = other.attentionBands[j]
+    }
   }
 
   /** Feed one frame of band levels; `t` is the frame clock in seconds. */
@@ -133,10 +157,19 @@ export class Listener {
       if (this.elapsed - this.historyElapsed[i] >= c.riseWindowSeconds) break
     }
 
-    const target = loudest > c.soundFloor ? 1 : 0
-    const tau = target > this.attentionLevel ? c.attackSeconds : c.releaseSeconds
-    this.attentionLevel += (target - this.attentionLevel) * (1 - Math.exp(-h / tau))
+    // Attention: the whole sound, and each ring's own register.
+    const attend = (level: number, target: number) => {
+      const tau = target > level ? c.attackSeconds : c.releaseSeconds
+      return level + (target - level) * (1 - Math.exp(-h / tau))
+    }
+    this.attentionLevel = attend(this.attentionLevel, loudest > c.soundFloor ? 1 : 0)
+    const span = c.attendedLevel - c.soundFloor
+    for (let k = 0; k < this.count; k++) {
+      const target = clamp01((current[k] - c.soundFloor) / span)
+      this.attentionBands[k] = attend(this.attentionBands[k], target)
+    }
 
+    // Impact: nearly every band rising together over the window.
     let hit = 0
     if (baseline) {
       let risen = 0
@@ -180,8 +213,10 @@ export class Listener {
     const hz = c.driftHz * (1.15 - 0.3 * u)
     const phase = GOLDEN_ANGLE * (2 * k + side)
     const drift = 0.5 * (1 + Math.sin(2 * Math.PI * hz * this.now + phase))
-    const presence =
-      this.attentionLevel * (c.presenceMin + (c.presenceMax - c.presenceMin) * drift)
+    const attention =
+      c.globalShare * this.attentionLevel + (1 - c.globalShare) * this.attentionBands[k]
+    const [lo, hi] = c.presenceUnits
+    const presence = (attention * (lo + (hi - lo) * drift)) / this.lengths[k]
     const depth = c.innerImpactShare + (1 - c.innerImpactShare) * u
     return Math.min(c.maxPerEnd, presence + this.impactLevel * depth)
   }

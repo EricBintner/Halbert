@@ -8,6 +8,7 @@ import {
   TINE_AMPLITUDES,
   staticTinePaths,
   tineCount,
+  tineLengths,
   tinePathD,
   type Retraction,
   type TinePathOptions,
@@ -136,7 +137,7 @@ interface Engine {
 function createEngine(density: VoiceDensity, initialState: string, carry: Engine | null): Engine {
   const count = tineCount(density)
   const initial = excitationFor(initialState)
-  const listener = new Listener(count)
+  const listener = new Listener(tineLengths(density))
   if (carry) listener.adopt(carry.listener)
   return {
     density,

@@ -64,6 +64,20 @@ export function laneTop(lane: number, density: VoiceDensity = DEFAULT_DENSITY): 
   return MARK.cy - Math.sqrt(Math.max(0, MARK.outerR ** 2 - r ** 2))
 }
 
+/** Length of a line in mark units: the spine, a U-lane (two legs and the
+ * arc), or the bare outer arc. The listening travel is set in these units so
+ * every tip moves the same distance whatever its line's length. */
+export function tineLength(lane: number, density: VoiceDensity = DEFAULT_DENSITY): number {
+  if (lane === 0) return MARK.spine.bottom - MARK.spine.top
+  const r = laneRadius(lane, density)
+  if (lane === LANES[density]) return Math.PI * r
+  return 2 * (MARK.cy - laneTop(lane, density)) + Math.PI * r
+}
+
+export function tineLengths(density: VoiceDensity = DEFAULT_DENSITY): number[] {
+  return Array.from({ length: tineCount(density) }, (_, k) => tineLength(k, density))
+}
+
 /** Spatial harmonic mode per tine (n_k): the inner, higher-pitched strings
  * ring in their second mode (an S on the legs); outer legs use the
  * fundamental to avoid visible kinks. */

@@ -58,6 +58,8 @@ export {
   MAX_DISPLACEMENT_MULTIPLIER,
   laneRadius,
   laneTop,
+  tineLength,
+  tineLengths,
   tinePathD,
   staticTinePaths,
 } from './geometry'

@@ -10,6 +10,8 @@ import {
   MARK,
   laneRadius,
   laneTop,
+  tineLength,
+  tineLengths,
   tinePathD,
   staticTinePaths,
 } from '../voice/geometry'
@@ -51,6 +53,16 @@ describe('mark voice geometry — brand density (the ratified 7-line mark, the d
     expect(last(points(statik[3]))).toEqual([728, 137.88])
     const lane3 = points(statik[3]) // r = 216 -> apex y = 728
     expect(Math.max(...lane3.map(([, y]) => y))).toBeCloseTo(728, 1)
+  })
+
+  it('knows every line\'s length in mark units (the listening travel is absolute)', () => {
+    expect(tineLength(0)).toBeCloseTo(432, 6) // the spine
+    expect(tineLength(6)).toBeCloseTo(Math.PI * 432, 6) // the bare outer arc
+    expect(tineLength(2)).toBeCloseTo(2 * (512 - laneTop(2)) + Math.PI * 144, 6)
+    expect(tineLengths()).toHaveLength(7)
+    expect(tineLengths('display')).toHaveLength(10)
+    // outer lines are longer: 5 % of the outer arc is ~68 units, of the spine ~22
+    expect(tineLength(6)).toBeGreaterThan(3 * tineLength(0))
   })
 
   it('samples both leg/arc junctions of every U-lane, symmetrically', () => {

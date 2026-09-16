@@ -3,9 +3,12 @@
 import { describe, it, expect } from 'vitest'
 import { Listener, LISTENING } from '../voice/listening'
 import { createSpeechBurstSource } from '../voice/demo'
+import { tineLengths } from '../voice/geometry'
 
-const COUNT = 7
+const LENGTHS = tineLengths() // brand: spine, five U-lanes, outer arc
+const COUNT = LENGTHS.length
 const DT = 1 / 60
+const listener = () => new Listener(LENGTHS)
 
 /** Feed `frames` frames of the given levels; returns the elapsed time. */
 function feed(
@@ -23,6 +26,7 @@ function feed(
 }
 
 const silence = new Float32Array(COUNT)
+/** A vowel: the middle of the register. */
 const speech = (() => {
   const v = new Float32Array(COUNT)
   v[2] = 0.3
@@ -31,13 +35,16 @@ const speech = (() => {
 })()
 const clap = new Float32Array(COUNT).fill(0.8)
 
+/** Retraction of end `side` of tine k in mark units. */
+const units = (l: Listener, k: number, side: 0 | 1) => l.retraction(k, side) * LENGTHS[k]
+
 function ends(l: Listener): Array<[number, number]> {
   return Array.from({ length: COUNT }, (_, k) => [l.retraction(k, 0), l.retraction(k, 1)])
 }
 
-describe('Listener — presence: sound raises attention fast and lets it go slowly', () => {
+describe('Listener — presence: a fixed travel, tuned to each ring\'s own register', () => {
   it('is fully extended in silence', () => {
-    const l = new Listener(COUNT)
+    const l = listener()
     feed(l, silence, 60)
     expect(l.attention).toBe(0)
     for (const [a, b] of ends(l)) {
@@ -46,23 +53,59 @@ describe('Listener — presence: sound raises attention fast and lets it go slow
     }
   })
 
-  it('steady speech settles every end between presenceMin and presenceMax', () => {
-    const l = new Listener(COUNT)
-    feed(l, speech, 60) // 1 s
-    expect(l.attention).toBeGreaterThan(0.95)
-    ends(l).forEach(([a, b], k) => {
-      expect(a).toBeGreaterThanOrEqual(LISTENING.presenceMin - 0.01)
-      expect(a).toBeLessThanOrEqual(LISTENING.presenceMax + 1e-6)
-      if (k === 0) expect(b).toBe(0) // the spine's bottom end is the mark's centre
+  it('a sound across every band moves every tip by the same distance', () => {
+    const l = listener()
+    const everywhere = new Float32Array(COUNT).fill(0.3)
+    feed(l, everywhere, 60)
+    const [lo, hi] = LISTENING.presenceUnits
+    for (let k = 0; k < COUNT; k++) {
+      expect(units(l, k, 0)).toBeGreaterThanOrEqual(lo - 1)
+      expect(units(l, k, 0)).toBeLessThanOrEqual(hi + 1e-6)
+      if (k === 0) expect(units(l, k, 1)).toBe(0) // the spine's base is the mark's centre
       else {
-        expect(b).toBeGreaterThanOrEqual(LISTENING.presenceMin - 0.01)
-        expect(b).toBeLessThanOrEqual(LISTENING.presenceMax + 1e-6)
+        expect(units(l, k, 1)).toBeGreaterThanOrEqual(lo - 1)
+        expect(units(l, k, 1)).toBeLessThanOrEqual(hi + 1e-6)
       }
-    })
+    }
+    // the travel is about five percent of an outer ring and much more of the spine
+    expect(l.retraction(0, 0)).toBeGreaterThan(2.5 * l.retraction(6, 0))
+  })
+
+  it('high sounds draw the inner rings in, low sounds the outer rings', () => {
+    const high = new Float32Array(COUNT)
+    high[0] = 0.4
+    high[1] = 0.4
+    const low = new Float32Array(COUNT)
+    low[5] = 0.4
+    low[6] = 0.4
+    // an attended ring travels 45-70 units, an unattended one a quarter of that
+    const hi = listener()
+    feed(hi, high, 60)
+    expect(units(hi, 0, 0)).toBeGreaterThan(2.2 * units(hi, 6, 0))
+    expect(units(hi, 1, 0)).toBeGreaterThan(2.2 * units(hi, 5, 0))
+    const lo = listener()
+    feed(lo, low, 60)
+    expect(units(lo, 6, 0)).toBeGreaterThan(2.2 * units(lo, 0, 0))
+    expect(units(lo, 5, 0)).toBeGreaterThan(2.2 * units(lo, 1, 0))
+  })
+
+  it('a vowel attends its own rings fully and the rest a little (the whole mark listens)', () => {
+    const l = listener()
+    feed(l, speech, 60)
+    expect(l.attention).toBeGreaterThan(0.95)
+    const [lo, hi] = LISTENING.presenceUnits
+    for (const k of [2, 3]) {
+      expect(units(l, k, 0)).toBeGreaterThanOrEqual(lo - 1)
+      expect(units(l, k, 0)).toBeLessThanOrEqual(hi + 1e-6)
+    }
+    for (const k of [0, 5, 6]) {
+      expect(units(l, k, 0)).toBeGreaterThan(LISTENING.globalShare * lo - 2)
+      expect(units(l, k, 0)).toBeLessThan(LISTENING.globalShare * hi + 2)
+    }
   })
 
   it('drifts slowly while listening, ends and lines out of step', () => {
-    const l = new Listener(COUNT)
+    const l = listener()
     feed(l, speech, 60)
     let maxDiffBetweenEnds = 0
     let maxDiffBetweenLines = 0
@@ -70,35 +113,35 @@ describe('Listener — presence: sound raises attention fast and lets it go slow
     let t = 1
     for (let i = 0; i < 180; i++) {
       t = feed(l, speech, 1, t)
-      lane3Start.push(l.retraction(3, 0))
-      maxDiffBetweenEnds = Math.max(maxDiffBetweenEnds, Math.abs(l.retraction(3, 0) - l.retraction(3, 1)))
-      maxDiffBetweenLines = Math.max(maxDiffBetweenLines, Math.abs(l.retraction(3, 0) - l.retraction(5, 0)))
+      lane3Start.push(units(l, 3, 0))
+      maxDiffBetweenEnds = Math.max(maxDiffBetweenEnds, Math.abs(units(l, 3, 0) - units(l, 3, 1)))
+      maxDiffBetweenLines = Math.max(maxDiffBetweenLines, Math.abs(units(l, 3, 0) - units(l, 2, 0)))
     }
-    expect(Math.max(...lane3Start) - Math.min(...lane3Start)).toBeGreaterThan(0.02)
-    expect(maxDiffBetweenEnds).toBeGreaterThan(0.01)
-    expect(maxDiffBetweenLines).toBeGreaterThan(0.01)
+    expect(Math.max(...lane3Start) - Math.min(...lane3Start)).toBeGreaterThan(15)
+    expect(maxDiffBetweenEnds).toBeGreaterThan(8)
+    expect(maxDiffBetweenLines).toBeGreaterThan(8)
     // never a jump: frame-to-frame change stays tiny
     for (let i = 1; i < lane3Start.length; i++) {
-      expect(Math.abs(lane3Start[i] - lane3Start[i - 1])).toBeLessThan(0.002)
+      expect(Math.abs(lane3Start[i] - lane3Start[i - 1])).toBeLessThan(2)
     }
   })
 
   it('keeps listening for a moment after the sound stops, then lets go', () => {
-    const l = new Listener(COUNT)
+    const l = listener()
     let t = feed(l, speech, 60)
     t = feed(l, silence, 48, t) // +0.8 s
     expect(l.attention).toBeGreaterThan(0.5)
-    expect(l.retraction(3, 0)).toBeGreaterThan(0.04)
+    expect(units(l, 3, 0)).toBeGreaterThan(20)
     feed(l, silence, 480, t) // +8 s
     expect(l.attention).toBeLessThan(0.02)
-    expect(l.retraction(3, 0)).toBeLessThan(0.003)
+    expect(units(l, 3, 0)).toBeLessThan(1)
   })
 
   it('rises within a few frames once sound starts', () => {
-    const l = new Listener(COUNT)
+    const l = listener()
     feed(l, speech, 12) // 0.2 s
     expect(l.attention).toBeGreaterThan(0.6)
-    expect(l.retraction(2, 0)).toBeGreaterThan(0.05)
+    expect(units(l, 2, 0)).toBeGreaterThan(20)
   })
 })
 
@@ -120,7 +163,7 @@ function syllable(age: number, centre: number, peak = 1, width = 0.26): Float32A
 describe('Listener — impact: a clap retracts hard, speech does not', () => {
   it('syllables never count as an impact, at 60 or 30 fps', () => {
     for (const fps of [60, 30]) {
-      const l = new Listener(COUNT)
+      const l = listener()
       let maxImpact = 0
       let t = 0
       for (const centre of [0.1, 0.3, 0.5, 0.7, 0.9]) {
@@ -131,7 +174,7 @@ describe('Listener — impact: a clap retracts hard, speech does not', () => {
         }
       }
       expect(maxImpact).toBeLessThan(0.01)
-      expect(l.retraction(6, 0)).toBeLessThanOrEqual(LISTENING.presenceMax + 1e-6)
+      expect(units(l, 6, 0)).toBeLessThanOrEqual(LISTENING.presenceUnits[1] + 1e-6)
     }
   })
 
@@ -140,7 +183,7 @@ describe('Listener — impact: a clap retracts hard, speech does not', () => {
       const run = (opts: Parameters<typeof createSpeechBurstSource>[0]) => {
         const src = createSpeechBurstSource(opts)
         src.start()
-        const l = new Listener(COUNT)
+        const l = listener()
         const out = new Float32Array(COUNT)
         let maxImpact = 0
         let events = 0
@@ -168,7 +211,7 @@ describe('Listener — impact: a clap retracts hard, speech does not', () => {
   it('a talker whose voice spans most bands at once still does not startle it', () => {
     // Even a broad voice leaves the extremes (air above 4 kHz, room below
     // 100 Hz) quiet; only something that lifts nearly every band is a hit.
-    const l = new Listener(COUNT)
+    const l = listener()
     const broad = new Float32Array([0, 0.2, 0.3, 0.3, 0.25, 0.1, 0.02])
     let maxImpact = 0
     let t = feed(l, silence, 10)
@@ -180,7 +223,7 @@ describe('Listener — impact: a clap retracts hard, speech does not', () => {
   })
 
   it('a broadband clap retracts every line within 100 ms, the outer lines most', () => {
-    const l = new Listener(COUNT)
+    const l = listener()
     let t = feed(l, silence, 30)
     t = feed(l, clap, 1, t)
     let outerPeak = 0
@@ -200,8 +243,8 @@ describe('Listener — impact: a clap retracts hard, speech does not', () => {
   it('even the hardest clap at full attention leaves a fifth of every line', () => {
     // The founder's brief: a handclap should not close a line. Presence at
     // its peak plus a saturated impact must still leave the tips well apart.
-    const l = new Listener(COUNT)
-    let t = feed(l, speech, 120) // attention fully up
+    const l = listener()
+    let t = feed(l, new Float32Array(COUNT).fill(0.3), 120) // attention fully up, every band
     const hardest = new Float32Array(COUNT).fill(1)
     t = feed(l, hardest, 1, t)
     let worst = 0
@@ -212,11 +255,17 @@ describe('Listener — impact: a clap retracts hard, speech does not', () => {
       }
     }
     expect(worst).toBeLessThanOrEqual(0.8)
-    expect(LISTENING.impactMax + LISTENING.presenceMax).toBeLessThanOrEqual(0.4)
+    // and by construction, per line: peak presence plus a saturated impact fits under the cap
+    for (let k = 0; k < COUNT; k++) {
+      const depth = LISTENING.innerImpactShare + (1 - LISTENING.innerImpactShare) * (k / (COUNT - 1))
+      expect(LISTENING.presenceUnits[1] / LENGTHS[k] + LISTENING.impactMax * depth).toBeLessThanOrEqual(
+        LISTENING.maxPerEnd,
+      )
+    }
   })
 
   it('relaxes smoothly after the clap and never fully closes', () => {
-    const l = new Listener(COUNT)
+    const l = listener()
     let t = feed(l, silence, 30)
     t = feed(l, clap, 1, t)
     const trace: number[] = []
@@ -236,8 +285,8 @@ describe('Listener — impact: a clap retracts hard, speech does not', () => {
   })
 
   it('a harder clap retracts further than a soft one, up to the cap', () => {
-    const soft = new Listener(COUNT)
-    const hard = new Listener(COUNT)
+    const soft = listener()
+    const hard = listener()
     const softClap = new Float32Array(COUNT).fill(0.4)
     let ts = feed(soft, silence, 30)
     let th = feed(hard, silence, 30)
@@ -258,8 +307,8 @@ describe('Listener — impact: a clap retracts hard, speech does not', () => {
 
 describe('Listener — robustness', () => {
   it('is deterministic: two listeners fed the same frames agree exactly', () => {
-    const a = new Listener(COUNT)
-    const b = new Listener(COUNT)
+    const a = listener()
+    const b = listener()
     const script = (frame: number) => (frame % 40 < 20 ? speech : frame % 97 === 0 ? clap : silence)
     feed(a, script, 300)
     feed(b, script, 300)
@@ -267,7 +316,7 @@ describe('Listener — robustness', () => {
   })
 
   it('stays finite and bounded under hostile input', () => {
-    const l = new Listener(COUNT)
+    const l = listener()
     const hostile = (frame: number) => {
       const v = new Float32Array(COUNT)
       v.fill(frame % 2 === 0 ? 1 : 0)
@@ -289,15 +338,26 @@ describe('Listener — robustness', () => {
     }
   })
 
+  it('carries its envelopes to a listener of another density', () => {
+    const a = listener()
+    feed(a, speech, 60)
+    const b = new Listener(tineLengths('display'))
+    b.adopt(a)
+    expect(b.attention).toBeCloseTo(a.attention, 9)
+    // the vowel's rings (mid register) are attended in the new density too
+    expect(b.retraction(4, 0) * tineLengths('display')[4]).toBeGreaterThan(30)
+    expect(b.retraction(0, 0) * tineLengths('display')[0]).toBeLessThan(20)
+  })
+
   it('exposes the tuning the design record documents', () => {
-    expect(LISTENING.presenceMin).toBe(0.1)
-    expect(LISTENING.presenceMax).toBe(0.15)
+    expect(LISTENING.presenceUnits).toEqual([45, 70]) // ~3-5 % of an outer ring
+    expect(LISTENING.globalShare).toBe(0.25)
     expect(LISTENING.releaseSeconds).toBeGreaterThan(LISTENING.attackSeconds * 5)
     expect(LISTENING.maxPerEnd).toBeLessThan(0.5)
   })
 
   it('the hardest clap actually reaches impactMax before the cap', () => {
-    const l = new Listener(COUNT)
+    const l = listener()
     let t = feed(l, silence, 30)
     t = feed(l, clap, 1, t)
     let peak = 0
@@ -309,7 +369,7 @@ describe('Listener — robustness', () => {
   })
 
   it('a stalled or backwards frame clock cannot latch an impact', () => {
-    const l = new Listener(COUNT)
+    const l = listener()
     l.feed(silence, DT, 1)
     l.feed(clap, DT, 1 + DT)
     // the clock now stands still (or goes backwards); time still passes by dt
