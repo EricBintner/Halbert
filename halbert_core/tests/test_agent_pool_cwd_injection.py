@@ -1,11 +1,14 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
-"""`cwd` is a tool argument, and the safety gate never classified it.
+"""`cwd` is a tool argument, and the safety gate now classifies it.
 
 `TerminalPool.run_block` interpolates the command into a bash line. It also
-interpolated `cwd`, while `ToolSafetyFramework.classify` inspects only
+interpolated `cwd`, while `ToolSafetyFramework.classify` used to inspect only
 `command` — so a benign command with a hostile `cwd` was approved as SAFE,
-with no confirmation, and the whole line reached the shell.
+with no confirmation, and the whole line reached the shell.  SEC-2 closed
+that: the base classifier resolves bare operands against `cwd`, so
+`rm grub.cfg` with cwd=/boot is classified like `rm /boot/grub.cfg`.  The
+quoting in `run_block` stays — defence in depth, not instead of the gate.
 
 The pre-pool substrate was never exposed to this: `create_subprocess_shell`
 takes `cwd` as a real chdir argument, not as shell text. The hole opened when
@@ -30,31 +33,47 @@ def _block_line(command: str, cwd: str) -> str:
     return f"({prefix}{command});"
 
 
-class TestTheGateDoesNotSeeCwd:
-    def test_the_base_classifier_still_does_not_classify_cwd(self):
-        """Pinned as the reason quoting is load-bearing, not as approval of it.
-
-        Narrowed by B3: the *skill* pass now reads cwd, so a protected path
-        reached through it is classified (see the companion test below and
-        `test_skills_safety_binding.py`). The base classifier still does not,
-        which is why the quoting stays — defence in depth, not instead of it.
+class TestTheBaseClassifierReadsCwd:
+    def test_a_destructive_command_is_classified_against_cwd(self):
+        """SEC-2: `rm grub.cfg` with cwd=/boot is the same operation as
+        `rm /boot/grub.cfg`. Only the second spelling was ever classified
+        before; the gate now resolves bare operands against the directory the
+        command will actually run in.
         """
-        r = ToolSafetyFramework().classify(
+        r = ToolSafetyFramework(user_overrides={}).classify(
+            "run_command", {"command": "rm grub.cfg", "cwd": "/boot"})
+        assert r.requires_confirmation, r
+
+    def test_the_gate_and_the_quoting_are_separate_layers(self):
+        """A hostile cwd string is quoted by run_block AND inert for
+        classification: `/tmp && touch ...` is not a directory, so the read
+        of it normalises away, leaving an ordinary (unraised) SAFE — the
+        same verdict `ls` in /tmp gets. Both must hold: if quoting regresses
+        the line is exploited; if cwd classification regresses, the skill
+        layer below becomes the only thing watching.
+        """
+        r = ToolSafetyFramework(user_overrides={}).classify(
             "run_command", {"command": "ls", "cwd": HOSTILE})
         assert r.risk_level == RiskLevel.SAFE and not r.requires_confirmation
 
-    def test_but_a_skill_protecting_the_path_does_classify_it(self):
-        """B3: `rm grub.cfg` with cwd=/boot used to be MEDIUM with no
-        confirmation while `cd /boot && rm grub.cfg` was HIGH — the same
-        operation, one classified and one not.
+    def test_but_a_skill_protecting_the_path_still_confirms(self):
+        """The skill layer confirms even what the base classifier only
+        *elevates*: `ls` with cwd=/boot is LOW in the base (read-only at a
+        watched path, auto-runs) but must prompt once storage-ops declares
+        /boot protected. This is the test that fails if `set_skill_safety`
+        stops being installed per turn.
         """
         from halbert_core.skills.composer import compose
         from halbert_core.skills.loader import BUILTIN_DIR, load_skills
 
-        f = ToolSafetyFramework()
+        base = ToolSafetyFramework(user_overrides={}).classify(
+            "run_command", {"command": "ls", "cwd": "/boot"})
+        assert not base.requires_confirmation, base  # LOW: the skill must be the reason
+
+        f = ToolSafetyFramework(user_overrides={})
         f.set_skill_safety(compose([load_skills([BUILTIN_DIR])["storage-ops"]]).safety)
-        r = f.classify("run_command", {"command": "rm grub.cfg", "cwd": "/boot"})
-        assert r.requires_confirmation
+        r = f.classify("run_command", {"command": "ls", "cwd": "/boot"})
+        assert r.requires_confirmation, r
 
 
 class TestTheCommandLineIsSafeAnyway:

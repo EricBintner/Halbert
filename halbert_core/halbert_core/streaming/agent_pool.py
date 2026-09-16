@@ -180,7 +180,7 @@ class TerminalPool:
             from ..tools.safety import RiskLevel, ToolSafetyFramework
 
             read_only = ToolSafetyFramework().classify(
-                "run_command", {"command": command}
+                "run_command", {"command": command, "cwd": cwd}
             ).risk_level == RiskLevel.SAFE
         except Exception:  # pragma: no cover - the gate is never optional
             logger.warning("could not classify a block command; treating it as a write")
