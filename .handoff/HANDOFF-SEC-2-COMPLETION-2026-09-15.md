@@ -3,7 +3,7 @@
 > **Document:** `.handoff/HANDOFF-SEC-2-COMPLETION-2026-09-15.md`
 > **Status:** Review requested — the §3 table is closed, the branch is rebased onto current main, one item needs a founder ruling rather than a patch.
 > **Date:** 2026-09-15
-> **Branch:** `fix/sec-2-readonly-lane`, worktree `.claude/worktrees/sec-2-lane`. Six commits on top of `fa6491dc`, which is main's tip. **Not 537 behind — this branch is current.**
+> **Branch:** `fix/sec-2-readonly-lane`, worktree `.claude/worktrees/sec-2-lane`. Ten commits on top of `fa6491dc`, which is main's tip. **Not 537 behind — this branch is current.**
 > **Supersedes:** `.handoff/HANDOFF-SEC-2-READONLY-LANE-REVIEW-2026-09-15.md`, whose §3 table is now closed and whose §3 "double classification" note was wrong in a way that matters (see §4).
 > **Retires:** `worktree-sec-1-one-door`. Do not merge it; see §1.
 
@@ -56,6 +56,10 @@ All against runs, not readings. Commits in order:
 | `b9a03097` | **The §3 bypass table — all nineteen closed** |
 | `53d4ddff` | The adjacent items; the prompt rate as actually measured |
 | `eb3c341e` | SUBVERBS edge-case pins; `SECURITY-TODO` reconciled |
+| `7aa0e455` | The UI badged the contained state and stayed silent on the uncontained one |
+| `38481cca` | The owner store's position between CRITICAL and HIGH, pinned |
+| `5c384f02` | Two of the four false positives the review named |
+| `868b4615` | Probes against the one token vouched by shape rather than value |
 
 **The nineteen bypasses.** Two mechanisms had failed. `True` vouches a whole binary, so the systemd `*ctl` family, `hostname` and `date` carried their writing verbs along; those became frozensets that keep the reporting spellings. `ifconfig`, `iwconfig`, `arp`, `dmesg`, `nvidia-smi`, `mokutil` and `sort -o` take the effect past a first operand that is an arbitrary interface or filename, so they are named in `EFFECTFUL_ARGS`.
 
@@ -86,11 +90,37 @@ One was changed: **`kubectl get secrets -o yaml` prints the secret's contents**,
 
 ## 7. Verification
 
-- `test_classifier_read_only.py` — **164 passed**, up from 72. The nineteen bypasses, the twenty-six read-only spellings, the twenty-three awkward ones, the four resolution tests, and the pins for the adjudicated carve-outs.
+- `test_classifier_read_only.py` — **182 passed**, up from 72. The nineteen bypasses, the twenty-six read-only spellings, the twenty-three awkward ones, the four resolution tests, the owner-store ordering, the substitution probes, and the pins for the adjudicated carve-outs.
 - Related suites (safety, applescript, mcp, skills, sandbox, secrets, terminal, editor, write-paths) — **1493 passed**, one failure, `test_executor_pool.py::test_background_kwarg_accepted`, which fails identically on the merge-base.
 - Full suite vs. a merge-base baseline: see §8.
 - Invocation, from the worktree: `arch -arm64 /Volumes/4TB-BAD/Halbert/.venv/bin/python ./wt_pytest.py <paths>`. Bare `./wt_pytest.py` picks up the system Python, which has no `pytest-asyncio`, and silently skips the async tests.
 
 ## 8. Full-suite result
 
-<!--FULLSUITE-->
+Both runs are the whole of `halbert_core/tests`, on this machine, within half an hour of each other.
+
+| | branch `fix/sec-2-readonly-lane` | merge-base `fa6491dc` (main) |
+|---|---|---|
+| passed | **9699** | 9555 |
+| failed | **53** | 53 |
+| errors | 1 | 1 |
+| skipped / xfailed | 18 / 6 | 18 / 6 |
+| wall | 6m10s | 6m34s |
+
+**The failure sets are byte-identical.** Sorted and diffed, `comm` returns nothing in either
+direction: no test fails on the branch that passes on main, and none the other way. The branch's
++144 passes are the cherry-picked test files plus the 110 tests added here.
+
+The 53 are main's known nonzero baseline, concentrated in four files —
+`test_proactive_catchup_wiring.py` (18), `test_agent_model_selected_event.py` (15),
+`test_num_ctx.py` (5), `test_thread_manager_store_injection.py` (3) — with the rest spread one
+and two at a time. Several are environmental: the errors are an agent route trying to reach a
+model endpoint that is not up on this host. None of them are this branch's, and none are
+investigated here.
+
+Reproduce:
+
+```
+cd .claude/worktrees/sec-2-lane
+arch -arm64 /Volumes/4TB-BAD/Halbert/.venv/bin/python ./wt_pytest.py halbert_core/tests -q
+```
