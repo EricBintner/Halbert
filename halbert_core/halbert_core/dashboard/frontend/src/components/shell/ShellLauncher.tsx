@@ -29,7 +29,13 @@ export function ShellLauncher(): ReactNode {
     setLaunching(true);
     setError(null);
     try {
-      await spawn(NEW_SHELL_COMMAND);
+      // The click IS the confirmation (ruling B, 2026-09-16). The shell
+      // command is a wrapper head and classifies HIGH, so a bare spawn is a
+      // 428; but a person who just pressed "Open a shell" has confirmed
+      // exactly that. The shell runs nothing until typed into, and the
+      // sandbox still applies. Asking "open a shell?" after the click would
+      // be friction with no safety in it.
+      await spawn(NEW_SHELL_COMMAND, { force: true });
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {

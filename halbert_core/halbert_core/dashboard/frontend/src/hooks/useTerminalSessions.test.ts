@@ -173,3 +173,48 @@ describe('terminal session store — attached (PTY) sessions', () => {
     ])
   })
 })
+
+// ---------------------------------------------------------------------------
+// Ruling B (2026-09-16): a HIGH verdict on /sessions is a 428 that asks.
+// ---------------------------------------------------------------------------
+
+describe('terminal session store — the ask', () => {
+  beforeEach(() => {
+    vi.stubGlobal('WebSocket', vi.fn())
+  })
+  afterEach(() => vi.unstubAllGlobals())
+
+  const detail = {
+    requires_confirmation: true,
+    risk_level: 'high',
+    reason: 'Unrecognised command: not on the read-only list',
+    confirmation_message: '**Execute command:**\n```\nhostname evil\n```',
+  }
+
+  it('surfaces a 428 as a typed ask, not a generic failure', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ detail }), { status: 428 })))
+    await expect(store.spawn('hostname evil')).rejects.toMatchObject({
+      command: 'hostname evil',
+      detail: { requires_confirmation: true, risk_level: 'high' },
+    })
+  })
+
+  it('carries force through to the request body', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ session_id: 's1', pid: 7, sandboxed: true }), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    await store.spawn('hostname evil', { force: true })
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string)
+    expect(body.force).toBe(true)
+  })
+
+  it('does not send force unless asked to', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ session_id: 's2', pid: 8, sandboxed: true }), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    await store.spawn('ls -la')
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string)
+    expect(body.force).toBeUndefined()
+  })
+})

@@ -89,6 +89,36 @@ export interface SpawnOptions {
   cols?: number;
   rows?: number;
   writablePaths?: string[];
+  /** Ruling B (2026-09-16): a person has seen the ask for this command.
+   *  Carried to the backend as `force`; without it a HIGH verdict is a
+   *  428 and `spawn` throws SpawnNeedsConfirmation. */
+  force?: boolean;
+}
+
+/** What the backend puts in a 428's detail: the same fields the agent
+ *  path's confirmation carries, so one dialog renders both. */
+export interface SpawnAskDetail {
+  requires_confirmation: boolean;
+  risk_level: string;
+  reason: string;
+  confirmation_message: string;
+}
+
+/**
+ * /sessions answered 428 Precondition Required: the classifier called the
+ * command HIGH and nobody has confirmed it. Not a failure — an ask. The
+ * caller shows `detail.confirmation_message` and, on yes, spawns again with
+ * `{ force: true }`.
+ */
+export class SpawnNeedsConfirmation extends Error {
+  readonly command: string;
+  readonly detail: SpawnAskDetail;
+  constructor(command: string, detail: SpawnAskDetail) {
+    super(detail?.confirmation_message ?? `Confirmation required: ${command}`);
+    this.name = 'SpawnNeedsConfirmation';
+    this.command = command;
+    this.detail = detail;
+  }
 }
 
 const MAX_VISIBLE = 3;
@@ -128,12 +158,17 @@ class TerminalSessionStore {
     };
     if (opts.cwd) body.cwd = opts.cwd;
     if (opts.writablePaths) body.writable_paths = opts.writablePaths;
+    if (opts.force) body.force = true;
 
     const resp = await fetch(apiUrl('/api/terminal/sessions'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
+    if (resp.status === 428) {
+      const payload = await resp.json().catch(() => ({}));
+      throw new SpawnNeedsConfirmation(command, payload.detail ?? payload);
+    }
     if (!resp.ok) {
       throw new Error(`spawn failed: ${resp.status} ${await resp.text()}`);
     }

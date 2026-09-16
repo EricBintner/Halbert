@@ -56,6 +56,10 @@ export function Terminal() {
   const [historyIndex, setHistoryIndex] = useState(-1)
   const [aiSuggestion, setAiSuggestion] = useState<AISuggestion | null>(null)
   const [isAiLoading, setIsAiLoading] = useState(false)
+  // Ruling B (2026-09-16): a 428 from /exec is an ask, printed in the
+  // terminal. Running the same command again is the confirmation, so the
+  // command that was asked about is remembered here until then.
+  const pendingForceRef = useRef<string | null>(null)
   const [showAiPanel, setShowAiPanel] = useState(true)
   const [lastOutput, setLastOutput] = useState('')
 
@@ -206,11 +210,27 @@ export function Terminal() {
     xtermRef.current?.writeln(`\x1b[1;34m$\x1b[0m ${cmd}`)
 
     try {
+      const force = pendingForceRef.current === cmd
+      pendingForceRef.current = null
       const response = await fetch(apiUrl('/api/terminal/exec'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ command: cmd }),
+        body: JSON.stringify(force ? { command: cmd, force: true } : { command: cmd }),
       })
+
+      if (response.status === 428) {
+        // The ask. Say it in the terminal's own voice and stop -- the demo
+        // fallbacks below must never turn a refusal into a pretend success.
+        const payload = await response.json().catch(() => ({}))
+        const detail = payload.detail ?? payload
+        const message: string = detail.confirmation_message ?? detail.reason
+          ?? 'This command needs confirmation.'
+        message.replace(/\*\*/g, '').replace(/```/g, '').split('\n').filter(Boolean)
+          .forEach((line: string) => xtermRef.current?.writeln(`\x1b[33m${line}\x1b[0m`))
+        xtermRef.current?.writeln('\x1b[33mRun the same command again to confirm.\x1b[0m')
+        pendingForceRef.current = cmd
+        return
+      }
 
       if (response.ok) {
         const data = await response.json()

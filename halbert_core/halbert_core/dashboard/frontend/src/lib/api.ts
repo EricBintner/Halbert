@@ -17,14 +17,41 @@ import {
   type TimelinePage,
 } from '../types/timeline'
 
+/**
+ * A non-2xx from the backend, with the status and the parsed detail kept on
+ * the error. Ruling B (2026-09-16) made /exec answer 428 on a HIGH verdict,
+ * and a caller that has to render that ask cannot do it from one flattened
+ * string. Still an Error: `e.message` reads as it always did.
+ */
+export class ApiError extends Error {
+  status: number
+  detail: unknown
+  constructor(message: string, status: number, detail: unknown) {
+    super(message)
+    this.name = 'ApiError'
+    this.status = status
+    this.detail = detail
+  }
+}
+
 async function request<T = any>(path: string, options: RequestInit = {}): Promise<T> {
   const res = await fetch(`${apiBase()}${path}`, {
     headers: options.body ? { 'Content-Type': 'application/json' } : undefined,
     ...options,
   })
   if (!res.ok) {
-    const detail = await res.text().catch(() => '')
-    throw new Error(`API ${options.method ?? 'GET'} ${path} failed (${res.status}): ${detail}`)
+    const text = await res.text().catch(() => '')
+    let detail: unknown = text
+    try {
+      const parsed = JSON.parse(text)
+      detail = parsed?.detail ?? parsed
+    } catch {
+      /* not JSON; the raw text is the detail */
+    }
+    throw new ApiError(
+      `API ${options.method ?? 'GET'} ${path} failed (${res.status}): ${text}`,
+      res.status, detail,
+    )
   }
   return res.json()
 }
@@ -308,10 +335,11 @@ export const api = {
     })
   },
 
-  executeCommand(command: string) {
+  /** `force` carries a person's confirmation back after a 428 (ruling B). */
+  executeCommand(command: string, opts: { force?: boolean } = {}) {
     return request('/api/terminal/exec', {
       method: 'POST',
-      body: JSON.stringify({ command }),
+      body: JSON.stringify(opts.force ? { command, force: true } : { command }),
     })
   },
 
