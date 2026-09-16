@@ -3,6 +3,9 @@
 **Date:** 2026-09-15
 **From:** Storybook public-publish feasibility review
 **Status:** AUDIT COMPLETE — external best-practices research in flight (see §5)
+**Resolution (2026-09-16):** §3's branding rows are implemented per
+`documentation/design/STORYBOOK-CHROME-AND-ICON-DOCK-2026-09-16.md`. Still open
+from §3: Welcome/MDX pages and CI deploy (founder: deploy is out of scope for now).
 **Target surface:** `packages/design-system/.storybook/` (config), `packages/design-system/src/stories/` (stories), `.github/workflows/ci.yml` (deploy)
 **Question asked:** Can we post our Storybook publicly online, and what does standard practice include that we're missing?
 
