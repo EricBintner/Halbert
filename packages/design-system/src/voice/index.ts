@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
-export { AudioReactiveHalbertMark } from './AudioReactiveHalbertMark'
+export { AudioReactiveHalbertMark, THINKING_BULGES } from './AudioReactiveHalbertMark'
 export type {
   AudioReactiveHalbertMarkProps,
   VoiceVisualState,
@@ -51,6 +51,7 @@ export { Listener, LISTENING } from './listening'
 export {
   MARK,
   DEFAULT_DENSITY,
+  STROKE_WIDTH,
   laneCount,
   tineCount,
   TINE_AMPLITUDES,
@@ -61,6 +62,13 @@ export {
   tineLength,
   tineLengths,
   tinePathD,
+  bulgePolygonPoints,
   staticTinePaths,
 } from './geometry'
-export type { Retraction, TinePathOptions, TravelingBulge, VoiceDensity } from './geometry'
+export type {
+  BulgeOptions,
+  BulgeSpec,
+  Retraction,
+  TinePathOptions,
+  VoiceDensity,
+} from './geometry'

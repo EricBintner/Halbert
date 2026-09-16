@@ -13,6 +13,7 @@ import {
   tineLength,
   tineLengths,
   tinePathD,
+  bulgePolygonPoints,
   staticTinePaths,
 } from '../voice/geometry'
 
@@ -272,62 +273,78 @@ describe('retraction — a line withdraws its ends along its own path (listening
   })
 })
 
-describe('traveling bulges (thinking state — "snake ate a ball")', () => {
-  const bulge = [{ center: 0.5, width: 0.07, height: 8 }]
+describe('thinking bulges — a python that ate a baseball', () => {
+  const SW = 48
+  const ball = { center: 0.5, sigmaUnits: 36, height: 10 }
+  const poly = (s: string) => s.trim().split(' ').map((p) => p.split(',').map(Number) as [number, number])
+  const centroidX = (pts: Array<[number, number]>) => pts.reduce((s, [x]) => s + x, 0) / pts.length
 
-  it('moves the arc apex outward at the bulge center', () => {
-    const d = tinePathD(2, 0, { density: 'medium', bulges: bulge })
-    const pts = points(d)
-    const statik = points(staticTinePaths('medium')[2])
-    const apexY = (arr: Array<[number, number]>) => Math.max(...arr.map(([, y]) => y))
-    expect(apexY(pts)).toBeGreaterThan(apexY(statik) + 6)
-    expect(apexY(pts)).toBeLessThan(apexY(statik) + 9)
+  it('swells both sides of the line equally at its centre', () => {
+    // lane 2's apex: the line is the r=144 arc about the mark's centre
+    const pts = poly(bulgePolygonPoints(2, ball, { strokeWidth: SW }))
+    const radii = pts.map(([x, y]) => Math.hypot(x - 512, y - 512))
+    expect(Math.max(...radii)).toBeGreaterThan(144 + SW / 2 + 10)
+    expect(Math.max(...radii)).toBeLessThan(144 + SW / 2 + 11)
+    expect(Math.min(...radii)).toBeLessThan(144 - SW / 2 - 10)
+    expect(Math.min(...radii)).toBeGreaterThan(144 - SW / 2 - 11)
   })
 
-  it('pins both path endpoints while a bulge travels', () => {
-    for (const center of [0.05, 0.3, 0.5, 0.7, 0.95]) {
-      const d = tinePathD(2, 0, {
-        density: 'medium',
-        bulges: [{ center, width: 0.07, height: 8 }],
-      })
-      const pts = points(d)
-      const statik = points(staticTinePaths('medium')[2])
-      expect(pts[0]).toEqual(statik[0])
-      expect(pts[pts.length - 1]).toEqual(statik[statik.length - 1])
+  it('is as wide as the stroke at its ends, so it merges into the line', () => {
+    const pts = poly(bulgePolygonPoints(2, ball, { strokeWidth: SW }))
+    const n = pts.length / 2 // one side forward, the other back
+    const width = (i: number) => Math.hypot(pts[i][0] - pts[2 * n - 1 - i][0], pts[i][1] - pts[2 * n - 1 - i][1])
+    expect(width(0)).toBeGreaterThanOrEqual(SW)
+    expect(width(0)).toBeLessThan(SW + 2)
+    expect(width(n - 1)).toBeLessThan(SW + 2)
+    expect(width(Math.floor(n / 2))).toBeGreaterThan(SW + 18) // the ball in the middle
+  })
+
+  it('is the same physical size on every line: sigma is in mark units', () => {
+    const along = (lane: number) => {
+      const pts = poly(bulgePolygonPoints(lane, ball, { strokeWidth: SW }))
+      const n = pts.length / 2
+      const a = pts[0]
+      const b = pts[n - 1]
+      if (lane === 0) return Math.abs(b[1] - a[1]) // the spine is vertical
+      // the outer arc: angle swept about the mark's centre, times its radius
+      const ang = (p: [number, number]) => Math.atan2(p[1] - 512, p[0] - 512)
+      return Math.abs(ang(b) - ang(a)) * 432
     }
+    expect(along(0)).toBeGreaterThan(6 * 36 - 4)
+    expect(along(0)).toBeLessThan(6 * 36 + 4)
+    expect(along(6)).toBeGreaterThan(6 * 36 - 6) // measured on the offset curve, a little wider
+    expect(along(6)).toBeLessThan(6 * 36 + 10)
   })
 
-  it('leaves points far from the bulge untouched', () => {
-    const d = tinePathD(2, 0, { density: 'medium', bulges: bulge })
-    const pts = points(d)
-    const statik = points(staticTinePaths('medium')[2])
-    // left-leg top quarter (u < 0.05 path-normalized) is untouched to the cent
-    for (let i = 1; i <= 3; i++) {
-      expect(pts[i][0]).toBeCloseTo(statik[i][0], 2)
-      expect(pts[i][1]).toBeCloseTo(statik[i][1], 2)
-    }
+  it('fades over the last tenth of a line and never draws past its end', () => {
+    expect(bulgePolygonPoints(0, { ...ball, center: 0.002 }, { strokeWidth: SW })).toBe('')
+    const near = poly(bulgePolygonPoints(0, { ...ball, center: 0.99 }, { strokeWidth: SW }))
+    for (const [, y] of near) expect(y).toBeLessThanOrEqual(512 + 0.5) // clipped at the spine's base
+    // and nearly gone: a tenth of the way into the fade leaves under a unit of swelling
+    expect(Math.max(...near.map(([x]) => Math.abs(x - 512)))).toBeLessThan(SW / 2 + 2)
+    // while a ball in the middle rides at full size
+    const mid = poly(bulgePolygonPoints(0, { ...ball, center: 0.3 }, { strokeWidth: SW }))
+    expect(Math.max(...mid.map(([x]) => Math.abs(x - 512)))).toBeGreaterThan(SW / 2 + 9.5)
   })
 
-  it('sums stacked bulges on one tine', () => {
-    const d = tinePathD(2, 0, {
-      density: 'medium',
-      bulges: [
-        { center: 0.5, width: 0.07, height: 8 },
-        { center: 0.52, width: 0.07, height: 8 },
-      ],
-    })
-    const pts = points(d)
-    const statik = points(staticTinePaths('medium')[2])
-    const apexY = (arr: Array<[number, number]>) => Math.max(...arr.map(([, y]) => y))
-    expect(apexY(pts)).toBeGreaterThan(apexY(statik) + 12)
+  it('is clipped to the visible part of a withdrawn line', () => {
+    const trim = { start: 0.4, end: 0 }
+    expect(bulgePolygonPoints(2, { ...ball, center: 0.2 }, { strokeWidth: SW, trim })).toBe('')
+    expect(bulgePolygonPoints(2, { ...ball, center: 0.6 }, { strokeWidth: SW, trim })).not.toBe('')
   })
 
-  it('bulges work on the spine and the bare outermost arc', () => {
-    const spine = points(tinePathD(0, 0, { density: 'medium', bulges: bulge }))
-    const midXs = spine.slice(4, -4).map(([x]) => x)
-    expect(Math.max(...midXs)).toBeGreaterThan(512 + 6)
-    const outer = points(tinePathD(5, 0, { density: 'medium', bulges: bulge }))
-    const apexY = Math.max(...outer.map(([, y]) => y))
-    expect(apexY).toBeGreaterThan(944 + 6)
+  it('rides a warped line', () => {
+    const onLeg = { ...ball, center: 0.15 } // lane 2's left leg, near its bow
+    const still = poly(bulgePolygonPoints(2, onLeg, { strokeWidth: SW }))
+    const bowed = poly(bulgePolygonPoints(2, onLeg, { strokeWidth: SW, displacement: 8 }))
+    expect(centroidX(bowed)).toBeLessThan(centroidX(still) - 3) // the leg bows outward, to -x
+  })
+
+  it('the line itself no longer bends: a bulge is drawn over it, not into it', () => {
+    // tinePathD accepts no bulge input; the swelling is a separate polygon
+    expect((tinePathD as unknown as (...a: unknown[]) => string)(2, 0, { bulges: [ball] })).toBe(
+      staticTinePaths()[2],
+    )
   })
 })
+

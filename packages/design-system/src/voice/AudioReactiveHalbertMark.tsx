@@ -5,14 +5,15 @@ import { cx } from '../lib'
 import {
   DEFAULT_DENSITY,
   MAX_DISPLACEMENT_MULTIPLIER,
+  STROKE_WIDTH,
   TINE_AMPLITUDES,
+  bulgePolygonPoints,
   staticTinePaths,
   tineCount,
   tineLengths,
   tinePathD,
   type Retraction,
   type TinePathOptions,
-  type TravelingBulge,
   type VoiceDensity,
 } from './geometry'
 import { ResonatorBank, STRING_LADDER, SWELL_SPRING } from './springs'
@@ -67,7 +68,6 @@ const STROKE_BY_TONE: Record<Exclude<HalbertMarkTone, 'badge'>, string> = {
   current: 'currentColor',
 }
 const ERROR_STROKE = 'var(--color-status-error, #C83E2D)'
-const STROKE_BY_DENSITY: Record<VoiceDensity, number> = { brand: 48, medium: 48, display: 26.67 }
 
 /** The per-state lean weight glides to its target with this time constant,
  * so a state change never pops the lean (speaking 0.3 -> idle 1.0). */
@@ -78,12 +78,36 @@ const RETRACT_WEIGHT_RAMP_SECONDS = 0.25
 /** Below this weight the trim is skipped entirely (exact static geometry). */
 const RETRACT_EPSILON = 0.001
 
+/**
+ * Thinking: "a python that ate a baseball" (design doc 17). Several balls
+ * travel the lines at once, in both directions, each the same physical size
+ * (sigma in mark units), crossing a line in under a second.
+ */
+export const THINKING_BULGES = Object.freeze({
+  /** Balls alive at once (also the size of the polygon pool). */
+  max: 5,
+  /** Seconds into thinking before the first ball, then the gap between spawns. */
+  firstSpawnSeconds: 0.15,
+  spawnMin: 0.15,
+  spawnMax: 0.35,
+  /** Seconds for a ball to cross its line, end to end. */
+  durationMin: 0.45,
+  durationMax: 0.8,
+  /** Gaussian sigma of the ball along the line, in mark units. */
+  sigmaUnits: 36,
+  /** Extra half-width at the ball's centre, in mark units per side. Two
+   * neighbouring balls at the same spot must clear the 24-unit brand gap. */
+  heightMin: 8,
+  heightMax: 11,
+})
+
 interface ActiveBulge {
   tine: number
   start: number
   duration: number
   height: number
-  width: number
+  /** Travelling from the path's first end to its last, or the other way. */
+  forward: boolean
 }
 
 function excitationFor(state: string): StateExcitation {
@@ -110,6 +134,8 @@ interface Engine {
   listener: Listener
   raw: Float32Array
   scaled: Float32Array
+  /** This frame's displacement multiplier per tine (ring + lean, clamped). */
+  multipliers: Float64Array
   /** The state the engine last acted on. Seeded 'idle' so mounting in any
    * other state counts as entering it (a mount in `recognized` strums). */
   seenState: VoiceVisualState
@@ -121,7 +147,6 @@ interface Engine {
   bulges: ActiveBulge[]
   /** Armed on the first thinking frame so it shares the frame clock. */
   nextSpawn: number | null
-  bulgesByTine: TravelingBulge[][]
   /** 0 = full size, 1 = thinking contraction; a small spring of its own. */
   contract: number
   contractV: number
@@ -151,13 +176,13 @@ function createEngine(density: VoiceDensity, initialState: string, carry: Engine
     listener,
     raw: new Float32Array(count),
     scaled: new Float32Array(count),
+    multipliers: new Float64Array(count),
     seenState: carry ? carry.seenState : 'idle',
     swellWeight: carry ? carry.swellWeight : initial.swellWeight,
     retractWeight: carry ? carry.retractWeight : initial.retract,
     trims: Array.from({ length: count }, () => ({ start: 0, end: 0 })),
     bulges: [],
     nextSpawn: null,
-    bulgesByTine: Array.from({ length: count }, () => []),
     contract: 0,
     contractV: 0,
   }
@@ -171,10 +196,11 @@ function createEngine(density: VoiceDensity, initialState: string, carry: Engine
  * pluck that tine's string (ring), the level itself leans it a little
  * (swell); the sum, clamped to the geometry ceiling, is the tine's
  * displacement. In the listening posture the lines withdraw their ends
- * instead (listening.ts), a trim of the same path. State only changes how
- * the strings are struck and whether they withdraw — the strings
- * themselves (pitch, sustain) never change, which is what keeps every
- * surface's motion identical.
+ * instead (listening.ts), a trim of the same path. Thinking lays travelling
+ * swellings over the lines as filled polygons. State only changes how the
+ * strings are struck and whether they withdraw — the strings themselves
+ * (pitch, sustain) never change, which is what keeps every surface's motion
+ * identical.
  */
 export const AudioReactiveHalbertMark = React.forwardRef<
   SVGSVGElement,
@@ -195,6 +221,7 @@ export const AudioReactiveHalbertMark = React.forwardRef<
   ref,
 ) {
   const pathRefs = React.useRef<Array<SVGPathElement | null>>([])
+  const bulgeRefs = React.useRef<Array<SVGPolygonElement | null>>([])
   const groupRef = React.useRef<SVGGElement | null>(null)
   const stateRef = React.useRef(state)
   stateRef.current = state
@@ -233,7 +260,7 @@ export const AudioReactiveHalbertMark = React.forwardRef<
       const dt = Math.min(0.1, Math.max(0, (nowMs - last) / 1000))
       last = nowMs
       const t = nowMs / 1000
-      const { count, ring, swell, raw, scaled, amplitudes } = e
+      const { count, ring, swell, raw, scaled, amplitudes, multipliers } = e
 
       const state = stateRef.current
       if (state !== e.seenState) {
@@ -259,36 +286,29 @@ export const AudioReactiveHalbertMark = React.forwardRef<
       const ringAlpha = ring.step(dt)
       const swellAlpha = swell.step(dt)
 
-      // Thinking: spawn traveling bulges on random tines (sequential,
-      // 2-3 alive at once); cull them on state exit or journey end.
+      // Thinking: spawn balls on random lines, several alive at once, each
+      // heading one way or the other; cull them on state exit or arrival.
+      const B = THINKING_BULGES
       if (state === 'thinking') {
-        if (e.nextSpawn === null) e.nextSpawn = t + 0.3
-        if (t >= e.nextSpawn && e.bulges.length < 3) {
+        if (e.nextSpawn === null) e.nextSpawn = t + B.firstSpawnSeconds
+        if (t >= e.nextSpawn && e.bulges.length < B.max) {
           const busy = new Set(e.bulges.map((b) => b.tine))
           let pick = Math.floor(Math.random() * count)
           if (busy.has(pick)) pick = (pick + 1) % count
           e.bulges.push({
             tine: pick,
             start: t,
-            duration: 0.9 + Math.random() * 0.7,
-            height: 7 + Math.random() * 4,
-            width: 0.07,
+            duration: B.durationMin + Math.random() * (B.durationMax - B.durationMin),
+            height: B.heightMin + Math.random() * (B.heightMax - B.heightMin),
+            forward: Math.random() < 0.5,
           })
-          e.nextSpawn = t + 0.45 + Math.random() * 0.75
+          e.nextSpawn = t + B.spawnMin + Math.random() * (B.spawnMax - B.spawnMin)
         }
       } else if (e.bulges.length > 0) {
         e.bulges = []
         e.nextSpawn = null
       }
       e.bulges = e.bulges.filter((b) => (t - b.start) / b.duration <= 1)
-      for (const arr of e.bulgesByTine) arr.length = 0
-      for (const b of e.bulges) {
-        e.bulgesByTine[b.tine].push({
-          center: (t - b.start) / b.duration,
-          width: b.width,
-          height: b.height,
-        })
-      }
 
       // Thinking contraction (spec §4.1 state 4): gentle spring scale 1 -> 0.94
       const contractTarget = state === 'thinking' ? 1 : 0
@@ -298,23 +318,45 @@ export const AudioReactiveHalbertMark = React.forwardRef<
 
       const retracting = e.retractWeight > RETRACT_EPSILON
       for (let k = 0; k < count; k++) {
-        const el = pathRefs.current[k]
-        if (!el) continue
-        const opts: TinePathOptions = { density: e.density }
-        if (e.bulgesByTine[k].length > 0) opts.bulges = e.bulgesByTine[k]
+        const unclamped =
+          ring.interpolated(k, ringAlpha) + e.swellWeight * swell.interpolated(k, swellAlpha)
+        multipliers[k] = Math.max(
+          -MAX_DISPLACEMENT_MULTIPLIER,
+          Math.min(MAX_DISPLACEMENT_MULTIPLIER, unclamped),
+        )
         if (retracting) {
           const trim = e.trims[k]
           trim.start = e.retractWeight * e.listener.retraction(k, 0)
           trim.end = e.retractWeight * e.listener.retraction(k, 1)
-          opts.trim = trim
         }
-        const unclamped =
-          ring.interpolated(k, ringAlpha) + e.swellWeight * swell.interpolated(k, swellAlpha)
-        const m = Math.max(
-          -MAX_DISPLACEMENT_MULTIPLIER,
-          Math.min(MAX_DISPLACEMENT_MULTIPLIER, unclamped),
+        const el = pathRefs.current[k]
+        if (!el) continue
+        const opts: TinePathOptions = { density: e.density }
+        if (retracting) opts.trim = e.trims[k]
+        el.setAttribute('d', tinePathD(k, amplitudes[k] * multipliers[k], opts))
+      }
+      for (let i = 0; i < B.max; i++) {
+        const el = bulgeRefs.current[i]
+        if (!el) continue
+        const b = e.bulges[i]
+        if (!b) {
+          el.setAttribute('points', '')
+          continue
+        }
+        const progress = (t - b.start) / b.duration
+        el.setAttribute(
+          'points',
+          bulgePolygonPoints(
+            b.tine,
+            { center: b.forward ? progress : 1 - progress, sigmaUnits: B.sigmaUnits, height: b.height },
+            {
+              density: e.density,
+              displacement: amplitudes[b.tine] * multipliers[b.tine],
+              strokeWidth: STROKE_WIDTH[e.density],
+              trim: retracting ? e.trims[b.tine] : undefined,
+            },
+          ),
         )
-        el.setAttribute('d', tinePathD(k, amplitudes[k] * m, opts))
       }
       const g = groupRef.current
       if (g) {
@@ -358,7 +400,7 @@ export const AudioReactiveHalbertMark = React.forwardRef<
         ref={groupRef}
         fill="none"
         stroke={stroke}
-        strokeWidth={STROKE_BY_DENSITY[density]}
+        strokeWidth={STROKE_WIDTH[density]}
         strokeLinecap="round"
         strokeLinejoin="round"
       >
@@ -371,6 +413,19 @@ export const AudioReactiveHalbertMark = React.forwardRef<
             }}
           />
         ))}
+        {/* Thinking's travelling swellings: filled in the line's colour, laid
+         * over the strokes, inside the same contracting group. */}
+        <g fill={stroke} stroke="none">
+          {Array.from({ length: THINKING_BULGES.max }, (_, i) => (
+            <polygon
+              key={i}
+              points=""
+              ref={(el) => {
+                bulgeRefs.current[i] = el
+              }}
+            />
+          ))}
+        </g>
       </g>
     </svg>
   )

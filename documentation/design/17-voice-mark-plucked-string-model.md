@@ -135,6 +135,34 @@ reads as a startle that relaxes. The per-state weight (`retract` in
 ramps with a 250 ms time constant so leaving listening slides the ends back
 out instead of snapping.
 
+## Thinking — a python that ate a baseball (revised 2026-09-16)
+
+The 2026-08-31 thinking bulges bent the line outward along its normal, one
+at a time, always left to right: a wrinkle on one side. The brief: several
+balls at once, in both directions, twice as fast, swelling the line equally
+on both sides.
+
+A stroke has one width, so the swelling cannot be a bend of the path. Each
+ball is a **filled polygon laid over the stroked line** in the same colour
+(`bulgePolygonPoints`): as wide as the stroke at its ends (plus a 0.4-unit
+overlap that hides the seam), a gaussian thicker in the middle, symmetric
+about the line — the line itself never moves. Sized in mark units (sigma
+36, so a ball is about 216 units long and 16–22 units fatter than the
+stroke at its centre) it is the same ball on every line; it fades in and out
+over the first and last tenth of a line, rides a warped line, and is clipped
+to the visible part of a withdrawn one.
+
+| | before | now |
+|---|---|---|
+| alive at once | up to 3, in practice 1–2 | up to 5, spawned every 0.15–0.35 s |
+| direction | first end → last end only | each ball picks a direction |
+| time to cross a line | 0.9–1.6 s | 0.45–0.8 s |
+| shape | one-sided bend of the path, 7–11 units | symmetric swelling, 8–11 units per side |
+
+Two neighbouring balls at the same spot swell at most 22 units into a
+24-unit gap, so lines never touch. Contraction to 0.94 is unchanged; the
+polygons sit inside the same transformed group.
+
 ### Geometry: the voice mark is the ratified 7-line mark
 
 The voice mark now renders the `brand` density by default (spine + 6 lanes,

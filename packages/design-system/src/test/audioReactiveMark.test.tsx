@@ -517,22 +517,79 @@ describe('AudioReactiveHalbertMark', () => {
     }
   })
 
-  it('thinking spawns a traveling bulge on a random tine and keeps the shrink', () => {
-    const rng = vi.spyOn(Math, 'random').mockReturnValue(0) // tine 0, then 1, ...
-    try {
-      const { container } = render(<AudioReactiveHalbertMark state="thinking" />)
-      const spine = container.querySelectorAll('path')[0]
-      expect(spine.getAttribute('d')).toBe(STATIC[0])
-      pump(30) // ~0.5s: first bulge spawned at 0.3s is mid-journey
-      const d = spine.getAttribute('d')!
-      expect(d).not.toBe(STATIC[0])
-      expect(d.startsWith(STATIC[0].split(' L ')[0])).toBe(true)
-      // contraction: group transform has begun scaling down
-      const transform = container.querySelector('g')!.getAttribute('transform')!
-      expect(transform).toMatch(/scale\(0\.9\d/)
-    } finally {
-      rng.mockRestore()
+  describe('thinking — a python that ate a baseball', () => {
+    /** Centroid of a bulge polygon's points. */
+    const centroid = (points: string): [number, number] => {
+      const xy = points.trim().split(' ').map((p) => p.split(',').map(Number))
+      const n = xy.length
+      return [xy.reduce((s, [x]) => s + x, 0) / n, xy.reduce((s, [, y]) => s + y, 0) / n]
     }
+    const drawn = (container: HTMLElement) =>
+      Array.from(container.querySelectorAll('polygon')).filter(
+        (p) => (p.getAttribute('points') ?? '').length > 0,
+      )
+
+    it('swells several lines at once as filled bulges, never bending a line, and keeps the shrink', () => {
+      const rng = vi.spyOn(Math, 'random').mockReturnValue(0.3)
+      try {
+        const { container } = render(<AudioReactiveHalbertMark state="thinking" />)
+        const paths = container.querySelectorAll('path')
+        expect(paths).toHaveLength(7) // bulges are polygons, not more paths
+        expect(drawn(container)).toHaveLength(0)
+        pump(60) // 1 s: bulges spawn every 0.15-0.35 s and live 0.45-0.8 s
+        expect(drawn(container).length).toBeGreaterThanOrEqual(2)
+        // the lines themselves are untouched: the swelling sits on top of them
+        paths.forEach((p, k) => expect(p.getAttribute('d')).toBe(STATIC[k]))
+        // every bulge is filled in the mark's colour, inside the contracting group
+        const bulgeGroup = drawn(container)[0].parentElement!
+        expect(bulgeGroup.getAttribute('fill')).toContain('--color-accent')
+        expect(bulgeGroup.getAttribute('stroke')).toBe('none')
+        const transform = container.querySelector('g')!.getAttribute('transform')!
+        expect(transform).toMatch(/scale\(0\.9\d/)
+      } finally {
+        rng.mockRestore()
+      }
+    })
+
+    it('a bulge is a symmetric swelling: as far outside the line as inside', () => {
+      const rng = vi.spyOn(Math, 'random').mockReturnValue(0.3) // tine 2, forward, 0.555 s
+      try {
+        const { container } = render(<AudioReactiveHalbertMark state="thinking" />)
+        pump(27) // ~0.45 s: the first bulge (spawned at 0.167 s) is at lane 2's apex
+        const points = drawn(container)[0].getAttribute('points')!
+        const radii = points.trim().split(' ').map((p) => {
+          const [x, y] = p.split(',').map(Number)
+          return Math.hypot(x - 512, y - 512)
+        })
+        const r = laneRadius(2)
+        const outside = Math.max(...radii) - r // beyond the arc's centre line, outward
+        const inside = r - Math.min(...radii) // and inward
+        expect(outside).toBeGreaterThan(24 + 4) // more than the stroke's half width
+        expect(Math.abs(outside - inside)).toBeLessThan(0.5)
+      } finally {
+        rng.mockRestore()
+      }
+    })
+
+    it('bulges travel in both directions', () => {
+      // random 0 -> the spine, forward (top to bottom); random 0.9 -> the
+      // outer arc, backward (right end to left end)
+      const travel = (value: number, axis: 0 | 1) => {
+        const rng = vi.spyOn(Math, 'random').mockReturnValue(value)
+        try {
+          const { container } = render(<AudioReactiveHalbertMark state="thinking" />)
+          pump(18)
+          const early = centroid(drawn(container)[0].getAttribute('points')!)[axis]
+          pump(8)
+          const late = centroid(drawn(container)[0].getAttribute('points')!)[axis]
+          return late - early
+        } finally {
+          rng.mockRestore()
+        }
+      }
+      expect(travel(0, 1)).toBeGreaterThan(20) // spine: y grows, moving down
+      expect(travel(0.9, 0)).toBeLessThan(-20) // outer arc: x shrinks, moving left
+    })
   })
 
   it('smoothly contracts when entering thinking and grows when exiting thinking', () => {
