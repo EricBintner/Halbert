@@ -73,6 +73,15 @@ describe('STRING_LADDER — pitch falls and sustain grows outward', () => {
     }
   })
 
+  it('brand (the 7-line default): seven strings spanning the same endpoints', () => {
+    const l = STRING_LADDER.brand
+    expect(l).toHaveLength(7)
+    expect(l[0]).toEqual(STRING_LADDER.medium[0])
+    expect(l[3].frequencyHz).toBeCloseTo(4, 6) // the middle string is the geometric midpoint
+    expect(l[6].frequencyHz).toBeCloseTo(2, 6)
+    expect(l[6].decaySeconds).toBeCloseTo(1.1, 6)
+  })
+
   it('display: ten strings spanning the same endpoints', () => {
     const l = STRING_LADDER.display
     expect(l).toHaveLength(10)

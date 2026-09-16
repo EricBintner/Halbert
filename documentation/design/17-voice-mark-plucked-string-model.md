@@ -98,19 +98,82 @@ the amplitude tables are retuned to it.
 
 ### Excitation per state
 
-| state | pluck source | gain (displacement per unit level rise) | swell weight | extra |
-|---|---|---|---|---|
-| idle | none from the breathing source | — | 1.0 | sparse soft plucks: one random tine every 2.5–6 s, amplitude 0.25–0.45, weighted toward the outer (long-sustain) tines |
-| listening | band-level onsets | 2.0 | 0.3 | — |
-| recognized | — | — | 0.3 | on entry (including mounting in it), a **strum**: every tine plucked at 0.7, spine first, 35 ms stagger outward |
-| thinking | — | — | 0 | traveling bulges and the 0.94 contraction, unchanged |
-| speaking | band-level onsets | 2.5 | 0.3 | — |
-| error | — | — | 0 | tint only, unchanged |
+| state | pluck source | gain (displacement per unit level rise) | swell weight | retract | extra |
+|---|---|---|---|---|---|
+| idle | none from the breathing source | — | 1.0 | 0 | sparse soft plucks: one random tine every 2.5–6 s, amplitude 0.25–0.45, weighted toward the outer (long-sustain) tines |
+| listening | — | — | 0 | 1 | the ends withdraw (see *Listening* below); no warp at all |
+| recognized | — | — | 0.3 | 1 | on entry (including mounting in it), a **strum**: every tine plucked at 0.7, spine first, 35 ms stagger outward, on the still-withdrawn lines |
+| thinking | — | — | 0 | 0 | traveling bulges and the 0.94 contraction, unchanged |
+| speaking | band-level onsets | 2.5 | 0.3 | 0 | — |
+| error | — | — | 0 | 0 | tint only, unchanged |
 
 **Onset** = a per-frame rise of a tine's band level above 0.02 (mic noise
 stays below it). Each rising frame plucks by `gain × rise`; a sharp consonant
 lands in two or three frames and sums to one strike, a slow ramp becomes a
 slow push that returns when the ramp ends. No edge detector, no latency.
+
+## Listening — retraction, not warping (added 2026-09-16)
+
+Listening had been plucking exactly like speaking. The founder's brief: while
+listening the lines do not warp; each line **withdraws its ends** along its
+own path in response to sound. Fully withdrawn, a U-line is a dot at its
+apex, the outer arc a dot at its lowest point, the spine a dot at the
+mark's centre (it withdraws from the top only; its base *is* the centre).
+Retraction is a trim of the sampled path (`TinePathOptions.trim`), so it
+composes with every warp — recognized strums the withdrawn lines.
+
+Two inputs drive it, and neither is a level meter (`listening.ts`):
+
+| input | what it responds to | how far | timing |
+|---|---|---|---|
+| **presence** | any sustained sound (loudest band above 0.04) for the whole mark, one part in four; each ring's own register (its band, fully attended at 0.25) for the other three parts — so high sounds draw the inner rings in and low sounds the outer, and the whole mark always listens a little | a **fixed travel** of 45–70 mark units per tip at full attention (about 3–5 % of an outer ring, 10–16 % of the short spine — the same distance on every line, so the long outer rings no longer move further than the rest), each tip drifting on its own slow curve (~0.35 Hz, golden-angle phases, outer lines slightly slower) | attention rises with a 150 ms time constant and releases over 1.8 s — the mark keeps listening for a moment after you stop |
+| **impact** | a broadband transient: all bands but one rising by more than 0.15 against their level 50 ms earlier (a fixed window, so 30 fps and 60 fps agree). A syllable is a gaussian over the register and lifts at most five of seven bands, however sharp its attack; a clap lifts them all. Strength comes from the mean rise: 0.15 → nothing, 0.65 → full | a **60/40 blend of a fixed distance and a share of the line's length**: at full strength 0.6 × 170 units plus 0.4 × 24 % of the line — about 232 units per end on the outer arc (17 %) and 143 on the spine (33 % of its short length), so the centre reacts as visibly as the edge while long lines still travel a little further; hard-capped at 0.4 per end (0.8 on the spine's single moving end), so even the hardest clap at full attention leaves a fifth of every line (test-enforced) — a clap startles, it never closes a line | rises in 30 ms, holds 120 ms (so it actually reaches its target), releases over 0.45 s; critically damped, no ring; all timing on elapsed frame time, never the absolute clock |
+
+Speech therefore reads as "it is listening" rather than as syllables; a clap
+reads as a startle that relaxes. The per-state weight (`retract` in
+`STATE_EXCITATION`) is 1 for listening and recognized, 0 elsewhere, and it
+ramps with a 250 ms time constant so leaving listening slides the ends back
+out instead of snapping.
+
+## Thinking — a python that ate a baseball (revised 2026-09-16)
+
+The 2026-08-31 thinking bulges bent the line outward along its normal, one
+at a time, always left to right: a wrinkle on one side. The brief: several
+balls at once, in both directions, twice as fast, swelling the line equally
+on both sides.
+
+A stroke has one width, so the swelling cannot be a bend of the path. Each
+ball is a **filled polygon laid over the stroked line** in the same colour
+(`bulgePolygonPoints`): as wide as the stroke at its ends (plus a 0.4-unit
+overlap that hides the seam), a gaussian thicker in the middle, symmetric
+about the line — the line itself never moves. Sized in mark units (sigma
+36, so a ball is about 216 units long and 16–22 units fatter than the
+stroke at its centre) it is the same ball on every line; it fades in and out
+over the first and last tenth of a line, rides a warped line, and is clipped
+to the visible part of a withdrawn one.
+
+| | before | now |
+|---|---|---|
+| alive at once | up to 3, in practice 1–2 | up to 5, spawned every 0.15–0.35 s |
+| direction | first end → last end only | each ball picks a direction |
+| time to cross a line | 0.9–1.6 s | 0.45–0.8 s; the spine's ball twice as fast |
+| shape | one-sided bend of the path, 7–11 units | symmetric swelling, 8–11 units per side |
+| company | always alone | half the time a second ball runs in step on another line, any free one: same start, speed and direction (the spine never pairs) |
+| the spine | like any other line | half the time it crosses and comes straight back |
+
+Two neighbouring balls at the same spot swell at most 22 units into a
+24-unit gap, so lines never touch. Contraction to 0.94 is unchanged; the
+polygons sit inside the same transformed group.
+
+### Geometry: the voice mark is the ratified 7-line mark
+
+The voice mark now renders the `brand` density by default (spine + 6 lanes,
+pitch 72, stroke 48, gap 24 — `PATHS_7` in `HalbertMark.tsx`, reproduced
+exactly). The tighter gap caps the pluck amplitudes at `[6, 7, 8, 9, 9, 9, 8]`
+(the 1.3-ceiling invariant against a 24-unit gap); the spectrum gains a
+7-band octave ladder (8 kHz → 40 Hz) and the string ladder a 7-entry
+interpolation of the same endpoints. `medium` (6) and `display` (10) remain
+available.
 
 ## Demo source (Storybook and marketing share it)
 

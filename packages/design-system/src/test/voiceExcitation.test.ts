@@ -25,16 +25,22 @@ function peakOf(bank: ResonatorBank, k: number, seconds = 0.6): number {
 }
 
 describe('STATE_EXCITATION — how each voice state strikes the strings', () => {
-  it('voiced states pluck on onsets and lean a little on level', () => {
-    expect(STATE_EXCITATION.speaking).toEqual({ pluckGain: 2.5, swellWeight: 0.3 })
-    expect(STATE_EXCITATION.listening).toEqual({ pluckGain: 2, swellWeight: 0.3 })
-    expect(STATE_EXCITATION.recognized).toEqual({ pluckGain: 0, swellWeight: 0.3 })
+  it('speaking plucks on onsets and leans a little on level; it never retracts', () => {
+    expect(STATE_EXCITATION.speaking).toEqual({ pluckGain: 2.5, swellWeight: 0.3, retract: 0 })
   })
 
-  it('idle breathes on level only; thinking and error neither pluck nor lean', () => {
-    expect(STATE_EXCITATION.idle).toEqual({ pluckGain: 0, swellWeight: 1 })
-    expect(STATE_EXCITATION.thinking).toEqual({ pluckGain: 0, swellWeight: 0 })
-    expect(STATE_EXCITATION.error).toEqual({ pluckGain: 0, swellWeight: 0 })
+  it('listening retracts the ends instead of warping the lines', () => {
+    expect(STATE_EXCITATION.listening).toEqual({ pluckGain: 0, swellWeight: 0, retract: 1 })
+  })
+
+  it('recognized strums (a warp) while still holding the listening posture', () => {
+    expect(STATE_EXCITATION.recognized).toEqual({ pluckGain: 0, swellWeight: 0.3, retract: 1 })
+  })
+
+  it('idle breathes on level only; thinking and error neither pluck, lean nor retract', () => {
+    expect(STATE_EXCITATION.idle).toEqual({ pluckGain: 0, swellWeight: 1, retract: 0 })
+    expect(STATE_EXCITATION.thinking).toEqual({ pluckGain: 0, swellWeight: 0, retract: 0 })
+    expect(STATE_EXCITATION.error).toEqual({ pluckGain: 0, swellWeight: 0, retract: 0 })
   })
 
   it('never leans past the 0.3 the geometry ceiling reserves for swell', () => {

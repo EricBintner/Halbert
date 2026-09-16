@@ -63,6 +63,7 @@ export function tuneStrings(
 }
 
 export const STRING_LADDER: Record<VoiceDensity, readonly StringTuning[]> = {
+  brand: tuneStrings(tineCount('brand')),
   medium: tuneStrings(tineCount('medium')),
   display: tuneStrings(tineCount('display')),
 }

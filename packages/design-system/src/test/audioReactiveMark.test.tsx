@@ -3,12 +3,14 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render } from '@testing-library/react'
 
-import { AudioReactiveHalbertMark } from '../voice/AudioReactiveHalbertMark'
+import { AudioReactiveHalbertMark, THINKING_BULGES } from '../voice/AudioReactiveHalbertMark'
 import {
   staticTinePaths,
   TINE_AMPLITUDES,
   MAX_DISPLACEMENT_MULTIPLIER,
+  MARK,
   laneRadius,
+  laneTop,
 } from '../voice/geometry'
 import { IDLE_PLUCK } from '../voice/excitation'
 import type { AudioEnergySource } from '../voice/spectrum'
@@ -98,10 +100,23 @@ function burstSource(
   }
 }
 
-const MEDIUM_STATIC = staticTinePaths('medium')
+/** The brand (7-line) mark is the default. Outer arc = tine 6. */
+const STATIC = staticTinePaths()
+const OUTER = 6
 
 function xAt(d: string, index: number): number {
   return Number(d.split(' L ')[index].split(' ')[0])
+}
+function points(d: string): Array<[number, number]> {
+  return d
+    .replace(/^M /, '')
+    .split(' L ')
+    .map((p) => p.split(' ').map(Number) as [number, number])
+}
+const first = (d: string) => points(d)[0]
+const last = (d: string) => {
+  const p = points(d)
+  return p[p.length - 1]
 }
 
 /** Left-leg midpoint (index LEG_SAMPLES/2) x of a lane path — the crest of a
@@ -112,13 +127,21 @@ function legMidX(d: string): number {
 
 /** Signed deviation of a probe point from the static mark. */
 function deviation(d: string, k: number, index: number): number {
-  return xAt(d, index) - xAt(MEDIUM_STATIC[k], index)
+  return xAt(d, index) - xAt(STATIC[k], index)
 }
 
 function signChanges(xs: number[]): number {
   let n = 0
   for (let i = 1; i < xs.length; i++) if (xs[i - 1] * xs[i] < 0) n++
   return n
+}
+
+/** Distance from a point to the static geometry of U-lane k (legs vertical
+ * at 512 ± r above the centre line; a radius-r arc below it). */
+function offStatic(k: number, [x, y]: [number, number]): number {
+  const r = laneRadius(k)
+  if (y <= MARK.cy + 1e-9) return Math.min(Math.abs(x - (512 - r)), Math.abs(x - (512 + r)))
+  return Math.abs(Math.hypot(x - MARK.cx, y - MARK.cy) - r)
 }
 
 /** Probe indices: spine antinode (u≈0.34 of 32), leg midpoint, outer arc
@@ -134,13 +157,14 @@ describe('AudioReactiveHalbertMark', () => {
     vi.restoreAllMocks()
   })
 
-  it('defaults to the medium density: 6 tine paths, static medium geometry', () => {
+  it('defaults to the brand density: the ratified 7-line mark, 48 stroke', () => {
     const { container } = render(<AudioReactiveHalbertMark size={512} />)
     const paths = container.querySelectorAll('path')
-    expect(paths).toHaveLength(6)
-    paths.forEach((p, k) => expect(p.getAttribute('d')).toBe(MEDIUM_STATIC[k]))
+    expect(paths).toHaveLength(7)
+    paths.forEach((p, k) => expect(p.getAttribute('d')).toBe(STATIC[k]))
     expect(container.querySelector('svg')).toHaveAttribute('viewBox', '0 0 1024 1024')
     expect(container.querySelector('g')).toHaveAttribute('stroke-width', '48')
+    expect(first(STATIC[1])).toEqual([440, 86.04])
   })
 
   it('supports the 10-tine display density explicitly', () => {
@@ -148,6 +172,7 @@ describe('AudioReactiveHalbertMark', () => {
     const paths = container.querySelectorAll('path')
     expect(paths).toHaveLength(10)
     paths.forEach((p, k) => expect(p.getAttribute('d')).toBe(staticTinePaths('display')[k]))
+    expect(container.querySelector('g')).toHaveAttribute('stroke-width', '26.67')
   })
 
   it('animates d attributes from the energy source without re-rendering React', () => {
@@ -157,32 +182,24 @@ describe('AudioReactiveHalbertMark', () => {
     const paths = container.querySelectorAll('path')
     pump(120) // ~2s of frames: the idle swell follows the level
     const d2 = paths[2].getAttribute('d')!
-    expect(d2).not.toBe(MEDIUM_STATIC[2])
-    expect(d2.startsWith(MEDIUM_STATIC[2].split(' L ')[0])).toBe(true)
-    expect(d2.endsWith(MEDIUM_STATIC[2].split(' L ').pop()!)).toBe(true)
+    expect(d2).not.toBe(STATIC[2])
+    expect(d2.startsWith(STATIC[2].split(' L ')[0])).toBe(true)
+    expect(d2.endsWith(STATIC[2].split(' L ').pop()!)).toBe(true)
   })
 
-  it('a band-level onset plucks the tine in speaking and listening; speaking strikes harder', () => {
-    const ring = (state: 'speaking' | 'listening') => {
-      const { container } = render(
-        <AudioReactiveHalbertMark size={512} state={state} source={stepSource(0.3, 5, [2])} />,
-      )
-      const path = container.querySelectorAll('path')[2]
-      const trace: number[] = []
-      for (let i = 0; i < 60; i++) {
-        pump(1)
-        trace.push(deviation(path.getAttribute('d')!, 2, LEG_PROBE))
-      }
-      return trace
+  it('a band-level onset plucks the tine while speaking', () => {
+    const { container } = render(
+      <AudioReactiveHalbertMark size={512} state="speaking" source={stepSource(0.3, 5, [2])} />,
+    )
+    const path = container.querySelectorAll('path')[2]
+    const trace: number[] = []
+    for (let i = 0; i < 60; i++) {
+      pump(1)
+      trace.push(deviation(path.getAttribute('d')!, 2, LEG_PROBE))
     }
-    const speaking = ring('speaking')
-    const listening = ring('listening')
     // A pluck rings through the rest position — a bounce never would.
-    expect(signChanges(speaking)).toBeGreaterThanOrEqual(3)
-    expect(signChanges(listening)).toBeGreaterThanOrEqual(3)
-    const peak = (xs: number[]) => Math.max(...xs.map(Math.abs))
-    expect(peak(speaking)).toBeGreaterThan(peak(listening) * 1.15)
-    expect(peak(speaking)).toBeGreaterThan(0.4 * TINE_AMPLITUDES.medium[2])
+    expect(signChanges(trace)).toBeGreaterThanOrEqual(3)
+    expect(Math.max(...trace.map(Math.abs))).toBeGreaterThan(0.4 * TINE_AMPLITUDES.brand[2])
   })
 
   it('the plucked spine rings faster and dies sooner than the plucked outer arc', () => {
@@ -195,7 +212,7 @@ describe('AudioReactiveHalbertMark', () => {
     for (let i = 0; i < 66; i++) {
       pump(1)
       spine.push(deviation(paths[0].getAttribute('d')!, 0, SPINE_PROBE))
-      outer.push(deviation(paths[5].getAttribute('d')!, 5, OUTER_PROBE))
+      outer.push(deviation(paths[OUTER].getAttribute('d')!, OUTER, OUTER_PROBE))
     }
     // ~1 s after the strike: 8 Hz spine vs 2 Hz arc
     expect(signChanges(spine)).toBeGreaterThan(2 * signChanges(outer))
@@ -214,13 +231,15 @@ describe('AudioReactiveHalbertMark', () => {
     )
     const paths = container.querySelectorAll('path')
     pump(5)
-    expect(paths[0].getAttribute('d')).toBe(MEDIUM_STATIC[0])
+    expect(paths[0].getAttribute('d')).toBe(STATIC[0])
     rerender(<AudioReactiveHalbertMark size={512} state="recognized" source={silence} />)
     pump(2) // ~33 ms: only the spine is due
     expect(Math.abs(deviation(paths[0].getAttribute('d')!, 0, SPINE_PROBE))).toBeGreaterThan(1)
-    expect(paths[5].getAttribute('d')).toBe(MEDIUM_STATIC[5])
-    pump(12) // ~230 ms: the outer arc has been struck
-    expect(Math.abs(deviation(paths[5].getAttribute('d')!, 5, OUTER_PROBE))).toBeGreaterThan(1)
+    expect(paths[OUTER].getAttribute('d')).toBe(STATIC[OUTER])
+    // the outer arc is struck at 6 × 35 = 210 ms and, at 2 Hz, crests 125 ms
+    // later; its brand amplitude is 8 and the probe sees a quarter of it
+    pump(20)
+    expect(Math.abs(deviation(paths[OUTER].getAttribute('d')!, OUTER, OUTER_PROBE))).toBeGreaterThan(0.8)
   })
 
   it('keeps ringing and still strums when the source is swapped in the same render', () => {
@@ -233,7 +252,7 @@ describe('AudioReactiveHalbertMark', () => {
     const paths = container.querySelectorAll('path')
     pump(8) // lane 4 rings for most of a second
     expect(Math.abs(deviation(paths[4].getAttribute('d')!, 4, LEG_PROBE))).toBeGreaterThan(3)
-    expect(paths[0].getAttribute('d')).toBe(MEDIUM_STATIC[0])
+    expect(paths[0].getAttribute('d')).toBe(STATIC[0])
     rerender(
       <AudioReactiveHalbertMark size={512} state="recognized" source={constSource(0)} />,
     )
@@ -251,8 +270,8 @@ describe('AudioReactiveHalbertMark', () => {
     const paths = container.querySelectorAll('path')
     pump(2)
     expect(Math.abs(deviation(paths[0].getAttribute('d')!, 0, SPINE_PROBE))).toBeGreaterThan(1)
-    pump(12)
-    expect(Math.abs(deviation(paths[5].getAttribute('d')!, 5, OUTER_PROBE))).toBeGreaterThan(1)
+    pump(20)
+    expect(Math.abs(deviation(paths[OUTER].getAttribute('d')!, OUTER, OUTER_PROBE))).toBeGreaterThan(0.8)
   })
 
   it('ramps the lean across a state change instead of popping', () => {
@@ -275,7 +294,7 @@ describe('AudioReactiveHalbertMark', () => {
   })
 
   it('sensitivity scales how hard strikes land; the ring never exceeds RING_MAX', () => {
-    const amp = TINE_AMPLITUDES.medium[2]
+    const amp = TINE_AMPLITUDES.brand[2]
     const { container } = render(
       <AudioReactiveHalbertMark
         size={512}
@@ -310,13 +329,133 @@ describe('AudioReactiveHalbertMark', () => {
     expect(container.querySelector('g')).toHaveAttribute('stroke-width', '26.67')
   })
 
+  it('a density change keeps the current posture instead of the mount state', () => {
+    const source = stepSource(0.3, 0, [2, 3])
+    const { container, rerender } = render(
+      <AudioReactiveHalbertMark size={512} state="speaking" source={source} />,
+    )
+    rerender(<AudioReactiveHalbertMark size={512} state="listening" source={source} />)
+    pump(60) // withdrawn
+    rerender(
+      <AudioReactiveHalbertMark size={512} state="listening" density="display" source={source} />,
+    )
+    pump(1)
+    // the new engine starts with listening's full retraction weight and the
+    // carried attention, not speaking's zero ramping up from nothing. The
+    // vowel sat on brand bands 2-3 (700-2000 Hz); by register that is display
+    // tine 3 (1000-1500 Hz), whose tips must already be well in.
+    const d3 = container.querySelectorAll('path')[3].getAttribute('d')!
+    expect(first(d3)[1]).toBeGreaterThan(laneTop(3, 'display') + 30)
+  })
+
+  it('a density change while recognized does not strum again', () => {
+    const silence = constSource(0)
+    const { container, rerender } = render(
+      <AudioReactiveHalbertMark size={512} state="recognized" source={silence} />,
+    )
+    pump(90) // the mount strum has rung out
+    rerender(
+      <AudioReactiveHalbertMark size={512} state="recognized" density="display" source={silence} />,
+    )
+    pump(3)
+    const spine = container.querySelectorAll('path')[0].getAttribute('d')!
+    expect(spine).toBe(staticTinePaths('display')[0])
+  })
+
   it('tolerates an unknown state from an untyped consumer', () => {
     const { container } = render(
       // @ts-expect-error — JSX callers can pass anything
       <AudioReactiveHalbertMark size={512} state="dreaming" source={constSource(0.5)} />,
     )
     expect(() => pump(5)).not.toThrow()
-    expect(container.querySelectorAll('path')).toHaveLength(6)
+    expect(container.querySelectorAll('path')).toHaveLength(7)
+  })
+
+  describe('listening — the lines withdraw their ends and never warp', () => {
+    const speech = () => stepSource(0.3, 5, [2, 3])
+
+    it('withdraws every line along its own static geometry', () => {
+      const { container } = render(
+        <AudioReactiveHalbertMark size={512} state="listening" source={speech()} />,
+      )
+      const paths = container.querySelectorAll('path')
+      pump(45) // ~0.75 s: attention is up
+      // lane 2 (the vowel's own register): tips have slid a fixed 45-70
+      // units down both legs; every point still on the U
+      const d2 = paths[2].getAttribute('d')!
+      expect(first(d2)[1]).toBeGreaterThan(laneTop(2) + 40)
+      expect(first(d2)[1]).toBeLessThan(laneTop(2) + 75)
+      expect(last(d2)[1]).toBeGreaterThan(laneTop(2) + 40)
+      for (const p of points(d2)) expect(offStatic(2, p)).toBeLessThan(0.05)
+      // spine (a register the vowel does not reach): withdrawn a little from
+      // the top, the whole mark listens; its base still at the mark's centre
+      const d0 = paths[0].getAttribute('d')!
+      expect(first(d0)[0]).toBe(512)
+      expect(first(d0)[1]).toBeGreaterThan(80 + 8)
+      expect(first(d0)[1]).toBeLessThan(80 + 25)
+      expect(last(d0)).toEqual([512, 512])
+      // outer arc: tips have slid a little along the arc, still at radius 432
+      const d6 = paths[OUTER].getAttribute('d')!
+      expect(Math.hypot(first(d6)[0] - 80, first(d6)[1] - 512)).toBeGreaterThan(8)
+      expect(Math.hypot(first(d6)[0] - 80, first(d6)[1] - 512)).toBeLessThan(25)
+      for (const [x, y] of points(d6)) {
+        expect(Math.abs(Math.hypot(x - 512, y - 512) - 432)).toBeLessThan(0.05)
+      }
+    })
+
+    it('leaves the ends where they are while speaking', () => {
+      const { container } = render(
+        <AudioReactiveHalbertMark size={512} state="speaking" source={speech()} />,
+      )
+      const paths = container.querySelectorAll('path')
+      pump(45)
+      expect(first(paths[2].getAttribute('d')!)).toEqual(first(STATIC[2]))
+      expect(last(paths[2].getAttribute('d')!)).toEqual(last(STATIC[2]))
+      expect(first(paths[OUTER].getAttribute('d')!)).toEqual(first(STATIC[OUTER]))
+    })
+
+    it('a clap withdraws far more than speech, and never closes a line', () => {
+      const remaining = (source: AudioEnergySource) => {
+        const { container } = render(
+          <AudioReactiveHalbertMark size={512} state="listening" source={source} />,
+        )
+        const path = container.querySelectorAll('path')[3] // a ring the vowel attends
+        let fewest = Infinity
+        for (let i = 0; i < 45; i++) {
+          pump(1)
+          fewest = Math.min(fewest, points(path.getAttribute('d')!).length)
+        }
+        return fewest
+      }
+      const full = points(STATIC[3]).length
+      const speechLeft = remaining(speech())
+      const clapLeft = remaining(burstSource(0.8, 5))
+      expect(speechLeft).toBeLessThan(full)
+      expect(speechLeft).toBeGreaterThan(0.6 * full)
+      expect(clapLeft).toBeLessThan(speechLeft - 15)
+      expect(clapLeft).toBeGreaterThanOrEqual(3) // never a dot
+    })
+
+    it('releases the ends smoothly when listening ends', () => {
+      const source = speech()
+      const { container, rerender } = render(
+        <AudioReactiveHalbertMark size={512} state="listening" source={source} />,
+      )
+      const path = container.querySelectorAll('path')[2]
+      pump(45)
+      const top = laneTop(2)
+      const depth0 = first(path.getAttribute('d')!)[1] - top
+      expect(depth0).toBeGreaterThan(30)
+      rerender(<AudioReactiveHalbertMark size={512} state="thinking" source={source} />)
+      const depths: number[] = []
+      for (let i = 0; i < 24; i++) {
+        pump(1)
+        depths.push(first(path.getAttribute('d')!)[1] - top)
+      }
+      expect(depths[0]).toBeGreaterThan(0.5 * depth0) // no snap on the first frame
+      for (let i = 1; i < depths.length; i++) expect(depths[i]).toBeLessThanOrEqual(depths[i - 1] + 1e-6)
+      expect(depths[depths.length - 1]).toBeLessThan(0.4 * depth0)
+    })
   })
 
   it('idle plucks a string now and then on top of the breathing', () => {
@@ -336,8 +475,8 @@ describe('AudioReactiveHalbertMark', () => {
         pump(1)
         pluckMax = Math.max(pluckMax, probe())
       }
-      expect(breathingMax).toBeLessThan(0.8)
-      expect(pluckMax).toBeGreaterThan(0.9)
+      expect(breathingMax).toBeLessThan(0.6)
+      expect(pluckMax).toBeGreaterThan(0.7)
     } finally {
       rng.mockRestore()
     }
@@ -348,7 +487,7 @@ describe('AudioReactiveHalbertMark', () => {
       <AudioReactiveHalbertMark size={512} state="speaking" source={constSource(1)} sensitivity={1.2} />,
     )
     const path = container.querySelectorAll('path')[2]
-    const amp = TINE_AMPLITUDES.medium[2]
+    const amp = TINE_AMPLITUDES.brand[2]
     let peak = 0
     for (let i = 0; i < 120; i++) {
       pump(1)
@@ -361,7 +500,7 @@ describe('AudioReactiveHalbertMark', () => {
       tail.push(deviation(path.getAttribute('d')!, 2, LEG_PROBE))
     }
     expect(signChanges(tail)).toBe(0)
-    expect(Math.max(...tail.map(Math.abs))).toBeLessThan(0.45 * amp) // 1.2 × 0.3 swell
+    expect(Math.max(...tail.map(Math.abs))).toBeLessThan(0.45 * amp) // 0.3 swell
   })
 
   it('thinking neither plucks nor leans on level', () => {
@@ -372,28 +511,153 @@ describe('AudioReactiveHalbertMark', () => {
       )
       const lane2 = container.querySelectorAll('path')[2]
       pump(60)
-      expect(lane2.getAttribute('d')).toBe(MEDIUM_STATIC[2])
+      expect(lane2.getAttribute('d')).toBe(STATIC[2])
     } finally {
       rng.mockRestore()
     }
   })
 
-  it('thinking spawns a traveling bulge on a random tine and keeps the shrink', () => {
-    const rng = vi.spyOn(Math, 'random').mockReturnValue(0) // tine 0, then 1, ...
-    try {
-      const { container } = render(<AudioReactiveHalbertMark state="thinking" />)
-      const spine = container.querySelectorAll('path')[0]
-      expect(spine.getAttribute('d')).toBe(MEDIUM_STATIC[0])
-      pump(30) // ~0.5s: first bulge spawned at 0.3s is mid-journey
-      const d = spine.getAttribute('d')!
-      expect(d).not.toBe(MEDIUM_STATIC[0])
-      expect(d.startsWith(MEDIUM_STATIC[0].split(' L ')[0])).toBe(true)
-      // contraction: group transform has begun scaling down
-      const transform = container.querySelector('g')!.getAttribute('transform')!
-      expect(transform).toMatch(/scale\(0\.9\d/)
-    } finally {
-      rng.mockRestore()
+  describe('thinking — a python that ate a baseball', () => {
+    /** Centroid of a bulge polygon's points. */
+    const centroid = (points: string): [number, number] => {
+      const xy = points.trim().split(' ').map((p) => p.split(',').map(Number))
+      const n = xy.length
+      return [xy.reduce((s, [x]) => s + x, 0) / n, xy.reduce((s, [, y]) => s + y, 0) / n]
     }
+    const drawn = (container: HTMLElement) =>
+      Array.from(container.querySelectorAll('polygon')).filter(
+        (p) => (p.getAttribute('points') ?? '').length > 0,
+      )
+
+    it('swells several lines at once as filled bulges, never bending a line, and keeps the shrink', () => {
+      const rng = vi.spyOn(Math, 'random').mockReturnValue(0.3)
+      try {
+        const { container } = render(<AudioReactiveHalbertMark state="thinking" />)
+        const paths = container.querySelectorAll('path')
+        expect(paths).toHaveLength(7) // bulges are polygons, not more paths
+        expect(drawn(container)).toHaveLength(0)
+        pump(60) // 1 s: bulges spawn every 0.15-0.35 s and live 0.45-0.8 s
+        expect(drawn(container).length).toBeGreaterThanOrEqual(2)
+        // the lines themselves are untouched: the swelling sits on top of them
+        paths.forEach((p, k) => expect(p.getAttribute('d')).toBe(STATIC[k]))
+        // every bulge is filled in the mark's colour, inside the contracting group
+        const bulgeGroup = drawn(container)[0].parentElement!
+        expect(bulgeGroup.getAttribute('fill')).toContain('--color-accent')
+        expect(bulgeGroup.getAttribute('stroke')).toBe('none')
+        const transform = container.querySelector('g')!.getAttribute('transform')!
+        expect(transform).toMatch(/scale\(0\.9\d/)
+      } finally {
+        rng.mockRestore()
+      }
+    })
+
+    it('a bulge is a symmetric swelling: as far outside the line as inside', () => {
+      const rng = vi.spyOn(Math, 'random').mockReturnValue(0.3) // tine 2, forward, 0.555 s
+      try {
+        const { container } = render(<AudioReactiveHalbertMark state="thinking" />)
+        pump(27) // ~0.45 s: the first bulge (spawned at 0.167 s) is at lane 2's apex
+        const points = drawn(container)[0].getAttribute('points')!
+        const radii = points.trim().split(' ').map((p) => {
+          const [x, y] = p.split(',').map(Number)
+          return Math.hypot(x - 512, y - 512)
+        })
+        const r = laneRadius(2)
+        const outside = Math.max(...radii) - r // beyond the arc's centre line, outward
+        const inside = r - Math.min(...radii) // and inward
+        expect(outside).toBeGreaterThan(24 + 4) // more than the stroke's half width
+        expect(Math.abs(outside - inside)).toBeLessThan(0.5)
+      } finally {
+        rng.mockRestore()
+      }
+    })
+
+    it('bulges travel in both directions', () => {
+      // random 0 -> the spine, forward (top to bottom); random 0.9 -> the
+      // outer arc, backward (right end to left end)
+      const travel = (value: number, axis: 0 | 1) => {
+        const rng = vi.spyOn(Math, 'random').mockReturnValue(value)
+        try {
+          const { container } = render(<AudioReactiveHalbertMark state="thinking" />)
+          pump(14)
+          const early = centroid(drawn(container)[0].getAttribute('points')!)[axis]
+          pump(6)
+          const late = centroid(drawn(container)[0].getAttribute('points')!)[axis]
+          return late - early
+        } finally {
+          rng.mockRestore()
+        }
+      }
+      expect(travel(0, 1)).toBeGreaterThan(20) // spine: y grows, moving down
+      expect(travel(0.9, 0)).toBeLessThan(-20) // outer arc: x shrinks, moving left
+    })
+
+    /** Which U-lane a point sits on, and how far along it (0 = left leg top). */
+    const laneAndProgress = ([x, y]: [number, number]): [number, number] => {
+      const r = y <= 512 ? Math.abs(x - 512) : Math.hypot(x - 512, y - 512)
+      const lane = Math.round(r / 72)
+      const top = laneTop(lane)
+      const legLen = 512 - top
+      const total = 2 * legLen + Math.PI * laneRadius(lane)
+      if (y <= 512) return [lane, (x < 512 ? y - top : 2 * legLen + Math.PI * r - (y - top)) / total]
+      const theta = Math.atan2(y - 512, 512 - x)
+      return [lane, (legLen + laneRadius(lane) * theta) / total]
+    }
+
+    it('often travels in pairs: a second ball runs in step on some other line', () => {
+      // random 0.2: lane 1, forward, paired; the partner is drawn from the
+      // other free lines, here lane 3 — any line, not just the neighbour
+      const rng = vi.spyOn(Math, 'random').mockReturnValue(0.2)
+      try {
+        const { container } = render(<AudioReactiveHalbertMark state="thinking" />)
+        pump(20) // ~0.33 s: the pair is under way, the next spawn (~0.36 s) not yet
+        const balls = drawn(container)
+        expect(balls.length).toBe(2)
+        const [a, b] = balls.map((el) => laneAndProgress(centroid(el.getAttribute('points')!)))
+        expect([a[0], b[0]].sort()).toEqual([1, 3]) // two different lines, not adjacent
+        expect(Math.abs(a[1] - b[1])).toBeLessThan(0.03) // and in step
+      } finally {
+        rng.mockRestore()
+      }
+    })
+
+    it('and sometimes alone', () => {
+      const rng = vi.spyOn(Math, 'random').mockReturnValue(0.9) // no pair when random >= 0.5
+      try {
+        const { container } = render(<AudioReactiveHalbertMark state="thinking" />)
+        pump(24)
+        expect(drawn(container)).toHaveLength(1)
+      } finally {
+        rng.mockRestore()
+      }
+    })
+
+    it('the spine\'s ball runs twice as fast and often comes straight back', () => {
+      expect(THINKING_BULGES.spineSpeedFactor).toBe(2)
+      const rng = vi.spyOn(Math, 'random').mockReturnValue(0) // spine, forward, round trip
+      try {
+        const { container } = render(<AudioReactiveHalbertMark state="thinking" />)
+        const leader = container.querySelectorAll('polygon')[0] // the first ball keeps slot 0
+        const ys: number[] = []
+        for (let i = 0; i < 36; i++) {
+          pump(1)
+          const pts = leader.getAttribute('points') ?? ''
+          if (pts.length > 0) {
+            const [x, y] = centroid(pts)
+            expect(Math.abs(x - 512)).toBeLessThan(1) // on the spine
+            ys.push(y)
+          }
+        }
+        const peakAt = ys.indexOf(Math.max(...ys))
+        expect(Math.max(...ys)).toBeGreaterThan(430) // reached the bottom
+        expect(ys[ys.length - 1]).toBeLessThan(200) // and came back up
+        // twice as fast: down the 432-unit spine in about a quarter second
+        expect(peakAt).toBeLessThanOrEqual(16)
+        for (let i = 1; i <= peakAt; i++) expect(ys[i]).toBeGreaterThanOrEqual(ys[i - 1] - 1e-6)
+        for (let i = peakAt + 1; i < ys.length; i++) expect(ys[i]).toBeLessThanOrEqual(ys[i - 1] + 1e-6)
+      } finally {
+        rng.mockRestore()
+      }
+    })
   })
 
   it('smoothly contracts when entering thinking and grows when exiting thinking', () => {
@@ -428,7 +692,7 @@ describe('AudioReactiveHalbertMark', () => {
     const { container } = render(<AudioReactiveHalbertMark />)
     const paths = container.querySelectorAll('path')
     pump(90)
-    expect(paths[2].getAttribute('d')).not.toBe(MEDIUM_STATIC[2])
+    expect(paths[2].getAttribute('d')).not.toBe(STATIC[2])
   })
 
   it('applies state classes and the error tint', () => {
@@ -441,9 +705,9 @@ describe('AudioReactiveHalbertMark', () => {
     )
   })
 
-  it('exposes the medium lane geometry constants used by the demo', () => {
-    expect(laneRadius(1, 'medium')).toBe(86.4)
-    expect(TINE_AMPLITUDES.medium).toHaveLength(6)
-    expect(legMidX(MEDIUM_STATIC[2])).toBeCloseTo(339.2, 5)
+  it('exposes the brand lane geometry constants used by the demo', () => {
+    expect(laneRadius(1)).toBe(72)
+    expect(TINE_AMPLITUDES.brand).toHaveLength(7)
+    expect(legMidX(STATIC[2])).toBeCloseTo(368, 5)
   })
 })
