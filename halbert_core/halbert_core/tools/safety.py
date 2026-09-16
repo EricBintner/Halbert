@@ -470,7 +470,9 @@ READ_ONLY_COMMANDS: Dict[str, Union[bool, FrozenSet[str]]] = {
     "codesign": frozenset({"-d", "-dv", "--display", "-v", "--verify"}),
     "plutil": frozenset({"-p", "-lint"}),
     "softwareupdate": frozenset({"-l", "--list"}),
-    "log": frozenset({"show", "stats"}),
+    # `stream` tails the unified log; `collect`, `erase` and `config` are
+    # refused in EFFECTFUL_ARGS below.
+    "log": frozenset({"show", "stats", "stream"}),
     "sysctl": frozenset({"-a", "-n", "-A", "-e"}),
     "crontab": frozenset({"-l"}),
     "ollama": frozenset({"list", "ps", "show", "--version"}),
@@ -569,6 +571,11 @@ INERT_LEADING_FLAGS: Dict[str, Dict[str, bool]] = {
                   "--all": False, "--no-legend": False, "-q": False,
                   "--quiet": False, "--plain": False, "-l": False},
     "kubectl": {"--context": True, "-n": True, "--namespace": True},
+    # `-t nat` chooses which table `-L` lists -- a selector, not a verb.
+    # Without it `iptables -t nat -L` prompted while `iptables -L` did not,
+    # which is the same read. The effectful verbs stay in EFFECTFUL_ARGS, so
+    # `iptables -t nat -F` is still refused.
+    "iptables": {"-t": True, "--table": True},
     "ip": {"-j": False, "-json": False, "-d": False, "-details": False,
            "-br": False, "-brief": False, "-4": False, "-6": False,
            "-s": False, "-stats": False, "-iec": False},

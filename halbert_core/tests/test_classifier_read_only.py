@@ -513,3 +513,29 @@ class TestTheOwnerStoreCannotVouchTheUnvouchable:
     def test_a_redirect_is_never_vouched_however_the_store_reads(self):
         fw = _fw(user_overrides={"echo": True, "tee": True})
         assert _gated(_classify("echo x > /etc/passwd", fw=fw))
+
+
+class TestTheFalsePositivesTheReviewNamed:
+    """Over-correction costs the lane its purpose: the gate that fires on
+    ordinary use is the gate that gets switched off. Two of the four the
+    review named reproduced; the other two already ran.
+    """
+
+    def test_a_table_selector_does_not_end_the_listing(self):
+        """`-t nat` chooses which table `-L` lists. It is the same read as
+        `iptables -L`, which was already vouched."""
+        assert not _gated(_classify("iptables -t nat -L"))
+        assert not _gated(_classify("iptables -t filter --list-rules"))
+
+    def test_streaming_the_log_is_reading_the_log(self):
+        """`log stream` tails the unified log; `log show` was already in the
+        set and `collect`/`erase`/`config` are already refused."""
+        assert not _gated(_classify("log stream"))
+
+    @pytest.mark.parametrize("command", [
+        "iptables -t nat -F",       # the flag must not vouch the flush
+        "log collect",
+        "log erase --all",
+    ])
+    def test_the_effectful_neighbours_are_still_refused(self, command):
+        assert _gated(_classify(command)), command
