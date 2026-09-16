@@ -99,15 +99,34 @@ export const THINKING_BULGES = Object.freeze({
    * neighbouring balls at the same spot must clear the 24-unit brand gap. */
   heightMin: 8,
   heightMax: 11,
+  /** Often a second ball runs in step on the neighbouring line: same start,
+   * same speed, same direction. (The spine keeps its own pace and never
+   * pairs.) */
+  pairProbability: 0.5,
+  /** The spine's ball runs this much faster than the others… */
+  spineSpeedFactor: 2,
+  /** …and often crosses the spine and comes straight back. */
+  spineRoundTripProbability: 0.5,
 })
 
 interface ActiveBulge {
   tine: number
   start: number
+  /** Seconds for the whole journey (both legs of a round trip). */
   duration: number
   height: number
   /** Travelling from the path's first end to its last, or the other way. */
   forward: boolean
+  /** Across and straight back again. */
+  roundTrip: boolean
+}
+
+/** Where along its line a ball is, 0 = the path's first end; outside [0, 1]
+ * before it starts (a paired follower waiting its turn). */
+function bulgeCentre(b: ActiveBulge, t: number): number {
+  const p = (t - b.start) / b.duration
+  const leg = b.roundTrip ? (p < 0.5 ? 2 * p : 2 - 2 * p) : p
+  return b.forward ? leg : 1 - leg
 }
 
 function excitationFor(state: string): StateExcitation {
@@ -287,7 +306,8 @@ export const AudioReactiveHalbertMark = React.forwardRef<
       const swellAlpha = swell.step(dt)
 
       // Thinking: spawn balls on random lines, several alive at once, each
-      // heading one way or the other; cull them on state exit or arrival.
+      // heading one way or the other, often in pairs; the spine's run twice
+      // as fast and often bounce straight back. Cull on state exit or arrival.
       const B = THINKING_BULGES
       if (state === 'thinking') {
         if (e.nextSpawn === null) e.nextSpawn = t + B.firstSpawnSeconds
@@ -295,13 +315,26 @@ export const AudioReactiveHalbertMark = React.forwardRef<
           const busy = new Set(e.bulges.map((b) => b.tine))
           let pick = Math.floor(Math.random() * count)
           if (busy.has(pick)) pick = (pick + 1) % count
-          e.bulges.push({
-            tine: pick,
-            start: t,
-            duration: B.durationMin + Math.random() * (B.durationMax - B.durationMin),
-            height: B.heightMin + Math.random() * (B.heightMax - B.heightMin),
-            forward: Math.random() < 0.5,
-          })
+          const oneWay =
+            (B.durationMin + Math.random() * (B.durationMax - B.durationMin)) /
+            (pick === 0 ? B.spineSpeedFactor : 1)
+          const height = B.heightMin + Math.random() * (B.heightMax - B.heightMin)
+          const forward = Math.random() < 0.5
+          const paired =
+            Math.random() < B.pairProbability && pick !== 0 && e.bulges.length <= B.max - 2
+          const roundTrip = pick === 0 && Math.random() < B.spineRoundTripProbability
+          const duration = oneWay * (roundTrip ? 2 : 1)
+          e.bulges.push({ tine: pick, start: t, duration, height, forward, roundTrip })
+          if (paired) {
+            // a partner on the neighbouring line, in step: the line outside
+            // first, the one inside if that is taken (never the spine)
+            const outside = pick + 1 < count && !busy.has(pick + 1) ? pick + 1 : -1
+            const inside = pick - 1 >= 1 && !busy.has(pick - 1) ? pick - 1 : -1
+            const partner = outside >= 0 ? outside : inside
+            if (partner >= 1) {
+              e.bulges.push({ tine: partner, start: t, duration, height, forward, roundTrip })
+            }
+          }
           e.nextSpawn = t + B.spawnMin + Math.random() * (B.spawnMax - B.spawnMin)
         }
       } else if (e.bulges.length > 0) {
@@ -343,12 +376,11 @@ export const AudioReactiveHalbertMark = React.forwardRef<
           el.setAttribute('points', '')
           continue
         }
-        const progress = (t - b.start) / b.duration
         el.setAttribute(
           'points',
           bulgePolygonPoints(
             b.tine,
-            { center: b.forward ? progress : 1 - progress, sigmaUnits: B.sigmaUnits, height: b.height },
+            { center: bulgeCentre(b, t), sigmaUnits: B.sigmaUnits, height: b.height },
             {
               density: e.density,
               displacement: amplitudes[b.tine] * multipliers[b.tine],

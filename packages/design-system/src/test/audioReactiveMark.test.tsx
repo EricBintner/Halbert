@@ -3,7 +3,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render } from '@testing-library/react'
 
-import { AudioReactiveHalbertMark } from '../voice/AudioReactiveHalbertMark'
+import { AudioReactiveHalbertMark, THINKING_BULGES } from '../voice/AudioReactiveHalbertMark'
 import {
   staticTinePaths,
   TINE_AMPLITUDES,
@@ -578,9 +578,9 @@ describe('AudioReactiveHalbertMark', () => {
         const rng = vi.spyOn(Math, 'random').mockReturnValue(value)
         try {
           const { container } = render(<AudioReactiveHalbertMark state="thinking" />)
-          pump(18)
+          pump(14)
           const early = centroid(drawn(container)[0].getAttribute('points')!)[axis]
-          pump(8)
+          pump(6)
           const late = centroid(drawn(container)[0].getAttribute('points')!)[axis]
           return late - early
         } finally {
@@ -589,6 +589,73 @@ describe('AudioReactiveHalbertMark', () => {
       }
       expect(travel(0, 1)).toBeGreaterThan(20) // spine: y grows, moving down
       expect(travel(0.9, 0)).toBeLessThan(-20) // outer arc: x shrinks, moving left
+    })
+
+    /** Which U-lane a point sits on, and how far along it (0 = left leg top). */
+    const laneAndProgress = ([x, y]: [number, number]): [number, number] => {
+      const r = y <= 512 ? Math.abs(x - 512) : Math.hypot(x - 512, y - 512)
+      const lane = Math.round(r / 72)
+      const top = laneTop(lane)
+      const legLen = 512 - top
+      const total = 2 * legLen + Math.PI * laneRadius(lane)
+      if (y <= 512) return [lane, (x < 512 ? y - top : 2 * legLen + Math.PI * r - (y - top)) / total]
+      const theta = Math.atan2(y - 512, 512 - x)
+      return [lane, (legLen + laneRadius(lane) * theta) / total]
+    }
+
+    it('often travels in pairs: a second ball runs in step on the neighbouring line', () => {
+      const rng = vi.spyOn(Math, 'random').mockReturnValue(0.3) // pairs when random < 0.5
+      try {
+        const { container } = render(<AudioReactiveHalbertMark state="thinking" />)
+        pump(20) // ~0.33 s: the pair is under way, the next spawn (~0.38 s) not yet
+        const balls = drawn(container)
+        expect(balls.length).toBe(2)
+        const [a, b] = balls.map((el) => laneAndProgress(centroid(el.getAttribute('points')!)))
+        expect(new Set([a[0], b[0]]).size).toBe(2) // two different lines
+        expect(Math.abs(a[0] - b[0])).toBe(1) // next to each other
+        expect(Math.abs(a[1] - b[1])).toBeLessThan(0.03) // and in step
+      } finally {
+        rng.mockRestore()
+      }
+    })
+
+    it('and sometimes alone', () => {
+      const rng = vi.spyOn(Math, 'random').mockReturnValue(0.9) // no pair when random >= 0.5
+      try {
+        const { container } = render(<AudioReactiveHalbertMark state="thinking" />)
+        pump(24)
+        expect(drawn(container)).toHaveLength(1)
+      } finally {
+        rng.mockRestore()
+      }
+    })
+
+    it('the spine\'s ball runs twice as fast and often comes straight back', () => {
+      expect(THINKING_BULGES.spineSpeedFactor).toBe(2)
+      const rng = vi.spyOn(Math, 'random').mockReturnValue(0) // spine, forward, round trip
+      try {
+        const { container } = render(<AudioReactiveHalbertMark state="thinking" />)
+        const leader = container.querySelectorAll('polygon')[0] // the first ball keeps slot 0
+        const ys: number[] = []
+        for (let i = 0; i < 36; i++) {
+          pump(1)
+          const pts = leader.getAttribute('points') ?? ''
+          if (pts.length > 0) {
+            const [x, y] = centroid(pts)
+            expect(Math.abs(x - 512)).toBeLessThan(1) // on the spine
+            ys.push(y)
+          }
+        }
+        const peakAt = ys.indexOf(Math.max(...ys))
+        expect(Math.max(...ys)).toBeGreaterThan(430) // reached the bottom
+        expect(ys[ys.length - 1]).toBeLessThan(200) // and came back up
+        // twice as fast: down the 432-unit spine in about a quarter second
+        expect(peakAt).toBeLessThanOrEqual(16)
+        for (let i = 1; i <= peakAt; i++) expect(ys[i]).toBeGreaterThanOrEqual(ys[i - 1] - 1e-6)
+        for (let i = peakAt + 1; i < ys.length; i++) expect(ys[i]).toBeLessThanOrEqual(ys[i - 1] + 1e-6)
+      } finally {
+        rng.mockRestore()
+      }
     })
   })
 
