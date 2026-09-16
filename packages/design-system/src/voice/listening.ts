@@ -48,17 +48,17 @@ export const LISTENING = Object.freeze({
   /** Mean rise across all bands that reaches impactMax (the floor reaches 0). */
   impactFullRise: 0.65,
   /** Retraction per end on the hardest impact, outer line. With presence at
-   * its peak this still leaves a tenth of the line: a clap startles, it
-   * never closes a line. */
-  impactMax: 0.32,
+   * its peak this still leaves a quarter of the outer arc and more of every
+   * other line: a clap startles, it never closes a line. */
+  impactMax: 0.24,
   /** The impact rises this fast, holds, then releases. */
   impactRiseSeconds: 0.03,
   impactHoldSeconds: 0.12,
   impactReleaseSeconds: 0.45,
   /** The spine takes this share of the outer line's impact. */
   innerImpactShare: 0.7,
-  /** No end withdraws past this, so two ends can never meet. */
-  maxPerEnd: 0.45,
+  /** No end withdraws past this: a fifth of every line always remains. */
+  maxPerEnd: 0.4,
 })
 
 /** Golden angle: spreads per-end drift phases so nothing moves in step. */

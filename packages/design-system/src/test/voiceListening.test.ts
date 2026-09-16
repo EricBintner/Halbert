@@ -161,7 +161,7 @@ describe('Listener — impact: a clap retracts hard, speech does not', () => {
       const clappy = run({ seed: 3, clapEverySeconds: [5, 8] })
       expect(clappy.events).toBeGreaterThanOrEqual(3)
       expect(clappy.events).toBeLessThanOrEqual(6)
-      expect(clappy.maxImpact).toBeGreaterThan(0.25)
+      expect(clappy.maxImpact).toBeGreaterThan(0.9 * LISTENING.impactMax)
     }
   })
 
@@ -190,16 +190,16 @@ describe('Listener — impact: a clap retracts hard, speech does not', () => {
       outerPeak = Math.max(outerPeak, l.retraction(6, 0))
       spinePeak = Math.max(spinePeak, l.retraction(0, 0))
     }
-    expect(outerPeak).toBeGreaterThanOrEqual(0.25)
+    expect(outerPeak).toBeGreaterThanOrEqual(0.2)
     expect(outerPeak).toBeLessThanOrEqual(LISTENING.maxPerEnd)
-    expect(spinePeak).toBeGreaterThan(0.15)
+    expect(spinePeak).toBeGreaterThan(0.12)
     expect(spinePeak).toBeLessThan(outerPeak)
     expect(l.retraction(6, 1)).toBeCloseTo(l.retraction(6, 0), 2) // a clap is symmetric
   })
 
-  it('even the hardest clap at full attention leaves a tenth of every line', () => {
+  it('even the hardest clap at full attention leaves a fifth of every line', () => {
     // The founder's brief: a handclap should not close a line. Presence at
-    // its peak plus a saturated impact must still leave the tips apart.
+    // its peak plus a saturated impact must still leave the tips well apart.
     const l = new Listener(COUNT)
     let t = feed(l, speech, 120) // attention fully up
     const hardest = new Float32Array(COUNT).fill(1)
@@ -211,8 +211,8 @@ describe('Listener — impact: a clap retracts hard, speech does not', () => {
         worst = Math.max(worst, l.retraction(k, 0) + l.retraction(k, 1))
       }
     }
-    expect(worst).toBeLessThanOrEqual(0.9)
-    expect(LISTENING.impactMax + LISTENING.presenceMax).toBeLessThanOrEqual(0.5)
+    expect(worst).toBeLessThanOrEqual(0.8)
+    expect(LISTENING.impactMax + LISTENING.presenceMax).toBeLessThanOrEqual(0.4)
   })
 
   it('relaxes smoothly after the clap and never fully closes', () => {
