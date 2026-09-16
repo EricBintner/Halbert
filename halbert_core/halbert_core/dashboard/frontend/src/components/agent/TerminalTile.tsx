@@ -354,8 +354,20 @@ export function TerminalTile({ session, onTerminated, blockId, blockOutput, bloc
         {session.status === 'running' && (
           <span className="text-muted-foreground font-mono tabular-nums">{formatElapsed(session.startedAt, now)}</span>
         )}
-        {session.sandboxed && (
+        {session.sandboxed ? (
           <span className="px-1 py-0.5 rounded bg-status-telemetry-bg text-status-telemetry border border-status-telemetry-line">sandbox</span>
+        ) : (
+          /* The uncontained run is the one that has to be loud. It only
+             happens where an operator set `capabilities.terminal_unsandboxed`
+             in being.yml -- no preset grants it and no probe sets it -- and
+             badging only the CONTAINED case left the degraded one silent,
+             which is the wrong way round for a security indicator. */
+          <span
+            className="px-1 py-0.5 rounded bg-status-warning-bg text-status-warning border border-status-warning-line"
+            title="Running without the platform sandbox — capabilities.terminal_unsandboxed is set"
+          >
+            uncontained
+          </span>
         )}
         {!interactive && (
           <span
