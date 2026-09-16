@@ -8,6 +8,7 @@ import { SegmentedBar, type SegmentItem } from '../primitives/SegmentedBar'
 
 const meta: Meta = {
   title: 'Instruments/Meters',
+  tags: ['autodocs'],
   parameters: {
     docs: {
       description: {

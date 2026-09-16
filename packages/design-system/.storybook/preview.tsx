@@ -2,6 +2,11 @@
 // Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 import * as React from 'react'
 import type { Preview, Decorator } from '@storybook/react'
+import { DocsContainer, type DocsContainerProps } from '@storybook/blocks'
+import { create } from '@storybook/theming'
+import { GLOBALS_UPDATED } from 'storybook/internal/core-events'
+
+import { readInjectedThemes } from './theme'
 
 import '../src/styles.css'
 
@@ -37,13 +42,46 @@ const withTheme: Decorator = (Story, context) => {
   )
 }
 
+/**
+ * Docs pages (autodocs, MDX) are styled by Storybook's own docs theme, not by
+ * the token file, so they need the same light/dark pair the manager uses and
+ * they need to follow the toolbar toggle. The store is not on the public
+ * context type, hence the narrow cast for the initial value; updates arrive
+ * on the channel.
+ */
+const injected = readInjectedThemes()
+const docsThemes = { light: create(injected.light), dark: create(injected.dark) }
+
+type ThemeName = keyof typeof docsThemes
+const themeOf = (globals?: { theme?: unknown }): ThemeName => (globals?.theme === 'dark' ? 'dark' : 'light')
+
+function initialTheme(context: DocsContainerProps['context']): ThemeName {
+  const store = (context as unknown as { store?: { userGlobals?: { globals?: { theme?: unknown } } } }).store
+  return themeOf(store?.userGlobals?.globals)
+}
+
+const ThemedDocsContainer = ({ context, children }: React.PropsWithChildren<DocsContainerProps>) => {
+  const [theme, setTheme] = React.useState<ThemeName>(() => initialTheme(context))
+  React.useEffect(() => {
+    const onGlobals = ({ globals }: { globals?: { theme?: unknown } }) => setTheme(themeOf(globals))
+    context.channel.on(GLOBALS_UPDATED, onGlobals)
+    return () => context.channel.off(GLOBALS_UPDATED, onGlobals)
+  }, [context])
+  return (
+    <DocsContainer context={context} theme={docsThemes[theme]}>
+      {children}
+    </DocsContainer>
+  )
+}
+
 const preview: Preview = {
   parameters: {
     controls: { matchers: { color: /(background|color)$/i, date: /Date$/i } },
     backgrounds: { disable: true },
+    docs: { container: ThemedDocsContainer },
     options: {
       storySort: {
-        order: ['Brand', 'Design Tokens', 'Primitives', 'Surfaces', 'Modules', 'Voice', 'Drafts'],
+        order: ['Brand', 'Design Tokens', 'Primitives', 'Instruments', 'Surfaces', 'Modules', 'Agent', 'Voice', 'Drafts'],
       },
     },
   },

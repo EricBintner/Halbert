@@ -1,21 +1,27 @@
 <!--
-  Manager chrome <head> injection — sets the page title and SEO/social meta
-  for the public Storybook. The favicons are already copied into the build
-  output via the package's public/ directory.
+  Manager chrome <head>. The colours and the brand line arrive from main.ts as
+  build-time JSON (see .storybook/theme.ts); this file holds only what is
+  static: the brand fonts, which the manager document would otherwise never
+  load, and the page meta for the public site. There is no <title> here on
+  purpose — Storybook writes its own first and manager.ts rebrands it.
 -->
-<title>Halbert Design System</title>
-<meta name="description" content="The Olivetti Vermilion & Bone component library for Halbert — a first-person home-automation and AI-agent desktop app. Open source under GPL-3.0-or-later." />
+<link rel="stylesheet" href="./fonts/fonts.css" />
 
-<!-- Open Graph / social cards -->
+<meta name="description" content="The Olivetti Vermilion & Bone component library shared by the Halbert desktop shell and marketing site. Open source under GPL-3.0-or-later." />
+<link rel="canonical" href="https://storybook.halbert.computer/" />
+
 <meta property="og:type" content="website" />
-<meta property="og:title" content="Halbert Design System" />
-<meta property="og:description" content="The Olivetti Vermilion & Bone component library for Halbert — a first-person home-automation and AI-agent desktop app." />
-<meta property="og:image" content="https://raw.githubusercontent.com/EricBintner/Halbert/main/marketing/web-v10/public/og-image.png" />
+<meta property="og:site_name" content="Halbert" />
+<meta property="og:url" content="https://storybook.halbert.computer/" />
+<meta property="og:title" content="Halbert's Storybook" />
+<meta property="og:description" content="The Olivetti Vermilion & Bone component library shared by the Halbert desktop shell and marketing site." />
+<meta property="og:image" content="https://halbert.computer/og-image.png" />
+<meta property="og:image:type" content="image/png" />
 <meta property="og:image:width" content="1200" />
 <meta property="og:image:height" content="630" />
+<meta property="og:image:alt" content="Halbert — I am the computer. And I put the smart in your home." />
 
-<!-- Twitter / X -->
 <meta name="twitter:card" content="summary_large_image" />
-<meta name="twitter:title" content="Halbert Design System" />
-<meta name="twitter:description" content="The Olivetti Vermilion & Bone component library for Halbert." />
-<meta name="twitter:image" content="https://raw.githubusercontent.com/EricBintner/Halbert/main/marketing/web-v10/public/og-image.png" />
+<meta name="twitter:title" content="Halbert's Storybook" />
+<meta name="twitter:description" content="The Olivetti Vermilion & Bone component library shared by the Halbert desktop shell and marketing site." />
+<meta name="twitter:image" content="https://halbert.computer/og-image.png" />

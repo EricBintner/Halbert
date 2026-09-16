@@ -11,6 +11,7 @@ import { StorageTierGroup } from '../primitives/StorageTierGroup'
 
 const meta: Meta = {
   title: 'Instruments/Templates',
+  tags: ['autodocs'],
   parameters: {
     docs: {
       description: {

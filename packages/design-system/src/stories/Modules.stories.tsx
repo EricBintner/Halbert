@@ -10,6 +10,7 @@ import { Button } from '../primitives/Button'
 
 const meta: Meta = {
   title: 'Modules/Vitals',
+  tags: ['autodocs'],
   parameters: { layout: 'padded' },
 }
 export default meta

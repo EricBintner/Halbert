@@ -8,6 +8,10 @@ export default defineConfig({
     globals: true,
     environment: 'jsdom',
     setupFiles: ['./src/test/setup.ts'],
-    css: false,
+    // Stylesheets are not processed in tests — except a `?raw` import, which
+    // is text, not CSS: the Storybook theme test reads tokens.css that way.
+    // `css: false` would blank it too, because vitest matches on the `.css`
+    // extension before looking at the query.
+    css: { include: [/\?raw$/] },
   },
 })
