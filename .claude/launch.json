@@ -6,6 +6,24 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev", "--prefix", "marketing/web-v10", "--", "--port", "5188"],
       "port": 5188
+    },
+    {
+      "name": "marketing-v10-worktree",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev", "--prefix", "/Volumes/4TB-BAD/Halbert/.claude/worktrees/seven-line-mark-web-v10/marketing/web-v10", "--", "--port", "5189"],
+      "port": 5189
+    },
+    {
+      "name": "storybook-worktree",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "storybook", "--prefix", "/Volumes/4TB-BAD/Halbert/.claude/worktrees/seven-line-mark-web-v10/packages/design-system", "--", "--port", "6007"],
+      "port": 6007
+    },
+    {
+      "name": "storybook",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "storybook", "--prefix", "packages/design-system", "--", "--port", "6016"],
+      "port": 6016
     }
   ]
 }
