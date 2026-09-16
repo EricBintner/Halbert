@@ -106,10 +106,14 @@ Status key: `[ ]` not started · `[~]` in progress · `[x]` done, wired and test
 - [ ] **Not exercised on Linux.** Every sandbox test monkeypatches `platform.system()`; `bwrap`
       is absent on this host (macOS, `sandbox-exec` only), so nothing has actually run under
       bubblewrap.
-- [ ] **The terminal routes jail, they do not ask — needs a ruling.** See
-      `HANDOFF-SEC-2-READONLY-LANE-REVIEW-2026-09-15.md` §"two lanes": `_gate_command` and
-      `_wrap_for_execution` use two different frameworks, and `check_command_safety` falls through
-      to `SafetyTier.SAFE`, so a HIGH verdict on `/exec` means "run it jailed", never "ask".
+- [x] **The terminal asks — ruled B by the founder 2026-09-16, landed `ee3d0001`.** `_gate_command` and
+      `_wrap_for_execution` were two frameworks; a HIGH verdict on `/exec` meant "run it jailed".
+      Now `_ask_or_refuse` mirrors the agent path's contract over HTTP on both doors: refused -> 403,
+      HIGH without `force` -> 428 with the confirmation message, resubmit with `force`.
+      `/check-safety` answers on the same classifier. **Backend only** — the frontend does not
+      render the 428 yet; until it does a HIGH command in a terminal tile errors instead of asking.
+      The founder framed the fuller question as research + UI planning: see
+      `RESEARCH-PERMISSION-MODELS-2026-09-16.md`.
 
 ### `[~]` SEC-3 · Path containment and the privileged write path — 17 findings (C2 H5 M8 L2)
 - [x] Persona purge traversal closed — a persona is a name that cannot express a path, plus a
