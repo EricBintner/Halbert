@@ -277,3 +277,79 @@ class TestSensitivePathsResolveLikeTheFilesystem:
         """Both spellings name one file; both must land in the same place."""
         r = _fw().classify("write_file", {"path": "/private/etc/ssh/sshd_config"})
         assert r.risk_level == RiskLevel.HIGH
+
+
+class TestVouchedBinariesWithEffectfulSpellings:
+    """The §3 table of the 2026-09-15 review: commands that classified SAFE —
+    vouched, no prompt, and on the terminal routes not even jailed — while
+    having spellings that change the host.
+
+    Two mechanisms failed. ``True`` vouches a whole binary, so every verb it
+    has rides along; and the frozenset check constrains only the *first*
+    operand, so `git branch -D`, `git remote add`, `git tag <name>` and
+    `tailscale drive share` all put the effect behind a vouched first word.
+    """
+
+    @pytest.mark.parametrize("command", [
+        "hostname evil",
+        "timedatectl set-timezone UTC",
+        "hostnamectl set-hostname x",
+        "localectl set-locale LANG=C",
+        "loginctl terminate-session 1",
+        "loginctl kill-user 501",
+        "ifconfig en0 down",
+        "iwconfig wlan0 essid x",
+        "arp -s 10.0.0.1 aa:bb:cc:dd:ee:ff",
+        "date 0915235926",
+        "dmesg -C",
+        "scutil --set HostName x",
+        "nvidia-smi -pm 1",
+        "mokutil --disable-validation",
+        "git branch -D main",
+        "git remote add evil https://x",
+        "git tag v9",
+        "tailscale drive share x y",
+        "sort /etc/passwd -o /tmp/x",
+        "xxd a /tmp/out",
+    ])
+    def test_an_effectful_spelling_is_not_vouched(self, command):
+        assert _gated(_classify(command)), command
+
+
+class TestTheReadOnlySpellingsStillRun:
+    """The other half: narrowing these must not cost the observation they
+    were in the table for. A gate that fires on ordinary use is a gate that
+    gets switched off.
+    """
+
+    @pytest.mark.parametrize("command", [
+        "hostname",
+        "hostname -f",
+        "timedatectl status",
+        "hostnamectl status",
+        "localectl status",
+        "loginctl list-sessions",
+        "ifconfig",
+        "ifconfig en0",
+        "ifconfig -a",
+        "arp -a",
+        "date",
+        "date +%s",
+        "date -u",
+        "dmesg",
+        "nvidia-smi",
+        "nvidia-smi -q",
+        "mokutil --sb-state",
+        "git branch",
+        "git branch -a",
+        "git remote -v",
+        "git tag -l",
+        "git status",
+        "git log -1",
+        "tailscale status",
+        "tailscale drive list",
+        "sort /tmp/x",
+    ])
+    def test_the_observing_spelling_still_runs_unprompted(self, command):
+        r = _classify(command)
+        assert not _gated(r), (command, r)

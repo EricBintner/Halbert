@@ -288,12 +288,25 @@ READ_ONLY_COMMANDS: Dict[str, Union[bool, FrozenSet[str]]] = {
     # coreutils and inspection
     "ls": True, "dir": True, "vdir": True, "cat": True, "head": True,
     "tail": True, "wc": True, "sort": True, "uniq": True, "cut": True,
-    "tr": True, "column": True, "nl": True, "od": True, "xxd": True,
+    "tr": True, "column": True, "nl": True, "od": True,
+    # `xxd` is off the table: its second positional operand is an OUTPUT
+    # file (`xxd a /tmp/out`) and `-r` reverts a dump back into binary.
+    # Neither is expressible as a first-operand frozenset. `od` and
+    # `hexdump`, which only ever write to stdout, stay.
     "strings": True, "basename": True, "dirname": True, "readlink": True,
     "realpath": True, "stat": True, "file": True, "du": True, "df": True,
     "tree": True, "find": True, "locate": True, "pwd": True,
     "whoami": True, "id": True, "groups": True, "who": True, "w": True,
-    "last": True, "hostname": True, "uname": True, "date": True,
+    "last": True, "uname": True,
+    # `hostname <name>` sets it; `date <MMDDhhmm>` sets the clock. Both
+    # report when bare, so the frozenset keeps the reporting spellings and
+    # refuses a bare operand. "+" vouches `date +FORMAT` specifically.
+    "hostname": frozenset({"-f", "--fqdn", "-s", "--short", "-d", "--domain",
+                           "-i", "-I", "--all-ip-addresses", "--all-fqdns",
+                           "-A", "-y", "--yp", "--nis"}),
+    "date": frozenset({"+", "-u", "--utc", "--universal", "-R", "--rfc-2822",
+                       "--rfc-3339", "--iso-8601", "-I", "-r", "-d", "--date",
+                       "-j", "-f", "--file", "--debug", "--reference"}),
     "uptime": True, "echo": True, "printf": True, "printenv": True,
     "which": True, "whereis": True, "type": True,
     "apropos": True, "whatis": True,
@@ -313,13 +326,28 @@ READ_ONLY_COMMANDS: Dict[str, Union[bool, FrozenSet[str]]] = {
     "mokutil": True, "sw_vers": True, "system_profiler": True,
     "ioreg": True, "smartctl": True, "kextstat": True, "getenforce": True,
     "systemd-detect-virt": True, "systemd-analyze": True,
-    "hostnamectl": True, "localectl": True, "timedatectl": True,
-    "loginctl": True, "tlp-stat": True, "lsattr": True, "getfacl": True,
+    # The *ctl family reports when bare and writes when given a verb:
+    # `timedatectl set-timezone`, `hostnamectl set-hostname`,
+    # `localectl set-locale`, `loginctl terminate-session`/`kill-user`.
+    # The bare invocation still runs -- it is the status output.
+    "hostnamectl": frozenset({"status", "show"}),
+    "localectl": frozenset({"status", "list-locales", "list-keymaps",
+                            "list-x11-keymap-models", "list-x11-keymap-layouts",
+                            "list-x11-keymap-variants", "list-x11-keymap-options"}),
+    "timedatectl": frozenset({"status", "show", "list-timezones",
+                              "show-timesync", "timesync-status"}),
+    "loginctl": frozenset({"list-sessions", "list-users", "list-seats",
+                           "show-session", "show-user", "show-seat",
+                           "session-status", "user-status", "seat-status"}),
+    "tlp-stat": True, "lsattr": True, "getfacl": True,
     # network, read-only
     "ping": True, "ping6": True, "traceroute": True, "dig": True,
     "host": True, "nslookup": True, "ss": True, "netstat": True,
     "ifconfig": True, "iwconfig": True, "arp": True,
-    "scutil": True,
+    # `scutil` is off the table entirely, not narrowed: bare, it opens an
+    # interactive session where `set`/`add` arrive over stdin, which no
+    # frozenset on argv can see. Same exclusion as the pager-hosts above,
+    # for the same reason. `scutil --get` reaches the owner allowlist.
     "resolvectl": frozenset({"status", "query", "statistics",
                              "show-cache", "reset-statistics"}),
     "ip": frozenset({"addr", "a", "link", "l", "route", "r", "neigh", "n"}),
@@ -470,6 +498,40 @@ EFFECTFUL_ARGS: Dict[str, Set[str]] = {
                    "--smart-relinquish-var"},
     "fuser": {"-k", "--kill", "-w"},
     "man": {"-P", "--pager"},
+    # Interface configuration: `ifconfig en0 down`, `iwconfig wlan0 essid x`.
+    # The interface name is the first operand and is arbitrary, so the verb
+    # that follows it can only be caught here.
+    "ifconfig": {"up", "down", "add", "del", "delete", "netmask", "mtu",
+                 "broadcast", "alias", "-alias", "promisc", "-promisc",
+                 "media", "create", "destroy", "plumb", "unplumb", "tunnel",
+                 "hw", "txqueuelen"},
+    "iwconfig": {"essid", "mode", "freq", "channel", "ap", "nick", "rate",
+                 "bit", "rts", "frag", "key", "enc", "power", "txpower",
+                 "sens", "retry", "modu", "commit"},
+    # `arp -s` writes the table, `-d` deletes, `-f` loads a file of entries.
+    "arp": {"-s", "--set", "-d", "--delete", "-f", "--file"},
+    # `dmesg -C` clears the kernel ring buffer -- destroying the evidence a
+    # diagnostic command exists to read. `-w`/`--follow` stays read-only.
+    "dmesg": {"-C", "--clear", "-c", "--read-clear", "-D", "--console-off",
+              "-E", "--console-on", "-n", "--console-level"},
+    # nvidia-smi is a reporting tool with a configuration half.
+    "nvidia-smi": {"-pm", "--persistence-mode", "-e", "--ecc-config",
+                   "-c", "--compute-mode", "-ac", "--applications-clocks",
+                   "-rac", "--reset-applications-clocks", "-lgc",
+                   "--lock-gpu-clocks", "-rgc", "--reset-gpu-clocks",
+                   "-pl", "--power-limit", "-r", "--gpu-reset",
+                   "-p", "--reset-ecc-errors", "--gom", "-am",
+                   "--accounting-mode", "-caa", "--clear-accounted-apps",
+                   "-dm", "--driver-model", "-fdm", "--force-driver-model"},
+    # Secure Boot key enrolment. `--sb-state` and the list verbs only read.
+    "mokutil": {"--disable-validation", "--enable-validation", "--import",
+                "--delete", "--revoke-import", "--revoke-delete", "--reset",
+                "--set-verbosity", "--import-hash", "--delete-hash",
+                "--password", "--clear-password", "--set-sbat-policy",
+                "--generate-hash", "--set-fallback-verbosity",
+                "--disable-fallback-verbosity", "--set-fallback-noreboot"},
+    # `sort -o FILE` writes; every other sort spelling goes to stdout.
+    "sort": {"-o", "--output"},
 }
 
 #: Leading flags a binary may carry before its verb without changing what the
@@ -511,6 +573,37 @@ INERT_LEADING_FLAGS: Dict[str, Dict[str, bool]] = {
 #: Wrappers whose whole purpose is running something else under an altered
 #: environment. A vouched command reached through one of them is not the
 #: vouched command, so they never enter the read-only lane.
+#: Second-operand vouching. A frozenset entry in READ_ONLY_COMMANDS constrains
+#: only the FIRST operand, so a binary whose effect hides one word further in
+#: rides through on a vouched verb: ``git branch -D``, ``git remote add``,
+#: ``git tag <name>`` and ``tailscale drive share`` all classified SAFE on the
+#: strength of ``branch``/``remote``/``tag``/``drive``. Where a verb appears
+#: here, the token after it must be absent -- the bare verb lists -- or itself
+#: vouched. Listing the read-only spellings rather than the effectful ones is
+#: deliberate: a new subcommand is refused until someone reads it, which is
+#: the same fail direction as the table above.
+SUBVERBS: Dict[str, Dict[str, FrozenSet[str]]] = {
+    "git": {
+        "branch": frozenset({
+            "-l", "--list", "-a", "--all", "-r", "--remotes", "-v", "-vv",
+            "--verbose", "--show-current", "--contains", "--no-contains",
+            "--merged", "--no-merged", "--points-at", "--format", "--sort",
+            "--color", "--no-color", "--column",
+        }),
+        # `show` and `get-url` read; `add`, `remove`, `rename`, `set-url`,
+        # `set-head` and `prune` all write .git/config or the remote refs.
+        "remote": frozenset({"-v", "--verbose", "show", "get-url"}),
+        # A bare `git tag <name>` CREATES the tag -- no flag involved, which
+        # is why the effectful spellings cannot be enumerated here.
+        "tag": frozenset({
+            "-l", "--list", "-n", "--contains", "--no-contains", "--points-at",
+            "--merged", "--no-merged", "--format", "--sort", "--column",
+        }),
+    },
+    # `tailscale drive share` exports a host directory over Taildrive.
+    "tailscale": {"drive": frozenset({"list", "ls"})},
+}
+
 _WRAPPER_HEADS = frozenset({
     "sudo", "doas", "env", "xargs", "nice", "nohup", "stdbuf", "timeout",
     "command", "builtin", "exec", "chroot", "setsid", "watch", "parallel",
@@ -1336,7 +1429,17 @@ class ToolSafetyFramework:
             i += 1
         if i >= len(args):
             return True  # only inert flags: `systemctl --user` prints usage
-        return args[i].partition("=")[0] in allowed
+        operand = args[i].partition("=")[0]
+        if operand not in allowed:
+            # `date +%Y-%m-%d`: a format spec is an output shape, not a verb.
+            # Spelled as a literal "+" member of that binary's frozenset so
+            # no other command gains the exemption by accident.
+            if not (args[i].startswith("+") and "+" in allowed):
+                return False
+        sub = SUBVERBS.get(head, {}).get(operand)
+        if sub is not None and i + 1 < len(args):
+            return args[i + 1].partition("=")[0] in sub
+        return True
 
     def _owner_vouched(self, command: str) -> bool:
         """True when every segment is on the owner's own allowlist.
