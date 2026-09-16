@@ -64,7 +64,10 @@ class CommandRequest(BaseModel):
     # minutes is well past anything /exec should be used for -- longer work
     # belongs in a session tile.
     timeout: int = Field(default=30, ge=1, le=300)
-    force: bool = False  # Skip safety confirmation (for pre-approved commands)
+    # Carries the ask through: a HIGH verdict is a 428 until the caller
+    # resubmits with this set, having shown a person the confirmation
+    # message. Never read before ruling B (2026-09-16).
+    force: bool = False
 
 
 class CommandResponse(BaseModel):
@@ -100,6 +103,8 @@ class SpawnRequest(BaseModel):
     # typing into (R04-F1). Whitelisted: a caller must not be able to name a
     # kind with a longer TTL or a different cap than the manager expects.
     kind: Literal["user", "oneshot"] = "user"
+    # Same contract as CommandRequest.force: the interactive door asks too.
+    force: bool = False
 
 
 class SpawnResponse(BaseModel):
@@ -241,7 +246,7 @@ def _gate_command(command: str) -> tuple[SafetyTier, str, str, Optional[str]]:
     return tier, warning, suggestion, None
 
 
-def _wrap_for_execution(command: str, writable_paths=None, cwd=None) -> "tuple[str, bool]":
+def _wrap_for_execution(command: str, writable_paths=None, cwd=None, verdict=None) -> "tuple[str, bool]":
     """Sandbox a command iff the classifier does not vouch it read-only.
 
     The lanes are complementary, not stacked: commands the safety framework
@@ -259,9 +264,13 @@ def _wrap_for_execution(command: str, writable_paths=None, cwd=None) -> "tuple[s
     from ...streaming.sandbox import Sandbox, SandboxUnavailable
     from ...tools.safety import RiskLevel, ToolSafetyFramework
 
-    verdict = ToolSafetyFramework().classify(
-        "run_command", {"command": command, "cwd": cwd}
-    )
+    if verdict is None:
+        # Direct callers (the sandbox tests) still get a verdict here; the
+        # routes pass the one `_ask_or_refuse` produced so a command is
+        # classified once, not twice.
+        verdict = ToolSafetyFramework().classify(
+            "run_command", {"command": command, "cwd": cwd}
+        )
     if verdict.risk_level in (RiskLevel.SAFE, RiskLevel.LOW):
         return command, False
     try:
@@ -275,6 +284,40 @@ def _wrap_for_execution(command: str, writable_paths=None, cwd=None) -> "tuple[s
             e.error_type, command[:80],
         )
         return command, False
+
+
+def _ask_or_refuse(command: str, cwd: Optional[str], force: bool):
+    """Ruling B (2026-09-16): one verdict means one thing on both doors.
+
+    `_gate_command` is the frontend's SafetyTier contract and decides only
+    BLOCKED. This is the agent path's contract -- tools/executor.py's
+    `execute(confirmed=False)`, which on HIGH does not run and returns
+    requires_confirmation -- mirrored over HTTP. A verdict the classifier
+    refuses is a 403. A HIGH verdict is a 428 Precondition Required whose
+    detail names why and carries the same confirmation message the agent
+    path shows; the caller resubmits with `force` once a person has seen
+    it. Before this, HIGH on these routes meant "run it jailed", and the
+    ask SEC-2 promised existed only on the agent path.
+
+    Returns the verdict so the route hands it to `_wrap_for_execution`.
+    """
+    from ...tools.safety import RiskLevel, ToolSafetyFramework
+
+    framework = ToolSafetyFramework()
+    args = {"command": command, "cwd": cwd}
+    verdict = framework.classify("run_command", args)
+    if not verdict.allowed:
+        raise HTTPException(403, f"Refused: {verdict.reason}")
+    if verdict.risk_level == RiskLevel.HIGH and not force:
+        raise HTTPException(428, {
+            "requires_confirmation": True,
+            "risk_level": verdict.risk_level.value,
+            "reason": verdict.reason,
+            "confirmation_message": framework.get_confirmation_message(
+                "run_command", args, verdict
+            ),
+        })
+    return verdict
 
 
 if FASTAPI_AVAILABLE:
@@ -297,13 +340,16 @@ if FASTAPI_AVAILABLE:
         tier, warning, _suggestion, blocked = _gate_command(command)
         if blocked:
             raise HTTPException(403, blocked)
+        verdict = _ask_or_refuse(command, request.cwd, request.force)
 
         # The classifier's lane decision: vetted observation runs bare,
         # anything else runs jailed; no jail on this host is a loud 503.
         from ...streaming.sandbox import SandboxUnavailable
         writable = [request.cwd] if request.cwd else None
         try:
-            wrapped, _sandboxed = _wrap_for_execution(command, writable_paths=writable, cwd=request.cwd)
+            wrapped, _sandboxed = _wrap_for_execution(
+                command, writable_paths=writable, cwd=request.cwd, verdict=verdict
+            )
         except SandboxUnavailable as e:
             raise HTTPException(503, f"Refusing to run uncontained: {e}")
 
@@ -366,11 +412,13 @@ if FASTAPI_AVAILABLE:
         _tier, warning, _sug, blocked = _gate_command(command)
         if blocked:
             raise HTTPException(403, blocked)
+        verdict = _ask_or_refuse(command, request.cwd, request.force)
 
         from ...streaming.sandbox import SandboxUnavailable
         try:
             wrapped, sandboxed = _wrap_for_execution(
-                command, writable_paths=request.writable_paths, cwd=request.cwd
+                command, writable_paths=request.writable_paths, cwd=request.cwd,
+                verdict=verdict,
             )
         except SandboxUnavailable as e:
             raise HTTPException(503, f"Refusing to run uncontained: {e}")
@@ -532,13 +580,23 @@ if FASTAPI_AVAILABLE:
         """
         command = request.command.strip()
         tier, warning, suggestion = check_command_safety(command)
+        # The frontend calls this to decide whether to warn before /exec.
+        # It has to answer on the classifier /exec now asks with, or the
+        # pre-flight says "fine" and the run comes back 428.
+        from ...tools.safety import RiskLevel, ToolSafetyFramework
+        verdict = ToolSafetyFramework().classify(
+            "run_command", {"command": command, "cwd": request.cwd}
+        )
 
         return SafetyCheckResponse(
             command=command,
             tier=tier.value,
-            allowed=tier != SafetyTier.BLOCKED,
-            warning=warning,
-            requires_confirmation=tier in (SafetyTier.CAUTION, SafetyTier.DANGEROUS),
+            allowed=tier != SafetyTier.BLOCKED and verdict.allowed,
+            warning=warning or verdict.reason,
+            requires_confirmation=(
+                tier in (SafetyTier.CAUTION, SafetyTier.DANGEROUS)
+                or verdict.risk_level == RiskLevel.HIGH
+            ),
             suggestion=suggestion,
         )
 

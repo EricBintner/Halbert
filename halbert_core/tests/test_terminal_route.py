@@ -293,5 +293,85 @@ async def test_exec_blocked_command_403(fresh_manager):
 
 @pytest.mark.asyncio
 async def test_exec_nonzero_exit(fresh_manager):
-    resp = await term.execute_command(term.CommandRequest(command="sh -c 'exit 3'"))
+    # `sh -c` is a wrapper head and correctly asks (ruling B); this test is
+    # about the exit code coming back, so it answers the ask the way a
+    # person would.
+    resp = await term.execute_command(
+        term.CommandRequest(command="sh -c 'exit 3'", force=True))
     assert resp.exit_code == 3
+
+
+# ---------------------------------------------------------------------------
+# Ruling B (2026-09-16): the terminal routes ASK, they do not merely jail.
+# ---------------------------------------------------------------------------
+
+class TestTheTerminalAsks:
+    """One classifier, one meaning per verdict, on both doors.
+
+    Before this, `_gate_command` (SafetyTier, falls through to SAFE) decided
+    only BLOCKED -> 403, and `_wrap_for_execution` turned a HIGH RiskLevel
+    verdict into "run it jailed". The agent path, for the same verdict, does
+    not run and returns requires_confirmation. `CommandRequest.force` has
+    said "Skip safety confirmation (for pre-approved commands)" since Phase
+    13d and was never read. These pin the mirror: HIGH and not force is a
+    428 that names why; force carries the ask through; a verdict the
+    classifier refuses outright is a 403 on this door too.
+    """
+
+    class _Reached(Exception):
+        """Raised by a stubbed wrap to prove control got past the gate."""
+
+    def _no_spawn(self, monkeypatch):
+        def _wrap(*_a, **_k):
+            raise TestTheTerminalAsks._Reached()
+        monkeypatch.setattr(term, "_wrap_for_execution", _wrap)
+
+    def test_a_high_verdict_is_a_428_not_a_run(self, fresh_manager, monkeypatch):
+        self._no_spawn(monkeypatch)
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(term.execute_command(term.CommandRequest(command="hostname evil")))
+        assert exc.value.status_code == 428
+        detail = exc.value.detail
+        assert detail["requires_confirmation"] is True
+        assert detail["risk_level"] == "high"
+        assert "hostname evil" in detail["confirmation_message"]
+        assert term.get_terminal_manager().list_active() == []
+
+    def test_force_carries_the_ask_through(self, fresh_manager, monkeypatch):
+        self._no_spawn(monkeypatch)
+        with pytest.raises(TestTheTerminalAsks._Reached):
+            asyncio.run(term.execute_command(
+                term.CommandRequest(command="hostname evil", force=True)))
+
+    def test_a_vouched_command_needs_no_force(self, fresh_manager, monkeypatch):
+        self._no_spawn(monkeypatch)
+        with pytest.raises(TestTheTerminalAsks._Reached):
+            asyncio.run(term.execute_command(term.CommandRequest(command="ls -la")))
+
+    def test_the_pre_flight_agrees_with_exec(self):
+        """/check-safety is what the frontend calls to decide whether to warn.
+        It must say what /exec will do, on the classifier /exec uses."""
+        r = asyncio.run(term.check_safety(term.CommandRequest(command="hostname evil")))
+        assert r.requires_confirmation is True
+
+    def test_spawn_asks_too(self, fresh_manager, monkeypatch):
+        self._no_spawn(monkeypatch)
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(term.spawn_session(term.SpawnRequest(command="hostname evil")))
+        assert exc.value.status_code == 428
+
+    def test_spawn_has_the_same_force_field(self):
+        req = term.SpawnRequest(command="hostname evil", force=True)
+        assert getattr(req, "force", None) is True
+
+    def test_a_refused_verdict_is_a_403_on_this_door_too(self, fresh_manager, monkeypatch):
+        from halbert_core.tools.safety import RiskLevel, SafetyCheckResult, ToolSafetyFramework
+
+        self._no_spawn(monkeypatch)
+        refused = SafetyCheckResult(
+            risk_level=RiskLevel.CRITICAL, allowed=False,
+            requires_confirmation=False, reason="refused by test")
+        monkeypatch.setattr(ToolSafetyFramework, "classify", lambda self, *a, **k: refused)
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(term.execute_command(term.CommandRequest(command="echo hi", force=True)))
+        assert exc.value.status_code == 403

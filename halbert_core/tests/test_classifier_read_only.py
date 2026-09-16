@@ -349,6 +349,7 @@ class TestTheReadOnlySpellingsStillRun:
         "tailscale status",
         "tailscale drive list",
         "sort /tmp/x",
+        "sleep 2",
     ])
     def test_the_observing_spelling_still_runs_unprompted(self, command):
         r = _classify(command)

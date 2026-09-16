@@ -328,6 +328,11 @@ READ_ONLY_COMMANDS: Dict[str, Union[bool, FrozenSet[str], Dict[str, bool]]] = {
     "tree": True, "find": True, "locate": True, "pwd": True,
     "whoami": True, "id": True, "groups": True, "who": True, "w": True,
     "last": True, "uname": True,
+    # `sleep` has no spelling that touches the host. It is here because it is
+    # what a test spawns when it needs a session that stays open, and a
+    # session test should not have to force its way past an ask that a
+    # harmless command should never raise.
+    "sleep": True,
     # `hostname <name>` sets it and `-b`/`-F` set it from a file; `date
     # <MMDDhhmm>` sets the clock and so does `-s`/`--set` in ANY position
     # (`date -u -s ...` is real on every Linux target). Flag-moded, so
