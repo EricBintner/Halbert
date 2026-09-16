@@ -355,6 +355,20 @@ Regenerate with `python3 scripts/vendor_fonts.py`; verify with
 
 ---
 
+### 3.7 Bundled Brand Glyphs
+
+Four third-party brand marks are vendored as SVG path data in
+`packages/design-system/src/icons/brands.tsx` so the design system carries no
+icon-library dependency for them. The marks identify links to the named
+services and remain trademarks of their owners.
+
+| Glyph | Source | Version | Licence |
+| :--- | :--- | :--- | :--- |
+| GitHub, Storybook, X, Reddit | [Simple Icons](https://simpleicons.org) | 16.31.0 | CC0 1.0 Universal |
+
+CC0 requires no notice; this row exists so the provenance is recorded the
+same way as the typefaces in §3.6.
+
 ## 4. Attribution Notice for Redistributions
 
 When redistributing Halbert — in source or binary form, including via the Mac

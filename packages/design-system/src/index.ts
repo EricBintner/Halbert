@@ -54,6 +54,12 @@ export { DiffBlock, DiffSummary } from './surfaces/DiffBlock'
 export type { DiffBlockProps, DiffSummaryProps } from './surfaces/DiffBlock'
 export { NavRail } from './surfaces/NavRail'
 export type { NavRailProps, NavRailSection, NavRailItem } from './surfaces/NavRail'
+export { IconDock } from './surfaces/IconDock'
+export type { IconDockProps, IconDockItem } from './surfaces/IconDock'
+
+// Icons (vendored brand glyphs — see src/icons/brands.tsx for provenance)
+export { GitHubIcon, StorybookIcon, XIcon, RedditIcon } from './icons/brands'
+export type { BrandIconProps } from './icons/brands'
 
 // Utilities
 export { cx } from './lib'
