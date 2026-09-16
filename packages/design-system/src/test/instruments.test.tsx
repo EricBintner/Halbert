@@ -155,6 +155,42 @@ describe('SegmentedBar', () => {
     expect(container.querySelector('.hb-segmented-bar__offline-strip')).toBeInTheDocument()
     expect(container.querySelectorAll('.hb-segmented-bar__segment').length).toBe(0)
   })
+
+  it('handles smart tiered label fitting inside segments without clipping', () => {
+    const tieredSegments: SegmentItem[] = [
+      { id: 'wide', label: 'Primary Core Workload', value: 600, tone: 'data-blue' }, // 60% -> Full
+      { id: 'short', label: 'Secondary Ingestion Buffer', shortLabel: 'Buffer', value: 180, tone: 'data-amber' }, // 18% -> Short
+      { id: 'val', label: 'Compaction Journal Table', value: 120, tone: 'data-teal' }, // 12% -> Val only
+      { id: 'sliver', label: 'Micro-Checkpoint Log', value: 40, tone: 'data-purple' }, // 4% -> No label
+    ]
+
+    render(
+      <SegmentedBar
+        segments={tieredSegments}
+        total={1000}
+        unit="GB"
+        showInSegmentLabels
+        showLegend={false}
+      />
+    )
+
+    // Wide segment has full label and value
+    expect(screen.getByText('Primary Core Workload')).toBeInTheDocument()
+    expect(screen.getByText('600.0 GB')).toBeInTheDocument()
+
+    // Short-label segment uses shortLabel instead of clipped full label
+    expect(screen.getByText('Buffer')).toBeInTheDocument()
+    expect(screen.queryByText('Secondary Ingestion Buffer')).not.toBeInTheDocument()
+    expect(screen.getByText('180.0 GB')).toBeInTheDocument()
+
+    // Val-only segment renders numeric value without clipped label
+    expect(screen.getByText('120.0 GB')).toBeInTheDocument()
+    expect(screen.queryByText('Compaction Journal Table')).not.toBeInTheDocument()
+
+    // Sliver segment renders pure mark without text collision
+    expect(screen.queryByText('Micro-Checkpoint Log')).not.toBeInTheDocument()
+    expect(screen.queryByText('40.0 GB')).not.toBeInTheDocument()
+  })
 })
 
 describe('DataGridRow', () => {
@@ -229,6 +265,7 @@ describe('TactileMeter Grid Alignment', () => {
     )
 
     expect(container.querySelector('.hb-tactile-meter--thick')).toBeInTheDocument()
+    expect(container.querySelector('.hb-tactile-meter--has-in-bar')).toBeInTheDocument()
     expect(screen.getByTestId('in-bar-path')).toBeInTheDocument()
     expect(screen.getByTestId('in-bar-metrics')).toBeInTheDocument()
     expect(container.querySelector('.hb-tactile-meter__in-bar')).toBeInTheDocument()

@@ -15,6 +15,13 @@
 
 @import "../../../shared-tokens/tokens.css";
 
+:root {
+  --color-border: var(--color-line);
+  --color-border-subtle: var(--color-line-subtle);
+  --color-border-strong: var(--color-line-strong);
+  --color-surface-sunken: var(--color-surface-subtle);
+}
+
 /* ---------------------------------------------------------------- shared -- */
 
 .hb-visually-hidden {
@@ -1021,8 +1028,8 @@
   position: relative;
   width: 100%;
   border-radius: var(--radius-sm);
-  background-color: var(--color-surface-sunken);
-  border: 1px solid var(--color-border);
+  background-color: var(--color-surface-subtle);
+  border: 1px solid var(--color-line);
   overflow: hidden;
 }
 
@@ -1038,42 +1045,68 @@
   inset: 0;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 0 var(--space-2);
+  justify-content: flex-start;
+  padding: 0 var(--space-3);
   z-index: 3;
   pointer-events: none;
-  font-family: var(--font-mono);
-  font-size: 11px;
-  font-weight: 600;
-  line-height: 1;
   min-width: 0;
   overflow: hidden;
-  gap: var(--space-2);
 }
 
-.hb-tactile-meter__in-bar-left,
-.hb-tactile-meter__in-bar-right {
+.hb-tactile-meter__in-bar-left {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   white-space: nowrap;
-  background: rgba(16, 16, 16, 0.78);
+  background: none;
+  border: none;
+  box-shadow: none;
+  padding: 0;
   color: #ffffff;
-  padding: 3px 8px;
-  border-radius: var(--radius-sm);
-  letter-spacing: 0.02em;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
-}
-
-.hb-tactile-meter__in-bar-left {
+  font-family: var(--font-mono);
+  font-size: 13.5px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: -0.01em;
+  text-shadow: none;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
+.hb-tactile-meter--thick .hb-tactile-meter__in-bar-left,
+.hb-tactile-meter--hero .hb-tactile-meter__in-bar-left {
+  font-size: 14px;
+}
+
+.hb-tactile-meter--xl .hb-tactile-meter__in-bar-left {
+  font-size: 13px;
+}
+
+.hb-tactile-meter--lg .hb-tactile-meter__in-bar-left {
+  font-size: 12px;
+}
+
 .hb-tactile-meter__in-bar-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  background: none;
+  border: none;
+  box-shadow: none;
+  padding: 0;
+  color: #ffffff;
+  font-family: var(--font-mono);
+  font-size: 13.5px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: -0.01em;
+  text-shadow: none;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
   flex-shrink: 0;
   margin-left: auto;
 }
@@ -1108,14 +1141,14 @@
   top: 0;
   bottom: 0;
   width: 1px;
-  background-color: var(--color-border);
+  background-color: var(--color-line-strong);
   z-index: 2;
   pointer-events: none;
 }
 
 .hb-tactile-meter__tick--critical {
   background-color: var(--color-status-critical);
-  opacity: 0.7;
+  opacity: 0.8;
 }
 
 .hb-tactile-meter__offline-strip {
@@ -1191,15 +1224,27 @@
   padding: 0 var(--space-2);
   white-space: nowrap;
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 12.5px;
   font-weight: 600;
   color: #ffffff;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+  text-shadow: none;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   pointer-events: none;
   height: 100%;
+}
+
+.hb-segmented-bar--thick .hb-segmented-bar__segment-label,
+.hb-segmented-bar--hero .hb-segmented-bar__segment-label {
+  font-size: 13.5px;
+}
+
+.hb-segmented-bar__segment-label--val-only {
+  justify-content: center;
+  padding: 0 4px;
 }
 
 .hb-segmented-bar__segment-label--free {
@@ -1804,6 +1849,32 @@
 
 .hb-drive-cassette__meter-zone {
   width: 100%;
+}
+
+.hb-drive-cassette__gauge-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+}
+
+.hb-drive-cassette__gauge-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  width: 100%;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.hb-drive-cassette__gauge-label {
+  font-weight: 600;
+  color: var(--color-ink);
+}
+
+.hb-drive-cassette__gauge-readout {
+  font-variant-numeric: tabular-nums;
+  color: var(--color-ink-secondary);
 }
 
 .hb-drive-cassette__partition-block {

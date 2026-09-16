@@ -132,6 +132,7 @@ export const TactileMeter = React.forwardRef<HTMLDivElement, TactileMeterProps>(
       : {}),
   }
 
+  const hasInBar = Boolean(inBarLeft || inBarRight)
   const hasHeader = Boolean(label || sub || valueLabel !== undefined || statusBadge || showReadout)
 
   return (
@@ -142,6 +143,7 @@ export const TactileMeter = React.forwardRef<HTMLDivElement, TactileMeterProps>(
         'hb-tactile-meter',
         `hb-tactile-meter--${size}`,
         `hb-tactile-meter--${resolvedTone}`,
+        hasInBar && 'hb-tactile-meter--has-in-bar',
         labelWidth != null && 'hb-tactile-meter--has-label-width',
         offline && 'is-offline',
         className,

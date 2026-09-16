@@ -165,9 +165,8 @@ export const DriveCassette = React.forwardRef<HTMLDivElement, DriveCassetteProps
             </div>
             <SegmentedBar
               segments={partitionSegments}
-              size="thick"
+              size="md"
               unit="GB"
-              showInSegmentLabels
               showLegend={false}
               showFreeHeadroom
             />
@@ -192,20 +191,26 @@ export const DriveCassette = React.forwardRef<HTMLDivElement, DriveCassetteProps
             </div>
           </div>
         ) : (
-          <TactileMeter
-            value={percent ?? 0}
-            tone={isCritical ? 'critical' : isWarning ? 'warning' : 'telemetry'}
-            size="thick"
-            inBarLeft={label ? `${label} · ${device}` : device}
-            inBarRight={
-              used && size
-                ? `${used} / ${size} · ${percent ?? 0}%`
-                : size
-                  ? `${size} · ${percent ?? 0}%`
-                  : `${percent ?? 0}%`
-            }
-            ticks={[25, 50, 75, 90]}
-          />
+          <div className="hb-drive-cassette__gauge-block">
+            {(used || size || percent != null) && (
+              <div className="hb-drive-cassette__gauge-header">
+                <span className="hb-drive-cassette__gauge-readout">
+                  {used && size
+                    ? `${used} / ${size} · ${percent ?? 0}%`
+                    : size
+                      ? `${size} · ${percent ?? 0}%`
+                      : `${percent ?? 0}%`}
+                </span>
+              </div>
+            )}
+            <TactileMeter
+              value={percent ?? 0}
+              tone={isCritical ? 'critical' : isWarning ? 'warning' : 'telemetry'}
+              size="thick"
+              inBarLeft={label ? `${label} · ${device}` : device}
+              ticks={[25, 50, 75, 90]}
+            />
+          </div>
         )}
       </div>
 

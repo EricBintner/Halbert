@@ -235,7 +235,7 @@ export const StoragePoolTemplate: StoryObj = {
         detail="NoCoW · Raw Sparse Images"
         metrics="820.0 GB / 1000.0 GB"
         status={<MetricStatus value="82.0%" tone="warning" />}
-        meter={<TactileMeter value={82.0} tone="warning" size="md" />}
+        meter={<TactileMeter value={82.0} tone="data-teal" size="md" />}
         titleWidth={220}
         pathWidth={180}
         metricsWidth={180}
@@ -367,9 +367,9 @@ export const HostComputeVitalsTemplate: StoryObj = {
 /* ------------------------------------- 3. AI Accelerator & GPU VRAM Template -- */
 
 const vramSegments: SegmentItem[] = [
-  { id: 'weights', label: 'Model Weights (Q4_K_M)', value: 14.2, tone: 'data-blue', detail: 'Llama-3.3-70B' },
-  { id: 'kv', label: 'KV Cache Context', value: 4.6, tone: 'data-amber', detail: '16k token context' },
-  { id: 'surface', label: 'Display Compositor', value: 1.1, tone: 'data-teal', detail: 'Wayland surface' },
+  { id: 'weights', label: 'Model Weights (Q4_K_M)', shortLabel: 'Weights (Q4)', value: 14.2, tone: 'data-blue', detail: 'Llama-3.3-70B' },
+  { id: 'kv', label: 'KV Cache Context', shortLabel: 'KV Cache', value: 4.6, tone: 'data-teal', detail: '16k token context' },
+  { id: 'surface', label: 'Display Compositor', shortLabel: 'Compositor', value: 1.1, tone: 'data-purple', detail: 'Wayland surface' },
 ]
 
 export const AcceleratorVramTemplate: StoryObj = {
@@ -584,13 +584,14 @@ export const ScenarioA_IntegratedAvionics: StoryObj = {
   render: () => (
     <CardContainer
       title="Scenario A: Integrated Avionics Track (Recommended)"
-      subtitle="28px thick track · Machine path (left) & metrics (right) integrated directly inside gauge · Zero upper cramping"
+      subtitle="28px thick track · Left-aligned white label atop gauge · Tabular metrics in upper-right deck · Zero box/pill clutter"
       status={<StatusIndicator tone="nominal" label="RECOMMENDED" />}
     >
       <DataGridRow
         variant="in-bar"
         title="Primary System Root"
         detail="Subvolume ID 256 · Compression: zstd:3 · RAID1"
+        metrics="142.0 GB / 500.0 GB"
         status={<MetricStatus value="● HEALTHY" tone="nominal" />}
         meter={
           <TactileMeter
@@ -598,7 +599,6 @@ export const ScenarioA_IntegratedAvionics: StoryObj = {
             tone="telemetry"
             size="thick"
             inBarLeft="/ · btrfs"
-            inBarRight="142.0 GB / 500.0 GB · 28.4%"
             ticks={[25, 50, 75, 90]}
           />
         }
@@ -608,6 +608,7 @@ export const ScenarioA_IntegratedAvionics: StoryObj = {
         variant="in-bar"
         title="Application & Container Storage"
         detail="Subvolume ID 257 · Docker Root & Overlay2 Pool"
+        metrics="77.4 GB / 200.0 GB"
         status={<MetricStatus value="● HEALTHY" tone="nominal" />}
         meter={
           <TactileMeter
@@ -615,7 +616,6 @@ export const ScenarioA_IntegratedAvionics: StoryObj = {
             tone="telemetry"
             size="thick"
             inBarLeft="/var/lib/docker · btrfs"
-            inBarRight="77.4 GB / 200.0 GB · 38.7%"
             ticks={[25, 50, 75, 90]}
           />
         }
@@ -625,14 +625,14 @@ export const ScenarioA_IntegratedAvionics: StoryObj = {
         variant="in-bar"
         title="Local LLM Model Weights & Artifacts"
         detail="Subvolume ID 258 · Direct I/O Cache · High Throughput"
+        metrics="1.64 TB / 2.00 TB"
         status={<MetricStatus value="▲ WARN" tone="warning" />}
         meter={
           <TactileMeter
             value={82.0}
-            tone="warning"
+            tone="data-teal"
             size="thick"
             inBarLeft="/models · btrfs"
-            inBarRight="1.64 TB / 2.00 TB · 82.0%"
             ticks={[25, 50, 75, 90]}
           />
         }
@@ -642,6 +642,7 @@ export const ScenarioA_IntegratedAvionics: StoryObj = {
         variant="in-bar"
         title="Scratch NVMe High-Speed Swap Pool"
         detail="Subvolume ID 259 · Critical Capacity Ceiling Reached"
+        metrics="958.0 GB / 1.00 TB"
         status={<MetricStatus value="■ CRIT" tone="critical" />}
         meter={
           <TactileMeter
@@ -649,7 +650,6 @@ export const ScenarioA_IntegratedAvionics: StoryObj = {
             tone="critical"
             size="thick"
             inBarLeft="/scratch · btrfs"
-            inBarRight="958.0 GB / 1.00 TB · 95.8%"
             ticks={[25, 50, 75, 90]}
           />
         }
@@ -664,7 +664,7 @@ export const ScenarioB_DualDeckMasterBench: StoryObj = {
   render: () => (
     <CardContainer
       title="Scenario B: Dual-Deck Master Bench"
-      subtitle="24px track · Upper deck has title & metrics · In-bar overlay shows device spec & free headroom target"
+      subtitle="24px track · Upper deck has title & metrics · In-bar white label atop gauge"
       status={<StatusIndicator tone="telemetry" label="ALTERNATIVE" />}
     >
       <DataGridRow
@@ -678,7 +678,6 @@ export const ScenarioB_DualDeckMasterBench: StoryObj = {
             tone="telemetry"
             size="xl"
             inBarLeft="mem · DDR5-5600 EXPO"
-            inBarRight="39.2 GB Free Headroom"
             ticks={[25, 50, 75, 90]}
           />
         }
@@ -694,10 +693,9 @@ export const ScenarioB_DualDeckMasterBench: StoryObj = {
         meter={
           <TactileMeter
             value={30.0}
-            tone="data-amber"
+            tone="data-teal"
             size="xl"
             inBarLeft="pci0000:00/nvme0n1"
-            inBarRight="2.8 GB Buffer Room"
             ticks={[25, 50, 75, 90]}
           />
         }
@@ -716,7 +714,6 @@ export const ScenarioB_DualDeckMasterBench: StoryObj = {
             tone="warning"
             size="xl"
             inBarLeft="hwmon0/k10temp/Tctl"
-            inBarRight="16.5°C Delta to Throttle"
             ticks={[25, 50, 75, 90]}
           />
         }
@@ -733,12 +730,14 @@ export const ScenarioC_CockpitMasterHUD: StoryObj = {
   render: () => (
     <CardContainer
       title="Scenario C: Cockpit Master HUD"
-      subtitle="32px chunky cassette track · Volume title & status unified inside gauge · Monospace specs below"
+      subtitle="32px chunky cassette track · Left white label atop mark · Monospace specs below"
       status={<StatusIndicator tone="telemetry" label="ALTERNATIVE" />}
     >
       <DataGridRow
         variant="in-bar"
         title="Primary System Root"
+        metrics="142.0 GB / 500.0 GB"
+        status={<MetricStatus value="28.4% NOMINAL" tone="nominal" />}
         meter={
           <TactileMeter
             value={28.4}
@@ -746,12 +745,11 @@ export const ScenarioC_CockpitMasterHUD: StoryObj = {
             size="hero"
             inBarLeft={
               <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                <span style={{ color: 'var(--color-ink-tertiary)' }}>[ROOT]</span>
+                <span style={{ opacity: 0.7 }}>[ROOT]</span>
                 <strong>Primary System Root</strong>
                 <span style={{ opacity: 0.7 }}>(/)</span>
               </span>
             }
-            inBarRight="142.0 GB / 500.0 GB · 28.4% NOMINAL"
             ticks={[25, 50, 75, 90]}
           />
         }
@@ -761,6 +759,8 @@ export const ScenarioC_CockpitMasterHUD: StoryObj = {
       <DataGridRow
         variant="in-bar"
         title="Docker Container Volumes"
+        metrics="77.4 GB / 200.0 GB"
+        status={<MetricStatus value="38.7% NOMINAL" tone="nominal" />}
         meter={
           <TactileMeter
             value={38.7}
@@ -768,12 +768,11 @@ export const ScenarioC_CockpitMasterHUD: StoryObj = {
             size="hero"
             inBarLeft={
               <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                <span style={{ color: 'var(--color-ink-tertiary)' }}>[DOCK]</span>
+                <span style={{ opacity: 0.7 }}>[DOCK]</span>
                 <strong>Container Volumes</strong>
                 <span style={{ opacity: 0.7 }}>(/var/lib/docker)</span>
               </span>
             }
-            inBarRight="77.4 GB / 200.0 GB · 38.7% NOMINAL"
             ticks={[25, 50, 75, 90]}
           />
         }
@@ -783,6 +782,8 @@ export const ScenarioC_CockpitMasterHUD: StoryObj = {
       <DataGridRow
         variant="in-bar"
         title="Scratch Swap Pool"
+        metrics="958.0 GB / 1.00 TB"
+        status={<MetricStatus value="95.8% CRITICAL" tone="critical" />}
         meter={
           <TactileMeter
             value={95.8}
@@ -790,12 +791,11 @@ export const ScenarioC_CockpitMasterHUD: StoryObj = {
             size="hero"
             inBarLeft={
               <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                <span style={{ color: 'var(--color-status-critical)' }}>[WARN]</span>
+                <span style={{ opacity: 0.85 }}>[WARN]</span>
                 <strong>Scratch Swap Pool</strong>
                 <span style={{ opacity: 0.7 }}>(/scratch)</span>
               </span>
             }
-            inBarRight="958.0 GB / 1.00 TB · 95.8% CRITICAL"
             ticks={[25, 50, 75, 90]}
           />
         }
@@ -811,7 +811,7 @@ export const ScenarioD_SegmentedInBarLabels: StoryObj = {
   render: () => (
     <CardContainer
       title="Scenario D: Segmented Multi-Category In-Bar Labels"
-      subtitle="32px segmented track · Micro-labels embedded inside slices · Eliminates legend cross-referencing"
+      subtitle="32px segmented track · Pure white labels directly on marks (no dropshadow) · Smart tiered fit prevents clipping"
       status={<StatusIndicator tone="nominal" label="DATAVIZ BEST PRACTICE" />}
     >
       <div>
@@ -847,11 +847,39 @@ export const ScenarioD_SegmentedInBarLabels: StoryObj = {
         </div>
         <SegmentedBar
           segments={[
-            { id: 'data', label: 'Active User Data', value: 280.0, tone: 'data-blue', detail: 'Single device' },
-            { id: 'meta', label: 'Filesystem Metadata', value: 48.0, tone: 'data-teal', detail: 'DUP profile' },
-            { id: 'snaps', label: 'Read-Only Snapshots', value: 28.0, tone: 'data-purple', detail: '14 subvolume snaps' },
+            { id: 'data', label: 'Active User Data', shortLabel: 'User Data', value: 280.0, tone: 'data-blue', detail: 'Single device' },
+            { id: 'meta', label: 'Filesystem Metadata', shortLabel: 'Metadata', value: 48.0, tone: 'data-teal', detail: 'DUP profile' },
+            { id: 'snaps', label: 'Read-Only Snapshots', shortLabel: 'Snapshots', value: 28.0, tone: 'data-purple', detail: '14 subvolume snaps' },
           ]}
           total={500.0}
+          unit="GB"
+          size="thick"
+          showInSegmentLabels
+          showLegend
+          showFreeHeadroom
+        />
+      </div>
+
+      <div style={{ height: 1, backgroundColor: 'var(--color-border)', margin: 'var(--space-4) 0' }} />
+
+      {/* Edge Case Demonstration: Tiered label fitting across diverse slice widths */}
+      <div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8 }}>
+          <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--color-ink)' }}>
+            Slice Fit Edge Cases (Wide, Medium, Value-Only, and Sliver Marks)
+          </span>
+          <span style={{ fontSize: 12, fontFamily: 'var(--font-mono)', color: 'var(--color-ink-secondary)' }}>
+            Proof: Zero clipped words · Full label when wide · Value-only when compact · Pure mark when narrow
+          </span>
+        </div>
+        <SegmentedBar
+          segments={[
+            { id: 'primary', label: 'Primary Core Workload', value: 540.0, tone: 'data-blue', detail: 'Wide slice (54%)' },
+            { id: 'secondary', label: 'Secondary Ingestion Buffer', shortLabel: 'Buffer', value: 180.0, tone: 'data-teal', detail: 'Short-label fallback (18%)' },
+            { id: 'compact', label: 'Compaction Journal Table', value: 110.0, tone: 'data-purple', detail: 'Value-only fallback (11%)' },
+            { id: 'sliver', label: 'Micro-Checkpoint Log', value: 40.0, tone: 'data-green', detail: 'Clean mark, no collision (4%)' },
+          ]}
+          total={1000.0}
           unit="GB"
           size="thick"
           showInSegmentLabels
@@ -882,6 +910,7 @@ export const ResponsiveAdaptiveSimulation: StoryObj = {
             variant="in-bar"
             title="Primary System Root"
             detail="Subvolume ID 256 · Compression: zstd:3"
+            metrics="142.0 GB / 500.0 GB"
             status={<MetricStatus value="● HEALTHY" tone="nominal" />}
             meter={
               <TactileMeter
@@ -889,7 +918,6 @@ export const ResponsiveAdaptiveSimulation: StoryObj = {
                 tone="telemetry"
                 size="thick"
                 inBarLeft="/ · btrfs"
-                inBarRight="142.0 GB / 500.0 GB · 28.4%"
               />
             }
           />
@@ -897,14 +925,14 @@ export const ResponsiveAdaptiveSimulation: StoryObj = {
             variant="in-bar"
             title="Local LLM Model Weights & Artifacts"
             detail="Subvolume ID 258 · Direct I/O Cache"
+            metrics="1.64 TB / 2.00 TB"
             status={<MetricStatus value="▲ WARN" tone="warning" />}
             meter={
               <TactileMeter
                 value={82.0}
-                tone="warning"
+                tone="data-teal"
                 size="thick"
                 inBarLeft="/models · btrfs"
-                inBarRight="1.64 TB / 2.00 TB · 82.0%"
               />
             }
           />
@@ -917,7 +945,7 @@ export const ResponsiveAdaptiveSimulation: StoryObj = {
         </h3>
         <CardContainer
           title="Storage Subvolumes (Tablet 640px)"
-          subtitle="Subtle adaptability: zero wrapping, Title stays pristine, in-bar chips preserve alignment"
+          subtitle="Subtle adaptability: zero wrapping, Title stays pristine, clean baseline alignment"
           status={<StatusIndicator tone="nominal" label="TABLET" />}
           width={640}
         >
@@ -925,6 +953,7 @@ export const ResponsiveAdaptiveSimulation: StoryObj = {
             variant="in-bar"
             title="Primary System Root"
             detail="Subvolume ID 256"
+            metrics="142.0 GB / 500.0 GB"
             status={<MetricStatus value="● HEALTHY" tone="nominal" />}
             meter={
               <TactileMeter
@@ -932,7 +961,6 @@ export const ResponsiveAdaptiveSimulation: StoryObj = {
                 tone="telemetry"
                 size="thick"
                 inBarLeft="/ · btrfs"
-                inBarRight="142.0 GB / 500.0 GB · 28.4%"
               />
             }
           />
@@ -940,14 +968,14 @@ export const ResponsiveAdaptiveSimulation: StoryObj = {
             variant="in-bar"
             title="Local LLM Model Weights"
             detail="Subvolume ID 258"
+            metrics="1.64 TB / 2.00 TB"
             status={<MetricStatus value="▲ WARN" tone="warning" />}
             meter={
               <TactileMeter
                 value={82.0}
-                tone="warning"
+                tone="data-teal"
                 size="thick"
                 inBarLeft="/models · btrfs"
-                inBarRight="1.64 TB / 2.00 TB · 82.0%"
               />
             }
           />
@@ -960,13 +988,14 @@ export const ResponsiveAdaptiveSimulation: StoryObj = {
         </h3>
         <CardContainer
           title="Storage Subvolumes (Mobile 400px)"
-          subtitle="Graceful compaction: in-bar left path truncates with ellipsis, numbers remain visible"
+          subtitle="Graceful compaction: in-bar left path truncates with ellipsis, metrics cleanly above"
           status={<StatusIndicator tone="nominal" label="MOBILE" />}
           width={400}
         >
           <DataGridRow
             variant="in-bar"
             title="Primary Root"
+            metrics="142 GB (28.4%)"
             status={<MetricStatus value="● OK" tone="nominal" />}
             meter={
               <TactileMeter
@@ -974,21 +1003,20 @@ export const ResponsiveAdaptiveSimulation: StoryObj = {
                 tone="telemetry"
                 size="thick"
                 inBarLeft="/"
-                inBarRight="142 GB (28.4%)"
               />
             }
           />
           <DataGridRow
             variant="in-bar"
             title="LLM Models"
+            metrics="1.64 TB (82.0%)"
             status={<MetricStatus value="▲ WARN" tone="warning" />}
             meter={
               <TactileMeter
                 value={82.0}
-                tone="warning"
+                tone="data-teal"
                 size="thick"
                 inBarLeft="/models"
-                inBarRight="1.64 TB (82.0%)"
               />
             }
           />

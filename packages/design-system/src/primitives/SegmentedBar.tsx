@@ -26,6 +26,8 @@ export type SegmentTone =
 export interface SegmentItem {
   id: string
   label: string
+  /** Optional shorter label for compact slices or dense responsive viewports. */
+  shortLabel?: string
   value: number
   /** Tone for this slice: status ('nominal', 'warning', etc.) or data series ('data-blue', 'data-1', etc.). */
   tone?: SegmentTone
@@ -123,6 +125,18 @@ export const SegmentedBar = React.forwardRef<HTMLDivElement, SegmentedBarProps>(
               if (pct <= 0) return null
               const tone = seg.tone ?? 'neutral'
 
+              const valStr = `${segVal.toFixed(1)} ${unit}`
+              // Approximate character fitting threshold (% required to render cleanly without clipping on ~800px track)
+              const reqPctForFull = seg.label.length * 0.85 + valStr.length * 0.75 + 4
+              const reqPctForShort = seg.shortLabel
+                ? seg.shortLabel.length * 0.85 + valStr.length * 0.75 + 4
+                : 999
+              const reqPctForVal = valStr.length * 0.85 + 2
+
+              const canFitFull = pct >= reqPctForFull
+              const canFitShort = !canFitFull && Boolean(seg.shortLabel) && pct >= reqPctForShort
+              const canFitVal = !canFitFull && !canFitShort && pct >= reqPctForVal && pct >= 7
+
               return (
                 <div
                   key={seg.id}
@@ -134,27 +148,62 @@ export const SegmentedBar = React.forwardRef<HTMLDivElement, SegmentedBarProps>(
                   style={{ width: `${pct}%` }}
                   title={`${seg.label}: ${segVal.toFixed(1)} ${unit} (${pct.toFixed(1)}%)`}
                 >
-                  {showInSegmentLabels && pct >= 8 && (
-                    <span className="hb-segmented-bar__segment-label" aria-hidden="true">
-                      <span className="hb-segmented-bar__segment-name">{seg.label}</span>
-                      <span className="hb-segmented-bar__segment-val">{segVal.toFixed(1)} {unit}</span>
-                    </span>
+                  {showInSegmentLabels && (
+                    canFitFull ? (
+                      <span className="hb-segmented-bar__segment-label" aria-hidden="true">
+                        <span className="hb-segmented-bar__segment-name">{seg.label}</span>
+                        <span className="hb-segmented-bar__segment-val">{valStr}</span>
+                      </span>
+                    ) : canFitShort ? (
+                      <span className="hb-segmented-bar__segment-label" aria-hidden="true">
+                        <span className="hb-segmented-bar__segment-name">{seg.shortLabel}</span>
+                        <span className="hb-segmented-bar__segment-val">{valStr}</span>
+                      </span>
+                    ) : canFitVal ? (
+                      <span className="hb-segmented-bar__segment-label hb-segmented-bar__segment-label--val-only" aria-hidden="true">
+                        <span className="hb-segmented-bar__segment-val">{valStr}</span>
+                      </span>
+                    ) : null
                   )}
                 </div>
               )
             })}
-            {showInSegmentLabels && hasFree && ((freeValue / effectiveTotal) * 100) >= 8 && (
-              <div
-                className="hb-segmented-bar__segment hb-segmented-bar__segment--free"
-                style={{ width: `${(freeValue / effectiveTotal) * 100}%` }}
-                title={`${freeHeadroomLabel}: ${freeValue.toFixed(1)} ${unit} (${((freeValue / effectiveTotal) * 100).toFixed(1)}%)`}
-              >
-                <span className="hb-segmented-bar__segment-label hb-segmented-bar__segment-label--free" aria-hidden="true">
-                  <span className="hb-segmented-bar__segment-name">{freeHeadroomLabel}</span>
-                  <span className="hb-segmented-bar__segment-val">{freeValue.toFixed(1)} {unit}</span>
-                </span>
-              </div>
-            )}
+            {showInSegmentLabels && hasFree && (() => {
+              const freePct = (freeValue / effectiveTotal) * 100
+              if (freePct <= 0) return null
+              const freeValStr = `${freeValue.toFixed(1)} ${unit}`
+              const reqPctForFull = freeHeadroomLabel.length * 0.85 + freeValStr.length * 0.75 + 4
+              const reqPctForShort = 4 * 0.85 + freeValStr.length * 0.75 + 4 // "Free" + val
+              const reqPctForVal = freeValStr.length * 0.85 + 2
+
+              const canFitFull = showInSegmentLabels && freePct >= reqPctForFull
+              const canFitShort = showInSegmentLabels && !canFitFull && freePct >= reqPctForShort
+              const canFitVal = showInSegmentLabels && !canFitFull && !canFitShort && freePct >= reqPctForVal && freePct >= 7
+
+              return (
+                <div
+                  className="hb-segmented-bar__segment hb-segmented-bar__segment--free"
+                  style={{ width: `${freePct}%` }}
+                  title={`${freeHeadroomLabel}: ${freeValStr} (${freePct.toFixed(1)}%)`}
+                >
+                  {canFitFull ? (
+                    <span className="hb-segmented-bar__segment-label hb-segmented-bar__segment-label--free" aria-hidden="true">
+                      <span className="hb-segmented-bar__segment-name">{freeHeadroomLabel}</span>
+                      <span className="hb-segmented-bar__segment-val">{freeValStr}</span>
+                    </span>
+                  ) : canFitShort ? (
+                    <span className="hb-segmented-bar__segment-label hb-segmented-bar__segment-label--free" aria-hidden="true">
+                      <span className="hb-segmented-bar__segment-name">Free</span>
+                      <span className="hb-segmented-bar__segment-val">{freeValStr}</span>
+                    </span>
+                  ) : canFitVal ? (
+                    <span className="hb-segmented-bar__segment-label hb-segmented-bar__segment-label--free hb-segmented-bar__segment-label--val-only" aria-hidden="true">
+                      <span className="hb-segmented-bar__segment-val">{freeValStr}</span>
+                    </span>
+                  ) : null}
+                </div>
+              )
+            })()}
           </>
         ) : (
           <div className="hb-segmented-bar__offline-strip">

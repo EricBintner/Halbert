@@ -730,6 +730,7 @@ function FilesystemUsageRow({
         />
       }
       detail={profileDetail ? `• ${profileDetail}` : undefined}
+      metrics={`${fs.used} / ${fs.size}`}
       status={
         <span
           className={cn(
@@ -750,7 +751,7 @@ function FilesystemUsageRow({
           tone={tone}
           size="thick"
           inBarLeft={fs.mountpoint}
-          inBarRight={`${fs.used} / ${fs.size} · ${fs.percent}%`}
+          ticks={[25, 50, 75, 90]}
           aria-label={`${shortName} (${fs.mountpoint}) capacity`}
         />
       }

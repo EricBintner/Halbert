@@ -35,8 +35,8 @@ export interface DataGridRowProps extends Omit<React.HTMLAttributes<HTMLDivEleme
   /**
    * Layout presentation variant:
    * - 'standard': 5-column rigid unigrid line above full-width meter (default).
-   * - 'in-bar': Spacious avionics layout. Top deck has Title/Details (left) and Status (right),
-   *   meter track carries Path (inBarLeft) and Metrics (inBarRight).
+   * - 'in-bar': Spacious avionics layout. Top deck has Title/Details (left) and Metrics/Status (right),
+   *   meter track carries Path (inBarLeft) directly on the mark without grey/black boxes.
    * - 'dual-deck': Top deck has Title (left) and Metrics/Status (right),
    *   lower sub-deck has Path and Details.
    */
@@ -84,15 +84,16 @@ export const DataGridRow = React.forwardRef<HTMLDivElement, DataGridRowProps>(fu
         style={style}
         {...props}
       >
-        {/* Upper Deck: Title + Detail on left, Status on right */}
+        {/* Upper Deck: Title + Detail on left, Metrics + Status on right */}
         <div className="hb-data-row__in-bar-header">
           <div className="hb-data-row__title-cell">
             {icon && <span className="hb-data-row__icon">{icon}</span>}
             <span className="hb-data-row__title">{title}</span>
             {detail && <span className="hb-data-row__detail-inline">· {detail}</span>}
           </div>
-          <div className="hb-data-row__status-cell">
-            {status}
+          <div className="hb-data-row__readout-group">
+            {metrics && <span className="hb-data-row__metrics">{metrics}</span>}
+            {status && <div className="hb-data-row__status-cell">{status}</div>}
           </div>
         </div>
 
