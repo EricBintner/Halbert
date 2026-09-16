@@ -235,3 +235,45 @@ class TestTokeniserDiscipline:
         for command in ("sudo ls", "env ls", "timeout 5 ls", "nice ls",
                         "xargs ls", "exec ls"):
             assert not _fw()._every_segment_is_read_only(command), command
+
+
+class TestSensitivePathsResolveLikeTheFilesystem:
+    """The constants are compared against a resolved candidate, so they must
+    be resolved themselves.
+
+    `101241da` fixed exactly this in `streaming/sandbox.py` — on macOS
+    ``/etc`` is a symlink to ``/private/etc`` and ``/var`` to ``/private/var``,
+    so a rule spelled ``/etc/`` matched nothing once the path under test had
+    been through ``realpath``. The same constants live here and had the same
+    hole: the elevation and the write gate both resolve the candidate first.
+    """
+
+    def test_every_sensitive_path_is_already_resolved(self):
+        import os
+
+        unresolved = [
+            p for p in ToolSafetyFramework().SENSITIVE_PATHS
+            if os.path.realpath(p) != p.rstrip("/")
+        ]
+        assert unresolved == []
+
+    def test_a_write_under_etc_is_gated_though_etc_is_a_symlink(self):
+        r = _fw().classify("write_file", {"path": "/etc/ssh/sshd_config"})
+        assert r.risk_level == RiskLevel.HIGH
+        assert r.requires_confirmation
+
+    def test_both_spellings_of_one_file_elevate_alike(self):
+        """The command lane and the write lane must resolve the same way.
+
+        ``/etc/ssh/sshd_config`` and ``/private/etc/ssh/sshd_config`` are one
+        file. If only one spelling meets a resolved constant, the gate is
+        decided by how the operator happened to type the path.
+        """
+        plain = _classify("cat /etc/ssh/sshd_config")
+        resolved = _classify("cat /private/etc/ssh/sshd_config")
+        assert plain.risk_level == resolved.risk_level, (plain, resolved)
+
+    def test_a_write_under_the_resolved_spelling_is_gated_too(self):
+        """Both spellings name one file; both must land in the same place."""
+        r = _fw().classify("write_file", {"path": "/private/etc/ssh/sshd_config"})
+        assert r.risk_level == RiskLevel.HIGH

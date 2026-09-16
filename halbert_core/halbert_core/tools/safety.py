@@ -209,6 +209,26 @@ def _within_path(candidate: str, root: str) -> bool:
     return candidate.startswith(root + os.sep)
 
 
+def _resolved_root(path: str) -> str:
+    """A sensitive-path constant in the spelling a resolved candidate has.
+
+    ``_classify_write`` and the elevation both resolve the path under test
+    before comparing it. On macOS ``/etc`` is a symlink to ``/private/etc``
+    and ``/var`` to ``/private/var``, so a constant left unresolved matched
+    nothing once the candidate had been through ``realpath`` -- the same
+    hole `101241da` closed in the sandbox's rule set, in the other file that
+    keeps a table of paths. The trailing separator is preserved because the
+    set is written with one and ``_within_path`` strips it anyway.
+    """
+    text = str(path or "").rstrip(os.sep)
+    if not text:
+        return path
+    try:
+        return os.path.realpath(text) + os.sep
+    except OSError:
+        return path
+
+
 def _platform_sensitive_dirs() -> tuple:
     """Halbert's own config and data directories, as path prefixes.
 
@@ -609,7 +629,14 @@ def _token_as_path(token: str, cwd: Optional[str] = None) -> Optional[str]:
         if not cwd:
             return None
         expanded = os.path.join(cwd, expanded)
-    return os.path.normpath(expanded)
+    # Resolved, not merely collapsed: the comparison targets are resolved
+    # (``_resolved_root``), and ``/etc/x`` and ``/private/etc/x`` are one
+    # file. Collapsing alone left the gate decided by which spelling the
+    # operator happened to type.
+    try:
+        return os.path.realpath(expanded)
+    except OSError:
+        return os.path.normpath(expanded)
 
 
 def _paths_touched(command: str, cwd: Optional[str] = None) -> List[str]:
@@ -918,7 +945,7 @@ class ToolSafetyFramework:
     # source (lenses invariant 8): once the composed skill prompt reaches
     # messages[0], a model able to write here once would persist its own
     # directives across every later restart.
-    SENSITIVE_PATHS: Set[str] = {
+    SENSITIVE_PATHS: Set[str] = {_resolved_root(_p) for _p in (
         "/etc/",
         "/boot/",
         "/usr/",
@@ -942,7 +969,7 @@ class ToolSafetyFramework:
         # along for the same reason: it holds the stores the agent's own
         # answers are read back out of.
         *_platform_sensitive_dirs(),
-    }
+    )}
     
     def __init__(self, user_overrides: Optional[Dict[str, Union[bool, Set[str]]]] = None):
         """
