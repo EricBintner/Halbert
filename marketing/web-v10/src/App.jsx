@@ -7,6 +7,7 @@ import { LayoutStage } from './components/LayoutStage';
 import { ScrollHUD } from './components/ScrollHUD';
 import { Reticle } from './components/Reticle';
 import { TechnicalDossierModal } from './components/TechnicalDossierModal';
+import { CornerDock } from './components/CornerDock';
 import { HalbertMark } from '@halbert/design-system'
 
 function useViewport() {
@@ -150,6 +151,9 @@ export function App() {
       <FolioBar camera={camera} reticle={reticle} isOverlay />
 
       <ScrollHUD currentStop={camera.stopIndex} onSelectStop={jumpToStop} scrollProgress={s} />
+
+      {/* Bottom-right links: GitHub, Storybook, and the two placeholders */}
+      <CornerDock />
 
       {/* Technical & Academic Research Dossier — tracks the active stop */}
       <TechnicalDossierModal camera={camera} stops={STOPS} onSelectStop={jumpToStop} />

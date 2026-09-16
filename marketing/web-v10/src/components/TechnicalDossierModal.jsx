@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { BookOpen, X, ChevronRight, ExternalLink, ArrowLeft } from 'lucide-react';
+import { CORNER_INSET, STROKE_MASK } from './CornerDock';
 import { STOPS } from '../lib/storyboard';
 import {
   citationsForStop,
@@ -228,7 +229,11 @@ export function TechnicalDossierModal({ camera, stops }) {
 
   return (
     <>
-      {/* Standalone Graphic Icon Trigger — hides when popup is open */}
+      {/* Standalone Graphic Icon Trigger — hides when popup is open.
+          Bare glyph on the shared corner frame, drawn like the header logo:
+          `hb-dock__btn` gives it the same box, ink, hover and focus ring as
+          the corner dock opposite, and the masked copy below inverts it
+          where the vermilion stroke passes under. */}
       <button
         ref={triggerRef}
         type="button"
@@ -239,15 +244,33 @@ export function TechnicalDossierModal({ camera, stops }) {
         aria-label="Research & Architecture Dossier"
         data-testid="dossier-trigger"
         style={{
-          bottom: 'calc(env(safe-area-inset-bottom, 0px) + 1rem)',
-          left: 'calc(env(safe-area-inset-left, 0px) + 1rem)',
+          bottom: CORNER_INSET.y,
+          left: 'calc(env(safe-area-inset-left, 0px) + 1.5rem)',
         }}
-        className={`fixed z-40 flex h-9 w-9 items-center justify-center rounded-lg border border-[var(--color-line)] bg-[var(--color-surface)]/95 text-[var(--color-ink)] shadow-[var(--shadow-plate)] backdrop-blur-md transition-all duration-200 hover:border-[var(--color-stroke)] hover:text-[var(--color-stroke)] active:scale-95 cursor-pointer ${
-          open ? 'opacity-0 pointer-events-none scale-75' : 'opacity-100 scale-100'
+        className={`hb-dock__btn fixed z-40 text-[var(--color-ink)] transition-opacity duration-200 ${
+          open ? 'opacity-0 pointer-events-none' : 'opacity-100'
         }`}
       >
         <BookOpen size={16} aria-hidden="true" />
       </button>
+      <div
+        aria-hidden="true"
+        inert
+        className={`fixed inset-0 z-40 pointer-events-none select-none text-[var(--color-ink-on-stroke)] transition-opacity duration-200 ${
+          open ? 'opacity-0' : 'opacity-100'
+        }`}
+        style={STROKE_MASK}
+      >
+        <span
+          className="hb-dock__btn absolute"
+          style={{
+            bottom: CORNER_INSET.y,
+            left: 'calc(env(safe-area-inset-left, 0px) + 1.5rem)',
+          }}
+        >
+          <BookOpen size={16} aria-hidden="true" />
+        </span>
+      </div>
 
       {/* Popup Dialog — fixed constant height on desktop with fly-out detail pane */}
       <div

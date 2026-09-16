@@ -1,5 +1,8 @@
 @import "tailwindcss";
 @import "../shared-tokens/tokens.css";
+/* Component styles for the design-system surfaces this site mounts (IconDock).
+ * Relative path, not the vite alias: Tailwind v4 resolves @import itself. */
+@import "../../../packages/design-system/src/styles.css";
 
 @layer base {
   html {
