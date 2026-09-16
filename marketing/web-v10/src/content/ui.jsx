@@ -1,14 +1,13 @@
 import React from 'react';
 import { Mic, Keyboard } from 'lucide-react';
-import { AudioReactiveHalbertMark, SyntheticEnergySource } from '@halbert/design-system';
+import { AudioReactiveHalbertMark, createSpeechBurstSource } from '@halbert/design-system';
 
-/** Simulated voice energy source for the landing page kiosk demo. */
-const voiceEnergySource = new SyntheticEnergySource((t, out) => {
-  for (let k = 0; k < out.length; k++) {
-    const center = 2.5 + 2 * Math.sin(t * 0.9);
-    out[k] = Math.exp(-((k - center) ** 2) / 3) * (0.55 + 0.45 * Math.sin(t * 6 + k));
-  }
-});
+/**
+ * The demo voice for the landing page kiosk plate: the design system's
+ * shared speech-burst source (design doc 17), the same one Storybook plays,
+ * so the strings pluck here exactly as they do there.
+ */
+const voiceEnergySource = createSpeechBurstSource();
 
 /**
  * Placeholder app surfaces.

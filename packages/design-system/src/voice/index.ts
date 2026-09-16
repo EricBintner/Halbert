@@ -22,14 +22,37 @@ export {
   TINE_BIN_RANGES_16K_64,
   SUB_BASS_ATTENUATION,
 } from './spectrum'
-export { ResonatorBank, SPRING_DEFAULTS, PLUCK_SPRING, FIXED_TIMESTEP } from './springs'
+export { createSpeechBurstSource } from './demo'
+export type { SpeechBurstOptions } from './demo'
+export {
+  ResonatorBank,
+  SWELL_SPRING,
+  STRING_LADDER,
+  STRING_TUNING,
+  RING_MAX,
+  FIXED_TIMESTEP,
+  stringSpring,
+  tuneStrings,
+} from './springs'
+export type { SpringParams, StringTuning } from './springs'
+export {
+  STATE_EXCITATION,
+  ONSET_FLOOR,
+  IDLE_PLUCK,
+  STRUM,
+  OnsetPlucker,
+  PluckQueue,
+  IdlePlucker,
+  strum,
+} from './excitation'
+export type { StateExcitation, ScheduledPluck } from './excitation'
 export {
   MARK,
   laneCount,
   tineCount,
   TINE_AMPLITUDES,
   TINE_MODES,
-  TINE_DRIFT,
+  MAX_DISPLACEMENT_MULTIPLIER,
   laneRadius,
   laneTop,
   tinePathD,
