@@ -1,7 +1,7 @@
 # Research: how three agent hosts decide what may run — and what Halbert should take
 
 > **Document:** `.handoff/RESEARCH-PERMISSION-MODELS-2026-09-16.md`
-> **Status:** Research complete; recommendations ranked; four founder questions at the end.
+> **Status:** Research complete; recommendations ranked; five founder questions at the end (the fifth, §6a's fork, was added after ruling B landed).
 > **Date:** 2026-09-16
 > **Asked by:** the founder, on ruling B for the terminal ask: *"this is a whole scope of research and UI planning … we should really be looking deeply into how cdesktop, open-claude-code and warp handle permissions, then decide how this is different for us and find the best options."*
 > **Read:** `/Volumes/Thunderbolt/AI/OSS/{cdesktop,open-claude-code,warp}` at their 2026-08-24 checkouts. Every claim below cites a file and, where it matters, a line. Nothing was run; this is a reading of source.
