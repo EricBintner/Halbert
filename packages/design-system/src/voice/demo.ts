@@ -9,7 +9,7 @@
  * That is what makes the strings pluck the way they do on a real voice; a
  * smooth sweep never crosses the onset floor and never strikes anything.
  * Optionally a clap lands in a breath every few seconds: every band at once,
- * gone within a tenth of a second — the listening posture's startle.
+ * mostly gone within a tenth of a second — the listening posture's startle.
  *
  * Deterministic per seed, so a page reload replays the same performance.
  */
@@ -36,9 +36,10 @@ const BREATH_SECONDS: readonly [number, number] = [0.45, 0.8]
 const LOOKAHEAD_SECONDS = 0.5
 /** The outermost arc is sub-bass and room; a voice barely reaches it. */
 const SUB_BASS_WEIGHT = 0.5
-/** A clap: every band, instantly, then a 25 ms decay. */
+/** A clap: every band, instantly, then a 60 ms decay — long enough that a
+ * 30 fps frame cannot miss it, gone within a tenth of a second. */
 const CLAP_LEVEL = 0.85
-const CLAP_DECAY_SECONDS = 0.025
+const CLAP_DECAY_SECONDS = 0.06
 const CLAP_LIFETIME = CLAP_DECAY_SECONDS * 6
 /** A clap lands this long into a breath, once the last syllable has died. */
 const CLAP_INTO_BREATH_SECONDS = 0.3

@@ -329,6 +329,39 @@ describe('AudioReactiveHalbertMark', () => {
     expect(container.querySelector('g')).toHaveAttribute('stroke-width', '26.67')
   })
 
+  it('a density change keeps the current posture instead of the mount state', () => {
+    const source = stepSource(0.3, 0, [2, 3])
+    const { container, rerender } = render(
+      <AudioReactiveHalbertMark size={512} state="speaking" source={source} />,
+    )
+    rerender(<AudioReactiveHalbertMark size={512} state="listening" source={source} />)
+    pump(60) // withdrawn
+    rerender(
+      <AudioReactiveHalbertMark size={512} state="listening" density="display" source={source} />,
+    )
+    pump(1)
+    // the new engine starts with listening's full retraction weight, not
+    // speaking's zero ramping up from nothing
+    const d2 = container.querySelectorAll('path')[2].getAttribute('d')!
+    const top = laneTop(2, 'display')
+    const total = 2 * (MARK.cy - top) + Math.PI * laneRadius(2, 'display')
+    expect(first(d2)[1]).toBeGreaterThan(top + 0.05 * total)
+  })
+
+  it('a density change while recognized does not strum again', () => {
+    const silence = constSource(0)
+    const { container, rerender } = render(
+      <AudioReactiveHalbertMark size={512} state="recognized" source={silence} />,
+    )
+    pump(90) // the mount strum has rung out
+    rerender(
+      <AudioReactiveHalbertMark size={512} state="recognized" density="display" source={silence} />,
+    )
+    pump(3)
+    const spine = container.querySelectorAll('path')[0].getAttribute('d')!
+    expect(spine).toBe(staticTinePaths('display')[0])
+  })
+
   it('tolerates an unknown state from an untyped consumer', () => {
     const { container } = render(
       // @ts-expect-error — JSX callers can pass anything

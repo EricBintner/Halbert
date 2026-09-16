@@ -53,6 +53,16 @@ describe('mark voice geometry — brand density (the ratified 7-line mark, the d
     expect(Math.max(...lane3.map(([, y]) => y))).toBeCloseTo(728, 1)
   })
 
+  it('samples both leg/arc junctions of every U-lane, symmetrically', () => {
+    for (let lane = 1; lane <= 5; lane++) {
+      const pts = points(staticTinePaths()[lane])
+      const r = laneRadius(lane)
+      expect(pts).toHaveLength(2 * 25 + 47) // 25 per leg, 47 interior arc samples
+      expect(pts[24]).toEqual([512 - r, 512]) // left junction
+      expect(pts[pts.length - 25]).toEqual([512 + r, 512]) // right junction
+    }
+  })
+
   it('keeps adjacent tine excursions inside the 24-unit gap at the multiplier ceiling', () => {
     const amps = TINE_AMPLITUDES.brand
     expect(amps).toHaveLength(7)

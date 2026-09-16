@@ -21,6 +21,7 @@ export {
   TINE_BAND_HZ,
   TINE_BIN_RANGES_16K_64,
   SUB_BASS_ATTENUATION,
+  DEFAULT_FFT_SIZE,
 } from './spectrum'
 export { createSpeechBurstSource } from './demo'
 export type { SpeechBurstOptions } from './demo'

@@ -126,9 +126,18 @@ interface Engine {
   contractV: number
 }
 
-function createEngine(density: VoiceDensity, initialState: string): Engine {
+/**
+ * @param carry the engine being replaced on a density change, if any: its
+ *        posture (which state it last acted on, the ramped weights, the
+ *        listener's envelopes) carries over so nothing restarts or strums
+ *        again. On mount there is nothing to carry: the state is seeded
+ *        'idle' so mounting in any other state counts as entering it.
+ */
+function createEngine(density: VoiceDensity, initialState: string, carry: Engine | null): Engine {
   const count = tineCount(density)
   const initial = excitationFor(initialState)
+  const listener = new Listener(count)
+  if (carry) listener.adopt(carry.listener)
   return {
     density,
     count,
@@ -138,12 +147,12 @@ function createEngine(density: VoiceDensity, initialState: string): Engine {
     onsets: new OnsetPlucker(count),
     queue: new PluckQueue(),
     idle: new IdlePlucker(count),
-    listener: new Listener(count),
+    listener,
     raw: new Float32Array(count),
     scaled: new Float32Array(count),
-    seenState: 'idle',
-    swellWeight: initial.swellWeight,
-    retractWeight: initial.retract,
+    seenState: carry ? carry.seenState : 'idle',
+    swellWeight: carry ? carry.swellWeight : initial.swellWeight,
+    retractWeight: carry ? carry.retractWeight : initial.retract,
     trims: Array.from({ length: count }, () => ({ start: 0, end: 0 })),
     bulges: [],
     nextSpawn: null,
@@ -188,10 +197,15 @@ export const AudioReactiveHalbertMark = React.forwardRef<
   const groupRef = React.useRef<SVGGElement | null>(null)
   const stateRef = React.useRef(state)
   stateRef.current = state
-  // The mount state only seeds the lean and retraction weights; later states are read live.
+  // The mount state only seeds the lean and retraction weights; later states
+  // are read live. A density change rebuilds the engine but carries the
+  // previous one's posture over.
   const initialStateRef = React.useRef(state)
-  const engine = React.useMemo(() => createEngine(density, initialStateRef.current), [density])
-  const engineRef = React.useRef(engine)
+  const engineRef = React.useRef<Engine | null>(null)
+  const engine = React.useMemo(
+    () => createEngine(density, initialStateRef.current, engineRef.current),
+    [density],
+  )
   engineRef.current = engine
   const staticPaths = React.useMemo(() => staticTinePaths(density), [density])
 
@@ -214,6 +228,7 @@ export const AudioReactiveHalbertMark = React.forwardRef<
     const frame = (nowMs: number) => {
       raf = requestAnimationFrame(frame)
       const e = engineRef.current
+      if (!e) return
       const dt = Math.min(0.1, Math.max(0, (nowMs - last) / 1000))
       last = nowMs
       const t = nowMs / 1000

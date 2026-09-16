@@ -251,7 +251,8 @@ function tineShape(
       const uArc = i / ARC_SAMPLES
       out.push(arc(uArc, (legLen + uArc * arcLen) / total))
     }
-    for (let i = 1; i <= LEG_SAMPLES; i++) {
+    // i = 0 is the right leg/arc junction, which the arc loop stopped short of.
+    for (let i = 0; i <= LEG_SAMPLES; i++) {
       out.push(rightLeg(1 - i / LEG_SAMPLES, (legLen + arcLen + (i / LEG_SAMPLES) * legLen) / total))
     }
     return out

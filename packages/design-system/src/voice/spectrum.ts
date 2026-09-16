@@ -70,6 +70,16 @@ export const TINE_BIN_RANGES_16K_64: Record<VoiceDensity, ReadonlyArray<readonly
 export const SUB_BASS_ATTENUATION = 0.3
 
 /**
+ * Analyser FFT size. Browser contexts run at 44.1/48 kHz whatever the
+ * capture rate; 2048 points give 23.4 Hz per bin at 48 kHz, so the three low
+ * brand bands (40-100, 100-250, 250-500 Hz) each keep their own bins (the
+ * old 128 points, 375 Hz per bin, folded all three onto bin 0), and a 43 ms
+ * window covers a whole 30 fps frame, so a clap a few milliseconds long can
+ * never fall between two analyses.
+ */
+export const DEFAULT_FFT_SIZE = 2048
+
+/**
  * Bin ranges (inclusive lower, exclusive upper) for a given context rate and
  * bin count. Band edges are rounded to the nearest bin — the center-frequency
  * argmin rule from spec §3.4.
@@ -170,7 +180,7 @@ export function createAnalyserEnergySource(
 }
 
 export interface MediaStreamAnalyserOptions {
-  /** fftSize 128 -> 64 bins (128-sample frames are plenty for 7 bands). */
+  /** Analyser FFT size. @default DEFAULT_FFT_SIZE (1024) */
   fftSize?: number
   minDecibels?: number // default -85 (voice floor)
   maxDecibels?: number // default -25
@@ -195,7 +205,7 @@ export function createMediaStreamAnalyserSource(
       context = new AudioContext()
       const source = context.createMediaStreamSource(stream)
       const analyser = context.createAnalyser()
-      analyser.fftSize = opts.fftSize ?? 128
+      analyser.fftSize = opts.fftSize ?? DEFAULT_FFT_SIZE
       analyser.smoothingTimeConstant = 0 // the spring bank smooths instead
       analyser.minDecibels = opts.minDecibels ?? -85
       analyser.maxDecibels = opts.maxDecibels ?? -25
@@ -223,7 +233,7 @@ export function createNodeAnalyserSource(
   return {
     start() {
       const created = node.context.createAnalyser()
-      created.fftSize = opts.fftSize ?? 128
+      created.fftSize = opts.fftSize ?? DEFAULT_FFT_SIZE
       created.smoothingTimeConstant = 0
       created.minDecibels = opts.minDecibels ?? -85
       created.maxDecibels = opts.maxDecibels ?? -25

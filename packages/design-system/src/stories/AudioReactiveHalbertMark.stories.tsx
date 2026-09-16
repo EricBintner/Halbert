@@ -118,9 +118,14 @@ class ManualPluckSource implements AudioEnergySource {
   clap(level = 0.8): void {
     for (let k = 0; k < this.until.length; k++) this.strike(k, level, 40)
   }
-  /** Every band at a low level for `holdMs`: someone talking. */
+  /** A vowel's spread over the register for `holdMs`: someone talking.
+   * The extremes (air above 4 kHz, room below 100 Hz) stay quiet, as they
+   * do for a voice, so this never reads as broadband. */
   talk(holdMs = 2500): void {
-    for (let k = 0; k < this.until.length; k++) this.strike(k, 0.25, holdMs)
+    const vowel = [0, 0.15, 0.3, 0.3, 0.25, 0.1, 0.05]
+    for (let k = 0; k < this.until.length; k++) {
+      this.strike(k, vowel[Math.min(k, vowel.length - 1)], holdMs)
+    }
   }
   start(): void {}
   stop(): void {}

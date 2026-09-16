@@ -2,6 +2,7 @@
 // Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 import { describe, it, expect } from 'vitest'
 import { Listener, LISTENING } from '../voice/listening'
+import { createSpeechBurstSource } from '../voice/demo'
 
 const COUNT = 7
 const DT = 1 / 60
@@ -101,28 +102,81 @@ describe('Listener — presence: sound raises attention fast and lets it go slow
   })
 })
 
+/** A syllable as a voice (and the demo) makes them: a gaussian over the
+ * register, several adjacent bands rising together, 20 ms attack, 120 ms
+ * decay. `age` in seconds since the syllable started. */
+function syllable(age: number, centre: number, peak = 1, width = 0.26): Float32Array {
+  const v = new Float32Array(COUNT)
+  if (age < 0) return v
+  const env = age < 0.02 ? age / 0.02 : Math.exp(-(age - 0.02) / 0.12)
+  for (let k = 0; k < COUNT; k++) {
+    const z = (k / (COUNT - 1) - centre) / width
+    v[k] = peak * env * Math.exp(-z * z)
+  }
+  v[COUNT - 1] *= 0.5
+  return v
+}
+
 describe('Listener — impact: a clap retracts hard, speech does not', () => {
-  it('single-band onsets (syllables) never count as an impact', () => {
-    const l = new Listener(COUNT)
-    let maxImpact = 0
-    let maxRetraction = 0
-    feed(
-      l,
-      (frame) => {
-        const v = new Float32Array(COUNT)
-        // one band steps from 0 to 0.35 every 6 frames, a different band each time
-        const band = 1 + (Math.floor(frame / 6) % 5)
-        if (frame % 6 < 3) v[band] = 0.35
-        return v
-      },
-      180,
-    )
-    for (let i = 0; i < 180; i++) {
-      maxImpact = Math.max(maxImpact, l.impact)
-      maxRetraction = Math.max(maxRetraction, l.retraction(6, 0))
+  it('syllables never count as an impact, at 60 or 30 fps', () => {
+    for (const fps of [60, 30]) {
+      const l = new Listener(COUNT)
+      let maxImpact = 0
+      let t = 0
+      for (const centre of [0.1, 0.3, 0.5, 0.7, 0.9]) {
+        for (let i = 0; i < Math.round(0.35 * fps); i++) {
+          t += 1 / fps
+          l.feed(syllable(i / fps, centre), 1 / fps, t)
+          maxImpact = Math.max(maxImpact, l.impact)
+        }
+      }
+      expect(maxImpact).toBeLessThan(0.01)
+      expect(l.retraction(6, 0)).toBeLessThanOrEqual(LISTENING.presenceMax + 1e-6)
     }
-    expect(maxImpact).toBeLessThan(0.05)
-    expect(maxRetraction).toBeLessThanOrEqual(LISTENING.presenceMax + 0.05)
+  })
+
+  it('the demo voice: no impacts without claps, one per clap with them, at both rates', () => {
+    for (const fps of [60, 30]) {
+      const run = (opts: Parameters<typeof createSpeechBurstSource>[0]) => {
+        const src = createSpeechBurstSource(opts)
+        src.start()
+        const l = new Listener(COUNT)
+        const out = new Float32Array(COUNT)
+        let maxImpact = 0
+        let events = 0
+        let above = false
+        for (let i = 0; i < 30 * fps; i++) {
+          const t = i / fps
+          src.readEnergies(out, t)
+          l.feed(out, 1 / fps, t)
+          maxImpact = Math.max(maxImpact, l.impact)
+          const isAbove = l.impact > 0.15
+          if (isAbove && !above) events++
+          above = isAbove
+        }
+        return { maxImpact, events }
+      }
+      const plain = run({ seed: 3 })
+      expect(plain.maxImpact).toBeLessThan(0.01)
+      const clappy = run({ seed: 3, clapEverySeconds: [5, 8] })
+      expect(clappy.events).toBeGreaterThanOrEqual(3)
+      expect(clappy.events).toBeLessThanOrEqual(6)
+      expect(clappy.maxImpact).toBeGreaterThan(0.25)
+    }
+  })
+
+  it('a talker whose voice spans most bands at once still does not startle it', () => {
+    // Even a broad voice leaves the extremes (air above 4 kHz, room below
+    // 100 Hz) quiet; only something that lifts nearly every band is a hit.
+    const l = new Listener(COUNT)
+    const broad = new Float32Array([0, 0.2, 0.3, 0.3, 0.25, 0.1, 0.02])
+    let maxImpact = 0
+    let t = feed(l, silence, 10)
+    for (let i = 0; i < 30; i++) {
+      t = feed(l, broad, 1, t)
+      maxImpact = Math.max(maxImpact, l.impact)
+    }
+    expect(maxImpact).toBeLessThan(0.01)
   })
 
   it('a broadband clap retracts every line within 100 ms, the outer lines most', () => {
@@ -184,7 +238,7 @@ describe('Listener — impact: a clap retracts hard, speech does not', () => {
   it('a harder clap retracts further than a soft one, up to the cap', () => {
     const soft = new Listener(COUNT)
     const hard = new Listener(COUNT)
-    const softClap = new Float32Array(COUNT).fill(0.3)
+    const softClap = new Float32Array(COUNT).fill(0.4)
     let ts = feed(soft, silence, 30)
     let th = feed(hard, silence, 30)
     ts = feed(soft, softClap, 1, ts)
@@ -240,5 +294,26 @@ describe('Listener — robustness', () => {
     expect(LISTENING.presenceMax).toBe(0.15)
     expect(LISTENING.releaseSeconds).toBeGreaterThan(LISTENING.attackSeconds * 5)
     expect(LISTENING.maxPerEnd).toBeLessThan(0.5)
+  })
+
+  it('the hardest clap actually reaches impactMax before the cap', () => {
+    const l = new Listener(COUNT)
+    let t = feed(l, silence, 30)
+    t = feed(l, clap, 1, t)
+    let peak = 0
+    for (let i = 0; i < 12; i++) {
+      t = feed(l, silence, 1, t)
+      peak = Math.max(peak, l.impact)
+    }
+    expect(peak).toBeGreaterThan(0.95 * LISTENING.impactMax)
+  })
+
+  it('a stalled or backwards frame clock cannot latch an impact', () => {
+    const l = new Listener(COUNT)
+    l.feed(silence, DT, 1)
+    l.feed(clap, DT, 1 + DT)
+    // the clock now stands still (or goes backwards); time still passes by dt
+    for (let i = 0; i < 120; i++) l.feed(silence, DT, 0.5)
+    expect(l.impact).toBeLessThan(0.02)
   })
 })

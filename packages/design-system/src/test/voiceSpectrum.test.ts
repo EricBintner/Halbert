@@ -5,6 +5,7 @@ import {
   TINE_BAND_HZ,
   TINE_BIN_RANGES_16K_64,
   SUB_BASS_ATTENUATION,
+  DEFAULT_FFT_SIZE,
   binRangesFor,
   tineEnergies,
   SyntheticEnergySource,
@@ -34,6 +35,21 @@ describe('FFT bin mapping', () => {
     expect(TINE_BIN_RANGES_16K_64.brand).toEqual([
       [32, 64], [16, 32], [8, 16], [4, 8], [2, 4], [1, 2], [0, 1],
     ])
+  })
+
+  it('at a 48kHz context the default FFT keeps every brand band on its own bins', () => {
+    // Browser contexts run at 44.1/48 kHz whatever the capture rate. With
+    // the old 128-point FFT (375 Hz per bin) the three low bands collapsed
+    // onto bin 0; the default is now 2048 points (23.4 Hz per bin), whose
+    // 43 ms window also covers a whole 30 fps frame.
+    expect(DEFAULT_FFT_SIZE).toBe(2048)
+    const ranges = binRangesFor(48000, DEFAULT_FFT_SIZE / 2, 'brand')
+    for (let k = 1; k < ranges.length; k++) {
+      expect(ranges[k][1]).toBeLessThanOrEqual(ranges[k - 1][0]) // disjoint, descending
+      expect(ranges[k][1]).toBeGreaterThan(ranges[k][0]) // non-empty
+    }
+    expect(ranges[ranges.length - 1]).toEqual([2, 4]) // 40-100 Hz
+    expect(ranges[ranges.length - 2]).toEqual([4, 11]) // 100-250 Hz
   })
 
   it('rescales for a 48kHz context', () => {
@@ -127,6 +143,7 @@ describe('energy sources', () => {
     // must not leave another permanently-connected analyser on a
     // long-lived node (the Voice Mode mic tap / TTS out live for hours).
     const analysers: Array<{
+      fftSize: number
       connected: unknown[]
       disconnected: boolean
       frequencyBinCount: number
@@ -169,6 +186,7 @@ describe('energy sources', () => {
     expect(analysers[0].disconnected).toBe(true) // the retired one is gone
     expect(analysers[1].disconnected).toBe(false)
     expect(analysers[1].connected).toHaveLength(1)
+    expect(analysers[1].fftSize).toBe(DEFAULT_FFT_SIZE)
 
     // The live analyser still flows energy (7 tines — the brand default).
     const out = new Float32Array(7)

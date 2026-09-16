@@ -12,14 +12,18 @@
  *              end drifts on its own slow curve between presenceMin and
  *              presenceMax, ends and lines out of phase, so speech reads as
  *              "it is listening", not as syllables.
- *   impact   — only a sharp broadband transient (a clap, a door) drives a
- *              quick, critically damped retraction that scales with the hit,
- *              up to impactMax on the outer lines, then relaxes. Speech
- *              syllables raise one or two bands at a time and stay below
- *              its threshold.
+ *   impact   — only a broadband transient (a clap, a door) drives a quick,
+ *              critically damped retraction that scales with the hit, up to
+ *              impactMax on the outer lines, then relaxes. "Broadband" is
+ *              the test: nearly every band must rise together over a fixed
+ *              50 ms window. A syllable is a gaussian over the register and
+ *              lifts at most five of seven bands; a clap lifts them all.
+ *              Measuring over a window, not a frame, keeps 30 fps and 60 fps
+ *              identical.
  *
  * The spine's bottom end is the mark's centre and never retracts; the
- * spine withdraws from the top. Everything here is deterministic.
+ * spine withdraws from the top. Everything here is deterministic, and all
+ * timing runs on elapsed frame time, never on the absolute clock.
  */
 
 export const LISTENING = Object.freeze({
@@ -34,18 +38,22 @@ export const LISTENING = Object.freeze({
   presenceMax: 0.15,
   /** The slow organic drift; outer lines drift a little slower than inner. */
   driftHz: 0.35,
-  /** Sum of per-band rises in one frame that starts an impact (a clap sums
-   * to several units; a syllable to well under one). */
-  impactThreshold: 1.2,
-  /** Rise sum above the threshold that reaches impactMax. */
-  impactScale: 1.5,
+  /** A band's rise is measured against its level this long ago. */
+  riseWindowSeconds: 0.05,
+  /** A band counts as risen when it climbed by more than this. */
+  bandRiseFloor: 0.15,
+  /** At most this many bands may sit a hit out and it still counts as
+   * broadband (the sub-bass band is usually the one). */
+  bandsAllowedQuiet: 1,
+  /** Mean rise across all bands that reaches impactMax (the floor reaches 0). */
+  impactFullRise: 0.65,
   /** Retraction per end on the hardest impact, outer line. With presence at
    * its peak this still leaves a tenth of the line: a clap startles, it
    * never closes a line. */
   impactMax: 0.32,
-  /** The impact rises this fast, holds briefly, then releases. */
-  impactRiseSeconds: 0.05,
-  impactHoldSeconds: 0.08,
+  /** The impact rises this fast, holds, then releases. */
+  impactRiseSeconds: 0.03,
+  impactHoldSeconds: 0.12,
   impactReleaseSeconds: 0.45,
   /** The spine takes this share of the outer line's impact. */
   innerImpactShare: 0.7,
@@ -55,6 +63,8 @@ export const LISTENING = Object.freeze({
 
 /** Golden angle: spreads per-end drift phases so nothing moves in step. */
 const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5))
+/** Frames of level history kept for the rise window (67 ms at 240 fps). */
+const HISTORY = 16
 
 function clamp01(v: number): number {
   if (Number.isNaN(v)) return 0
@@ -62,15 +72,20 @@ function clamp01(v: number): number {
 }
 
 export class Listener {
-  private readonly prev: Float32Array
+  private readonly history: Float32Array[]
+  private readonly historyElapsed: Float64Array
+  private historyHead = -1
+  private historyFilled = 0
+  private elapsed = 0
   private attentionLevel = 0
   private impactTarget = 0
   private impactLevel = 0
-  private impactHoldUntil = -Infinity
+  private impactHoldLeft = 0
   private now = 0
 
   constructor(private readonly count: number) {
-    this.prev = new Float32Array(count)
+    this.history = Array.from({ length: HISTORY }, () => new Float32Array(count))
+    this.historyElapsed = new Float64Array(HISTORY)
   }
 
   /** 0 (silence for a while) … 1 (sound now). */
@@ -83,34 +98,66 @@ export class Listener {
     return this.impactLevel
   }
 
+  /** Carry the envelopes over from another listener (a density change
+   * rebuilds the engine; the posture must not restart from silence). */
+  adopt(other: Listener): void {
+    this.attentionLevel = other.attentionLevel
+    this.impactTarget = other.impactTarget
+    this.impactLevel = other.impactLevel
+    this.impactHoldLeft = other.impactHoldLeft
+    this.now = other.now
+  }
+
   /** Feed one frame of band levels; `t` is the frame clock in seconds. */
   feed(levels: ArrayLike<number>, dt: number, t: number): void {
     const h = Number.isFinite(dt) && dt > 0 ? dt : 0
     if (Number.isFinite(t)) this.now = t
+    this.elapsed += h
     const c = LISTENING
 
+    // Record this frame, then find the newest frame at least a window old.
+    this.historyHead = (this.historyHead + 1) % HISTORY
+    const current = this.history[this.historyHead]
     let loudest = 0
-    let riseSum = 0
     for (let k = 0; k < this.count; k++) {
       const v = clamp01(levels[k] ?? 0)
+      current[k] = v
       if (v > loudest) loudest = v
-      const rise = v - this.prev[k]
-      if (rise > 0) riseSum += rise
-      this.prev[k] = v
+    }
+    this.historyElapsed[this.historyHead] = this.elapsed
+    if (this.historyFilled < HISTORY) this.historyFilled++
+    let baseline: Float32Array | null = null
+    for (let back = 1; back < this.historyFilled; back++) {
+      const i = (this.historyHead - back + HISTORY) % HISTORY
+      baseline = this.history[i]
+      if (this.elapsed - this.historyElapsed[i] >= c.riseWindowSeconds) break
     }
 
     const target = loudest > c.soundFloor ? 1 : 0
     const tau = target > this.attentionLevel ? c.attackSeconds : c.releaseSeconds
     this.attentionLevel += (target - this.attentionLevel) * (1 - Math.exp(-h / tau))
 
-    const hit =
-      riseSum > c.impactThreshold
-        ? Math.min(1, (riseSum - c.impactThreshold) / c.impactScale) * c.impactMax
-        : 0
+    let hit = 0
+    if (baseline) {
+      let risen = 0
+      let riseSum = 0
+      for (let k = 0; k < this.count; k++) {
+        const rise = current[k] - baseline[k]
+        if (rise > c.bandRiseFloor) risen++
+        if (rise > 0) riseSum += rise
+      }
+      if (risen >= this.count - c.bandsAllowedQuiet) {
+        const meanRise = riseSum / this.count
+        const strength = (meanRise - c.bandRiseFloor) / (c.impactFullRise - c.bandRiseFloor)
+        hit = clamp01(strength) * c.impactMax
+      }
+    }
     if (hit > this.impactTarget) {
       this.impactTarget = hit
-      this.impactHoldUntil = this.now + c.impactHoldSeconds
-    } else if (this.now >= this.impactHoldUntil) {
+      this.impactHoldLeft = c.impactHoldSeconds
+    } else if (this.impactHoldLeft > 0) {
+      this.impactHoldLeft -= h
+    } else {
       this.impactTarget *= Math.exp(-h / c.impactReleaseSeconds)
     }
     if (this.impactTarget > this.impactLevel) {
