@@ -141,6 +141,7 @@ def _fingerprint(claims: Any) -> str:
     return hashlib.sha256(repr(claims).encode("utf-8", "replace")).hexdigest()
 
 
+
 def _bound(text: str, limit: int = MAX_GATE_OUTPUT_CHARS) -> str:
     """Keep the TAIL of ``text`` — that is where a failure's diagnostic
     line lives — prefixed with a marker that survives the bound itself."""

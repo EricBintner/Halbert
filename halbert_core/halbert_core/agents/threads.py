@@ -22,11 +22,15 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from ..continuity.rotation import RotationPlan, plan_rotation
 from ..intake.signals import MessageSignals
 from . import conversation_sqlite as _cs
 from .conversation_sqlite import SqliteConversationStore
 from .receipt import build_receipt, provisional_title, refined_title
+# Imported at module level, not inside ``_maybe_rotate``: ``continuity.rotation``
+# is a leaf (stdlib plus a dataclass) and reaches back into nothing here, so
+# there is no cycle to dodge -- and a deferred import would hide an
+# unwired module exactly the way this one stayed hidden.
+from ..continuity.rotation import RotationRefusal, plan_rotation
 from .thread_signals import (
     GRACE_MINUTES, GRACE_TURNS, ThreadDecision, build_hint, decide, format_date,
 )
@@ -51,6 +55,28 @@ __all__ = [
 ]
 
 HISTORY_ROWS = 12
+
+#: What an interrupted turn leaves behind when it produced no answer at all
+#: (A16-G5). Fixed text, not a model's words: the machine is recording that
+#: its own turn was cut, and a template is enough.
+INTERRUPTED_MARKER = "[turn interrupted before an answer]"
+
+#: Design §1.1's move kinds. ``root`` is not among them: a move always
+#: records a departure, and a root has no parent by definition.
+#:
+#: The distinction is worth keeping rather than stamping one word on
+#: everything. A model that declares a new subject has BRANCHED; a
+#: conversation that drifts into one by itself, and a return to a subject
+#: set aside earlier, are both CONTINUATIONS of the same conversation.
+EDGE_BRANCH = "branch"
+EDGE_CONTINUATION = "continuation"
+
+#: Rotation is attempted only once a thread has more rows than the window
+#: that gets replayed. Below that there is nothing to fold: every row is
+#: still in the history the next turn sees, and folding them would trade a
+#: verbatim record for a summary of it and buy nothing. Above it, the rows
+#: falling off the end are exactly what the summary is for.
+ROTATION_MIN_ROWS = HISTORY_ROWS * 3
 SOFT_LANDING_ROWS = 6
 # How many hidden system rows one turn will carry into the hint. `build_hint`
 # renders at most `thread_signals.NOTES_MAX` (3) of them, so this is headroom,
@@ -59,11 +85,6 @@ SOFT_LANDING_ROWS = 6
 PENDING_NOTES_MAX = 8
 RECALL_SNIPPETS = 5
 RECALL_MAX = 3
-
-#: A16-G5: the persisted fact that a turn ended without an answer -- never
-#: shown as if the assistant said it, but a real row so replay does not
-#: read as two consecutive user turns.
-INTERRUPTED_TURN_MARKER = "[turn interrupted before an answer]"
 
 # ── topic windows ────────────────────────────────────────────────
 # `topic_domains` / `entities_json` are what `thread_signals.decide` compares
@@ -460,15 +481,18 @@ class ThreadManager:
                 diff_proposals=list(diff_proposals or []),
                 timestamp=now,
             )
-        elif status == "interrupted":
-            # A16-G5: a crash mid-turn (mark_interrupted, or state_machine's
-            # own outer finally) wrote no assistant row at all, leaving a
-            # bare user row with no persisted fact that anything was cut
-            # short -- replay showed two consecutive user rows. A deliberate
-            # stop ("cancelled") is not this: the user already knows they
-            # stopped it, so only a genuine interruption gets the marker.
+        elif status != "complete":
+            # A16-G5. A turn stopped before a single token streamed wrote
+            # nothing at all, so the transcript ended on an unanswered
+            # question -- and the next turn's history was two bare user rows
+            # in a row. A local model reading [delete the old backups...,
+            # what time is it?] has every reason to treat the first as still
+            # outstanding and stage the deletion again. The row says the cut
+            # happened; it is the assistant's own, because that is whose turn
+            # was cut. "cancelled" is a superseded turn, not the stop button
+            # -- the shape it leaves is the same one this marker exists for.
             self.store.append_message(
-                thread_id, "assistant", INTERRUPTED_TURN_MARKER, origin="assistant",
+                thread_id, "assistant", INTERRUPTED_MARKER, origin="assistant",
                 turn_id=turn.turn_id, session_id=turn.session_id, status=status,
                 timestamp=now,
             )
@@ -486,7 +510,11 @@ class ThreadManager:
             turns_since_pause=int(thread.get("turns_since_pause") or 0) + 1,
         )
         self._refresh_receipt(thread_id)
-        self._maybe_rotate(thread_id, now)
+        # The thread's own counter answers "could this possibly rotate?"
+        # without another full read. It counts every row, hidden ones
+        # included, so it can only ever be generous -- it lets a thread
+        # through to the real check, never past it.
+        self._maybe_rotate(thread_id, now, rough_rows=thread.get("message_count"))
 
     def _anchor_blocks(
         self,
@@ -648,7 +676,12 @@ class ThreadManager:
             )
         return self._open_new_thread(
             provisional_title(title or ""), "model", now,
-            from_thread_id=previous_id, reason=reason, edge_kind="branch",
+            from_thread_id=previous_id, reason=reason,
+            # A model declaring a new subject is a BRANCH; the conversation
+            # drifting into one on its own is a continuation of the same
+            # conversation. Design §1.1 has both words, and using only one
+            # of them throws away the distinction the column exists for.
+            edge_kind=EDGE_BRANCH,
         )
 
     def tick(self) -> List[str]:
@@ -779,7 +812,7 @@ class ThreadManager:
     # Internals
     # ------------------------------------------------------------------
 
-    def _open_new_thread(self, title: str, title_source: str, now: float, *, from_thread_id: Optional[str], reason: str, edge_kind: str = "continuation") -> str:
+    def _open_new_thread(self, title: str, title_source: str, now: float, *, from_thread_id: Optional[str], reason: str, edge_kind: str = EDGE_CONTINUATION) -> str:
         """Open the next leaf thread -- or join the one a concurrent body
         opened first (P3c, founder ruling D-5).
 
@@ -798,10 +831,38 @@ class ThreadManager:
         """
         new_id = uuid.uuid4().hex
         if from_thread_id:
+            # A16 bug 1 and the T2 rewire are one change. ``move_leaf`` is
+            # the only writer that stamps ``parent_thread_id``/``edge_kind``,
+            # and it stamps them exactly when the child records no parent --
+            # so while the switch wrote provenance to ``metadata`` only,
+            # every row stayed NULL/'root' and the FIRST real move would
+            # stamp whatever thread happened to be the leaf then. Rows never
+            # re-parent, so the column and the metadata would have disagreed
+            # about B's origin forever, with the §2.1 path projection reading
+            # one and ``_predecessor_id`` reading the other.
+            #
+            # It is also the one transaction that mints the branch summaries
+            # (design §2.3), which is why T1 and T3 could both ship "done"
+            # with nothing calling either.
+            if self._move_leaf_to_new(
+                new_id, title, title_source, now,
+                from_thread_id=from_thread_id, reason=reason,
+                edge_kind=edge_kind,
+            ):
+                return new_id
+            # Degraded: the leaf moved under us, or the store refused. Take
+            # the pre-T2 path rather than fail the switch -- a conversation
+            # that cannot change subject is worse than a tree missing an edge.
             self._pause_thread(from_thread_id, now, successor=new_id)
         thread = self.store.get_or_open_thread(
             new_id, title, title_source=title_source, created_at=now,
-            parent_thread_id=from_thread_id, edge_kind=edge_kind,
+            # The degraded path stamps the column too, so a thread opened
+            # when ``move_leaf`` was unavailable is not a root that claims
+            # to have no origin. It carries no divider -- there was no
+            # transaction to mint one in -- and that is the honest
+            # difference between the two paths.
+            parent_thread_id=from_thread_id,
+            edge_kind=edge_kind if from_thread_id else "root",
             metadata={"reason": reason, "previous_thread_id": from_thread_id},
         )
         if thread is None:
@@ -815,6 +876,46 @@ class ThreadManager:
                 f"a new one (a concurrent body created it first)"
             )
         return thread["thread_id"]
+
+    def _move_leaf_to_new(
+        self,
+        new_id: str,
+        title: str,
+        title_source: str,
+        now: float,
+        *,
+        from_thread_id: str,
+        reason: str,
+        edge_kind: str = EDGE_CONTINUATION,
+    ) -> bool:
+        """Open ``new_id`` by moving the leaf onto it. False if it could not.
+
+        The new row is created ``paused`` and then opened by the move, not
+        created ``open``: the one-leaf index means there is no instant at
+        which two rows may claim to be the leaf, and the swap has to be the
+        single transaction that also stamps the edge and writes the two
+        dividers.
+
+        Failure leaves an empty paused row, which ``tick()`` closes on its
+        own sweep -- the same shape as the pre-existing lost-create race,
+        where a successor pointer names an id that was never created. Both
+        are advisory and cost nothing but a row.
+        """
+        if not self._pause_marks(from_thread_id, now, successor=new_id):
+            return False
+        created = self.store.create_thread(
+            new_id, title, status="paused", title_source=title_source,
+            created_at=now,
+            metadata={"reason": reason, "previous_thread_id": from_thread_id},
+        )
+        if not created:
+            return False
+        if not self.store.move_leaf(
+            from_thread_id, new_id, edge_kind, now=now
+        ):
+            return False
+        self._refresh_receipt(from_thread_id)
+        return True
 
     def _pause_thread(self, thread_id: str, now: float, *, successor: str) -> None:
         t = self.store.get_thread(thread_id)
@@ -830,72 +931,88 @@ class ThreadManager:
         self.store.update_thread(thread_id, **fields)
         self._refresh_receipt(thread_id)
 
+    def _pause_marks(self, thread_id: str, now: float, *, successor: str) -> bool:
+        """Everything ``_pause_thread`` does except move the leaf.
+
+        The successor pointer, the refined title and the stale flag are
+        writer discipline -- they belong to whoever is leaving a thread.
+        The *status* belongs to ``move_leaf``, which swaps both rows and
+        mints the branch summaries in one transaction. Split so the two can
+        be used together without the pause happening twice, or happening
+        outside the transaction that is supposed to contain it.
+
+        False when ``thread_id`` is not the open leaf, which is also the
+        answer to "is the caller's belief about the current thread true?".
+        """
+        t = self.store.get_thread(thread_id)
+        if t is None or t.get("status") != "open":
+            return False
+        meta = dict(t.get("metadata") or {})
+        meta["successor"] = successor
+        fields: Dict[str, Any] = {
+            "stale": False, "metadata": meta, "updated_at": now,
+        }
+        fields.update(self._refined_title_fields(t))
+        self.store.update_thread(thread_id, **fields)
+        return True
+
     def _reopen_thread(self, target: Dict[str, Any], from_thread_id: Optional[str], now: float) -> bool:
-        """Plain reopen: ``target`` becomes open and the real open leaf is
-        paused beside it.
+        """Reopen ``target``, moving the leaf off whatever is actually open.
 
-        own-bug: this used to trust the caller's ``from_thread_id`` belief
-        the way a direct ``_pause_thread(from_thread_id, ...)`` call would —
-        a stale id (e.g. a synthesized thread id from a store-outage turn)
-        made the pause a silent no-op while the real open leaf stayed open,
-        and the target's own ``status='open'`` write then hit
-        ``idx_one_open_leaf`` and surfaced as "could not resume" a thread
-        that was perfectly resumable. Resolved against
-        ``current_open_thread()`` instead, mirroring ``new_thread``'s
-        existing fix (A6b) — ``from_thread_id`` stays a parameter for
-        callers that still pass it, but only as a mismatch to warn about,
-        never a decision.
+        A16 bug 3: ``from_thread_id`` is only the caller's *belief*.
+        ``state_machine`` passes the turn's ``thread_id``, documented as a
+        synthesized ``uuid4`` on the store-outage path and stale after any
+        concurrent switch -- and ``new_thread`` was already fixed not to
+        trust the same value (A6b). Here the consequence got worse when the
+        one-leaf index landed: pausing a thread that is not open is a silent
+        no-op, so the real leaf stayed open, the target's ``status='open'``
+        write hit the index, and the admin was told a perfectly resumable
+        thread could not be resumed.
 
-        Routes the leaf move itself through ``store.move_leaf`` (design
-        §1.2): one transaction for the status swap, the structural edge,
-        and the branch-summary minting (§2.3), instead of the separate
-        pause/update calls this used to make.
+        So the predecessor is resolved, not accepted, and the swap goes
+        through ``move_leaf`` -- one transaction, and the return divider
+        (design §2.3) is minted inside it.
         """
         thread_id = target["thread_id"]
         if target.get("status") != "paused":
             return False
         open_thread = self.store.current_open_thread()
-        real_from = open_thread["thread_id"] if open_thread else None
-        if from_thread_id and from_thread_id != real_from:
+        leaf_id = open_thread["thread_id"] if open_thread else None
+        if from_thread_id and leaf_id and from_thread_id != leaf_id:
             logger.warning(
-                f"_reopen_thread names {from_thread_id} as the open thread but "
-                f"{real_from!r} is open; pausing that one instead"
+                f"resume names {from_thread_id} as the current thread but "
+                f"{leaf_id} is open; leaving that one instead"
             )
-        if real_from:
-            if not self.store.move_leaf(real_from, thread_id, "continuation", now=now):
-                return False
-            from_thread = self.store.get_thread(real_from) or {}
-            meta = dict(from_thread.get("metadata") or {})
-            meta["successor"] = thread_id
-            fields: Dict[str, Any] = {"metadata": meta}
-            fields.update(self._refined_title_fields(from_thread))
-            self.store.update_thread(real_from, **fields)
-            self._refresh_receipt(real_from)
-        else:
-            # Nothing open to leave -- open the target directly; there is
-            # no departure to record.
-            if not self.store.update_thread(
-                thread_id, status="open", paused_at=None, stale=False,
-                turns_since_pause=0, updated_at=now,
-            ):
-                return False
         meta = dict(target.get("metadata") or {})
         meta.pop("successor", None)
-        ok = self.store.update_thread(thread_id, metadata=meta, stale=False)
-        self._refresh_receipt(thread_id)
-        return ok
+        if leaf_id and leaf_id != thread_id:
+            if self._pause_marks(leaf_id, now, successor=thread_id) and \
+                    self.store.move_leaf(
+                        leaf_id, thread_id, EDGE_CONTINUATION, now=now
+                    ):
+                self.store.update_thread(
+                    thread_id, stale=False, metadata=meta, updated_at=now,
+                )
+                self._refresh_receipt(leaf_id)
+                return True
+            # Degraded, as in ``_open_new_thread``: keep the pre-T2 shape.
+            self._pause_thread(leaf_id, now, successor=thread_id)
+        return self.store.update_thread(
+            thread_id, status="open", paused_at=None, stale=False,
+            turns_since_pause=0, metadata=meta, updated_at=now,
+        )
 
     @staticmethod
     def _predecessor_id(thread: Dict[str, Any]) -> Optional[str]:
         """The thread this one was opened from.
 
-        own-bug: this used to prefer the legacy ``metadata.previous_thread_id``
-        pointer over the structural ``parent_thread_id`` column, back when
-        ``_open_new_thread`` only ever wrote the metadata copy. Now that
-        creation always stamps the column too, the column is the one this
-        prefers -- metadata is the fallback, for a row from before that fix
-        (a migrated row, or one from a store outage that never wrote the
-        column).
+        The structural column first, the legacy ``metadata`` pointer as the
+        fallback. The order used to be the other way round, and it had to
+        be: nothing wrote the column. Now that every creation stamps it,
+        the column is the better record of the same fact -- typed,
+        indexable, and the one the §2.1 path projection walks -- and
+        metadata is what a row from before this fix carries (a migrated
+        row, or one whose switch took the degraded path).
         """
         parent = thread.get("parent_thread_id")
         if parent:
@@ -1133,6 +1250,9 @@ class ThreadManager:
         if t is None:
             return ""
         messages = self.store.list_messages(thread_id)
+        # A16-G2: the ask that outlived its row. Read through the store's
+        # own extractor rather than re-derived here, so the receipt line and
+        # the compaction boundary can never disagree about what was open.
         unresolved = self.store.unresolved_request(thread_id)
         receipt = build_receipt(t, messages, unresolved_request=unresolved)
         if t.get("ephemeral"):
@@ -1149,44 +1269,62 @@ class ThreadManager:
         self.store.upsert_receipt(thread_id, t.get("title") or "", receipt)
         return receipt
 
-    def _maybe_rotate(self, thread_id: str, now: float) -> None:
-        """R-12 Phase A: the rotation writer's caller (A16-G1, FD-3's v0).
+    def _maybe_rotate(
+        self, thread_id: str, now: float, *, rough_rows: Optional[int] = None
+    ) -> None:
+        """Fold what has scrolled out of the window (A16-G1's missing caller).
 
-        ``compact_boundaries`` shipped with a schema, an index and a writer
-        (``write_compact_boundary``) that nothing ever called — a long
-        thread grew until whatever budget it hit truncated the part that
-        had scrolled away, exactly the part someone expects the machine to
-        remember. Called every turn; ``plan_rotation``'s own guards
-        (cooldown, merge-max, futility, empty summary, clock jump) decide
-        whether anything actually happens, so this is cheap to call and
-        never raises into the turn it is finishing.
+        ``continuity.rotation`` shipped with its guards, its tests and no
+        consumer, so a long thread grew until its history was cut by
+        whatever budget it met -- and the part that fell off was the part
+        that had scrolled away, which is precisely the part a person expects
+        to be remembered.
 
-        Same ownership gate as the receipt: a rotation is the machine's own
-        durable processing of the transcript, not something a guest turn or
-        a private-mode conversation gets (matches ``_refresh_receipt``'s
-        gate, and the standing rule that private-mode content is not
-        written where a later erasure cannot reach it).
+        Every decision not to rotate is the planner's, and it says why:
+        cooldown, clock jump, merge-max, nothing-to-rotate, empty summary,
+        no progress. This function only decides *when to ask*, and asks only
+        once a thread is long enough that folding could mean anything.
         """
+        if not _conversation_is_halberts():
+            # A summary is a third copy of the words. In private mode the
+            # receipt is not written for that reason, and neither is this.
+            return
+        if rough_rows is not None and int(rough_rows or 0) < ROTATION_MIN_ROWS:
+            # Cheap gate on a hot path: every turn ends here, and a thread
+            # that cannot rotate should not pay for a full read to find out.
+            return
         t = self.store.get_thread(thread_id)
-        if t is None or t.get("ephemeral") or not _conversation_is_halberts():
+        if t is None or t.get("ephemeral"):
+            # Same ownership gate as the receipt: a rotation is the
+            # machine's own durable processing of the transcript, not
+            # something an ephemeral thread gets.
             return
         try:
-            messages = [
-                {"id": m["message_id"], "content": m.get("content")}
-                for m in self.store.list_messages(thread_id)
+            rows = [
+                m for m in self.store.list_messages(thread_id)
                 if m.get("visible_in_timeline", True)
             ]
-            boundary = self.store.last_compact_boundary(thread_id)
-            generation = int(boundary["generation"]) + 1 if boundary else 1
-            last_rotated_at = boundary["created_at"] if boundary else None
+            if len(rows) < ROTATION_MIN_ROWS:
+                return
+            last = self.store.last_compact_boundary(thread_id) or {}
             plan = plan_rotation(
-                thread_id, messages, generation=generation,
-                last_rotated_at=last_rotated_at, now=now,
+                thread_id, rows,
+                generation=int(last.get("generation") or 0) + 1,
+                keep_recent=HISTORY_ROWS,
+                last_rotated_at=last.get("created_at"),
+                now=now,
             )
-            if isinstance(plan, RotationPlan):
-                self.store.write_compact_boundary(plan)
+            if isinstance(plan, RotationRefusal):
+                logger.debug(
+                    "no rotation for %s: %s (%s)",
+                    thread_id, plan.reason, plan.detail,
+                )
+                return
+            self.store.write_compact_boundary(plan)
         except Exception as e:
-            logger.warning(f"rotation check failed for {thread_id} (non-fatal): {e}")
+            # A rotation is housekeeping. It must never be the reason a
+            # turn fails to finish.
+            logger.warning(f"rotation skipped for {thread_id}: {e}")
 
     def _sync_open_loops(
         self, thread_id: str, thread: Dict[str, Any], messages: List[Dict[str, Any]]
@@ -1451,12 +1589,14 @@ def _create_conversation_store():
                     "replica fallback unavailable, peer-only store: %s", e)
                 inner = peer
             try:
+                from pathlib import Path
+
                 from .resilient_peer_store import ResilientPeerConversationStore
                 from ..utils.paths import data_dir
 
                 return ResilientPeerConversationStore(
                     peer=inner,
-                    cache_path=str(data_dir() / "local_conversation_cache.db"),
+                    cache_path=str(Path(data_dir()) / "local_conversation_cache.db"),
                 )
             except Exception as e:
                 logger.warning(

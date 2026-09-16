@@ -37,6 +37,21 @@ def tm():
     s.close()
 
 
+def _conversation(tm, thread_id):
+    """The thread's turns, without the branch dividers.
+
+    R-12 wired the leaf moves through ``store.move_leaf``, which mints the
+    two crossing rows (design §2.3) in the same transaction as the status
+    swap. They are real rows and they belong in ``list_messages``; they are
+    just not turns, so an assertion about what was *said* filters them the
+    way ``recent_messages`` already does.
+    """
+    return [
+        m for m in tm.store.list_messages(thread_id)
+        if (m.get("origin") or "") != "branch"
+    ]
+
+
 def _boom(*args, **kwargs):
     raise RuntimeError("segmenter is on fire")
 
@@ -217,10 +232,13 @@ class TestBeginEndTurn:
         t2 = _turn(tm, "add a samba share for the media folder")
         tm.clock.advance(GRACE_MINUTES * 60)  # past the grace window: plain reopen (merge cases: TestMergeBack)
         assert tm.resume_thread(t1.thread_id, from_thread_id=t2.thread_id) is True
-        departed = [m for m in tm.store.list_messages(t2.thread_id) if m.get("origin") == "branch"]
-        returned = [m for m in tm.store.list_messages(t1.thread_id) if m.get("origin") == "branch"]
-        assert departed and departed[0]["metadata"]["side"] == "departed"
-        assert returned and returned[0]["metadata"]["side"] == "returned"
+        # The switch out of t1 already minted its own departure row there,
+        # so t1 carries both halves of the round trip -- assert by side.
+        departed = [m for m in tm.store.list_messages(t2.thread_id)
+                    if m.get("origin") == "branch" and m["metadata"]["side"] == "departed"]
+        returned = [m for m in tm.store.list_messages(t1.thread_id)
+                    if m.get("origin") == "branch" and m["metadata"]["side"] == "returned"]
+        assert departed and returned
 
     def test_mark_interrupted(self, tm):
         tm.begin_turn("add a samba share", analyze_message("add a samba share"), "s")
@@ -254,7 +272,7 @@ class TestBeginEndTurn:
             + "\n".join(f"  reading configuration block {j} ... ok" for j in range(20))
             + "\nExit code 1\nerror: permission denied on /etc/nginx/nginx.conf\n"
         )
-        for i in range(15):
+        for i in range(20):
             _turn(tm, f"turn {i}", assistant=assistant)
         thread_id = tm.current()["thread_id"]
         boundary = tm.store.last_compact_boundary(thread_id)
@@ -274,17 +292,19 @@ class TestBeginEndTurn:
         receipt = tm.store.get_thread(turn.thread_id)["receipt"]
         assert f"Unresolved request: {text}" in receipt
 
-    def test_cancelled_turn_gets_no_marker(self, tm):
-        # A deliberate stop is not an unexplained cut -- the user already
-        # knows they cancelled it, so no marker row is owed (and the
-        # pinned override test above already asserts exactly one row for
-        # a cancelled turn).
+    def test_a_superseded_turn_leaves_the_marker(self, tm):
+        # "cancelled" is the state machine's name for a turn superseded by
+        # a newer one, not the stop button (that writes "interrupted") --
+        # and a superseded turn leaves exactly the two-bare-user-rows shape
+        # the A16-G5 marker exists to explain, so it gets the row too.
         text = "add a samba share"
         turn = tm.begin_turn(text, analyze_message(text), "s")
         tm.end_turn(turn, assistant_text="", blocks=[], terminal_block_ids=[],
                     diff_proposals=[], status="cancelled")
         rows = tm.store.list_messages(turn.thread_id)
-        assert len(rows) == 1
+        assert len(rows) == 2
+        assert rows[1]["role"] == "assistant"
+        assert rows[1]["content"] == "[turn interrupted before an answer]"
 
 
 class TestTopicWindow:
@@ -594,9 +614,12 @@ class TestConcurrency:
     @pytest.mark.parametrize(
         "store_method, call",
         [
-            # P3c: `_open_new_thread` opens the successor through the atomic
-            # get-or-open, so that is the store call the lock must cover.
-            ("get_or_open_thread", lambda tm, tid: tm.new_thread("Scanner share", "x", from_thread_id=tid)),
+            # R-12: `_open_new_thread` opens the successor by MOVING the
+            # leaf onto it -- one transaction that swaps both statuses and
+            # stamps the edge -- so that is the store call the lock must
+            # cover. It was the P3c get-or-open until the leaf move was
+            # wired; that path is still there as the degraded fallback.
+            ("move_leaf", lambda tm, tid: tm.new_thread("Scanner share", "x", from_thread_id=tid)),
             ("get_thread", lambda tm, tid: tm.retract_recall(tid, "gone")),
         ],
         # `tick` moves threads too, but takes the lock once per close rather
@@ -718,21 +741,23 @@ class TestConcurrency:
     def test_new_thread_cannot_race_a_turn_into_a_second_open_row(self, tm, monkeypatch):
         t1 = _turn(tm, "add a samba share for the media folder")
         entered, released = threading.Event(), threading.Event()
-        real = tm.store.get_or_open_thread
+        real = tm.store.move_leaf
 
         def synced(*args, **kwargs):
-            # new_thread pauses the old row *before* it opens the successor
-            # (through the P3c get-or-open). Unlocked, a begin_turn arriving
-            # in this window found no open thread at all and opened its own,
-            # leaving two rows at status='open' — the loser never selected
-            # again, never paused, and out of reach of tick(), which sweeps
-            # only 'paused'. Behind the manager's lock the turn cannot get
-            # in here, so it waits.
+            # new_thread used to pause the old row *before* it opened the
+            # successor (through the P3c get-or-open). Unlocked, a begin_turn
+            # arriving in that window found no open thread at all and opened
+            # its own, leaving two rows at status='open' — the loser never
+            # selected again, never paused, and out of reach of tick(), which
+            # sweeps only 'paused'. R-12 closed the window structurally: the
+            # pause and the open are now one transaction inside move_leaf.
+            # The lock invariant is pinned here regardless, because the
+            # degraded fallback still takes the two-call path.
             entered.set()
             released.wait(timeout=0.5)
             return real(*args, **kwargs)
 
-        monkeypatch.setattr(tm.store, "get_or_open_thread", synced)
+        monkeypatch.setattr(tm.store, "move_leaf", synced)
         failures = []
 
         def switch():
@@ -937,9 +962,15 @@ class TestNewResumeTick:
         new_id = tm.new_thread("Other thing", "model switched", from_thread_id=turn.thread_id)
         tm.end_turn(turn, assistant_text="", blocks=[], terminal_block_ids=[], diff_proposals=[],
                     status="cancelled", thread_id_override=new_id)
-        assert tm.store.list_messages(t1.thread_id)[-1]["role"] == "assistant"
+        assert _conversation(tm, t1.thread_id)[-1]["role"] == "assistant"
         moved = tm.store.list_messages(new_id)
-        assert len(moved) == 1 and moved[0]["content"] == text and moved[0]["status"] == "cancelled"
+        # Two rows, not one: A16-G5 leaves a marker behind whenever a turn
+        # ends without an answer, so the transcript never ends on a bare
+        # unanswered question. It carries the turn's own status.
+        assert len(moved) == 2
+        assert moved[0]["content"] == text and moved[0]["status"] == "cancelled"
+        assert moved[1]["content"] == threads_mod.INTERRUPTED_MARKER
+        assert moved[1]["status"] == "cancelled"
         assert tm.store.get_thread(new_id)["turns_since_pause"] == 1
 
     def test_new_thread_pauses_and_tick_closes_after_grace(self, tm):
@@ -1097,7 +1128,7 @@ class TestMergeBack:
         t2 = _turn(tm, "now the scanner share too", assistant="Added [scanner].")
         assert t2.thread_id == new_id
         assert tm.merge_back(new_id) == t1.thread_id
-        rows = tm.store.list_messages(t1.thread_id)
+        rows = _conversation(tm, t1.thread_id)
         assert [r["content"] for r in rows] == ["add a samba share for the media folder", "Added [media].",
                                                 "now the scanner share too", "Added [scanner]."]
         assert tm.store.list_messages(new_id) == []
@@ -1146,7 +1177,7 @@ class TestMergeBack:
         assert tm.resume_thread(t1.thread_id, from_thread_id=new_id) is True
         assert tm.store.get_thread(new_id)["status"] == "merged"
         assert tm.current()["thread_id"] == t1.thread_id
-        assert len(tm.store.list_messages(t1.thread_id)) == 4
+        assert len(_conversation(tm, t1.thread_id)) == 4
         assert tm.resume_thread(t1.thread_id, from_thread_id=new_id) is False  # already open
 
     def test_resume_after_grace_reopens_without_merging(self, tm):
@@ -1157,10 +1188,11 @@ class TestMergeBack:
         assert tm.resume_thread(t1.thread_id, from_thread_id=new_id) is True
         paused = tm.store.get_thread(new_id)
         assert paused["status"] == "paused" and paused["metadata"]["successor"] == t1.thread_id
-        # +1 each: the reopen is a leaf move (design §2.3) and both threads
-        # have turns, so it mints a departure row in new_id and a return
-        # row in t1.
-        assert len(tm.store.list_messages(t1.thread_id)) == 3 and len(tm.store.list_messages(new_id)) == 3
+        # The reopen is a leaf move (design §2.3) and both threads have
+        # turns: it mints a departure row in new_id and a return row in t1
+        # -- and t1 already carries the departure row the switch out of it
+        # minted, the round trip's other half.
+        assert len(tm.store.list_messages(t1.thread_id)) == 4 and len(tm.store.list_messages(new_id)) == 3
         assert tm.current()["thread_id"] == t1.thread_id
 
     def test_auto_reopen_on_strong_match_never_merges(self, tm):
@@ -1216,13 +1248,21 @@ class TestMergeBack:
         meta = dict(tm.store.get_thread(disk_id)["metadata"])
         meta.pop("previous_thread_id", None)
         tm.store.update_thread(disk_id, metadata=meta)
+        # ...and the typed column too, which R-12 made ``move_leaf`` write.
+        # Clearing only the metadata no longer produces a row with no
+        # recorded predecessor -- it produces one with a *better* record of
+        # the same predecessor, which ``_predecessor_id`` reads as its
+        # fallback. The invariant being pinned is "no predecessor, no
+        # merge", so the fixture has to actually remove it.
         tm.store._conn.execute(
-            "UPDATE conversations SET parent_thread_id = NULL WHERE id = ?", (disk_id,))
+            "UPDATE conversations SET parent_thread_id = NULL WHERE id = ?",
+            (disk_id,),
+        )
         tm.store._conn.commit()
         assert tm.merge_back(disk_id) is None
         assert tm.store.get_thread(disk_id)["status"] == "open"
-        assert len(tm.store.list_messages(disk_id)) == 2
-        assert len(tm.store.list_messages(certs.thread_id)) == 2
+        assert len(_conversation(tm, disk_id)) == 2
+        assert len(_conversation(tm, certs.thread_id)) == 2
         # ...and the model naming that same paused thread reopens it, never merges
         assert tm.resume_thread(certs.thread_id, from_thread_id=disk_id) is True
         assert tm.store.get_thread(disk_id)["status"] == "paused"
@@ -1242,7 +1282,7 @@ class TestMergeBack:
         assert tm.merge_back(new_id) is None
         assert tm.store.get_thread(new_id)["status"] == "open"
         assert tm.store.get_thread(t1.thread_id)["status"] == "paused"
-        assert len(tm.store.list_messages(t1.thread_id)) == 2
+        assert len(_conversation(tm, t1.thread_id)) == 2
 
     def test_resume_reopens_when_the_store_merge_fails(self, tm, monkeypatch):
         """A6c review finding 1: a failed merge must still land the resume.
@@ -1265,10 +1305,11 @@ class TestMergeBack:
         paused = tm.store.get_thread(new_id)
         assert paused["status"] == "paused" and paused["metadata"]["successor"] == t1.thread_id
         assert tm.current()["thread_id"] == t1.thread_id
-        # +1 each: the degraded-to-reopen crossing mints a departure row in
-        # new_id and a return row in t1 (design §2.3), same as any other
-        # reopen through move_leaf.
-        assert len(tm.store.list_messages(t1.thread_id)) == 3
+        # The degraded-to-reopen crossing mints a departure row in new_id
+        # and a return row in t1 (design §2.3), same as any other reopen
+        # through move_leaf -- and t1 already carries the departure row the
+        # switch out of it minted.
+        assert len(tm.store.list_messages(t1.thread_id)) == 4
         assert len(tm.store.list_messages(new_id)) == 3
 
 

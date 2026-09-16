@@ -34,6 +34,16 @@ CUT_MARKER = "\u2026"
 #: `max_chars` cannot hold the whole thing: what is still open is what the
 #: next turn has to act on.
 OPEN_LOOP_LABEL = "Open loop:"
+
+#: A16-G2's line. Present only when the thread holds a question nobody
+#: answered -- an interrupted turn's ask, which is otherwise a row like any
+#: other and scrolls out of the window with them.
+UNRESOLVED_LABEL = "Unresolved request:"
+
+#: Long enough to carry a real two-clause request ("rotate the nginx logs
+#: and then tell me the disk usage") without letting a pasted stack trace
+#: become the receipt.
+_UNRESOLVED_MAX = 200
 #: The three lines a receipt is reduced to when it cannot be carried whole:
 #: what was asked, how it ended, what is still open. `receipt_one_liner`
 #: joins exactly these, and the context assembler drops every *other* line
@@ -248,14 +258,15 @@ def build_receipt(
         f"Commands: {commands}",
         f"Files written: {files}",
     ]
-    # A16-G2 (design §4.3): the deterministic carryforward line -- the last
-    # ask a crash or an in-flight turn left unanswered. Omitted rather than
-    # rendered as "none": most threads have nothing unresolved, and every
-    # other line above always renders, so absence here already means "none"
-    # without spending a line saying so. Placed before Open loop, which the
-    # truncation branch below assumes is always the last line.
+    # A16-G2. A tenth line only when there IS one: "Unresolved request: none"
+    # on every receipt in the system would be nine lines of furniture to
+    # hide the one case that matters. It sits ABOVE the open loop because
+    # the truncation below reserves the last line, and the open loop is
+    # what ``receipt_one_liner`` quotes.
     if unresolved_request:
-        lines.append(f"Unresolved request: {_clip(unresolved_request, 160)}")
+        lines.append(
+            f"{UNRESOLVED_LABEL} {_clip(unresolved_request, _UNRESOLVED_MAX)}"
+        )
     lines.append(f"{OPEN_LOOP_LABEL} {open_loop}")
     text = "\n".join(lines)
     if len(text) <= max_chars:

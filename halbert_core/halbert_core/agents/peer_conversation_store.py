@@ -357,6 +357,24 @@ class PeerConversationStore:
             "metadata": metadata,
         })
 
+    def move_leaf(
+        self, old_thread_id: str, new_thread_id: str, edge_kind: str,
+        *, now: Optional[float] = None,
+    ) -> bool:
+        """One wire call for the server-side atomic leaf move (design §1.2).
+
+        One call for the same reason ``get_or_open_thread`` is one: the
+        status swap, the edge stamp and the branch-summary minting are a
+        single transaction on the server, and splitting them across the
+        wire would put a window back where the design closed one.
+        """
+        return self._invoke(
+            "move_leaf", [old_thread_id, new_thread_id, edge_kind], {"now": now})
+
+    def unresolved_request(self, thread_id: str) -> str:
+        """One wire call for the server-side deterministic extractor (§4.3)."""
+        return self._invoke("unresolved_request", [thread_id], {}) or ""
+
     def get_or_open_thread(
         self,
         thread_id: str,

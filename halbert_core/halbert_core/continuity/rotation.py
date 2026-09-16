@@ -159,6 +159,27 @@ def build_summary(messages: Sequence[Dict[str, Any]], generation: int) -> str:
     return "\n".join(lines)
 
 
+def _ids(messages: Sequence[Dict[str, Any]]) -> List[int]:
+    """The row ids of ``messages``, under either name the tree uses.
+
+    This module was written and tested against ``{"id": ...}``; the store's
+    own row shape (``_row_to_message``) is ``{"message_id": ...}``. Nothing
+    caught it, because nothing called this with a store row -- and the
+    failure is silent rather than loud: the generator's isinstance guard
+    drops every row, the plan comes back with an empty ``covered_message_ids``
+    and ``coverage_end_id`` 0, and the rotation writes a summary while hiding
+    nothing. The thread would keep every turn it had just claimed to fold.
+    """
+    out: List[int] = []
+    for m in messages:
+        raw = m.get("id")
+        if not isinstance(raw, int):
+            raw = m.get("message_id")
+        if isinstance(raw, int):
+            out.append(raw)
+    return out
+
+
 def plan_rotation(
     thread_id: str,
     messages: Sequence[Dict[str, Any]],
@@ -230,10 +251,8 @@ def plan_rotation(
             f"covered; below the {MIN_PROGRESS_RATIO:.0%} floor",
         )
 
-    covered_ids = tuple(
-        int(m["id"]) for m in covered if isinstance(m.get("id"), int))
-    preserved_ids = tuple(
-        int(m["id"]) for m in preserved if isinstance(m.get("id"), int))
+    covered_ids = tuple(_ids(covered))
+    preserved_ids = tuple(_ids(preserved))
     return RotationPlan(
         thread_id=thread_id,
         generation=generation,

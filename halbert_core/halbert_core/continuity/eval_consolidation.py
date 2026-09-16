@@ -221,6 +221,69 @@ class Arm:
     policy: Callable[[EvalThread, Sequence[EvalMessage]], Retained]
     label: str = ""
     gate: str = "open"  # "open" | "closed"
+    #: How this arm's retained text becomes an answer function (A02-G3).
+    #: ``None`` is ``context_answerer(retained.text)`` — one fixed context
+    #: for every question in the bank, which is what every arm did and what
+    #: every arm without this still does.
+    #:
+    #: A retrieval arm cannot be written as a policy, and that is not a
+    #: limitation of the policy contract but a fact about retrieval: a
+    #: query is per QUESTION, and a policy is handed no questions. So the
+    #: seam is here, one layer down, where ``_run_arm`` already turns
+    #: retained text into an answerer. The region is passed because
+    #: retrieval runs *over the region* — the same slice the policy saw,
+    #: never the thread, which is what the sentinel test pins.
+    answerer: Optional[
+        Callable[[Retained, Sequence[EvalMessage]], Callable[[str], str]]
+    ] = None
+
+
+def recovery_answerer(*, top_k: int = 5):
+    """Answer from the retained text PLUS what a keyword query finds (A02-G3).
+
+    This is the arm that measures what the machine actually does. Production
+    never destroys a region: the Consolidator only *adds* durable facts, the
+    raw turns stay in the store, and the recall gate reaches them by FTS. A
+    scorecard with no retrieving arm therefore reports a loss that does not
+    happen — and, in the other direction, would let an LLM arm be opened on
+    a comparison that never included the option it is competing with.
+
+    Deterministic end to end. The query is the question's own tokens, the
+    index is FTS5 + BM25 over the region, and the answerer underneath is the
+    same closed-book one every other arm uses. No model is asked anything,
+    here or below.
+
+    Retrieval is CONCATENATED with the base arm's retained text, never
+    substituted for it: an arm that answered only from what it retrieved
+    could score below its own base, and a scorecard saying "retrieval hurts"
+    when what happened is the base text was discarded is worse than no
+    scorecard.
+    """
+    def make(retained: Retained, region: Sequence[EvalMessage]):
+        index = ReceiptIndex()
+        # One document per turn, keyed by position: the unit a query should
+        # be able to return is the thing that was said, not the whole
+        # region, or the top-k would be one hit that is everything.
+        for i, m in enumerate(region):
+            index.add(f"turn-{i}", f"{m.role}: {m.content}")
+        by_id = {f"turn-{i}": f"{m.role}: {m.content}"
+                 for i, m in enumerate(region)}
+        retrieved_tokens: List[int] = []
+
+        def answer(question: str) -> str:
+            hits = index.search(question, limit=top_k)
+            found = "\n".join(by_id[h] for h in hits if h in by_id)
+            retrieved_tokens.append(approx_tokens(found))
+            context = f"{retained.text}\n{found}" if retained.text else found
+            return context_answerer(context)(question)
+
+        # The runner reads this to price the arm honestly: retrieval is not
+        # free, and a mean is the only single number a per-question cost
+        # can be reported as.
+        answer.retrieved_tokens = retrieved_tokens  # type: ignore[attr-defined]
+        return answer
+
+    return make
 
 
 def default_arms(state_store: StateStore) -> List[Arm]:
@@ -237,6 +300,13 @@ def default_arms(state_store: StateStore) -> List[Arm]:
             name="CONSOLIDATOR_DETERMINISTIC",
             label="the current deterministic Consolidator's durable facts",
             policy=durable_facts_policy(state_store),
+        ),
+        Arm(
+            name="CONSOLIDATOR_DETERMINISTIC+RECOVERY",
+            label="what production actually does — durable facts plus a "
+                  "keyword query over the region, no model",
+            policy=durable_facts_policy(state_store),
+            answerer=recovery_answerer(),
         ),
         Arm(
             name="TRUNCATE_OLDEST",
@@ -447,9 +517,21 @@ class MatrixReport:
                     f"{finding_no}. The current deterministic Consolidator "
                     f"retains durable entity facts ({a.mean_retained_tokens:.0f} "
                     f"tokens) and no episodic planted facts — recall "
-                    f"{a.recall:.3f}. It was never designed to; the LLM pass "
-                    "this harness gates must beat TRUNCATE_OLDEST, not merely "
-                    "this arm.")
+                    f"{a.recall:.3f}. It was never designed to, and this arm "
+                    "alone is NOT what production does: see the +RECOVERY row, "
+                    "which is.")
+                finding_no += 1
+        for a in aggs:
+            if a.arm.endswith("+RECOVERY") and a.status == "OK":
+                lines.append(
+                    f"{finding_no}. {a.arm} is the shipped behaviour, and it "
+                    "is the row to read: production never destroys the "
+                    "region — the Consolidator only ADDS durable facts, the "
+                    "raw turns stay in the store, and the recall gate "
+                    f"reaches them by FTS. Recall {a.recall:.3f} at "
+                    f"{a.mean_retained_tokens:.0f} tokens. Any arm that "
+                    "costs a model has to beat THIS, on both axes, and this "
+                    "one costs nothing and asks nobody.")
                 finding_no += 1
         for a in aggs:
             if a.arm == "TRUNCATE_OLDEST" and a.status == "OK":
@@ -646,16 +728,29 @@ def _run_arm(arm: Arm, thread: EvalThread,
                           region_tokens=region_tokens, attempts=attempt,
                           failure=f"{type(exc).__name__}: {exc}", retryable=False)
 
-        exam = run_exam(bank, retained.answer_fn or context_answerer(retained.text))
+        answer_fn = (
+            arm.answerer(retained, region_copy) if arm.answerer is not None
+            else (retained.answer_fn or context_answerer(retained.text))
+        )
+        exam = run_exam(bank, answer_fn)
         s = exam.summary()
         n = int(s["n"])
+        # A02-G3: an arm that recalls more because it read more is not free.
+        # A retrieving answerer reports what each question cost it; the mean
+        # is added to the base retained text so the scorecard's two columns
+        # stay comparable across arms.
+        retained_tokens = approx_tokens(retained.text)
+        per_question = list(getattr(answer_fn, "retrieved_tokens", ()) or ())
+        if per_question:
+            retained_tokens += int(
+                sum(per_question) / len(per_question))
         return ArmRow(
             arm=arm.name, thread_id=thread.thread_id, bank_digest=digest,
             status="OK" if n else "NO-QUESTIONS",
             n_questions=n, correct=int(s["correct"]),
             partial=int(s["partial"]), wrong=int(s["wrong"]),
             recall=float(s["recall"]) if n else None,
-            retained_tokens=approx_tokens(retained.text),
+            retained_tokens=retained_tokens,
             region_tokens=region_tokens,
             verdicts=[v.as_dict() for v in exam.verdicts],
             attempts=attempt,

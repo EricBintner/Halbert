@@ -915,10 +915,18 @@ class ToolExecutor:
         if pool_wanted:
             try:
                 from halbert_core.streaming.agent_pool import get_terminal_pool
-                pool = get_terminal_pool()
-                result = await pool.run_block(command, cwd=cwd, timeout=timeout)
-                if result is not None:
-                    # Store the terminal_block row
+                from . import yield_signal
+
+                agent_session = current_agent_session.get()
+
+                def _store_block(result: Dict) -> None:
+                    """Store the terminal_block row.
+
+                    Called for a block that finished here, and again — from
+                    the pool's background task — for one that was yielded and
+                    finished later. Either way the row is written once, when
+                    there is an exit code to write.
+                    """
                     try:
                         from halbert_core.agents.threads import get_thread_manager
                         store = get_thread_manager().store
@@ -942,6 +950,21 @@ class ToolExecutor:
                         })
                     except Exception as e:
                         logger.warning(f"Failed to store terminal_block: {e}")
+
+                pool = get_terminal_pool()
+                result = await pool.run_block(
+                    command,
+                    cwd=cwd,
+                    timeout=timeout,
+                    # A07-G8. Read-and-clear: the pool asks once per poll and
+                    # acts on True immediately, so there is no lost wakeup and
+                    # a second command in the same turn does not inherit it.
+                    should_yield=lambda: yield_signal.consume(agent_session),
+                    on_close=_store_block,
+                )
+                if result is not None:
+                    if not result.get("yielded"):
+                        _store_block(result)
                     return self._format_block_result(result)
             except Exception as e:
                 logger.warning(f"Pool path failed, falling back to subprocess: {e}")
@@ -1167,6 +1190,22 @@ class ToolExecutor:
         full_output = output
         if tail and tail != output:
             full_output = output + "\n" + tail
+        if result.get("yielded"):
+            # A07-G8: the command did not end, it was let go of. Say that,
+            # and say where it went — a block that finishes later lands in
+            # the terminal blocks the next turn can read, keyed on exactly
+            # this session and block id. An exit code here would be a
+            # number invented for a process that has not produced one.
+            where = (
+                f"terminal {result.get('session_id')}, "
+                f"block {result.get('block_id')}"
+            )
+            body = full_output.strip()
+            head_line = (
+                f"Still running in the background ({where}) so I could read "
+                f"what you just said."
+            )
+            return f"{head_line}\nOutput so far:\n{body}" if body else head_line
         if exit_code != 0:
             return f"Exit code {exit_code}\n{full_output}".strip()
         return full_output.strip() if full_output else "(no output)"

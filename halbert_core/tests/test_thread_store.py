@@ -563,7 +563,14 @@ class TestMarkInProgressInterrupted:
 class TestUnresolvedRequest:
     """A16-G2 (design §4.3): the last human ask a thread has not answered,
     deterministic and zero model calls -- the last role='user' row whose
-    turn carries no status='complete' assistant row."""
+    turn carries no status='complete' assistant row.
+
+    A store-level suite because that is where the predicate lives, and
+    because the fourth case is the one that caught a real defect: an
+    extractor keyed on ``origin`` alone returned the A16-G5 marker row as
+    the question the machine had been asked. ``origin`` defaults to 'human'
+    for any caller that does not name it, so role has to be in the
+    predicate too."""
 
     def test_no_messages_is_not_unresolved(self, store):
         store.create("t1")
