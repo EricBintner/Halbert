@@ -148,10 +148,17 @@ export function CodeBlock({
         return
       }
       
-      if (safety.tier === 'dangerous' || safety.tier === 'caution') {
+      // `requires_confirmation` is the honest field (ruling B, 2026-09-16):
+      // /check-safety answers it on the classifier /exec asks with, and a
+      // HIGH verdict can sit under a SafetyTier of "safe" (`hostname evil`).
+      // The command is STAGED at the shell prompt, not run, and the PTY the
+      // person presses Enter in has no classifier -- so this warning is the
+      // only place the classifier's judgment can reach a staged command.
+      if (safety.tier === 'dangerous' || safety.tier === 'caution' || safety.requires_confirmation) {
         // Show warning and wait for confirmation
         setSafetyWarning({
-          tier: safety.tier,
+          // A verdict-HIGH / tier-safe command lands on the caution rung.
+          tier: safety.tier === 'dangerous' ? 'dangerous' : 'caution',
           warning: safety.warning,
           suggestion: safety.suggestion,
         })
