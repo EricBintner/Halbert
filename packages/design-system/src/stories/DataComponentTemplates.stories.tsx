@@ -117,7 +117,7 @@ const CardContainer = ({
       display: 'flex',
       flexDirection: 'column',
       backgroundColor: 'var(--color-surface)',
-      border: '1px solid var(--color-border)',
+      border: '1px solid var(--color-line)',
       borderRadius: 'var(--radius-lg)',
       boxShadow: 'var(--shadow-subtle)',
       overflow: 'hidden',
@@ -130,7 +130,7 @@ const CardContainer = ({
         alignItems: 'center',
         justifyContent: 'space-between',
         padding: 'var(--space-4) var(--space-6)',
-        borderBottom: '1px solid var(--color-border)',
+        borderBottom: '1px solid var(--color-line)',
         backgroundColor: 'var(--color-surface-subtle)',
       }}
     >
@@ -197,9 +197,9 @@ export const StoragePoolTemplate: StoryObj = {
       <div
         style={{
           padding: '8px 12px',
-          backgroundColor: 'var(--color-surface-sunken)',
+          backgroundColor: 'var(--color-surface-subtle)',
           borderRadius: 'var(--radius-sm)',
-          border: '1px solid var(--color-border)',
+          border: '1px solid var(--color-line)',
           fontSize: 12,
           color: 'var(--color-ink-secondary)',
           display: 'flex',
@@ -235,7 +235,7 @@ export const StoragePoolTemplate: StoryObj = {
         detail="NoCoW · Raw Sparse Images"
         metrics="820.0 GB / 1000.0 GB"
         status={<MetricStatus value="82.0%" tone="warning" />}
-        meter={<TactileMeter value={82.0} tone="data-teal" size="md" />}
+        meter={<TactileMeter value={82.0} tone="warning" size="md" />}
         titleWidth={220}
         pathWidth={180}
         metricsWidth={180}
@@ -275,7 +275,7 @@ export const StoragePoolTemplate: StoryObj = {
         style={{
           marginTop: 'var(--space-2)',
           paddingTop: 'var(--space-4)',
-          borderTop: '1px solid var(--color-border)',
+          borderTop: '1px solid var(--color-line)',
         }}
       >
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8 }}>
@@ -400,7 +400,7 @@ export const AcceleratorVramTemplate: StoryObj = {
         />
       </div>
 
-      <div style={{ height: 1, backgroundColor: 'var(--color-border)', margin: 'var(--space-2) 0' }} />
+      <div style={{ height: 1, backgroundColor: 'var(--color-line)', margin: 'var(--space-2) 0' }} />
 
       {/* Aligned Telemetry Rows */}
       <DataGridRow
@@ -630,7 +630,7 @@ export const ScenarioA_IntegratedAvionics: StoryObj = {
         meter={
           <TactileMeter
             value={82.0}
-            tone="data-teal"
+            tone="warning"
             size="thick"
             inBarLeft="/models · btrfs"
             ticks={[25, 50, 75, 90]}
@@ -834,7 +834,7 @@ export const ScenarioD_SegmentedInBarLabels: StoryObj = {
         />
       </div>
 
-      <div style={{ height: 1, backgroundColor: 'var(--color-border)', margin: 'var(--space-4) 0' }} />
+      <div style={{ height: 1, backgroundColor: 'var(--color-line)', margin: 'var(--space-4) 0' }} />
 
       <div>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8 }}>
@@ -860,7 +860,7 @@ export const ScenarioD_SegmentedInBarLabels: StoryObj = {
         />
       </div>
 
-      <div style={{ height: 1, backgroundColor: 'var(--color-border)', margin: 'var(--space-4) 0' }} />
+      <div style={{ height: 1, backgroundColor: 'var(--color-line)', margin: 'var(--space-4) 0' }} />
 
       {/* Edge Case Demonstration: Tiered label fitting across diverse slice widths */}
       <div>
@@ -930,7 +930,7 @@ export const ResponsiveAdaptiveSimulation: StoryObj = {
             meter={
               <TactileMeter
                 value={82.0}
-                tone="data-teal"
+                tone="warning"
                 size="thick"
                 inBarLeft="/models · btrfs"
               />
@@ -973,7 +973,7 @@ export const ResponsiveAdaptiveSimulation: StoryObj = {
             meter={
               <TactileMeter
                 value={82.0}
-                tone="data-teal"
+                tone="warning"
                 size="thick"
                 inBarLeft="/models · btrfs"
               />
@@ -1014,7 +1014,7 @@ export const ResponsiveAdaptiveSimulation: StoryObj = {
             meter={
               <TactileMeter
                 value={82.0}
-                tone="data-teal"
+                tone="warning"
                 size="thick"
                 inBarLeft="/models"
               />

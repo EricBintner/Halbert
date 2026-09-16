@@ -30,7 +30,7 @@ const Container = ({ children, width = 780 }: { children: React.ReactNode; width
       gap: 'var(--space-6)',
       padding: 'var(--space-6)',
       backgroundColor: 'var(--color-surface)',
-      border: '1px solid var(--color-border)',
+      border: '1px solid var(--color-line)',
       borderRadius: 'var(--radius-lg)',
       boxShadow: 'var(--shadow-subtle)',
     }}
@@ -45,7 +45,7 @@ export const TactileMeterStates: StoryObj = {
   name: 'TactileMeter / Operational Thresholds',
   render: () => (
     <Container>
-      <div style={{ borderBottom: '1px solid var(--color-border)', paddingBottom: 'var(--space-3)' }}>
+      <div style={{ borderBottom: '1px solid var(--color-line)', paddingBottom: 'var(--space-3)' }}>
         <h4 style={{ margin: 0, fontSize: 16, fontWeight: 600, fontFamily: 'var(--font-sans)', color: 'var(--color-ink)' }}>
           Precision Telemetry Gauges
         </h4>
@@ -94,7 +94,7 @@ export const TactileMeterSizes: StoryObj = {
   name: 'TactileMeter / Size Scale',
   render: () => (
     <Container>
-      <div style={{ borderBottom: '1px solid var(--color-border)', paddingBottom: 'var(--space-3)' }}>
+      <div style={{ borderBottom: '1px solid var(--color-line)', paddingBottom: 'var(--space-3)' }}>
         <h4 style={{ margin: 0, fontSize: 16, fontWeight: 600, fontFamily: 'var(--font-sans)', color: 'var(--color-ink)' }}>
           Instrument Track Scale
         </h4>
@@ -204,7 +204,7 @@ export const TwoTierVignelliStorageCard: StoryObj = {
   name: 'Two-Tier Vignelli Storage Layout (Solution to Alignment Defect)',
   render: () => (
     <Container width={860}>
-      <div style={{ borderBottom: '1px solid var(--color-border)', paddingBottom: 'var(--space-3)', marginBottom: 'var(--space-2)' }}>
+      <div style={{ borderBottom: '1px solid var(--color-line)', paddingBottom: 'var(--space-3)', marginBottom: 'var(--space-2)' }}>
         <h4 style={{ margin: 0, fontSize: 16, fontWeight: 600, fontFamily: 'var(--font-sans)', color: 'var(--color-ink)' }}>
           Two-Tier Vignelli Alignment Proof
         </h4>
@@ -214,7 +214,7 @@ export const TwoTierVignelliStorageCard: StoryObj = {
       </div>
 
       {/* Item 1: Short name */}
-      <div style={{ padding: 'var(--space-4) 0', borderBottom: '1px solid var(--color-border-subtle)' }}>
+      <div style={{ padding: 'var(--space-4) 0', borderBottom: '1px solid var(--color-line-subtle)' }}>
         <TactileMeter
           label="Root Volume"
           sub="/ · BTRFS"
@@ -225,7 +225,7 @@ export const TwoTierVignelliStorageCard: StoryObj = {
       </div>
 
       {/* Item 2: Very long pathological name */}
-      <div style={{ padding: 'var(--space-4) 0', borderBottom: '1px solid var(--color-border-subtle)' }}>
+      <div style={{ padding: 'var(--space-4) 0', borderBottom: '1px solid var(--color-line-subtle)' }}>
         <TactileMeter
           label="Virtual Machine Disk Images & Backups"
           sub="/var/lib/libvirt/images/qemu/production-storage · EXT4"
@@ -285,7 +285,7 @@ export const CategoricalDataPaletteShowcase: StoryObj = {
         </p>
       </div>
 
-      <div style={{ padding: 'var(--space-4)', backgroundColor: 'var(--color-surface-subtle)', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)' }}>
+      <div style={{ padding: 'var(--space-4)', backgroundColor: 'var(--color-surface-subtle)', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-line)' }}>
         <p style={{ margin: '0 0 10px', fontSize: 12, fontFamily: 'var(--font-mono)', color: 'var(--color-ink-tertiary)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
           MULTI-SERIES ALLOCATION METER
         </p>
@@ -314,7 +314,7 @@ export const CategoricalDataPaletteShowcase: StoryObj = {
             style={{
               padding: '12px 14px',
               borderRadius: 'var(--radius-md)',
-              border: '1px solid var(--color-border)',
+              border: '1px solid var(--color-line)',
               backgroundColor: 'var(--color-surface)',
               display: 'flex',
               alignItems: 'center',

@@ -7,6 +7,23 @@ import { DataGridRow } from '../primitives/DataGridRow'
 import { DriveCassette } from '../primitives/DriveCassette'
 import { StorageTierGroup } from '../primitives/StorageTierGroup'
 
+/**
+ * jsdom lays nothing out, so every element measures 0 and the component falls
+ * back to its assumed width. Pin a real width for the render to exercise the
+ * measured path.
+ */
+function withTrackWidth(width: number, run: () => void) {
+  const original = HTMLElement.prototype.getBoundingClientRect
+  HTMLElement.prototype.getBoundingClientRect = function () {
+    return { ...original.call(this), width } as DOMRect
+  }
+  try {
+    run()
+  } finally {
+    HTMLElement.prototype.getBoundingClientRect = original
+  }
+}
+
 describe('TactileMeter', () => {
   it('renders with meter role and correct ARIA values', () => {
     render(
@@ -189,6 +206,44 @@ describe('SegmentedBar', () => {
 
     // Sliver segment renders pure mark without text collision
     expect(screen.queryByText('Micro-Checkpoint Log')).not.toBeInTheDocument()
+    expect(screen.queryByText('40.0 GB')).not.toBeInTheDocument()
+  })
+
+  it('degrades the same slices further when the track itself is narrow', () => {
+    // Identical percentages to the test above. The ladder must answer in
+    // pixels, so a 320px sidebar track drops labels a 800px column keeps —
+    // a percentage-only threshold would clip them instead.
+    const tieredSegments: SegmentItem[] = [
+      { id: 'wide', label: 'Primary Core Workload', shortLabel: 'Core', value: 600, tone: 'data-blue' },
+      { id: 'short', label: 'Secondary Ingestion Buffer', shortLabel: 'Buffer', value: 180, tone: 'data-amber' },
+      { id: 'val', label: 'Compaction Journal Table', value: 120, tone: 'data-teal' },
+      { id: 'sliver', label: 'Micro-Checkpoint Log', value: 40, tone: 'data-purple' },
+    ]
+
+    withTrackWidth(320, () =>
+      render(
+        <SegmentedBar
+          segments={tieredSegments}
+          total={1000}
+          unit="GB"
+          showInSegmentLabels
+          showLegend={false}
+        />
+      )
+    )
+
+    // 60% of 320px is 192px — the full name no longer fits, the short one does.
+    expect(screen.queryByText('Primary Core Workload')).not.toBeInTheDocument()
+    expect(screen.getByText('Core')).toBeInTheDocument()
+    expect(screen.getByText('600.0 GB')).toBeInTheDocument()
+
+    // 18% of 320px is 58px — under the 76px even a bare value needs, so the
+    // slice that carried 'Buffer' on a wide track is now a bare mark.
+    expect(screen.queryByText('Buffer')).not.toBeInTheDocument()
+    expect(screen.queryByText('180.0 GB')).not.toBeInTheDocument()
+
+    // The narrower slices stay marks too.
+    expect(screen.queryByText('120.0 GB')).not.toBeInTheDocument()
     expect(screen.queryByText('40.0 GB')).not.toBeInTheDocument()
   })
 })

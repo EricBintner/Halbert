@@ -1,7 +1,35 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 import * as React from 'react'
-import { cx, useId } from '../lib'
+import { cx, useId, useMeasuredWidth } from '../lib'
+
+/**
+ * In-segment label fitting is measured, not assumed.
+ *
+ * The label is mono at a known size, so one advance width per character is an
+ * exact answer rather than a guess — but it is an answer in *pixels*, and a
+ * slice's share of the track is a *percentage*. Converting between them needs
+ * the track's real width: the same 18% slice carries 144px of label on a
+ * dashboard column and 58px in a sidebar. Deciding the fit from the percentage
+ * alone silently clips every track narrower than the one it was tuned on.
+ */
+const MONO_ADVANCE_RATIO = 0.6
+const LABEL_FONT_PX: Record<string, number> = { thick: 13.5, hero: 13.5 }
+const LABEL_FONT_PX_DEFAULT = 12.5
+/** `padding: 0 var(--space-2)` on both flanks. */
+const LABEL_PADDING_PX = 16
+/** `gap: var(--space-1)` between the name and its value. */
+const LABEL_GAP_PX = 4
+/**
+ * Width to assume before a measurement lands (SSR, first paint, jsdom). A
+ * typical dashboard column — wrong only for the frame before the observer
+ * fires, and never wrong in the direction that hides a label permanently.
+ */
+const ASSUMED_TRACK_PX = 800
+/** Below this share of the track, a slice is a mark, not a label surface. */
+const MIN_LABELLED_PCT = 7
+/** Fallback name for the unallocated slice when its full label will not fit. */
+const FREE_SHORT_LABEL = 'Free'
 
 export type SegmentTone =
   | 'neutral'
@@ -82,7 +110,20 @@ export const SegmentedBar = React.forwardRef<HTMLDivElement, SegmentedBarProps>(
   ref,
 ) {
   const barId = useId(id)
-  
+  const trackRef = React.useRef<HTMLDivElement>(null)
+  const measuredTrackPx = useMeasuredWidth(trackRef)
+  const trackPx = measuredTrackPx > 0 ? measuredTrackPx : ASSUMED_TRACK_PX
+  const charPx = (LABEL_FONT_PX[size] ?? LABEL_FONT_PX_DEFAULT) * MONO_ADVANCE_RATIO
+
+  /** Pixels a slice of this percentage actually gets on the current track. */
+  const slicePx = React.useCallback((pct: number) => (pct / 100) * trackPx, [trackPx])
+  /** Pixels a name-plus-value label needs, or a bare value when `name` is empty. */
+  const labelPx = React.useCallback(
+    (name: string, value: string) =>
+      (name.length + value.length) * charPx + (name ? LABEL_GAP_PX : 0) + LABEL_PADDING_PX,
+    [charPx],
+  )
+
   // Calculate total and proportions
   const sumValues = React.useMemo(() => {
     return segments.reduce((acc, s) => acc + (isNaN(s.value) ? 0 : Math.max(0, s.value)), 0)
@@ -106,6 +147,7 @@ export const SegmentedBar = React.forwardRef<HTMLDivElement, SegmentedBarProps>(
     >
       {/* The Track with Segments */}
       <div
+        ref={trackRef}
         className="hb-segmented-bar__track"
         role="meter"
         aria-valuenow={offline ? undefined : sumValues}
@@ -126,16 +168,18 @@ export const SegmentedBar = React.forwardRef<HTMLDivElement, SegmentedBarProps>(
               const tone = seg.tone ?? 'neutral'
 
               const valStr = `${segVal.toFixed(1)} ${unit}`
-              // Approximate character fitting threshold (% required to render cleanly without clipping on ~800px track)
-              const reqPctForFull = seg.label.length * 0.85 + valStr.length * 0.75 + 4
-              const reqPctForShort = seg.shortLabel
-                ? seg.shortLabel.length * 0.85 + valStr.length * 0.75 + 4
-                : 999
-              const reqPctForVal = valStr.length * 0.85 + 2
+              const availablePx = slicePx(pct)
 
-              const canFitFull = pct >= reqPctForFull
-              const canFitShort = !canFitFull && Boolean(seg.shortLabel) && pct >= reqPctForShort
-              const canFitVal = !canFitFull && !canFitShort && pct >= reqPctForVal && pct >= 7
+              const canFitFull = availablePx >= labelPx(seg.label, valStr)
+              const canFitShort =
+                !canFitFull &&
+                Boolean(seg.shortLabel) &&
+                availablePx >= labelPx(seg.shortLabel!, valStr)
+              const canFitVal =
+                !canFitFull &&
+                !canFitShort &&
+                availablePx >= labelPx('', valStr) &&
+                pct >= MIN_LABELLED_PCT
 
               return (
                 <div
@@ -172,13 +216,15 @@ export const SegmentedBar = React.forwardRef<HTMLDivElement, SegmentedBarProps>(
               const freePct = (freeValue / effectiveTotal) * 100
               if (freePct <= 0) return null
               const freeValStr = `${freeValue.toFixed(1)} ${unit}`
-              const reqPctForFull = freeHeadroomLabel.length * 0.85 + freeValStr.length * 0.75 + 4
-              const reqPctForShort = 4 * 0.85 + freeValStr.length * 0.75 + 4 // "Free" + val
-              const reqPctForVal = freeValStr.length * 0.85 + 2
+              const availablePx = slicePx(freePct)
 
-              const canFitFull = showInSegmentLabels && freePct >= reqPctForFull
-              const canFitShort = showInSegmentLabels && !canFitFull && freePct >= reqPctForShort
-              const canFitVal = showInSegmentLabels && !canFitFull && !canFitShort && freePct >= reqPctForVal && freePct >= 7
+              const canFitFull = availablePx >= labelPx(freeHeadroomLabel, freeValStr)
+              const canFitShort = !canFitFull && availablePx >= labelPx(FREE_SHORT_LABEL, freeValStr)
+              const canFitVal =
+                !canFitFull &&
+                !canFitShort &&
+                availablePx >= labelPx('', freeValStr) &&
+                freePct >= MIN_LABELLED_PCT
 
               return (
                 <div
@@ -193,7 +239,7 @@ export const SegmentedBar = React.forwardRef<HTMLDivElement, SegmentedBarProps>(
                     </span>
                   ) : canFitShort ? (
                     <span className="hb-segmented-bar__segment-label hb-segmented-bar__segment-label--free" aria-hidden="true">
-                      <span className="hb-segmented-bar__segment-name">Free</span>
+                      <span className="hb-segmented-bar__segment-name">{FREE_SHORT_LABEL}</span>
                       <span className="hb-segmented-bar__segment-val">{freeValStr}</span>
                     </span>
                   ) : canFitVal ? (
