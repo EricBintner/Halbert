@@ -3,11 +3,13 @@
 import * as React from 'react'
 import { cx } from '../lib'
 import {
+  DEFAULT_DENSITY,
   MAX_DISPLACEMENT_MULTIPLIER,
   TINE_AMPLITUDES,
   staticTinePaths,
   tineCount,
   tinePathD,
+  type Retraction,
   type TinePathOptions,
   type TravelingBulge,
   type VoiceDensity,
@@ -22,6 +24,7 @@ import {
   type StateExcitation,
   type VoiceVisualState,
 } from './excitation'
+import { Listener } from './listening'
 import type { AudioEnergySource } from './spectrum'
 import { IdleBreathingSource } from './spectrum'
 import type { HalbertMarkTone } from '../primitives/HalbertMark'
@@ -33,9 +36,9 @@ export interface AudioReactiveHalbertMarkProps
   /** Rendered size (px or CSS unit). Voice Mode uses 512. @default 512 */
   size?: number | string
   /**
-   * Optical density: 'medium' (6 tines — the Voice Mode default since
-   * 2026-08-31 v2 tuning) or 'display' (10 tines).
-   * @default 'medium'
+   * Optical density: 'brand' (the ratified 7-line mark, the voice mark
+   * everywhere), 'medium' (6 tines) or 'display' (10 tines).
+   * @default 'brand'
    */
   density?: VoiceDensity
   /** Color tone; same resolution as HalbertMark. @default 'accent' */
@@ -63,11 +66,16 @@ const STROKE_BY_TONE: Record<Exclude<HalbertMarkTone, 'badge'>, string> = {
   current: 'currentColor',
 }
 const ERROR_STROKE = 'var(--color-status-error, #C83E2D)'
-const STROKE_BY_DENSITY: Record<VoiceDensity, number> = { medium: 48, display: 26.67 }
+const STROKE_BY_DENSITY: Record<VoiceDensity, number> = { brand: 48, medium: 48, display: 26.67 }
 
 /** The per-state lean weight glides to its target with this time constant,
  * so a state change never pops the lean (speaking 0.3 -> idle 1.0). */
 const SWELL_WEIGHT_RAMP_SECONDS = 0.12
+/** The retraction weight glides too, so leaving listening lets the ends
+ * slide back out rather than snap. */
+const RETRACT_WEIGHT_RAMP_SECONDS = 0.25
+/** Below this weight the trim is skipped entirely (exact static geometry). */
+const RETRACT_EPSILON = 0.001
 
 interface ActiveBulge {
   tine: number
@@ -98,6 +106,7 @@ interface Engine {
   onsets: OnsetPlucker
   queue: PluckQueue
   idle: IdlePlucker
+  listener: Listener
   raw: Float32Array
   scaled: Float32Array
   /** The state the engine last acted on. Seeded 'idle' so mounting in any
@@ -105,6 +114,9 @@ interface Engine {
   seenState: VoiceVisualState
   /** Current lean weight, ramping toward the state's target. */
   swellWeight: number
+  /** Current retraction weight, ramping toward the state's target. */
+  retractWeight: number
+  trims: Retraction[]
   bulges: ActiveBulge[]
   /** Armed on the first thinking frame so it shares the frame clock. */
   nextSpawn: number | null
@@ -116,6 +128,7 @@ interface Engine {
 
 function createEngine(density: VoiceDensity, initialState: string): Engine {
   const count = tineCount(density)
+  const initial = excitationFor(initialState)
   return {
     density,
     count,
@@ -125,10 +138,13 @@ function createEngine(density: VoiceDensity, initialState: string): Engine {
     onsets: new OnsetPlucker(count),
     queue: new PluckQueue(),
     idle: new IdlePlucker(count),
+    listener: new Listener(count),
     raw: new Float32Array(count),
     scaled: new Float32Array(count),
     seenState: 'idle',
-    swellWeight: excitationFor(initialState).swellWeight,
+    swellWeight: initial.swellWeight,
+    retractWeight: initial.retract,
+    trims: Array.from({ length: count }, () => ({ start: 0, end: 0 })),
     bulges: [],
     nextSpawn: null,
     bulgesByTine: Array.from({ length: count }, () => []),
@@ -138,12 +154,15 @@ function createEngine(density: VoiceDensity, initialState: string): Engine {
 }
 
 /**
- * The Halbert mark as a set of plucked strings (design doc 17).
+ * The Halbert mark as a set of plucked strings that can also listen
+ * (design doc 17).
  *
  * Each frame: the energy source supplies a level per tine; rising levels
  * pluck that tine's string (ring), the level itself leans it a little
  * (swell); the sum, clamped to the geometry ceiling, is the tine's
- * displacement. State only changes how the strings are struck — the strings
+ * displacement. In the listening posture the lines withdraw their ends
+ * instead (listening.ts), a trim of the same path. State only changes how
+ * the strings are struck and whether they withdraw — the strings
  * themselves (pitch, sustain) never change, which is what keeps every
  * surface's motion identical.
  */
@@ -153,7 +172,7 @@ export const AudioReactiveHalbertMark = React.forwardRef<
 >(function AudioReactiveHalbertMark(
   {
     size = 512,
-    density = 'medium',
+    density = DEFAULT_DENSITY,
     tone = 'accent',
     color,
     state = 'idle',
@@ -169,7 +188,7 @@ export const AudioReactiveHalbertMark = React.forwardRef<
   const groupRef = React.useRef<SVGGElement | null>(null)
   const stateRef = React.useRef(state)
   stateRef.current = state
-  // The mount state only seeds the lean weight; later states are read live.
+  // The mount state only seeds the lean and retraction weights; later states are read live.
   const initialStateRef = React.useRef(state)
   const engine = React.useMemo(() => createEngine(density, initialStateRef.current), [density])
   const engineRef = React.useRef(engine)
@@ -210,12 +229,16 @@ export const AudioReactiveHalbertMark = React.forwardRef<
       e.swellWeight +=
         (excitation.swellWeight - e.swellWeight) *
         (1 - Math.exp(-dt / SWELL_WEIGHT_RAMP_SECONDS))
+      e.retractWeight +=
+        (excitation.retract - e.retractWeight) *
+        (1 - Math.exp(-dt / RETRACT_WEIGHT_RAMP_SECONDS))
 
       active.readEnergies(raw, t)
       for (let k = 0; k < count; k++) scaled[k] = raw[k] * sensitivity
       e.onsets.feed(scaled, excitation.pluckGain, ring)
       e.queue.flush(t, ring)
       if (state === 'idle') e.idle.tick(t, ring)
+      e.listener.feed(scaled, dt, t)
       swell.setTargets(scaled)
       const ringAlpha = ring.step(dt)
       const swellAlpha = swell.step(dt)
@@ -257,13 +280,18 @@ export const AudioReactiveHalbertMark = React.forwardRef<
       e.contractV += ca * dt
       e.contract += e.contractV * dt
 
+      const retracting = e.retractWeight > RETRACT_EPSILON
       for (let k = 0; k < count; k++) {
         const el = pathRefs.current[k]
         if (!el) continue
-        const opts: TinePathOptions =
-          e.bulgesByTine[k].length > 0
-            ? { density: e.density, bulges: e.bulgesByTine[k] }
-            : { density: e.density }
+        const opts: TinePathOptions = { density: e.density }
+        if (e.bulgesByTine[k].length > 0) opts.bulges = e.bulgesByTine[k]
+        if (retracting) {
+          const trim = e.trims[k]
+          trim.start = e.retractWeight * e.listener.retraction(k, 0)
+          trim.end = e.retractWeight * e.listener.retraction(k, 1)
+          opts.trim = trim
+        }
         const unclamped =
           ring.interpolated(k, ringAlpha) + e.swellWeight * swell.interpolated(k, swellAlpha)
         const m = Math.max(

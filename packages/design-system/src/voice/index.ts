@@ -46,8 +46,10 @@ export {
   strum,
 } from './excitation'
 export type { StateExcitation, ScheduledPluck } from './excitation'
+export { Listener, LISTENING } from './listening'
 export {
   MARK,
+  DEFAULT_DENSITY,
   laneCount,
   tineCount,
   TINE_AMPLITUDES,
@@ -58,4 +60,4 @@ export {
   tinePathD,
   staticTinePaths,
 } from './geometry'
-export type { TinePathOptions, TravelingBulge, VoiceDensity } from './geometry'
+export type { Retraction, TinePathOptions, TravelingBulge, VoiceDensity } from './geometry'

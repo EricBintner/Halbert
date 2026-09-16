@@ -5,9 +5,12 @@
  *
  * Vocal registers map low -> outer/lower tines and high -> center/upper
  * tines: the spine is brilliance/air (4-8 kHz) and the outermost arc is
- * sub-bass (40-100 Hz), in both densities:
+ * sub-bass (40-100 Hz), in every density:
  *
- *   medium (6 tines, Voice Mode default):
+ *   brand (7 tines, the voice mark): an octave ladder —
+ *     spine 4000-8000 | 2000-4000 | 1000-2000 | 500-1000 | 250-500
+ *     | 100-250 | outer arc 40-100
+ *   medium (6 tines):
  *     spine  4000-8000 | 86.4: 1500-4000 | 172.8: 700-1500
  *     259.2: 350-700   | 345.6: 100-350  | 432:   40-100
  *   display (10 tines): the full spec §2.2 table.
@@ -22,10 +25,19 @@
  * Web Audio types never appear in its props (SSR/Storybook-safe).
  */
 
-import { tineCount, type VoiceDensity } from './geometry'
+import { DEFAULT_DENSITY, tineCount, type VoiceDensity } from './geometry'
 
 /** Vocal register band edges in Hz per density, inner tine to outer. */
 export const TINE_BAND_HZ: Record<VoiceDensity, ReadonlyArray<readonly [number, number]>> = {
+  brand: [
+    [4000, 8000], // spine: brilliance / air
+    [2000, 4000], // sibilance
+    [1000, 2000], // upper mids / vowel clarity
+    [500, 1000],  // vocal core
+    [250, 500],   // vowel body + warmth
+    [100, 250],   // chest formant + fundamental
+    [40, 100],    // outermost arc: sub-bass / room
+  ],
   medium: [
     [4000, 8000], // spine: brilliance / air
     [1500, 4000], // sibilance + upper mids
@@ -42,6 +54,9 @@ export const TINE_BAND_HZ: Record<VoiceDensity, ReadonlyArray<readonly [number, 
 
 /** Reference bin tables (16kHz sample rate, 64 FFT bins). */
 export const TINE_BIN_RANGES_16K_64: Record<VoiceDensity, ReadonlyArray<readonly [number, number]>> = {
+  brand: [
+    [32, 64], [16, 32], [8, 16], [4, 8], [2, 4], [1, 2], [0, 1],
+  ],
   medium: [
     [32, 64], [12, 32], [6, 12], [3, 6], [1, 3], [0, 1],
   ],
@@ -62,7 +77,7 @@ export const SUB_BASS_ATTENUATION = 0.3
 export function binRangesFor(
   sampleRate: number,
   binCount: number,
-  density: VoiceDensity = 'medium',
+  density: VoiceDensity = DEFAULT_DENSITY,
 ): Array<[number, number]> {
   const hzPerBin = sampleRate / 2 / binCount
   return TINE_BAND_HZ[density].map(([lo, hi]) => {
@@ -76,7 +91,7 @@ export function binRangesFor(
  * band (sub-bass) is attenuated; output length follows the ranges. */
 export function tineEnergies(
   freqData: Uint8Array,
-  ranges: ReadonlyArray<readonly [number, number]> = TINE_BIN_RANGES_16K_64.medium,
+  ranges: ReadonlyArray<readonly [number, number]> = TINE_BIN_RANGES_16K_64[DEFAULT_DENSITY],
   out: Float32Array = new Float32Array(ranges.length),
 ): Float32Array {
   for (let k = 0; k < ranges.length; k++) {
@@ -137,7 +152,7 @@ export interface ByteFrequencyNode {
 export function createAnalyserEnergySource(
   analyser: ByteFrequencyNode,
   sampleRate: number,
-  density: VoiceDensity = 'medium',
+  density: VoiceDensity = DEFAULT_DENSITY,
 ): AudioEnergySource {
   const binCount = analyser.frequencyBinCount
   const ranges = binRangesFor(sampleRate, binCount, density)
@@ -155,11 +170,11 @@ export function createAnalyserEnergySource(
 }
 
 export interface MediaStreamAnalyserOptions {
-  /** fftSize 128 -> 64 bins (128-sample frames are plenty for 6 bands). */
+  /** fftSize 128 -> 64 bins (128-sample frames are plenty for 7 bands). */
   fftSize?: number
   minDecibels?: number // default -85 (voice floor)
   maxDecibels?: number // default -25
-  /** Tine density of the mark being driven. @default 'medium' */
+  /** Tine density of the mark being driven. @default 'brand' */
   density?: VoiceDensity
 }
 
@@ -185,7 +200,7 @@ export function createMediaStreamAnalyserSource(
       analyser.minDecibels = opts.minDecibels ?? -85
       analyser.maxDecibels = opts.maxDecibels ?? -25
       source.connect(analyser) // analyser is a terminal node — no audible tap
-      inner = createAnalyserEnergySource(analyser, context.sampleRate, opts.density ?? 'medium')
+      inner = createAnalyserEnergySource(analyser, context.sampleRate, opts.density ?? DEFAULT_DENSITY)
     },
     stop() {
       inner = null
@@ -214,7 +229,7 @@ export function createNodeAnalyserSource(
       created.maxDecibels = opts.maxDecibels ?? -25
       node.connect(created)
       analyser = created
-      inner = createAnalyserEnergySource(created, node.context.sampleRate, opts.density ?? 'medium')
+      inner = createAnalyserEnergySource(created, node.context.sampleRate, opts.density ?? DEFAULT_DENSITY)
     },
     stop() {
       inner = null

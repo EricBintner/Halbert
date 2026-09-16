@@ -35,15 +35,19 @@ export interface StateExcitation {
   readonly pluckGain: number
   /** Multiplier on the swell follower's level, <= 0.3 wherever plucks happen. */
   readonly swellWeight: number
+  /** Weight on the listening retraction (listening.ts): 1 = the ends withdraw. */
+  readonly retract: number
 }
 
 export const STATE_EXCITATION: Record<VoiceVisualState, StateExcitation> = Object.freeze({
-  idle: Object.freeze({ pluckGain: 0, swellWeight: 1 }),
-  listening: Object.freeze({ pluckGain: 2, swellWeight: 0.3 }),
-  recognized: Object.freeze({ pluckGain: 0, swellWeight: 0.3 }),
-  thinking: Object.freeze({ pluckGain: 0, swellWeight: 0 }),
-  speaking: Object.freeze({ pluckGain: 2.5, swellWeight: 0.3 }),
-  error: Object.freeze({ pluckGain: 0, swellWeight: 0 }),
+  idle: Object.freeze({ pluckGain: 0, swellWeight: 1, retract: 0 }),
+  // Listening never warps the lines; it withdraws their ends instead.
+  listening: Object.freeze({ pluckGain: 0, swellWeight: 0, retract: 1 }),
+  // Recognized strums (a warp) while still holding the listening posture.
+  recognized: Object.freeze({ pluckGain: 0, swellWeight: 0.3, retract: 1 }),
+  thinking: Object.freeze({ pluckGain: 0, swellWeight: 0, retract: 0 }),
+  speaking: Object.freeze({ pluckGain: 2.5, swellWeight: 0.3, retract: 0 }),
+  error: Object.freeze({ pluckGain: 0, swellWeight: 0, retract: 0 }),
 })
 
 /** A per-frame level rise at or below this is mic noise, not an onset. */

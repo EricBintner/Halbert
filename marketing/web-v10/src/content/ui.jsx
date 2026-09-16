@@ -306,7 +306,6 @@ export function VoiceModePlate() {
               size="100%"
               state={mode}
               source={voiceEnergySource}
-              density="medium"
               tone="accent"
               sensitivity={1.2}
             />

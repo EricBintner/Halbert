@@ -82,6 +82,32 @@ describe('createSpeechBurstSource — the shared demo voice', () => {
     expect(Math.max(...frames.map((f) => Math.max(...f)))).toBeGreaterThan(0.3)
   })
 
+  it('claps on request: a broadband burst every few seconds, never without the option', () => {
+    const isClap = (prev: Float32Array, cur: Float32Array) =>
+      Array.from(cur).every((v, k) => v - prev[k] > 0.4)
+    const countClaps = (frames: Float32Array[]) => {
+      let n = 0
+      for (let i = 1; i < frames.length; i++) if (isClap(frames[i - 1], frames[i])) n++
+      return n
+    }
+    const plain = sample(1, 12)
+    expect(countClaps(plain)).toBe(0)
+    const src = createSpeechBurstSource({ seed: 1, clapEverySeconds: [3, 5] })
+    src.start()
+    const frames: Float32Array[] = []
+    for (let i = 0; i < 12 * 60; i++) {
+      const out = new Float32Array(7)
+      src.readEnergies(out, i / 60)
+      frames.push(out)
+    }
+    const claps = countClaps(frames)
+    expect(claps).toBeGreaterThanOrEqual(2)
+    expect(claps).toBeLessThanOrEqual(4)
+    // a clap is short: the burst is gone within a tenth of a second
+    const at = frames.findIndex((f, i) => i > 0 && isClap(frames[i - 1], f))
+    expect(Math.max(...frames[at + 6])).toBeLessThan(0.5)
+  })
+
   it('reads as silence before it is started', () => {
     const src = createSpeechBurstSource({ seed: 1 })
     const out = new Float32Array(6).fill(0.5)

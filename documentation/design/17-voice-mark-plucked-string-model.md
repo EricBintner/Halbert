@@ -98,19 +98,52 @@ the amplitude tables are retuned to it.
 
 ### Excitation per state
 
-| state | pluck source | gain (displacement per unit level rise) | swell weight | extra |
-|---|---|---|---|---|
-| idle | none from the breathing source | — | 1.0 | sparse soft plucks: one random tine every 2.5–6 s, amplitude 0.25–0.45, weighted toward the outer (long-sustain) tines |
-| listening | band-level onsets | 2.0 | 0.3 | — |
-| recognized | — | — | 0.3 | on entry (including mounting in it), a **strum**: every tine plucked at 0.7, spine first, 35 ms stagger outward |
-| thinking | — | — | 0 | traveling bulges and the 0.94 contraction, unchanged |
-| speaking | band-level onsets | 2.5 | 0.3 | — |
-| error | — | — | 0 | tint only, unchanged |
+| state | pluck source | gain (displacement per unit level rise) | swell weight | retract | extra |
+|---|---|---|---|---|---|
+| idle | none from the breathing source | — | 1.0 | 0 | sparse soft plucks: one random tine every 2.5–6 s, amplitude 0.25–0.45, weighted toward the outer (long-sustain) tines |
+| listening | — | — | 0 | 1 | the ends withdraw (see *Listening* below); no warp at all |
+| recognized | — | — | 0.3 | 1 | on entry (including mounting in it), a **strum**: every tine plucked at 0.7, spine first, 35 ms stagger outward, on the still-withdrawn lines |
+| thinking | — | — | 0 | 0 | traveling bulges and the 0.94 contraction, unchanged |
+| speaking | band-level onsets | 2.5 | 0.3 | 0 | — |
+| error | — | — | 0 | 0 | tint only, unchanged |
 
 **Onset** = a per-frame rise of a tine's band level above 0.02 (mic noise
 stays below it). Each rising frame plucks by `gain × rise`; a sharp consonant
 lands in two or three frames and sums to one strike, a slow ramp becomes a
 slow push that returns when the ramp ends. No edge detector, no latency.
+
+## Listening — retraction, not warping (added 2026-09-16)
+
+Listening had been plucking exactly like speaking. The founder's brief: while
+listening the lines do not warp; each line **withdraws its ends** along its
+own path in response to sound. Fully withdrawn, a U-line is a dot at its
+apex, the outer arc a dot at its lowest point, the spine a dot at the
+mark's centre (it withdraws from the top only; its base *is* the centre).
+Retraction is a trim of the sampled path (`TinePathOptions.trim`), so it
+composes with every warp — recognized strums the withdrawn lines.
+
+Two inputs drive it, and neither is a level meter (`listening.ts`):
+
+| input | what it responds to | how far | timing |
+|---|---|---|---|
+| **presence** | any sustained sound (loudest band above 0.04) | 10–15 % per end at full attention, each end drifting on its own slow curve (~0.35 Hz, golden-angle phases, outer lines slightly slower) | attention rises with a 150 ms time constant and releases over 1.8 s — the mark keeps listening for a moment after you stop |
+| **impact** | a broadband transient: the sum of all bands' rises in one frame above 1.2 (a clap sums to several units; a syllable to well under one) | up to 0.32 per end on the outer line, 0.7 of that on the spine; hard-capped at 0.45 per end, so even the hardest clap at full attention leaves a tenth of every line (test-enforced) — a clap startles, it never closes a line | rises in 50 ms, holds 80 ms, releases over 0.45 s; critically damped, no ring |
+
+Speech therefore reads as "it is listening" rather than as syllables; a clap
+reads as a startle that relaxes. The per-state weight (`retract` in
+`STATE_EXCITATION`) is 1 for listening and recognized, 0 elsewhere, and it
+ramps with a 250 ms time constant so leaving listening slides the ends back
+out instead of snapping.
+
+### Geometry: the voice mark is the ratified 7-line mark
+
+The voice mark now renders the `brand` density by default (spine + 6 lanes,
+pitch 72, stroke 48, gap 24 — `PATHS_7` in `HalbertMark.tsx`, reproduced
+exactly). The tighter gap caps the pluck amplitudes at `[6, 7, 8, 9, 9, 9, 8]`
+(the 1.3-ceiling invariant against a 24-unit gap); the spectrum gains a
+7-band octave ladder (8 kHz → 40 Hz) and the string ladder a 7-entry
+interpolation of the same endpoints. `medium` (6) and `display` (10) remain
+available.
 
 ## Demo source (Storybook and marketing share it)
 
