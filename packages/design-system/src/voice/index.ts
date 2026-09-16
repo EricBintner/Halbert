@@ -5,6 +5,8 @@ export type {
   AudioReactiveHalbertMarkProps,
   VoiceVisualState,
 } from './AudioReactiveHalbertMark'
+export { VoiceModeLoop, VOICE_MODE_LOOP } from './VoiceModeLoop'
+export type { VoiceModeLoopProps } from './VoiceModeLoop'
 export type {
   AudioEnergySource,
   ByteFrequencyNode,

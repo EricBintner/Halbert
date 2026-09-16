@@ -1,13 +1,6 @@
 import React from 'react';
 import { Mic, Keyboard } from 'lucide-react';
-import { AudioReactiveHalbertMark, createSpeechBurstSource } from '@halbert/design-system';
-
-/**
- * The demo voice for the landing page kiosk plate: the design system's
- * shared speech-burst source (design doc 17), the same one Storybook plays,
- * so the strings pluck here exactly as they do there.
- */
-const voiceEnergySource = createSpeechBurstSource();
+import { VoiceModeLoop } from '@halbert/design-system';
 
 /**
  * Placeholder app surfaces.
@@ -261,15 +254,6 @@ export function KnowledgePlate() {
  * band on the horizontal one.
  */
 export function VoiceModePlate() {
-  const [mode, setMode] = React.useState('speaking');
-
-  React.useEffect(() => {
-    const timer = setInterval(() => {
-      setMode((prev) => (prev === 'speaking' ? 'thinking' : 'speaking'));
-    }, 4000);
-    return () => clearInterval(timer);
-  }, []);
-
   const glassEdge = 'color-mix(in srgb, var(--color-canvas) 20%, transparent)';
   return (
     <div
@@ -299,16 +283,12 @@ export function VoiceModePlate() {
           <span>10:47 AM</span>
         </div>
 
-        {/* the mark — looping between voice and thinking with shrink/grow spring */}
+        {/* the mark — the design system's Voice Mode loop (listening,
+         * recognized, thinking, speaking), the same component Storybook shows,
+         * playing the shared demo voice */}
         <div className="flex min-h-0 flex-1 items-center justify-center">
           <div className="aspect-square w-[52%]">
-            <AudioReactiveHalbertMark
-              size="100%"
-              state={mode}
-              source={voiceEnergySource}
-              tone="accent"
-              sensitivity={1.2}
-            />
+            <VoiceModeLoop size="100%" tone="accent" sensitivity={1.2} />
           </div>
         </div>
 

@@ -4,6 +4,7 @@ import * as React from 'react'
 import type { Meta, StoryObj } from '@storybook/react'
 import { AudioReactiveHalbertMark } from '../voice/AudioReactiveHalbertMark'
 import type { VoiceVisualState } from '../voice/AudioReactiveHalbertMark'
+import { VoiceModeLoop } from '../voice/VoiceModeLoop'
 import { createMediaStreamAnalyserSource, createNodeAnalyserSource } from '../voice/spectrum'
 import type { AudioEnergySource } from '../voice/spectrum'
 import { createSpeechBurstSource } from '../voice/demo'
@@ -82,19 +83,15 @@ export const OnDarkCanvas: Story = {
 }
 
 /** The kiosk conversation as a loop: listening (ends withdraw), recognized
- * (strum), thinking (contract + bulges), speaking (plucks) — 2.5 s each. */
-export const VoiceModeLoop: Story = {
+ * (strum), thinking (contract + bulges), speaking (plucks) — 2.5 s each.
+ * The same component the marketing kiosk plate renders. */
+export const VoiceModeLoopStory: Story = {
+  name: 'Voice Mode Loop',
   render: () => {
-    const cycle: VoiceVisualState[] = ['listening', 'recognized', 'thinking', 'speaking']
-    const [index, setIndex] = React.useState(0)
-    React.useEffect(() => {
-      const timer = setInterval(() => setIndex((i) => (i + 1) % cycle.length), 2500)
-      return () => clearInterval(timer)
-    }, [])
-    const state = cycle[index]
+    const [state, setState] = React.useState<VoiceVisualState>('listening')
     return (
       <div style={{ display: 'grid', gap: 16, justifyItems: 'center' }}>
-        <AudioReactiveHalbertMark size={512} state={state} source={speech} />
+        <VoiceModeLoop size={512} onStateChange={setState} />
         <p style={{ fontFamily: 'monospace', textTransform: 'uppercase', opacity: 0.6 }}>{state}</p>
       </div>
     )
