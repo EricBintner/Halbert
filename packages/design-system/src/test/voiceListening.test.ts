@@ -204,7 +204,7 @@ describe('Listener — impact: a clap retracts hard, speech does not', () => {
       const clappy = run({ seed: 3, clapEverySeconds: [5, 8] })
       expect(clappy.events).toBeGreaterThanOrEqual(3)
       expect(clappy.events).toBeLessThanOrEqual(6)
-      expect(clappy.maxImpact).toBeGreaterThan(0.9 * LISTENING.impactMax)
+      expect(clappy.maxImpact).toBeGreaterThan(0.9) // impact is a 0..1 strength
     }
   })
 
@@ -222,21 +222,30 @@ describe('Listener — impact: a clap retracts hard, speech does not', () => {
     expect(maxImpact).toBeLessThan(0.01)
   })
 
-  it('a broadband clap retracts every line within 100 ms, the outer lines most', () => {
+  /** The impact travel of tine k at full strength, in mark units: a 60/40
+   * blend of a fixed distance and a share of the line's own length. */
+  const fullImpactUnits = (k: number) =>
+    LISTENING.impactFixedShare * LISTENING.impactUnits +
+    (1 - LISTENING.impactFixedShare) * LISTENING.impactFraction * LENGTHS[k]
+
+  it('a broadband clap retracts every line within 100 ms; the centre reacts as visibly as the edge', () => {
     const l = listener()
     let t = feed(l, silence, 30)
     t = feed(l, clap, 1, t)
-    let outerPeak = 0
-    let spinePeak = 0
+    let outerUnits = 0
+    let spineUnits = 0
     for (let i = 0; i < 6; i++) {
       t = feed(l, silence, 1, t)
-      outerPeak = Math.max(outerPeak, l.retraction(6, 0))
-      spinePeak = Math.max(spinePeak, l.retraction(0, 0))
+      outerUnits = Math.max(outerUnits, units(l, 6, 0))
+      spineUnits = Math.max(spineUnits, units(l, 0, 0))
     }
-    expect(outerPeak).toBeGreaterThanOrEqual(0.2)
-    expect(outerPeak).toBeLessThanOrEqual(LISTENING.maxPerEnd)
-    expect(spinePeak).toBeGreaterThan(0.12)
-    expect(spinePeak).toBeLessThan(outerPeak)
+    // the spine travels at least 60 % of the outer arc's distance (the fixed
+    // share), and a larger fraction of its short length
+    expect(spineUnits).toBeGreaterThan(0.55 * outerUnits)
+    expect(spineUnits).toBeGreaterThan(100)
+    expect(outerUnits).toBeGreaterThan(spineUnits) // the proportional share still favours long lines
+    expect(outerUnits).toBeGreaterThan(200)
+    expect(l.retraction(0, 0)).toBeGreaterThan(l.retraction(6, 0))
     expect(l.retraction(6, 1)).toBeCloseTo(l.retraction(6, 0), 2) // a clap is symmetric
   })
 
@@ -255,12 +264,11 @@ describe('Listener — impact: a clap retracts hard, speech does not', () => {
       }
     }
     expect(worst).toBeLessThanOrEqual(0.8)
-    // and by construction, per line: peak presence plus a saturated impact fits under the cap
+    // and by construction, per line: peak presence plus a saturated impact
+    // fits under the cap (the spine spends its whole budget on one end)
     for (let k = 0; k < COUNT; k++) {
-      const depth = LISTENING.innerImpactShare + (1 - LISTENING.innerImpactShare) * (k / (COUNT - 1))
-      expect(LISTENING.presenceUnits[1] / LENGTHS[k] + LISTENING.impactMax * depth).toBeLessThanOrEqual(
-        LISTENING.maxPerEnd,
-      )
+      const cap = k === 0 ? 2 * LISTENING.maxPerEnd : LISTENING.maxPerEnd
+      expect((LISTENING.presenceUnits[1] + fullImpactUnits(k)) / LENGTHS[k]).toBeLessThanOrEqual(cap)
     }
   })
 
@@ -297,11 +305,11 @@ describe('Listener — impact: a clap retracts hard, speech does not', () => {
     for (let i = 0; i < 8; i++) {
       ts = feed(soft, silence, 1, ts)
       th = feed(hard, silence, 1, th)
-      softPeak = Math.max(softPeak, soft.retraction(4, 0))
-      hardPeak = Math.max(hardPeak, hard.retraction(4, 0))
+      softPeak = Math.max(softPeak, units(soft, 4, 0))
+      hardPeak = Math.max(hardPeak, units(hard, 4, 0))
     }
-    expect(softPeak).toBeGreaterThan(0.08)
-    expect(hardPeak).toBeGreaterThan(softPeak + 0.07)
+    expect(softPeak).toBeGreaterThan(90)
+    expect(hardPeak).toBeGreaterThan(softPeak + 80)
   })
 })
 
@@ -332,8 +340,10 @@ describe('Listener — robustness', () => {
           const r = l.retraction(k, side)
           expect(Number.isFinite(r)).toBe(true)
           expect(r).toBeGreaterThanOrEqual(0)
-          expect(r).toBeLessThanOrEqual(LISTENING.maxPerEnd)
+          // the spine's one moving end may spend the whole per-line budget
+          expect(r).toBeLessThanOrEqual(k === 0 ? 2 * LISTENING.maxPerEnd : LISTENING.maxPerEnd)
         }
+        expect(l.retraction(k, 0) + l.retraction(k, 1)).toBeLessThanOrEqual(2 * LISTENING.maxPerEnd)
       }
     }
   })
@@ -352,11 +362,13 @@ describe('Listener — robustness', () => {
   it('exposes the tuning the design record documents', () => {
     expect(LISTENING.presenceUnits).toEqual([45, 70]) // ~3-5 % of an outer ring
     expect(LISTENING.globalShare).toBe(0.25)
+    expect(LISTENING.impactFixedShare).toBe(0.6) // 60 % fixed distance, 40 % share of length
+    expect(LISTENING.impactUnits).toBeGreaterThan(2 * LISTENING.presenceUnits[1])
     expect(LISTENING.releaseSeconds).toBeGreaterThan(LISTENING.attackSeconds * 5)
     expect(LISTENING.maxPerEnd).toBeLessThan(0.5)
   })
 
-  it('the hardest clap actually reaches impactMax before the cap', () => {
+  it('the hardest clap actually reaches full strength before the cap', () => {
     const l = listener()
     let t = feed(l, silence, 30)
     t = feed(l, clap, 1, t)
@@ -365,7 +377,8 @@ describe('Listener — robustness', () => {
       t = feed(l, silence, 1, t)
       peak = Math.max(peak, l.impact)
     }
-    expect(peak).toBeGreaterThan(0.95 * LISTENING.impactMax)
+    expect(peak).toBeGreaterThan(0.95)
+    expect(peak).toBeLessThanOrEqual(1)
   })
 
   it('a stalled or backwards frame clock cannot latch an impact', () => {

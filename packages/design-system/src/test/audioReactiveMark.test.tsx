@@ -419,7 +419,7 @@ describe('AudioReactiveHalbertMark', () => {
         const { container } = render(
           <AudioReactiveHalbertMark size={512} state="listening" source={source} />,
         )
-        const path = container.querySelectorAll('path')[4]
+        const path = container.querySelectorAll('path')[3] // a ring the vowel attends
         let fewest = Infinity
         for (let i = 0; i < 45; i++) {
           pump(1)
@@ -427,7 +427,7 @@ describe('AudioReactiveHalbertMark', () => {
         }
         return fewest
       }
-      const full = points(STATIC[4]).length
+      const full = points(STATIC[3]).length
       const speechLeft = remaining(speech())
       const clapLeft = remaining(burstSource(0.8, 5))
       expect(speechLeft).toBeLessThan(full)

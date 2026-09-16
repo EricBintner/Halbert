@@ -17,8 +17,10 @@
  *              part in four: high sounds draw the inner rings in, low sounds
  *              the outer, and the whole mark always listens a little.
  *   impact   — only a broadband transient (a clap, a door) drives a quick,
- *              critically damped retraction that scales with the hit, up to
- *              impactMax on the outer lines, then relaxes. "Broadband" is
+ *              critically damped retraction that scales with the hit, then
+ *              relaxes. Its travel is 60 % a fixed distance and 40 % a share
+ *              of the line's length, so the short spine reacts as visibly as
+ *              the long outer arc. "Broadband" is
  *              the test: nearly every band must rise together over a fixed
  *              50 ms window. A syllable is a gaussian over the register and
  *              lifts at most five of seven bands; a clap lifts them all.
@@ -55,19 +57,27 @@ export const LISTENING = Object.freeze({
   /** At most this many bands may sit a hit out and it still counts as
    * broadband (the sub-bass band is usually the one). */
   bandsAllowedQuiet: 1,
-  /** Mean rise across all bands that reaches impactMax (the floor reaches 0). */
+  /** Mean rise across all bands that reaches full strength (the floor reaches 0). */
   impactFullRise: 0.65,
-  /** Retraction per end on the hardest impact, outer line. With presence at
-   * its peak this still leaves a quarter of the outer arc and more of every
-   * other line: a clap startles, it never closes a line. */
-  impactMax: 0.24,
+  /**
+   * Impact travel per end at full strength is a blend: impactFixedShare of a
+   * fixed distance (impactUnits, mark units, the same on every line) and the
+   * rest a share of the line's own length (impactFraction). The fixed part is
+   * what lets the short spine react as visibly as the long outer arc; the
+   * proportional part keeps the long lines travelling a little further.
+   * Outer arc at full strength: 0.6·170 + 0.4·0.24·1357 ≈ 232 units (17 %);
+   * spine: 0.6·170 + 0.4·0.24·432 ≈ 143 units (33 % of its length).
+   */
+  impactUnits: 170,
+  impactFraction: 0.24,
+  impactFixedShare: 0.6,
   /** The impact rises this fast, holds, then releases. */
   impactRiseSeconds: 0.03,
   impactHoldSeconds: 0.12,
   impactReleaseSeconds: 0.45,
-  /** The spine takes this share of the outer line's impact. */
-  innerImpactShare: 0.7,
-  /** No end withdraws past this: a fifth of every line always remains. */
+  /** No end withdraws past this, so a fifth of every line always remains.
+   * The spine withdraws from one end only and may spend the whole budget
+   * (twice this) there. */
   maxPerEnd: 0.4,
 })
 
@@ -110,7 +120,7 @@ export class Listener {
     return this.attentionLevel
   }
 
-  /** Current impact retraction before the per-line profile, 0 … impactMax. */
+  /** Current impact strength, 0 … 1 (1 = the hardest clap). */
   get impact(): number {
     return this.impactLevel
   }
@@ -181,8 +191,7 @@ export class Listener {
       }
       if (risen >= this.count - c.bandsAllowedQuiet) {
         const meanRise = riseSum / this.count
-        const strength = (meanRise - c.bandRiseFloor) / (c.impactFullRise - c.bandRiseFloor)
-        hit = clamp01(strength) * c.impactMax
+        hit = clamp01((meanRise - c.bandRiseFloor) / (c.impactFullRise - c.bandRiseFloor))
       }
     }
     if (hit > this.impactTarget) {
@@ -216,8 +225,12 @@ export class Listener {
     const attention =
       c.globalShare * this.attentionLevel + (1 - c.globalShare) * this.attentionBands[k]
     const [lo, hi] = c.presenceUnits
-    const presence = (attention * (lo + (hi - lo) * drift)) / this.lengths[k]
-    const depth = c.innerImpactShare + (1 - c.innerImpactShare) * u
-    return Math.min(c.maxPerEnd, presence + this.impactLevel * depth)
+    const length = this.lengths[k]
+    const presenceUnits = attention * (lo + (hi - lo) * drift)
+    const impactUnits =
+      this.impactLevel *
+      (c.impactFixedShare * c.impactUnits + (1 - c.impactFixedShare) * c.impactFraction * length)
+    const cap = k === 0 ? 2 * c.maxPerEnd : c.maxPerEnd // the spine has one moving end
+    return Math.min(cap, (presenceUnits + impactUnits) / length)
   }
 }
