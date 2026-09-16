@@ -1,9 +1,9 @@
 # Handoff: SEC-2 completed and rebased — Fable review request
 
 > **Document:** `.handoff/HANDOFF-SEC-2-COMPLETION-2026-09-15.md`
-> **Status:** Reviewed. A Fable pass found the §3 fix had left its own class open one level deeper, and closed it (§5a). Every §6 adjudication is decided except the one founder ruling, and one list needs a yes.
+> **Status:** Reviewed and ruled. The Fable pass closed the class §5a describes; the founder ruled B on the terminal ask and it is landed end to end — backend, frontend, code-block pre-flight (§4b, §6). What remains for the founder is the nine table entries and the research doc's questions.
 > **Date:** 2026-09-15
-> **Branch:** `fix/sec-2-readonly-lane`, worktree `.claude/worktrees/sec-2-lane`. Thirteen commits on top of `fa6491dc`, which is main's tip and is now on origin. **Not 537 behind — this branch is current.**
+> **Branch:** `fix/sec-2-readonly-lane`, worktree `.claude/worktrees/sec-2-lane`. 19 commits on top of `fa6491dc`, which is main's tip and is now on origin. **Not 537 behind — this branch is current.**
 > **Supersedes:** `.handoff/HANDOFF-SEC-2-READONLY-LANE-REVIEW-2026-09-15.md`, whose §3 table is now closed and whose §3 "double classification" note was wrong in a way that matters (see §4).
 > **Retires:** `worktree-sec-1-one-door`. Do not merge it; see §1.
 
@@ -42,7 +42,7 @@ This is the identical bug `101241da` fixed in `streaming/sandbox.py` — the oth
 
 This reframes the §3 table upward rather than downward: SAFE on a terminal route did not merely skip a prompt, it **skipped the sandbox**. The nineteen entries were exactly the set that escaped both. An unrecognised command was, by comparison, contained.
 
-**This is the one item left for a ruling, not a patch** — see §6.
+**Ruled by the founder 2026-09-16: option B**, and landed across three commits — `ee3d0001` (backend: `_ask_or_refuse` on both doors, 403 on a refused verdict, 428 Precondition Required with the confirmation message on HIGH, `force` on both request models, `/check-safety` answering on the same classifier), `2f435a72` (frontend: a typed `SpawnNeedsConfirmation` in the store, `ApiError` carrying status and detail, the shell launcher's click as its own confirmation, the `/terminal` page printing the ask instead of faking success) and `3fe41c60` (CodeBlock's pre-flight reads `requires_confirmation`). See §6 for what B gates in practice.
 
 ## 5. What was done
 
@@ -88,7 +88,9 @@ Forty-nine tests, both directions. The end-to-end probe after the fix: original 
 
 ## 6. What is left
 
-**Needs a ruling (§4b).** The terminal routes jail rather than ask. Reconcile the two lanes, or state deliberately that the terminal's containment answer is the jail and the ask lives on the agent tool path. Either is defensible; neither is mine to decide, because it changes what a person sees when they type a command. If the ruling is "ask", `check_command_safety`'s fall-through to `SafetyTier.SAFE` is where it starts.
+**Ruled and landed (§4b).** B: the terminal asks on the verdict the agent path asks on.
+
+**What B gates in practice — worth stating plainly.** B gates the two HTTP doors, `/exec` and the command a session is *spawned with*. **Typed input into an open shell does not pass through them**: keystrokes go to `/sessions/{id}/input` → `write_stdin`, and a raw PTY has no classifier. That is correct for a raw-PTY terminal and it is low-friction — for a person in a tile, B's day-to-day effect is that "Open a shell" carries `force` (the click is the confirmation) and nothing else changes. A code block's Run *stages* the command at the prompt (`HostShell.handleRunCommand` dispatches; nothing executes), so the classifier reaches it only through CodeBlock's pre-flight warning — now honest. Gating the *typed line* is a different architecture — Warp's block model, which parses the line before the shell sees it — and is the fork `RESEARCH-PERMISSION-MODELS-2026-09-16.md` §6a names for the founder.
 
 **Open, and larger than this branch.** The sandbox still reaches only `dashboard/routes/terminal.py`. `tools/executor.py` and `streaming/agent_pool.py` never wrap, so "one door" is one door for the terminal routes and not for the agent. Extending it needs its own design for writable paths per tool call.
 
@@ -122,9 +124,22 @@ Five cannot be vouched with any shape the table has, and the reason is worth kno
 - `test_classifier_read_only.py` — **231 passed**, up from 72. The nineteen bypasses, the twenty-six read-only spellings, the twenty-three awkward ones, the four resolution tests, the owner-store ordering, the substitution probes, the pins for the adjudicated carve-outs, and the reviewer pass's forty-nine (the thirteen, `mount` both ways, git's value-taking flags, helm both ways).
 - Related suites (safety, applescript, mcp, skills, sandbox, secrets, terminal, editor, write-paths) — **1583 passed**, one failure, `test_executor_pool.py::test_background_kwarg_accepted`, which fails identically on the merge-base.
 - Full suite vs. a merge-base baseline: see §8.
+- Frontend, after `2f435a72` and `3fe41c60`: **1100 tests in 122 files**, whole suite; `tsc --noEmit` reports only the pre-existing `Onboarding.test.tsx` TS6133.
 - Invocation, from the worktree: `arch -arm64 /Volumes/4TB-BAD/Halbert/.venv/bin/python ./wt_pytest.py <paths>`. Bare `./wt_pytest.py` picks up the system Python, which has no `pytest-asyncio`, and silently skips the async tests.
 
 ## 8. Full-suite result
+
+**After ruling B (`ee3d0001`) — three full runs, because the first differed by one test.**
+
+| | branch, run 1 | branch, run 2 | merge-base `fa6491dc` (saved) | main, re-run |
+|---|---|---|---|---|
+| passed | 9796 | **9797** | 9555 | 9574 |
+| failed | 54 | **53** | 53 | 53 |
+| wall | 5m49s | 6m19s | 6m34s | 6m40s |
+
+Run 2's failure set is **byte-identical to the saved merge-base baseline**, both directions of `comm` empty. The main re-run's set is identical in content — its lines carry a `../../../` prefix because it was launched from the worktree, and that rootdir collected 19 more tests; the apples-to-apples baseline is the saved one.
+
+Run 1 differed by exactly one test: `test_tools_supported.py::TestRegistry::test_a_call_without_tools_leaves_the_registry_alone`, which asserted `model_supports_tools("m:7b") is False` and got `None`. It **passes alone and in its file on both trees**, main passes it three times running, and it passed in branch run 2 and the main re-run — one failure in five full runs across both trees. No commit on this branch touches `model/client.py` or any of the sixteen test files that call into it. Its traceback shows two LLM calls where the mocked flow makes three, and no "rejected tool schemas" warning: the shape of its `requests.post` patch being bypassed under full-suite ordering, with the calls reaching the **live Ollama on this machine** — `localhost:11434` is up and answers `m:7b` with 404, which the client handles as a missing model rather than a tools rejection, so nothing is marked. A pre-existing isolation gap in that test, not a regression from this branch. A test that mocks HTTP should not be able to reach a socket; that is the fix, in its own change.
 
 **After the reviewer pass (`5a40b458`)** — the whole of `halbert_core/tests`, against the same saved merge-base baseline:
 

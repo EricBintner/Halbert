@@ -110,8 +110,11 @@ Status key: `[ ]` not started · `[~]` in progress · `[x]` done, wired and test
       `_wrap_for_execution` were two frameworks; a HIGH verdict on `/exec` meant "run it jailed".
       Now `_ask_or_refuse` mirrors the agent path's contract over HTTP on both doors: refused -> 403,
       HIGH without `force` -> 428 with the confirmation message, resubmit with `force`.
-      `/check-safety` answers on the same classifier. **Backend only** — the frontend does not
-      render the 428 yet; until it does a HIGH command in a terminal tile errors instead of asking.
+      `/check-safety` answers on the same classifier. Frontend landed `2f435a72` (typed ask in
+      the store, `ApiError`, the launcher's click as its own confirmation, `/terminal` prints the ask)
+      and `3fe41c60` (CodeBlock's pre-flight reads `requires_confirmation`). B gates the two HTTP
+      doors; typed input into an open PTY never meets the classifier — a raw PTY has no seam for one.
+      That fork is `RESEARCH-PERMISSION-MODELS-2026-09-16.md` §6a.
       The founder framed the fuller question as research + UI planning: see
       `RESEARCH-PERMISSION-MODELS-2026-09-16.md`.
 

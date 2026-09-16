@@ -90,6 +90,21 @@ Two things, and they point in opposite directions.
 
 **And one thing that is ours alone.** None of the three models *who is speaking*. Halbert is the machine, in a house, with an owner and guests and a restricted role; `RoleGate` tightens the verdict by speaker before anyone is asked. Warp's profile is per-team; ours has to be per-person-in-the-room. Any profile object we build inherits that axis — no borrowed design has it.
 
+## 6a. What ruling B gates in practice — and the fork it exposes
+
+B landed while this document was being written, and wiring its frontend taught something the comparison alone did not.
+
+**B gates the two HTTP doors** — `/exec`, and the command a session is *spawned with*. **It does not, and cannot, gate what a person types into an open shell.** Keystrokes go to `/sessions/{id}/input` → `write_stdin`; a raw PTY has no classifier and no seam to put one in. Nor does it gate a code block's Run, which *stages* the command at the shell prompt for the person to press Enter on — the classifier reaches that only through the pre-flight warning shown before staging. Both are correct consequences of Halbert's terminal being a real PTY, and they are why B's day-to-day effect on a person in a tile is small: "Open a shell" now carries `force` (the click is the confirmation), and nothing else they do changes.
+
+**That is the fork.** The three projects sit on two sides of it:
+
+- **Raw PTY, gate the doors, watch the stream.** Halbert today. The shell is the person's; the machine classifies what *it* is asked to run, and observes what the person runs (the watched-terminal direction). Per-command allow/deny on typed input is not possible here, because the line is never seen before the shell has it.
+- **Block model, gate the line.** Warp. The terminal owns the input line and parses it *before* the shell sees it — which is the only reason Warp's per-command allowlist/denylist can apply to something a person types. cdesktop and open-claude-code never face the question: neither has a terminal a person types into; commands come from the agent.
+
+Choosing the block model is a terminal-architecture decision, not a permissions patch, and it trades away "the shell is yours" for "the machine can ask about what you type." The founder's framing — research and UI planning first — is right precisely because this is the decision underneath the ask.
+
+**Two fail-open instincts found while wiring, both pre-existing.** `CodeBlock`'s safety check is wrapped in `catch { console.warn('Safety check failed, executing anyway') }` — an error reaching the endpoint stages the command. The `/terminal` page turned *any* non-2xx into a yellow "Command would execute: …" or "[Demo mode]" line — a refusal rendered as pretend success. The second is fixed for the 428 case (`2f435a72`); the first is left and named. Both are the "headless = allow" shape §2 warned against, and there may be more; they are worth a sweep.
+
 ## 7. Options, ranked
 
 Recommendations, not a survey. Cheap-and-certain first.
@@ -117,6 +132,7 @@ Recommendations, not a survey. Cheap-and-certain first.
 2. **Is the Profile one object or two?** Autonomy (`observe…orchestrate`) and permissions could be one card or a dial-within-a-profile. Warp fused them; the phrase ceremony argues for keeping autonomy its own step.
 3. **Does a guest ever see the dial?** `RoleGate` already answers what a guest may *do*; whether a guest may *see* what the owner permitted is a new question.
 4. **Options 1–4 now, or wait for 5?** They are independent of it and each removes a real friction today. The recommendation is now.
+5. **Which side of the fork (§6a)?** Raw PTY with the doors gated and the stream watched, or the block model with the typed line gated. Everything in §7 item 5 is buildable on either side; only the block model lets the ask reach what a person types.
 
 ## 9. Verification
 
