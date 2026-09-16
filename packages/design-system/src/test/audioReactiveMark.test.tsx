@@ -603,16 +603,17 @@ describe('AudioReactiveHalbertMark', () => {
       return [lane, (legLen + laneRadius(lane) * theta) / total]
     }
 
-    it('often travels in pairs: a second ball runs in step on the neighbouring line', () => {
-      const rng = vi.spyOn(Math, 'random').mockReturnValue(0.3) // pairs when random < 0.5
+    it('often travels in pairs: a second ball runs in step on some other line', () => {
+      // random 0.2: lane 1, forward, paired; the partner is drawn from the
+      // other free lines, here lane 3 — any line, not just the neighbour
+      const rng = vi.spyOn(Math, 'random').mockReturnValue(0.2)
       try {
         const { container } = render(<AudioReactiveHalbertMark state="thinking" />)
-        pump(20) // ~0.33 s: the pair is under way, the next spawn (~0.38 s) not yet
+        pump(20) // ~0.33 s: the pair is under way, the next spawn (~0.36 s) not yet
         const balls = drawn(container)
         expect(balls.length).toBe(2)
         const [a, b] = balls.map((el) => laneAndProgress(centroid(el.getAttribute('points')!)))
-        expect(new Set([a[0], b[0]]).size).toBe(2) // two different lines
-        expect(Math.abs(a[0] - b[0])).toBe(1) // next to each other
+        expect([a[0], b[0]].sort()).toEqual([1, 3]) // two different lines, not adjacent
         expect(Math.abs(a[1] - b[1])).toBeLessThan(0.03) // and in step
       } finally {
         rng.mockRestore()

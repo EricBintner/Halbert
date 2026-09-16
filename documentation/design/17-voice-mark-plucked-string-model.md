@@ -158,7 +158,7 @@ to the visible part of a withdrawn one.
 | direction | first end → last end only | each ball picks a direction |
 | time to cross a line | 0.9–1.6 s | 0.45–0.8 s; the spine's ball twice as fast |
 | shape | one-sided bend of the path, 7–11 units | symmetric swelling, 8–11 units per side |
-| company | always alone | half the time a second ball runs in step on the neighbouring line: same start, speed and direction (the spine never pairs) |
+| company | always alone | half the time a second ball runs in step on another line, any free one: same start, speed and direction (the spine never pairs) |
 | the spine | like any other line | half the time it crosses and comes straight back |
 
 Two neighbouring balls at the same spot swell at most 22 units into a

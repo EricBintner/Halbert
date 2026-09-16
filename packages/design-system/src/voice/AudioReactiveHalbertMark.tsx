@@ -99,9 +99,9 @@ export const THINKING_BULGES = Object.freeze({
    * neighbouring balls at the same spot must clear the 24-unit brand gap. */
   heightMin: 8,
   heightMax: 11,
-  /** Often a second ball runs in step on the neighbouring line: same start,
-   * same speed, same direction. (The spine keeps its own pace and never
-   * pairs.) */
+  /** Often a second ball runs in step on another line, any of them: same
+   * start, same speed, same direction. (The spine keeps its own pace and
+   * never pairs.) */
   pairProbability: 0.5,
   /** The spine's ball runs this much faster than the others… */
   spineSpeedFactor: 2,
@@ -326,12 +326,11 @@ export const AudioReactiveHalbertMark = React.forwardRef<
           const duration = oneWay * (roundTrip ? 2 : 1)
           e.bulges.push({ tine: pick, start: t, duration, height, forward, roundTrip })
           if (paired) {
-            // a partner on the neighbouring line, in step: the line outside
-            // first, the one inside if that is taken (never the spine)
-            const outside = pick + 1 < count && !busy.has(pick + 1) ? pick + 1 : -1
-            const inside = pick - 1 >= 1 && !busy.has(pick - 1) ? pick - 1 : -1
-            const partner = outside >= 0 ? outside : inside
-            if (partner >= 1) {
+            // a partner in step on any other free line (never the spine)
+            const free: number[] = []
+            for (let k = 1; k < count; k++) if (k !== pick && !busy.has(k)) free.push(k)
+            if (free.length > 0) {
+              const partner = free[Math.floor(Math.random() * free.length)]
               e.bulges.push({ tine: partner, start: t, duration, height, forward, roundTrip })
             }
           }
