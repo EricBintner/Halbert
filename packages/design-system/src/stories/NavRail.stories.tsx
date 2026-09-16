@@ -96,7 +96,10 @@ export const SettingsRail: StoryObj<typeof NavRail> = {
     tabMode: true,
     searchable: true,
     searchPlaceholder: 'Filter settings…',
-    header: (
+    /* Footer, not header: this rail is laid over the dashboard rail, and the
+     * dashboard rail's footer holds the settings gear. Same slot on both means
+     * Back lands exactly where the gear was. */
+    footer: (
       <button
         type="button"
         onClick={() => {}}
@@ -107,6 +110,7 @@ export const SettingsRail: StoryObj<typeof NavRail> = {
           width: '100%',
           padding: 'var(--space-2) var(--space-3)',
           border: 'none',
+          borderRadius: 'var(--radius-md)',
           background: 'none',
           color: 'var(--color-ink-secondary)',
           fontFamily: 'var(--font-sans)',
@@ -139,49 +143,117 @@ export const SettingsRail: StoryObj<typeof NavRail> = {
   ),
 }
 
-export const SideBySide: StoryObj = {
-  render: () => (
-    <>
-      <Note>
-        The dashboard rail (left) and the settings rail (right) are the same component.
-        Section labels, item type, weight, tracking, spacing, active treatment and icon
-        colour all come from one stylesheet, so they cannot drift.
-      </Note>
-      <div style={{ height: '60vh', display: 'flex', border: '1px solid var(--color-line)', borderRadius: 'var(--radius-lg)', overflow: 'hidden' }}>
-        <NavRail
-          sections={dashboardSections}
-          activeId="dashboard"
-          onSelect={() => {}}
-        />
-        <NavRail
-          sections={[
-            {
-              id: 'personality',
-              label: 'Personality',
-              items: [{ id: 'being', label: 'Identity & Voice', icon: GearIcon }],
-            },
-            {
-              id: 'intelligence',
-              label: 'Intelligence',
-              items: [
-                { id: 'ai', label: 'Models & Providers', icon: GearIcon },
-                { id: 'knowledge', label: 'Knowledge', icon: GearIcon },
-              ],
-            },
-          ]}
-          activeId="being"
-          tabMode
-          searchable
-          searchPlaceholder="Filter settings…"
-          header={
-            <button type="button" onClick={() => {}} style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', width: '100%', padding: 'var(--space-2) var(--space-3)', border: 'none', background: 'none', color: 'var(--color-ink-secondary)', fontFamily: 'var(--font-sans)', fontSize: 12, fontWeight: 500, cursor: 'pointer' }}>
-              <ArrowLeftIcon className="hb-navrail__icon" />
-              Back
-            </button>
-          }
-          onSelect={() => {}}
-        />
-      </div>
-    </>
-  ),
+const railButtonStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 'var(--space-2)',
+  width: '100%',
+  padding: 'var(--space-2) var(--space-3)',
+  border: 'none',
+  borderRadius: 'var(--radius-md)',
+  background: 'none',
+  color: 'var(--color-ink-secondary)',
+  fontFamily: 'var(--font-sans)',
+  fontSize: 12,
+  fontWeight: 500,
+  cursor: 'pointer',
+}
+
+const settingsSections: NavRailSection[] = [
+  {
+    id: 'personality',
+    label: 'Personality',
+    items: [{ id: 'being', label: 'Identity & Voice', icon: GearIcon }],
+  },
+  {
+    id: 'intelligence',
+    label: 'Intelligence',
+    items: [
+      { id: 'ai', label: 'Models & Providers', icon: GearIcon },
+      { id: 'knowledge', label: 'Knowledge', icon: GearIcon },
+    ],
+  },
+]
+
+/**
+ * Settings does not sit beside the dashboard rail — it is laid over it.
+ *
+ * Toggle the story to watch the swap: the settings rail comes down on top of
+ * the dashboard rail, and because both rails put their exit control in the
+ * footer slot, the gear and Back occupy the same pixel.
+ */
+export const SettingsOverlay: StoryObj = {
+  render: function SettingsOverlayStory() {
+    const [open, setOpen] = React.useState(true)
+    return (
+      <>
+        <Note>
+          The settings rail is laid <strong>over</strong> the dashboard rail, not beside it —
+          one column, not two. Both rails put their exit control in the same{' '}
+          <code>footer</code> slot, so the gear that opens settings and the Back that
+          closes it land on the same pixel and the change reads as one surface flipping.
+        </Note>
+        <div
+          style={{
+            position: 'relative',
+            /* Tall enough that both rails show their whole item list; the
+             * point of the story is the overlay, and a rail cropped to two
+             * rows undersells it. */
+            height: 440,
+            display: 'flex',
+            border: '1px solid var(--color-line)',
+            borderRadius: 'var(--radius-lg)',
+            overflow: 'hidden',
+          }}
+        >
+          <NavRail
+            sections={dashboardSections}
+            activeId="dashboard"
+            onSelect={() => {}}
+            footer={
+              <button type="button" style={railButtonStyle} onClick={() => setOpen(true)}>
+                <GearIcon className="hb-navrail__icon" />
+                Settings
+              </button>
+            }
+          />
+
+          <div style={{ flex: 1, padding: 'var(--space-6)', background: 'var(--color-surface)' }}>
+            <Note>The dashboard underneath.</Note>
+          </div>
+
+          {open && (
+            <div
+              style={{
+                position: 'absolute',
+                inset: 0,
+                zIndex: 20,
+                display: 'flex',
+                overflow: 'hidden',
+                background: 'var(--color-surface)',
+              }}
+            >
+              <NavRail
+                sections={settingsSections}
+                activeId="being"
+                tabMode
+                searchable
+                searchPlaceholder="Filter settings…"
+                onSelect={() => {}}
+                footer={
+                  <button type="button" style={railButtonStyle} onClick={() => setOpen(false)}>
+                    <ArrowLeftIcon className="hb-navrail__icon" />
+                    Back
+                  </button>
+                }
+              />
+              <div style={{ flex: 1, padding: 'var(--space-6)' }}>
+                <Note>Settings, over the top. The conversation panel beside it is untouched.</Note>
+              </div>
+            </div>
+          )}
+        </div>
+      </>
+    )
+  },
 }

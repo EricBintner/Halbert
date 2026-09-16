@@ -98,4 +98,31 @@ describe('NavRail', () => {
     expect(screen.queryByRole('tab')).not.toBeInTheDocument()
     expect(screen.getByRole('navigation', { name: 'Settings sections' })).toBeInTheDocument()
   })
+
+  it('renders a footer slot after the sections', () => {
+    const { container } = render(
+      <NavRail
+        sections={sections}
+        activeId="a"
+        onSelect={vi.fn()}
+        footer={<button type="button">Settings</button>}
+      />,
+    )
+    const footer = container.querySelector('.hb-navrail__footer')
+    expect(footer).not.toBeNull()
+    expect(footer).toContainElement(screen.getByRole('button', { name: 'Settings' }))
+
+    // Order matters: the footer is the rail's last child, so it lands at the
+    // bottom. The dashboard rail's gear and the settings rail's Back both sit
+    // here, and the settings rail is laid over the dashboard rail — so the
+    // control that opens settings and the one that closes it occupy the same
+    // spot. That only holds while this slot stays last.
+    const rail = container.querySelector('.hb-navrail')!
+    expect(rail.lastElementChild).toBe(footer)
+  })
+
+  it('omits the footer element entirely when no footer is passed', () => {
+    const { container } = render(<NavRail sections={sections} activeId="a" onSelect={vi.fn()} />)
+    expect(container.querySelector('.hb-navrail__footer')).toBeNull()
+  })
 })

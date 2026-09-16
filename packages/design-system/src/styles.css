@@ -824,7 +824,11 @@
   flex-shrink: 0;
   border-right: 1px solid var(--color-line);
   background-color: var(--color-canvas);
-  overflow-y: auto;
+  /* The rail itself does not scroll; its section list does (below). Scrolling
+   * the whole rail would carry the footer control off-screen once a rail has
+   * enough items to overflow — and the footer is where the control that
+   * leaves the rail lives, so it has to stay reachable. */
+  overflow: hidden;
   padding: var(--space-4) var(--space-3);
   display: flex;
   flex-direction: column;
@@ -872,6 +876,18 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-5);
+  /* Takes the slack, so a footer is pinned to the bottom of the rail whether
+   * the list is two items or twenty. min-height:0 is what lets a flex child
+   * actually shrink below its content height and scroll. */
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.hb-navrail__footer {
+  flex-shrink: 0;
+  border-top: 1px solid var(--color-line);
+  padding-top: var(--space-3);
 }
 
 .hb-navrail__section {

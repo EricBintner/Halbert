@@ -317,8 +317,9 @@ export function Layout({ children }: { children: React.ReactNode }) {
   }, [isVoiceRoute, isVoice, enterVoice, exitVoice])
 
   const openSettings = useCallback(() => {
-    // Settings renders in the center panel. Keep the conversation visible
-    // (right panel) so the user can ask Halbert for help while configuring.
+    // Settings is laid over the rail and centre panel, not rendered beside
+    // them. The conversation (right panel) stays visible on purpose, so the
+    // user can ask Halbert for help while configuring.
     setMode('both')
     navigate('/settings')
   }, [navigate, setMode])
@@ -636,20 +637,6 @@ export function Layout({ children }: { children: React.ReactNode }) {
             )}
           </Button>
 
-          {/* Settings entry — top-right corner, always present in both modes.
-           * Not a dashboard tab: it overtakes the shell, so the gear is the
-           * only way in. About, Legal Notices, and Developer Tools all live
-           * inside the Settings page now. */}
-          <Button
-            variant={isSettingsRoute ? 'default' : 'ghost'}
-            size="icon"
-            className="h-7 w-7"
-            onClick={openSettings}
-            title="Settings"
-            aria-label="Open settings"
-          >
-            <SettingsIcon className="h-4 w-4" />
-          </Button>
         </header>
       )}
 
@@ -681,35 +668,65 @@ export function Layout({ children }: { children: React.ReactNode }) {
           children
         ) : (
           <div className="flex h-full overflow-hidden">
-            {/* Navigation rail — always present (not togglable in this phase).
-             * Shared NavRail component, identical typography to the settings
-             * rail by construction. */}
-            <NavRail
-              sections={filteredSections as NavRailSection[]}
-              activeId={location.pathname}
-              onSelect={handleNavSelect}
-              header={<EntityNodeBlock />}
-            />
+            {/* Rail + center, wrapped so Settings can be laid over both of
+             * them without touching the conversation panel beside it.
+             *
+             * The wrapper takes the slack whenever there is a center to show
+             * (or a Settings overlay to size), and collapses to the rail's own
+             * width otherwise — which is exactly the geometry the rail and
+             * center had as direct children, so the conversation panel's
+             * w-[40%] / flex-1 behaviour is unchanged. */}
+            <div className={cn(
+              'relative flex overflow-hidden',
+              centerVisible || isSettingsRoute ? 'flex-1 min-w-0' : 'flex-shrink-0',
+            )}>
+              {/* Navigation rail — always present (not togglable in this phase).
+               * Shared NavRail component, identical typography to the settings
+               * rail by construction. The gear sits in the rail's footer so it
+               * lands on the same pixel as the settings rail's Back button,
+               * which overlays it. */}
+              <NavRail
+                sections={filteredSections as NavRailSection[]}
+                activeId={location.pathname}
+                onSelect={handleNavSelect}
+                header={<EntityNodeBlock />}
+                footer={
+                  <button
+                    type="button"
+                    onClick={openSettings}
+                    className="flex items-center gap-2.5 w-full px-3 py-2 rounded-md text-xs font-medium text-muted-foreground hover:bg-muted/40 hover:text-foreground transition-all"
+                    aria-label="Open settings"
+                  >
+                    <SettingsIcon className="h-4 w-4 shrink-0" />
+                    Settings
+                  </button>
+                }
+              />
 
-            {/* Center panel — the active page / Settings. Hidden when the
-             * user focuses on the conversation (Host Focus state). Settings
-             * needs the full center panel width (it has its own sub-rail),
-             * so it skips the padded max-width wrapper. */}
-            {centerVisible && (
-              <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
-                {isSettingsRoute ? (
-                  <div className="flex-1 overflow-hidden">
-                    {configEditor ?? children}
-                  </div>
-                ) : (
+              {/* Center panel — the active page. Hidden when the user focuses
+               * on the conversation (Host Focus state), and skipped entirely
+               * while Settings is up, since the overlay covers it. */}
+              {centerVisible && !isSettingsRoute && (
+                <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
                   <main className="flex-1 p-6 md:p-8 overflow-auto relative z-0">
                     <div className="max-w-6xl mx-auto w-full">
                       {configEditor ?? children}
                     </div>
                   </main>
-                )}
-              </div>
-            )}
+                </div>
+              )}
+
+              {/* Settings — laid over the rail and the center rather than
+               * sitting beside them, so its own rail comes down on top of the
+               * dashboard rail instead of forming a second column. This is what
+               * the gear's old comment already claimed ("it overtakes the
+               * shell") and what the implementation never did. */}
+              {isSettingsRoute && (
+                <div className="absolute inset-0 z-20 flex overflow-hidden bg-background">
+                  {configEditor ?? children}
+                </div>
+              )}
+            </div>
 
             {/* Right panel — the conversation (HostShell). Hidden when the
              * user focuses on the dashboard (Dashboard Focus state). When

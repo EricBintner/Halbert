@@ -757,10 +757,10 @@ export function Settings() {
 
   return (
     <div className="flex h-full overflow-hidden">
-      {/* Settings sub-rail — the same NavRail component the dashboard uses,
-       * rendered inside the center panel as a secondary navigation for the
-       * 12 settings tabs. The dashboard's primary NavRail is already on the
-       * left (provided by Layout.tsx); this sits to its right. */}
+      {/* Settings rail — the same NavRail component the dashboard uses.
+       * Layout.tsx lays this whole page over the rail and centre panel, so
+       * this rail covers the dashboard rail rather than forming a second
+       * column beside it. */}
       <NavRail
         tabMode
         sections={SETTINGS_SECTIONS as NavRailSection[]}
@@ -768,7 +768,11 @@ export function Settings() {
         onSelect={selectTab}
         searchable
         searchPlaceholder="Filter settings…"
-        header={
+        footer={
+          /* Bottom of the rail, deliberately: this rail is laid over the
+           * dashboard rail, so Back comes down exactly where the settings
+           * gear was. Same slot, same classes, same pixel — opening and
+           * closing settings reads as one surface flipping. */
           <button
             type="button"
             onClick={() => navigate('/')}

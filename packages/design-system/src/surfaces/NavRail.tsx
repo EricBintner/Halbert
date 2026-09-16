@@ -24,6 +24,20 @@ export interface NavRailProps extends Omit<React.HTMLAttributes<HTMLElement>, 't
   onSelect: (id: string) => void
   /** Optional node rendered at the very top — a back button, a brand mark, etc. */
   header?: React.ReactNode
+  /**
+   * Optional node pinned to the bottom of the rail — the control that leaves
+   * this rail for another one.
+   *
+   * The dashboard rail puts the settings gear here; the settings rail puts
+   * Back here. Because Settings overlays the dashboard rail rather than
+   * sitting beside it, the two controls land on the same pixel, so opening
+   * and closing settings reads as one surface flipping rather than two
+   * surfaces appearing. That only holds while both rails position the
+   * control identically — which is what this slot is for, and is the same
+   * reason the typography lives in this component rather than in two
+   * copy-pasted class strings.
+   */
+  footer?: React.ReactNode
   /** Renders a filter input below the header. Filtering is handled internally. */
   searchable?: boolean
   searchPlaceholder?: string
@@ -63,6 +77,7 @@ export const NavRail = React.forwardRef<HTMLElement, NavRailProps>(function NavR
     activeId,
     onSelect,
     header,
+    footer,
     searchable = false,
     searchPlaceholder = 'Filter…',
     tabMode = false,
@@ -153,6 +168,8 @@ export const NavRail = React.forwardRef<HTMLElement, NavRailProps>(function NavR
           </div>
         ))}
       </div>
+
+      {footer && <div className="hb-navrail__footer">{footer}</div>}
     </nav>
   )
 })
