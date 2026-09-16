@@ -479,3 +479,37 @@ class TestSubverbsSurviveTheAwkwardSpellings:
     @pytest.mark.parametrize("command", ["date -s '2020-01-01'", "date --set=x"])
     def test_setting_the_clock_by_flag_is_gated_too(self, command):
         assert _gated(_classify(command)), command
+
+
+class TestTheOwnerStoreCannotVouchTheUnvouchable:
+    """`_owner_vouched` sits between the CRITICAL gates and the HIGH rules.
+
+    That position is the whole contract: the store exists so "always allow
+    `systemctl restart`" retires a prompt forever, and it must not become a
+    way to retire a prompt that is not the owner's to retire. Pinned because
+    moving the call one block earlier would silently hand it that power.
+    """
+
+    def test_it_retires_a_high_prompt(self):
+        fw = _fw(user_overrides={"systemctl": frozenset({"restart"})})
+        assert not _gated(_classify("systemctl restart nginx", fw=fw))
+
+    @pytest.mark.parametrize("command,override", [
+        ("dd if=/dev/zero of=/dev/sda", {"dd": True}),
+        ("mkfs.ext4 /dev/sda1", {"mkfs.ext4": True}),
+    ])
+    def test_it_cannot_retire_a_critical_verdict(self, command, override):
+        fw = _fw(user_overrides=override)
+        r = _classify(command, fw=fw)
+        assert r.risk_level == RiskLevel.CRITICAL, (command, r)
+
+    def test_it_cannot_retire_a_credential_read(self):
+        """The secret gate is ahead of the store too — stronger than the
+        contract requires, and worth keeping that way."""
+        fw = _fw(user_overrides={"cat": True})
+        r = _classify(f"cat {HOME}/.ssh/id_ed25519", fw=fw)
+        assert _gated(r), r
+
+    def test_a_redirect_is_never_vouched_however_the_store_reads(self):
+        fw = _fw(user_overrides={"echo": True, "tee": True})
+        assert _gated(_classify("echo x > /etc/passwd", fw=fw))
