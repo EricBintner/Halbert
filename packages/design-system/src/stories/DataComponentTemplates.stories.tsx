@@ -31,14 +31,17 @@ const StatusIndicator = ({
   tone: 'nominal' | 'warning' | 'critical' | 'telemetry'
   label: string
 }) => {
+  // Status tones, not data series. The categorical pigments are licensed as
+  // marks at 3:1; this is 11px text, which owes 4.5:1, and the status tokens
+  // are the ones held to that floor.
   const color =
     tone === 'critical'
       ? 'var(--color-status-critical)'
       : tone === 'warning'
-        ? 'var(--color-data-amber)'
+        ? 'var(--color-status-warning)'
         : tone === 'telemetry'
-          ? 'var(--color-data-blue)'
-          : 'var(--color-data-green)'
+          ? 'var(--color-status-telemetry)'
+          : 'var(--color-status-nominal)'
   return (
     <div style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
       <span
@@ -52,10 +55,13 @@ const StatusIndicator = ({
       />
       <span
         style={{
-          fontFamily: 'var(--font-mono)',
+            fontFamily: 'var(--font-mono)',
           fontSize: 11,
           fontWeight: 600,
-          color,
+          // The pip carries the tone as a graphical mark (3:1); the label reads
+          // in ink. 11px chromatic text on a recessed header plate does not
+          // clear 4.5:1, and the word already says which state this is.
+          color: 'var(--color-ink-secondary)',
           letterSpacing: '0.06em',
           textTransform: 'uppercase',
         }}

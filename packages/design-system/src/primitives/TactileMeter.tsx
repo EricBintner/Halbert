@@ -107,12 +107,23 @@ export const TactileMeter = React.forwardRef<HTMLDivElement, TactileMeterProps>(
     className,
     style,
     id,
+    'aria-label': ariaLabel,
+    'aria-labelledby': ariaLabelledBy,
     ...props
   },
   ref,
 ) {
   const meterId = useId(id)
   const labelId = label ? `${meterId}-label` : undefined
+
+  // The name belongs on the node carrying role="meter", not the wrapper the
+  // caller's props spread onto. A caller's explicit name wins; otherwise the
+  // rendered label names it; a meter shown with only an in-bar path — as the
+  // drive cassettes do — would otherwise be announced as a bare number.
+  const describedByLabel = ariaLabelledBy ?? labelId
+  const meterLabel = describedByLabel
+    ? undefined
+    : (ariaLabel ?? (typeof inBarLeft === 'string' ? inBarLeft : 'Gauge reading'))
   const clamped = Math.max(0, Math.min(100, isNaN(value) ? 0 : value))
 
   // Determine tone
@@ -172,7 +183,8 @@ export const TactileMeter = React.forwardRef<HTMLDivElement, TactileMeterProps>(
       <div
         className="hb-tactile-meter__track"
         role="meter"
-        aria-labelledby={labelId}
+        aria-label={meterLabel}
+        aria-labelledby={describedByLabel}
         aria-valuenow={offline ? undefined : clamped}
         aria-valuemin={0}
         aria-valuemax={100}

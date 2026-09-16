@@ -105,6 +105,8 @@ export const SegmentedBar = React.forwardRef<HTMLDivElement, SegmentedBarProps>(
     offline = false,
     className,
     id,
+    'aria-label': ariaLabel,
+    'aria-labelledby': ariaLabelledBy,
     ...props
   },
   ref,
@@ -129,6 +131,11 @@ export const SegmentedBar = React.forwardRef<HTMLDivElement, SegmentedBarProps>(
     return segments.reduce((acc, s) => acc + (isNaN(s.value) ? 0 : Math.max(0, s.value)), 0)
   }, [segments])
 
+  // A meter without an accessible name is announced as a bare number. When the
+  // caller supplies neither, say what the gauge is at minimum: an allocation in
+  // the unit it is measured in.
+  const meterLabel = ariaLabelledBy ? undefined : (ariaLabel ?? `Allocation in ${unit}`)
+
   const effectiveTotal = total != null && total > 0 ? total : sumValues
   const freeValue = Math.max(0, effectiveTotal - sumValues)
   const hasFree = showFreeHeadroom && freeValue > 0.001
@@ -150,6 +157,8 @@ export const SegmentedBar = React.forwardRef<HTMLDivElement, SegmentedBarProps>(
         ref={trackRef}
         className="hb-segmented-bar__track"
         role="meter"
+        aria-label={meterLabel}
+        aria-labelledby={ariaLabelledBy}
         aria-valuenow={offline ? undefined : sumValues}
         aria-valuemin={0}
         aria-valuemax={effectiveTotal}

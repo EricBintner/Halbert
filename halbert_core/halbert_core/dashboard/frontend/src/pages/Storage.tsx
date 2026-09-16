@@ -21,7 +21,7 @@ import { useScan } from '@/contexts/ScanContext'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { TactileMeter, type TactileMeterTone, DataGridRow, DriveCassette, type DrivePartitionItem, StorageTierGroup } from '@halbert/design-system'
+import { TactileMeter, type TactileMeterTone, SegmentedBar, type SegmentItem, DataGridRow, DriveCassette, type DrivePartitionItem, StorageTierGroup } from '@halbert/design-system'
 import { Collapsible } from '@/components/ui/collapsible'
 import { api } from '@/lib/api'
 import { 
@@ -93,6 +93,7 @@ interface StorageItem {
     metadata_profile?: string // btrfs/bcachefs: metadata redundancy profile
     array_members?: ArrayMember[]  // List of member devices
     array_tiers?: Record<string, string[]>  // bcachefs: tier name -> device list
+    allocation?: FilesystemAllocation  // btrfs/bcachefs: data vs metadata vs cached bytes
     tier_targets?: {         // bcachefs/zfs tier target configuration
       foreground?: string    // tier for new writes (cache)
       background?: string    // tier for aged data (storage)
@@ -113,6 +114,23 @@ interface StorageItem {
 }
 
 /** A single filesystem after deduplication */
+/**
+ * The data/metadata/cached split, when the filesystem reports one.
+ *
+ * btrfs and bcachefs allocate separately for file data and for their own index,
+ * and a volume can exhaust one with room to spare in the other. Every field is
+ * optional because absence means unmeasured — a filesystem we could not ask is
+ * not a filesystem holding zero bytes of metadata.
+ */
+export interface FilesystemAllocation {
+  data_bytes?: number
+  metadata_bytes?: number
+  system_bytes?: number
+  cached_bytes?: number
+  total_bytes?: number
+  source?: string
+}
+
 interface FilesystemEntry {
   id: string
   device?: string
@@ -123,6 +141,7 @@ interface FilesystemEntry {
   used: string
   percent: number
   severity: string
+  allocation?: FilesystemAllocation
 }
 
 /** A group of filesystems that share the same physical disk(s) */
@@ -460,6 +479,7 @@ function deduplicateFilesystems(filesystems: StorageItem[]): FilesystemEntry[] {
         used: fs.data.used || '0',
         percent: fs.data.percent || 0,
         severity: fs.severity,
+        allocation: fs.data.allocation || undefined,
       })
     } else {
       // Duplicate found - prefer canonical mount path
@@ -697,6 +717,55 @@ function getShortName(mountpoint: string): string {
   return parts[parts.length - 1] || mountpoint
 }
 
+const GIB = 1024 ** 3
+
+/**
+ * Turn a reported allocation into gauge segments, or null when there is
+ * nothing real to draw.
+ *
+ * Returned in GiB because the gauge labels its own slices and mono digits read
+ * better than a raw byte count. `cached` is kept distinct from `data`: promoted
+ * copies are reclaimable, so folding them into one bar would overstate how full
+ * the volume really is.
+ */
+export function allocationSegments(
+  allocation: FilesystemAllocation | undefined,
+  sizeBytes: number,
+): { segments: SegmentItem[]; total: number } | null {
+  if (!allocation) return null
+
+  const slices: Array<[keyof FilesystemAllocation, string, string, SegmentItem['tone']]> = [
+    ['data_bytes', 'Data', 'Data', 'data-1'],
+    ['metadata_bytes', 'Metadata', 'Meta', 'data-3'],
+    ['cached_bytes', 'Cached', 'Cache', 'data-5'],
+    ['system_bytes', 'System', 'Sys', 'data-6'],
+  ]
+
+  const segments: SegmentItem[] = []
+  for (const [key, label, shortLabel, tone] of slices) {
+    const bytes = allocation[key]
+    if (typeof bytes !== 'number' || bytes <= 0) continue
+    segments.push({
+      id: key,
+      label,
+      shortLabel,
+      value: bytes / GIB,
+      tone,
+      pattern: key === 'metadata_bytes' ? 'hatched' : 'solid',
+    })
+  }
+
+  if (segments.length === 0) return null
+
+  const total = (allocation.total_bytes ?? sizeBytes) / GIB
+  const allocated = segments.reduce((acc, seg) => acc + seg.value, 0)
+  // A total we cannot trust to exceed what is already allocated is worse than
+  // no total: the gauge would render a negative headroom slice.
+  if (!(total > allocated)) return null
+
+  return { segments, total }
+}
+
 /** Two-Tier Vignelli usage row: clean decoupled baseline and 100% full-width meter */
 function FilesystemUsageRow({ 
   fs, 
@@ -714,6 +783,11 @@ function FilesystemUsageRow({
       : fs.severity === 'warning' 
         ? 'warning' 
         : 'telemetry'
+
+  // A filesystem that reports its data/metadata split gets the multi-segment
+  // gauge the spec calls for; one that does not keeps the single calibrated
+  // mark rather than a bar with an invented breakdown behind it.
+  const breakdown = allocationSegments(fs.allocation, parseSizeToBytes(fs.size))
 
   return (
     <DataGridRow
@@ -746,14 +820,27 @@ function FilesystemUsageRow({
         </span>
       }
       meter={
-        <TactileMeter
-          value={fs.percent}
-          tone={tone}
-          size="thick"
-          inBarLeft={fs.mountpoint}
-          ticks={[25, 50, 75, 90]}
-          aria-label={`${shortName} (${fs.mountpoint}) capacity`}
-        />
+        breakdown ? (
+          <SegmentedBar
+            segments={breakdown.segments}
+            total={breakdown.total}
+            unit="GiB"
+            size="thick"
+            showInSegmentLabels
+            showLegend={false}
+            freeHeadroomLabel="Free Headroom"
+            aria-label={`${shortName} (${fs.mountpoint}) allocation`}
+          />
+        ) : (
+          <TactileMeter
+            value={fs.percent}
+            tone={tone}
+            size="thick"
+            inBarLeft={fs.mountpoint}
+            ticks={[25, 50, 75, 90]}
+            aria-label={`${shortName} (${fs.mountpoint}) capacity`}
+          />
+        )
       }
     />
   )

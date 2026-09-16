@@ -222,6 +222,17 @@ FILL_CHECKS = [
     ("--color-ink-on-accent", "--color-accent-strong", AA_TEXT),
     ("--color-ink-on-accent", "--color-accent-hover",  AA_TEXT),
     ("--color-ink-on-accent", "--color-accent-active", AA_TEXT),
+
+    # In-segment gauge labels are set directly on the mark. The mark itself
+    # only owes the 3:1 graphical floor above, but the text laid on it owes
+    # the full 4.5:1 — a pairing the mark's own check cannot see.
+    *[
+        ("--color-ink-on-accent", f"--color-data-{series}", AA_TEXT)
+        for series in (
+            "1", "2", "3", "4", "5", "6",
+            "blue", "amber", "teal", "purple", "green", "orange", "neutral",
+        )
+    ],
 ]
 
 def run_theme(theme: str, tokens: dict[str, str], verbose: bool) -> list[str]:

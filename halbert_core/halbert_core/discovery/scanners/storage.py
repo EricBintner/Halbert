@@ -31,6 +31,42 @@ from ..schema import (
 )
 
 
+_IEC_UNITS = {
+    "B": 1,
+    "KIB": 1024,
+    "MIB": 1024**2,
+    "GIB": 1024**3,
+    "TIB": 1024**4,
+    "PIB": 1024**5,
+}
+
+_IEC_PATTERN = re.compile(r"^([0-9]*\.?[0-9]+)\s*([A-Za-z]*)$")
+
+
+def parse_iec_bytes(text: Optional[str]) -> Optional[int]:
+    """
+    Parse a size as btrfs and bcachefs print it, in bytes.
+
+    Handles '1.40TiB', '176.00KiB', '1.40 TiB' and a bare byte count. Returns
+    None — never 0 — when the text is not a measurement: a filesystem reporting
+    zero metadata and a filesystem we could not ask are different states, and
+    the difference is the whole point of the honesty gate.
+    """
+    if not text:
+        return None
+    match = _IEC_PATTERN.match(text.strip())
+    if not match:
+        return None
+    value, unit = match.groups()
+    multiplier = _IEC_UNITS.get(unit.upper(), 1) if unit else 1
+    if unit and unit.upper() not in _IEC_UNITS:
+        return None
+    try:
+        return int(float(value) * multiplier)
+    except ValueError:
+        return None
+
+
 class StorageScanner(BaseScanner):
     """
     Scanner for storage devices and filesystems.
@@ -394,6 +430,45 @@ class StorageScanner(BaseScanner):
         # Single-disk filesystem
         return {"type": None, "profile": "single", "members": []}
     
+    def _apply_btrfs_fi_df(self, stdout: str, result: dict) -> None:
+        """
+        Read `btrfs fi df` into both the RAID profile and the allocation split.
+
+        Each line reads `Data, RAID0: total=4.00TiB, used=1.40TiB`. The profile
+        tells us how the block group is replicated; the byte figures tell us how
+        close it is to exhaustion, which is a separate way to run out of disk —
+        a volume can be metadata-full with terabytes of data space free.
+        """
+        allocation: dict = {}
+        key_for = {
+            'Data,': 'data',
+            'Metadata,': 'metadata',
+            'System,': 'system',
+        }
+
+        for line in stdout.splitlines():
+            prefix = next((p for p in key_for if line.startswith(p)), None)
+            if prefix is None:
+                continue
+
+            profile = line.split(',')[1].split(':')[0].strip().lower()
+            if prefix == 'Data,':
+                result["profile"] = profile
+                result["data_profile"] = profile
+            elif prefix == 'Metadata,':
+                result["metadata_profile"] = profile
+
+            key = key_for[prefix]
+            for field in ('total', 'used'):
+                match = re.search(rf'\b{field}=([0-9.]+[A-Za-z]*)', line)
+                parsed = parse_iec_bytes(match.group(1)) if match else None
+                if parsed is not None:
+                    allocation[f'{key}_{"bytes" if field == "used" else "total_bytes"}'] = parsed
+
+        if allocation:
+            allocation["source"] = "btrfs fi df"
+            result["allocation"] = allocation
+
     def _scan_btrfs_array(self, mountpoint: str) -> dict:
         """
         Scan btrfs filesystem for all member devices.
@@ -429,14 +504,7 @@ class StorageScanner(BaseScanner):
                 # Metadata, RAID1: total=10.00GiB, used=2.85GiB
                 code2, stdout2, _ = self.run_command(["btrfs", "fi", "df", mountpoint])
                 if code2 == 0:
-                    for line in stdout2.splitlines():
-                        if line.startswith('Data,'):
-                            profile = line.split(',')[1].split(':')[0].strip().lower()
-                            result["profile"] = profile
-                            result["data_profile"] = profile
-                        elif line.startswith('Metadata,'):
-                            meta_profile = line.split(',')[1].split(':')[0].strip().lower()
-                            result["metadata_profile"] = meta_profile
+                    self._apply_btrfs_fi_df(stdout2, result)
                 
                 if result["members"]:
                     return result
@@ -465,17 +533,44 @@ class StorageScanner(BaseScanner):
             # Get profiles from btrfs fi df
             code2, stdout2, _ = self.run_command(["btrfs", "fi", "df", mountpoint])
             if code2 == 0:
-                for line in stdout2.splitlines():
-                    if line.startswith('Data,'):
-                        profile = line.split(',')[1].split(':')[0].strip().lower()
-                        result["profile"] = profile
-                        result["data_profile"] = profile
-                    elif line.startswith('Metadata,'):
-                        meta_profile = line.split(',')[1].split(':')[0].strip().lower()
-                        result["metadata_profile"] = meta_profile
+                self._apply_btrfs_fi_df(stdout2, result)
         
         return result
     
+    def _apply_bcachefs_usage(self, stdout: str, result: dict) -> None:
+        """
+        Read the allocation split out of `bcachefs fs usage`.
+
+        The tool reports a `Data type` table whose rows name what the bytes are
+        for — `user` is the data itself, `btree` is the filesystem's own index,
+        `cached` is promoted copies that are reclaimable rather than spent. A
+        single used-vs-total percentage cannot tell those apart, which is what
+        the multi-segment gauge exists to show.
+        """
+        row_for = {"user": "data_bytes", "btree": "metadata_bytes", "cached": "cached_bytes"}
+        allocation: dict = {}
+
+        for line in stdout.splitlines():
+            stripped = line.strip()
+
+            for header, key in (("Size:", "total_bytes"), ("Used:", "used_bytes")):
+                if stripped.startswith(header):
+                    parsed = parse_iec_bytes(stripped[len(header):].strip())
+                    if parsed is not None:
+                        allocation[key] = parsed
+
+            row = stripped.split(':', 1)
+            if len(row) == 2 and row[0] in row_for:
+                # The byte count is the last column, after the device list.
+                trailing = row[1].split(']')[-1].strip().split()
+                parsed = parse_iec_bytes(trailing[-1]) if trailing else None
+                if parsed is not None:
+                    allocation[row_for[row[0]]] = parsed
+
+        if allocation:
+            allocation["source"] = "bcachefs fs usage"
+            result["allocation"] = allocation
+
     def _scan_bcachefs_array(self, mountpoint: str) -> dict:
         """
         Scan bcachefs filesystem for all member devices with tier roles.
@@ -524,6 +619,7 @@ class StorageScanner(BaseScanner):
         self.logger.debug(f"bcachefs fs usage: code={code}, stdout_len={len(stdout) if stdout else 0}, stderr={stderr[:50] if stderr else ''}")
         
         if code == 0 and stdout.strip():
+            self._apply_bcachefs_usage(stdout, result)
             tiers: dict = {}  # tier_name -> list of devices
             
             for line in stdout.splitlines():
@@ -1057,6 +1153,9 @@ class StorageScanner(BaseScanner):
                     "metadata_profile": array_info.get("metadata_profile"),
                     "array_members": array_info.get("members", []),
                     "array_tiers": array_info.get("tiers", {}),
+                    # Data vs metadata vs cached bytes, when the filesystem
+                    # reports them. Absent means unmeasured, not zero.
+                    "allocation": array_info.get("allocation"),
                     # Tier target configuration (bcachefs/zfs)
                     "tier_targets": array_info.get("targets", {}),
                 },

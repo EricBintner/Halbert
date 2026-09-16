@@ -173,6 +173,38 @@ describe('SegmentedBar', () => {
     expect(container.querySelectorAll('.hb-segmented-bar__segment').length).toBe(0)
   })
 
+  it('names a TactileMeter shown with only an in-bar path', () => {
+    // How the drive cassettes use it: no label column, just the device on the
+    // mark. Without this the meter announces as a bare number.
+    const { container } = render(<TactileMeter value={31} inBarLeft="/dev/nvme0n1" size="thick" />)
+    expect(container.querySelector('[role="meter"]')).toHaveAttribute('aria-label', '/dev/nvme0n1')
+  })
+
+  it('names the meter node itself, not the wrapper around it', () => {
+    // The accessible name has to land on the element carrying role="meter";
+    // on the wrapper a screen reader announces a bare number.
+    const { container, rerender } = render(
+      <SegmentedBar segments={[{ id: 'a', label: 'Data', value: 10 }]} total={20} />
+    )
+
+    const track = container.querySelector('[role="meter"]')!
+    expect(track).toHaveAttribute('aria-label', 'Allocation in GB')
+
+    rerender(
+      <SegmentedBar
+        segments={[{ id: 'a', label: 'Data', value: 10 }]}
+        total={20}
+        aria-label="Root volume allocation"
+      />
+    )
+    expect(container.querySelector('[role="meter"]')).toHaveAttribute(
+      'aria-label',
+      'Root volume allocation',
+    )
+    // And it does not get left behind on the wrapper as a duplicate.
+    expect(container.firstElementChild).not.toHaveAttribute('aria-label')
+  })
+
   it('handles smart tiered label fitting inside segments without clipping', () => {
     const tieredSegments: SegmentItem[] = [
       { id: 'wide', label: 'Primary Core Workload', value: 600, tone: 'data-blue' }, // 60% -> Full
