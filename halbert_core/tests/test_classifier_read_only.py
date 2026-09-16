@@ -436,3 +436,46 @@ class TestTheAdjudicatedCarveOuts:
                         or "write" in line or "dump" in line):
                     writers.append(f"{py.name}: {line.strip()}")
         assert writers == []
+
+
+class TestSubverbsSurviveTheAwkwardSpellings:
+    """SUBVERBS sits after the inert-leading-flag skip, so the shapes that
+    could route around it are the ones with flags in front of the verb, an
+    `=`-joined value, or a flag that takes its value as a separate token.
+    """
+
+    @pytest.mark.parametrize("command", [
+        "git -C /repo branch -D main",
+        "git --git-dir=/r/.git tag v9",
+        "git remote rename a b",
+        "git tag -d v1",
+        "git branch -m old new",
+        "git branch --set-upstream-to=origin/main",
+        "tailscale drive unshare x",
+        "kubectl -n prod get secrets",
+    ])
+    def test_the_effect_is_found_past_the_leading_flags(self, command):
+        assert _gated(_classify(command)), command
+
+    @pytest.mark.parametrize("command", [
+        "git -C /repo branch",
+        "git branch --format=%(refname)",
+        "git remote show origin",
+        "git remote get-url origin",
+        "git tag --list 'v*'",
+        "git diff -M",
+        "tailscale drive",
+        "tailscale drive ls",
+        "date +%Y-%m-%dT%H:%M:%S",
+        "date -d 'yesterday'",
+        "hostname -I",
+        "loginctl show-session 1",
+        "kubectl get pods -n kube-system",
+    ])
+    def test_the_same_shapes_read_only_still_run(self, command):
+        r = _classify(command)
+        assert not _gated(r), (command, r)
+
+    @pytest.mark.parametrize("command", ["date -s '2020-01-01'", "date --set=x"])
+    def test_setting_the_clock_by_flag_is_gated_too(self, command):
+        assert _gated(_classify(command)), command

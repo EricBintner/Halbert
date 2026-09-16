@@ -60,20 +60,45 @@ Status key: `[ ]` not started · `[~]` in progress · `[x]` done, wired and test
 - [x] **Pager escape closed** (not in the audit; `79dca611`). `git log -1` auto-runs at MEDIUM,
       spawns a pager, and the pager executes `$GIT_PAGER` as a shell command. Verified running as
       uid 501 through the real `PTYSession`.
-- [ ] **Deny-by-default classification — DESIGNED AND MEASURED, NOT LANDED.** The plan's
-      `unknown → HIGH` takes the prompt rate on Halbert's own command repertoire from 3.1% to
-      **82.8%**. The allowlist alternative converges to ~11%, but the proposed patch has five live
-      defects. Referred to Fable — see `REVIEW-PACKET-12` §5.1 and `research/sec-2-3/`.
-- [ ] Normalise (expand `~`, `$HOME`, relative) **before** the sensitive-path check
-- [ ] `cwd` classified alongside the command
-- [ ] `find … -exec` no longer SAFE; word boundary on the `ls|dir|find|locate` rule.
-      **Coupled to the default:** 27 of 38 currently-SAFE argv commands (`lspci`, `lsof`,
-      `findmnt`…) are SAFE *only* because the rule is a bare prefix match. Fixing the regex alone
-      pushes them all into the default branch.
-- [ ] Sandbox applied to the agent's own commands, not only the two HTTP routes.
-      **See the seatbelt ruling first** — the proposed profile fails silently (`diskutil list`
-      returns rc=0 and zero bytes), and the *current* one already blocks all network.
-- [ ] `man -P`, `less`/`LESSOPEN` and other read-only binaries that take a program as an argument
+- [x] **Deny-by-default classification — LANDED** (`6d3a4914`, narrowed `b9a03097`). The nine
+      prefix regexes are replaced by `READ_ONLY_COMMANDS`, an exact-name table; an unrecognised
+      command defaults HIGH (ask), not MEDIUM (run silently). **Measured cost: 41 of 262, 15.6%**
+      on the `argv` corpus in `research/sec-2-3/measurement/corpus.json` — not the ~11% the
+      research prototype produced, which had been carried into a comment about a different table.
+      The plan's unallowlisted `unknown → HIGH` measured 82.8% on the same corpus. Owner drains
+      the residual through `<config_dir>/command-allowlist.json` (read in one place, written
+      nowhere agent-side — pinned by a test).
+- [x] Normalise (expand `~`, `$HOME`, relative) **before** the sensitive-path check. All four
+      spellings of `~/.ssh/id_ed25519`, including the quoted `"$HOME/…"`, classify HIGH.
+- [x] `cwd` classified alongside the command — `ls` with `cwd=~/.ssh` elevates, with `cwd=/tmp`
+      does not.
+- [x] **Both sides of the comparison resolve** (`7f10b0e0`). `SENSITIVE_PATHS` was never
+      `realpath`'d while the candidate was, so on macOS `/etc`→`/private/etc` and
+      `/var`→`/private/var` meant those entries matched nothing. Same bug class `101241da` fixed
+      in `streaming/sandbox.py`.
+- [x] `find … -exec` no longer SAFE; the prefix match is gone. `find / -name '*.key' -exec sh -c`
+      and `find . -delete` are HIGH, plain `find . -name x` is SAFE, and the prefix-match victims
+      (`filebeat`, `statistics_upload`, `idle_hack`, `iptables -F`) are all HIGH while `lsof`
+      stays SAFE.
+- [x] `man -P`, `less`/`LESSOPEN` and other read-only binaries that take a program as an argument
+      — the pager hosts are absent from the table entirely; `scutil` joined them (`b9a03097`)
+      because bare it takes `set`/`add` on stdin, which no check on argv can see.
+- [x] **The §3 bypass table closed** (`b9a03097`). Nineteen commands classified SAFE with
+      effectful spellings — `hostname evil`, `timedatectl set-timezone`, `ifconfig en0 down`,
+      `git branch -D`, `tailscale drive share`, `sort -o`, `xxd a b` and the rest. Root cause was
+      structural: a frozenset constrains only the FIRST operand. `SUBVERBS` answers that class.
+      Twenty-six read-only spellings pinned alongside so the narrowing cost nothing.
+- [ ] **Sandbox applied to the agent's own commands, not only the HTTP routes — STILL OPEN.**
+      `_wrap_for_execution` is called from `dashboard/routes/terminal.py` and nowhere else;
+      `tools/executor.py` and `streaming/agent_pool.py` never wrap. The "one door" of `101241da`
+      is one door for the terminal routes, not for the agent.
+- [ ] **Not exercised on Linux.** Every sandbox test monkeypatches `platform.system()`; `bwrap`
+      is absent on this host (macOS, `sandbox-exec` only), so nothing has actually run under
+      bubblewrap.
+- [ ] **The terminal routes jail, they do not ask — needs a ruling.** See
+      `HANDOFF-SEC-2-READONLY-LANE-REVIEW-2026-09-15.md` §"two lanes": `_gate_command` and
+      `_wrap_for_execution` use two different frameworks, and `check_command_safety` falls through
+      to `SafetyTier.SAFE`, so a HIGH verdict on `/exec` means "run it jailed", never "ask".
 
 ### `[~]` SEC-3 · Path containment and the privileged write path — 17 findings (C2 H5 M8 L2)
 - [x] Persona purge traversal closed — a persona is a name that cannot express a path, plus a
