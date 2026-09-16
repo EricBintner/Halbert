@@ -266,7 +266,11 @@ def _platform_sensitive_dirs() -> tuple:
 #
 # Measured against Halbert's own 262-command repertoire -- the `argv` set in
 # ``.handoff/research/sec-2-3/measurement/corpus.json`` -- THIS table prompts
-# on 41 of 262, 15.6%. The plan's unallowlisted `unknown -> HIGH` measured
+# on 37 of 262, of which one is a corpus artefact (a `|` inside a single
+# `--grep` argv element that the corpus flattened and the splitter read as a
+# pipe), so 36 of 262, 13.7%, on the argv Halbert actually issues. It was
+# 41 until `mount` was vouched: sharing.py calls it four times, bare and
+# with `-t`. The plan's unallowlisted `unknown -> HIGH` measured
 # 82.8% on the same corpus, which is not a gate an owner keeps. The ~11% that
 # stood here until 2026-09-15 was the research prototype's number
 # (``measurement/safety.patched.py``), not this table's: re-measure rather
@@ -274,9 +278,26 @@ def _platform_sensitive_dirs() -> tuple:
 # ``user_overrides`` (the "always allow this" store).
 # ---------------------------------------------------------------------------
 
-#: Read-only invocations, keyed on the exact executable name. ``True`` means
-#: the whole binary only observes; a frozenset means only those first
-#: operands do. A command absent from this table is not called safe.
+#: Read-only invocations, keyed on the exact executable name. Three value
+#: shapes, and which one a binary gets is the whole decision:
+#:
+#: * ``True`` -- the binary only observes, whatever follows. Its effectful
+#:   words, if any, are enumerated in EFFECTFUL_ARGS, which scans the whole
+#:   line.
+#: * a frozenset -- a VERB-POSITIONAL binary: the first operand is the verb,
+#:   the binary takes one, and the effect is the verb. Only that operand is
+#:   checked. Anything effectful that a flag could select must be in
+#:   EFFECTFUL_ARGS, or the entry is the wrong shape.
+#: * a dict -- a FLAG-MODED binary: any token can carry the effect
+#:   (`date -u -s`, `hostname -f -b`, `mount -t cifs //srv /mnt`), so every
+#:   token is walked to the end of the line as an allowlist. ``True`` on a
+#:   key consumes one following non-flag value; ``False`` is a bare switch.
+#:   A token that is not a key ends the verdict. This is the shape the
+#:   reviewer pass moved `date`, `hostname`, `mount` and the systemd *ctl
+#:   family to, after finding that a frozenset's unread remainder was the
+#:   same hole as the unread first operand, one level deeper.
+#:
+#: A command absent from this table is not called safe.
 #:
 #: Two deliberate absences:
 #:   * pagers and pager-hosts (``less``, ``more``, ``info``). A pager
@@ -289,7 +310,7 @@ def _platform_sensitive_dirs() -> tuple:
 #:   * ``dscl``: its first argument is a *node selector* (``.``), not a verb --
 #:     ``dscl . -create`` follows the same spelling as ``dscl . -read``. A
 #:     first-argument table cannot express it, so it prompts.
-READ_ONLY_COMMANDS: Dict[str, Union[bool, FrozenSet[str]]] = {
+READ_ONLY_COMMANDS: Dict[str, Union[bool, FrozenSet[str], Dict[str, bool]]] = {
     # coreutils and inspection
     "ls": True, "dir": True, "vdir": True, "cat": True, "head": True,
     "tail": True, "wc": True, "sort": True, "uniq": True, "cut": True,
@@ -303,15 +324,19 @@ READ_ONLY_COMMANDS: Dict[str, Union[bool, FrozenSet[str]]] = {
     "tree": True, "find": True, "locate": True, "pwd": True,
     "whoami": True, "id": True, "groups": True, "who": True, "w": True,
     "last": True, "uname": True,
-    # `hostname <name>` sets it; `date <MMDDhhmm>` sets the clock. Both
-    # report when bare, so the frozenset keeps the reporting spellings and
-    # refuses a bare operand. "+" vouches `date +FORMAT` specifically.
-    "hostname": frozenset({"-f", "--fqdn", "-s", "--short", "-d", "--domain",
-                           "-i", "-I", "--all-ip-addresses", "--all-fqdns",
-                           "-A", "-y", "--yp", "--nis"}),
-    "date": frozenset({"+", "-u", "--utc", "--universal", "-R", "--rfc-2822",
-                       "--rfc-3339", "--iso-8601", "-I", "-r", "-d", "--date",
-                       "-j", "-f", "--file", "--debug", "--reference"}),
+    # `hostname <name>` sets it and `-b`/`-F` set it from a file; `date
+    # <MMDDhhmm>` sets the clock and so does `-s`/`--set` in ANY position
+    # (`date -u -s ...` is real on every Linux target). Flag-moded, so
+    # dicts: every token is read. "+" vouches `date +FORMAT` specifically.
+    "hostname": {"-f": False, "--fqdn": False, "-s": False, "--short": False,
+                 "-d": False, "--domain": False, "-i": False, "-I": False,
+                 "--all-ip-addresses": False, "--all-fqdns": False,
+                 "-A": False, "-y": False, "--yp": False, "--nis": False},
+    "date": {"+": False, "-u": False, "--utc": False, "--universal": False,
+             "-R": False, "--rfc-2822": False, "--rfc-3339": True,
+             "--iso-8601": True, "-I": False, "-r": True, "--reference": True,
+             "-d": True, "--date": True, "-j": False, "-f": True,
+             "--file": True, "--debug": False},
     "uptime": True, "echo": True, "printf": True, "printenv": True,
     "which": True, "whereis": True, "type": True,
     "apropos": True, "whatis": True,
@@ -327,6 +352,12 @@ READ_ONLY_COMMANDS: Dict[str, Union[bool, FrozenSet[str]]] = {
     # hardware and host facts
     "lspci": True, "lsusb": True, "lscpu": True, "lsmod": True,
     "lsblk": True, "findmnt": True, "blkid": True, "dmidecode": True,
+    # `mount` lists when bare or with a type selector, and Halbert's own
+    # sharing.py issues it that way four times; any positional MOUNTS, and
+    # `-a`, `-o`, `--bind`, `--remount` all write. Flag-moded, so a dict:
+    # `-t` consumes its type and nothing else is admitted.
+    "mount": {"-t": True, "--types": True, "-l": False, "-v": False,
+              "--verbose": False, "-V": False, "--version": False},
     "sensors": True, "nvidia-smi": True, "rocm-smi": True,
     "mokutil": True, "sw_vers": True, "system_profiler": True,
     "ioreg": True, "smartctl": True, "kextstat": True, "getenforce": True,
@@ -334,16 +365,29 @@ READ_ONLY_COMMANDS: Dict[str, Union[bool, FrozenSet[str]]] = {
     # The *ctl family reports when bare and writes when given a verb:
     # `timedatectl set-timezone`, `hostnamectl set-hostname`,
     # `localectl set-locale`, `loginctl terminate-session`/`kill-user`.
-    # The bare invocation still runs -- it is the status output.
-    "hostnamectl": frozenset({"status", "show"}),
-    "localectl": frozenset({"status", "list-locales", "list-keymaps",
-                            "list-x11-keymap-models", "list-x11-keymap-layouts",
-                            "list-x11-keymap-variants", "list-x11-keymap-options"}),
-    "timedatectl": frozenset({"status", "show", "list-timezones",
-                              "show-timesync", "timesync-status"}),
-    "loginctl": frozenset({"list-sessions", "list-users", "list-seats",
-                           "show-session", "show-user", "show-seat",
-                           "session-status", "user-status", "seat-status"}),
+    # Dicts, not frozensets: a frozenset would have read the first verb
+    # only, and had nothing in EFFECTFUL_ARGS behind it. The `show-*` and
+    # `*-status` verbs consume one name; `-p`/`--property` consumes one.
+    "hostnamectl": {"status": False, "show": False, "-p": True,
+                    "--property": True, "--static": False,
+                    "--transient": False, "--pretty": False,
+                    "--no-pager": False},
+    "localectl": {"status": False, "list-locales": False,
+                  "list-keymaps": False, "list-x11-keymap-models": False,
+                  "list-x11-keymap-layouts": False,
+                  "list-x11-keymap-variants": True,
+                  "list-x11-keymap-options": False, "--no-pager": False},
+    "timedatectl": {"status": False, "show": False, "list-timezones": False,
+                    "show-timesync": False, "timesync-status": False,
+                    "-p": True, "--property": True, "-a": False,
+                    "--all": False, "--no-pager": False},
+    "loginctl": {"list-sessions": False, "list-users": False,
+                 "list-seats": False, "show-session": True,
+                 "show-user": True, "show-seat": True,
+                 "session-status": True, "user-status": True,
+                 "seat-status": True, "-p": True, "--property": True,
+                 "-a": False, "--all": False, "--no-pager": False,
+                 "--no-legend": False},
     "tlp-stat": True, "lsattr": True, "getfacl": True,
     # network, read-only
     "ping": True, "ping6": True, "traceroute": True, "dig": True,
@@ -592,41 +636,97 @@ INERT_LEADING_FLAGS: Dict[str, Dict[str, bool]] = {
 #: Wrappers whose whole purpose is running something else under an altered
 #: environment. A vouched command reached through one of them is not the
 #: vouched command, so they never enter the read-only lane.
-#: Second-operand vouching. A frozenset entry in READ_ONLY_COMMANDS constrains
-#: only the FIRST operand, so a binary whose effect hides one word further in
-#: rides through on a vouched verb: ``git branch -D``, ``git remote add``,
-#: ``git tag <name>`` and ``tailscale drive share`` all classified SAFE on the
-#: strength of ``branch``/``remote``/``tag``/``drive``. Where a verb appears
-#: here, the token after it must be absent -- the bare verb lists -- or itself
-#: vouched. Listing the read-only spellings rather than the effectful ones is
-#: deliberate: a new subcommand is refused until someone reads it, which is
-#: the same fail direction as the table above.
-SUBVERBS: Dict[str, Dict[str, FrozenSet[str]]] = {
+#: Second-operand vouching. A frozenset entry in READ_ONLY_COMMANDS
+#: constrains only the FIRST operand, so a binary whose effect hides one word
+#: further in rides through on a vouched verb: ``git branch -D``, ``git
+#: remote add``, ``git tag <name>`` and ``tailscale drive share`` all
+#: classified SAFE on the strength of ``branch``/``remote``/``tag``/``drive``.
+#:
+#: Where a verb appears here, EVERY token after it is walked as an allowlist
+#: (the dict shape described above READ_ONLY_COMMANDS: ``True`` consumes one
+#: following non-flag value). The first version of this table checked only
+#: the one token after the verb and returned -- which is how the reviewer
+#: pass got ``git remote -v add evil`` past it, and git, which takes the
+#: first non-option as the subcommand, added the remote. Listing the
+#: read-only spellings rather than the effectful ones is deliberate: a
+#: subcommand nobody has read yet is refused, the same fail direction as the
+#: table above. The flag sets are derived from ``git <verb> -h``.
+SUBVERBS: Dict[str, Dict[str, Dict[str, bool]]] = {
     "git": {
-        "branch": frozenset({
-            "-l", "--list", "-a", "--all", "-r", "--remotes", "-v", "-vv",
-            "--verbose", "--show-current", "--contains", "--no-contains",
-            "--merged", "--no-merged", "--points-at", "--format", "--sort",
-            "--color", "--no-color", "--column",
-        }),
-        # `show` and `get-url` read; `add`, `remove`, `rename`, `set-url`,
-        # `set-head` and `prune` all write .git/config or the remote refs.
-        "remote": frozenset({"-v", "--verbose", "show", "get-url"}),
-        # A bare `git tag <name>` CREATES the tag -- no flag involved, which
-        # is why the effectful spellings cannot be enumerated here.
-        "tag": frozenset({
-            "-l", "--list", "-n", "--contains", "--no-contains", "--points-at",
-            "--merged", "--no-merged", "--format", "--sort", "--column",
-        }),
+        # `--list`/`-l` consume an optional pattern; the query flags each
+        # consume one commit. Absent by design: -d -D -m -M -c -C -f -u
+        # --set-upstream-to --unset-upstream --edit-description -t --track
+        # --create-reflog -- every one of them writes.
+        "branch": {
+            "-l": True, "--list": True, "-a": False, "--all": False,
+            "-r": False, "--remotes": False, "-v": False, "-vv": False,
+            "--verbose": False, "-q": False, "--quiet": False,
+            "--show-current": False, "-i": False, "--ignore-case": False,
+            "--contains": True, "--no-contains": True, "--merged": True,
+            "--no-merged": True, "--points-at": True, "--sort": True,
+            "--format": True, "--color": False, "--no-color": False,
+            "--column": False, "--no-column": False, "--abbrev": True,
+            "--omit-empty": False, "--recurse-submodules": False,
+        },
+        # `show` and `get-url` read and consume a remote name; `add`,
+        # `remove`, `rename`, `set-url`, `set-head` and `prune` write.
+        # `-v` must precede a subcommand (git's own -h says so), which is
+        # exactly why `git remote -v add` is a live spelling.
+        "remote": {"-v": False, "--verbose": False, "show": True,
+                   "get-url": True, "-n": False, "--all": False,
+                   "--push": False},
+        # A bare `git tag <name>` CREATES the tag; a positional is only a
+        # pattern behind `-l`, or a commit behind a query flag. `-n<N>` is
+        # spelled joined and is not admitted; it prompts.
+        "tag": {
+            "-l": True, "--list": True, "-i": False, "--ignore-case": False,
+            "-v": True, "--verify": True, "--contains": True,
+            "--no-contains": True, "--merged": True, "--no-merged": True,
+            "--points-at": True, "--sort": True, "--format": True,
+            "--color": False, "--column": False, "--omit-empty": False,
+        },
     },
     # `tailscale drive share` exports a host directory over Taildrive.
-    "tailscale": {"drive": frozenset({"list", "ls"})},
+    "tailscale": {"drive": {"list": False, "ls": False}},
+    # `helm get` is `kubectl get secrets` by another route. `values` prints
+    # the release's values -- where `--set password=...` lands -- and
+    # `manifest` renders every Secret with its base64 data; `all` is both.
+    # `notes`, `hooks` and `metadata` read nothing secret and stay vouched,
+    # each consuming a release name. Only `get` is narrowed; `helm list`,
+    # `status` and `history` are untouched.
+    "helm": {"get": {"notes": True, "hooks": True, "metadata": True,
+                     "-n": True, "--namespace": True, "--revision": True}},
 }
 
 _WRAPPER_HEADS = frozenset({
     "sudo", "doas", "env", "xargs", "nice", "nohup", "stdbuf", "timeout",
     "command", "builtin", "exec", "chroot", "setsid", "watch", "parallel",
 })
+
+
+def _remainder_vouched(tokens: List[str], table: Dict[str, bool]) -> bool:
+    """Walk EVERY token against an allowlist; the first stranger ends it.
+
+    The one scan behind both dict-shaped entries and SUBVERBS. A key's
+    ``True`` consumes one following value, but only a value that does not
+    start with ``-``: ``git branch --list -D main`` must not let ``--list``
+    swallow ``-D``. An ``=``-joined value (``--sort=-date``) is already
+    attached and consumes nothing. A leading ``+`` is a format spec and is
+    admitted only where the table says so with a literal ``"+"`` key.
+    """
+    i, n = 0, len(tokens)
+    while i < n:
+        tok = tokens[i]
+        if tok.startswith("+") and "+" in table:
+            i += 1
+            continue
+        name, eq, _val = tok.partition("=")
+        if name not in table:
+            return False
+        if table[name] and not eq and i + 1 < n and not tokens[i + 1].startswith("-"):
+            i += 1
+        i += 1
+    return True
 
 
 def _segment_tokens(segment: str) -> Optional[List[str]]:
@@ -1409,6 +1509,10 @@ class ToolSafetyFramework:
         * Pager-hosts (``man``/``less``/``more``) are absent from the table:
           a vouched binary whose arguments (``man -P``) or environment
           (``LESSOPEN``) select a program is not read-only.
+        * Nothing after a vouched token is assumed. A dict-shaped entry and
+          a SUBVERBS verb both hand the REMAINDER of the line to
+          ``_remainder_vouched``; a frozenset entry reads its one verb and
+          relies on EFFECTFUL_ARGS for anything a flag could select.
         """
         tokens = _segment_tokens(segment)
         if not tokens:
@@ -1430,6 +1534,10 @@ class ToolSafetyFramework:
             return False
         if allowed is True:
             return True
+        if isinstance(allowed, dict):
+            # Flag-moded: the effect can sit anywhere, so every token is
+            # read. No inert-flag skip -- the dict IS the whole allowlist.
+            return _remainder_vouched(args, allowed)
         # A frozenset: skip flags this binary may inertly lead with, then the
         # first operand must be one of the vouched verbs. Some binaries spell
         # the verb AS a flag (iptables -L): an unskippable flag that is itself
@@ -1456,8 +1564,10 @@ class ToolSafetyFramework:
             if not (args[i].startswith("+") and "+" in allowed):
                 return False
         sub = SUBVERBS.get(head, {}).get(operand)
-        if sub is not None and i + 1 < len(args):
-            return args[i + 1].partition("=")[0] in sub
+        if sub is not None:
+            # The verb is vouched; nothing after it is assumed. The whole
+            # remainder is walked, not the one token that used to be.
+            return _remainder_vouched(args[i + 1:], sub)
         return True
 
     def _owner_vouched(self, command: str) -> bool:
@@ -1509,7 +1619,7 @@ class ToolSafetyFramework:
         the whole direction of SEC-2: an unrecognised command is not a
         severity claim, it is the classifier declining to vouch -- which is
         what confirmation is for. The measured cost on Halbert's own
-        262-command repertoire is 41 prompts, 15.6%, drainable through the
+        262-command repertoire is 36 prompts, 13.7%, drainable through the
         owner's command-allowlist store. See the lane header for the method.
         """
         command = command.strip()

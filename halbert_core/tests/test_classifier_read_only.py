@@ -560,3 +560,109 @@ class TestTheNewVouchingPathsCannotHostASecondCommand:
     ])
     def test_a_vouched_head_does_not_vouch_the_rest_of_the_line(self, command):
         assert _gated(_classify(command)), command
+
+
+class TestNothingAfterAVouchedTokenIsUnchecked:
+    """The reviewer pass against `b9a03097`, which closed nineteen spellings
+    and left the class open one level deeper.
+
+    A frozenset entry inspected ONE operand and returned; SUBVERBS inspected
+    ONE token after the verb and returned. Everything later on the line was
+    unread. The `EFFECTFUL_ARGS`-backed entries were immune because that
+    table scans the whole line -- which is the diagnosis and the fix: a
+    vouched binary's remaining tokens are an allowlist walked to the end,
+    not a first word checked and the rest assumed.
+
+    Two of these were confirmed against a real git in a scratch repo:
+    `git remote -v add` added the remote (git takes the first non-option as
+    the subcommand, so `-v` is just verbose) and `git branch -v -m` renamed
+    the branch. `date -u -s` is real on every Linux target.
+    """
+
+    @pytest.mark.parametrize("command", [
+        # frozenset entries: an effectful flag behind a vouched one
+        "date +%s -s 2020-01-01",
+        "date -u -s 2020-01-01",
+        "date -u --set=2020-01-01",
+        "hostname -f -b",
+        "hostname -f -F /tmp/h",
+        "hostname -s -b evil",
+        "timedatectl status set-timezone UTC",
+        "loginctl list-sessions kill-user 501",
+        # SUBVERBS: an effectful token behind a vouched one
+        "git remote -v add evil https://x",       # confirmed: adds the remote
+        "git branch -v -m victim renamed",        # confirmed: renames it
+        "git branch --list -D main",
+        "git branch -a -D main",
+        "git branch --contains abc -D main",
+        "git tag -l -d v1",
+        "tailscale drive list share x y",
+        # mount: absent from the table, and its positional MOUNTS
+        "mount //srv/share /mnt",
+        "mount -t cifs //srv/share /mnt",
+        "mount -a",
+        "mount -o remount,rw /",
+    ])
+    def test_the_whole_remainder_is_read(self, command):
+        assert _gated(_classify(command)), command
+
+    @pytest.mark.parametrize("command", [
+        # value-taking flags, derived from `git branch -h` / `git tag -h`
+        "git branch --contains abc123",
+        "git branch --merged main",
+        "git branch --list 'feat/*'",
+        "git branch -l",
+        "git branch -vv",
+        "git branch --sort=-committerdate",
+        "git tag --contains abc123",
+        "git tag -l 'v*'",
+        "git tag --points-at HEAD",
+        "git remote show origin",
+        "git remote show origin -n",
+        "git remote get-url origin",
+        # the shapes the table already vouched must survive the rewrite
+        "date -d yesterday",
+        "date -u +%s",
+        "loginctl show-session 1",
+        "loginctl show-user 501",
+        # mount: bare and with a type selector LISTS -- Halbert's own
+        # sharing.py issues these four times
+        "mount",
+        "mount -t cifs",
+        "mount -t nfs,nfs4",
+        "mount -l",
+    ])
+    def test_the_read_only_remainder_still_runs(self, command):
+        r = _classify(command)
+        assert not _gated(r), (command, r)
+
+
+class TestHelmGetIsTheSameShapeAsKubectlSecrets:
+    """The one adjudication the completion handoff deferred. Decided here
+    rather than re-deferred: `helm get values` prints the release's values,
+    which is where `--set password=...` lands; `helm get manifest` renders
+    every Secret with its base64 `data:`; `helm get all` is both. None has
+    a filename for the path-based gates to see. `notes` and `hooks` read
+    nothing secret and stay vouched, as does everything else `helm` lists.
+    """
+
+    @pytest.mark.parametrize("command", [
+        "helm get values my-release",
+        "helm get manifest my-release",
+        "helm get all my-release",
+        "helm get values my-release -n prod",
+    ])
+    def test_the_disclosing_subcommands_are_not_vouched(self, command):
+        assert _gated(_classify(command)), command
+
+    @pytest.mark.parametrize("command", [
+        "helm get notes my-release",
+        "helm get hooks my-release",
+        "helm list",
+        "helm ls -A",
+        "helm status my-release",
+        "helm history my-release",
+    ])
+    def test_the_rest_of_helm_still_runs(self, command):
+        r = _classify(command)
+        assert not _gated(r), (command, r)
