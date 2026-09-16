@@ -38,17 +38,23 @@ export const Headline = ({
     sm: 'text-[clamp(1.25rem,2.2vw,1.8em)] lg:text-[1.8em]',
   }[size] || '';
   // Phones: the 36px floor wraps long lines to 3 each in a half-width column,
-  // blowing the top field's budget. The phone step also carries a vh term so
-  // short viewports (SE-class heights, Safari's insecure-connection banner
-  // stealing height) scale the type down with the field. The caps keep every
-  // viewport >= ~812px at full size; >=640px wide is untouched entirely.
+  // blowing the top field's budget. The phone step carries a vh term so short
+  // viewports (SE-class heights, Safari's insecure-connection banner stealing
+  // height) scale the type down with the field. Tall phones have room to
+  // spare, so both the preferred term and the ceiling gain a width-scaled
+  // bonus — gated by max(0px, min(w-term, 100vh - 812px)), which is exactly
+  // zero on any viewport up to 812px tall: SE, banner-compromised and
+  // standard iPhone sizes keep the collision-safe sizes verified for them, by
+  // construction; Pro/Pro Max sizes grow with width (1.2–2vw) as well as
+  // height. No multiplication — max/min/addition only, valid CSS calc.
   // md runs only on the full-mark reveal stop, whose band is full-width and
   // centered — not a half column — so it carries more size than lg/xl.
+  // >=640px wide is untouched entirely.
   const phone = {
-    xl: 'max-sm:text-[clamp(1.6rem,4.2vh,2.4rem)]',
-    lg: 'max-sm:text-[clamp(1.3rem,3.7vh,1.9rem)]',
-    md: 'max-sm:text-[clamp(1.25rem,4vh,1.85rem)]',
-    sm: 'max-sm:text-[clamp(1.05rem,2.8vh,1.35rem)]',
+    xl: 'max-sm:text-[clamp(1.6rem,calc(4.2vh+max(0px,min(1.5vw,100vh_-_812px))),calc(2.4rem+max(0px,min(2vw,100vh_-_812px))))]',
+    lg: 'max-sm:text-[clamp(1.3rem,calc(3.7vh+max(0px,min(1.2vw,100vh_-_812px))),calc(1.9rem+max(0px,min(1.8vw,100vh_-_812px))))]',
+    md: 'max-sm:text-[clamp(1.25rem,calc(4vh+max(0px,min(1.2vw,100vh_-_812px))),calc(1.85rem+max(0px,min(1.8vw,100vh_-_812px))))]',
+    sm: 'max-sm:text-[clamp(1.05rem,calc(2.8vh+max(0px,min(1vw,100vh_-_812px))),calc(1.35rem+max(0px,min(1.5vw,100vh_-_812px))))]',
   }[size] || '';
   return <h2 className={`font-display tracking-tight ${weight} ${leading} ${cls} ${phone} ${className}`} style={style}>{children}</h2>;
 };
