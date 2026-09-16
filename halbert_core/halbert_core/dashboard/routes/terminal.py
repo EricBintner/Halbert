@@ -38,7 +38,6 @@ from ...streaming.session_manager import (
     get_terminal_manager, AtCapacityError,
 )
 from ...streaming.bounded_output import BoundedOutput
-from ...streaming.sandbox import Sandbox
 from ...streaming.injection_check import (
     is_blocked, uses_elevation, check_injection, worst_severity,
     InjectionSeverity,
@@ -242,6 +241,42 @@ def _gate_command(command: str) -> tuple[SafetyTier, str, str, Optional[str]]:
     return tier, warning, suggestion, None
 
 
+def _wrap_for_execution(command: str, writable_paths=None, cwd=None) -> "tuple[str, bool]":
+    """Sandbox a command iff the classifier does not vouch it read-only.
+
+    The lanes are complementary, not stacked: commands the safety framework
+    vouches as observation (SAFE/LOW) run bare — that is what vetting bought —
+    and everything else runs under the platform sandbox. Stacking both on the
+    same commands pays both costs to gain nothing on the overlap, and some
+    binaries (ps/top are setuid) physically cannot run under seatbelt.
+
+    Raises SandboxUnavailable when a jail is needed and cannot be built,
+    unless the operator has opted this host into an uncontained terminal in
+    being.yml (`capabilities.terminal_unsandboxed: true`). The routes turn
+    the raise into a loud 503; the degraded path logs on every run.
+    """
+    from ...capabilities import CAP_TERMINAL_UNSANDBOXED, has_capability
+    from ...streaming.sandbox import Sandbox, SandboxUnavailable
+    from ...tools.safety import RiskLevel, ToolSafetyFramework
+
+    verdict = ToolSafetyFramework().classify(
+        "run_command", {"command": command, "cwd": cwd}
+    )
+    if verdict.risk_level in (RiskLevel.SAFE, RiskLevel.LOW):
+        return command, False
+    try:
+        return Sandbox().wrap_command(command, writable_paths=writable_paths), True
+    except SandboxUnavailable as e:
+        if not has_capability(CAP_TERMINAL_UNSANDBOXED):
+            raise
+        logger.warning(
+            "running uncontained (%s) — consented via being.yml "
+            "capabilities.terminal_unsandboxed: %s",
+            e.error_type, command[:80],
+        )
+        return command, False
+
+
 if FASTAPI_AVAILABLE:
 
     @router.post("/exec", response_model=CommandResponse)
@@ -263,10 +298,14 @@ if FASTAPI_AVAILABLE:
         if blocked:
             raise HTTPException(403, blocked)
 
-        # Wrap with the platform sandbox (no-op if unavailable)
-        sandbox = Sandbox()
+        # The classifier's lane decision: vetted observation runs bare,
+        # anything else runs jailed; no jail on this host is a loud 503.
+        from ...streaming.sandbox import SandboxUnavailable
         writable = [request.cwd] if request.cwd else None
-        wrapped = sandbox.wrap_command(command, writable_paths=writable)
+        try:
+            wrapped, _sandboxed = _wrap_for_execution(command, writable_paths=writable, cwd=request.cwd)
+        except SandboxUnavailable as e:
+            raise HTTPException(503, f"Refusing to run uncontained: {e}")
 
         manager = get_terminal_manager()
         try:
@@ -328,8 +367,13 @@ if FASTAPI_AVAILABLE:
         if blocked:
             raise HTTPException(403, blocked)
 
-        sandbox = Sandbox()
-        wrapped = sandbox.wrap_command(command, writable_paths=request.writable_paths)
+        from ...streaming.sandbox import SandboxUnavailable
+        try:
+            wrapped, sandboxed = _wrap_for_execution(
+                command, writable_paths=request.writable_paths, cwd=request.cwd
+            )
+        except SandboxUnavailable as e:
+            raise HTTPException(503, f"Refusing to run uncontained: {e}")
         manager = get_terminal_manager()
         try:
             session_id = await manager.spawn(
@@ -345,7 +389,7 @@ if FASTAPI_AVAILABLE:
             session_id=session_id,
             pid=session.pid,
             command=command,
-            sandboxed=(wrapped != command),
+            sandboxed=sandboxed,
         )
 
     @router.get("/sessions")

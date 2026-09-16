@@ -57,6 +57,12 @@ Capabilities:
                        mcp_config.yml is empty, so the capability is
                        inert until a server is configured; a server
                        that is down simply contributes no tools.
+  terminal_unsandboxed — the terminal may run commands WITHOUT the
+                       platform sandbox on a host that has no sandbox
+                       binary. Override-only: no preset grants it and no
+                       probe sets it, because the fail direction is the
+                       point — without it the routes 503 rather than run
+                       a command uncontained.
 
 Design:
 - Probes are cheap (config checks, file existence, not network probes).
@@ -92,6 +98,11 @@ CAP_AUDIO = "audio"
 CAP_WEB = "web"
 CAP_APPLESCRIPT = "applescript"
 CAP_MCP_CLIENT = "mcp_client"
+#: May the terminal run commands WITHOUT the platform sandbox when the host
+#: has no sandbox binary? Override-only: no preset grants it, no probe sets
+#: it, and every uncontained run logs a warning (the spawn response carries
+#: sandboxed=false for the UI as well). Without it the routes 503.
+CAP_TERMINAL_UNSANDBOXED = "terminal_unsandboxed"
 
 ALL_CAPABILITIES: Set[str] = {
     CAP_TERMINAL,
@@ -108,6 +119,7 @@ ALL_CAPABILITIES: Set[str] = {
     CAP_WEB,
     CAP_APPLESCRIPT,
     CAP_MCP_CLIENT,
+    CAP_TERMINAL_UNSANDBOXED,
 }
 
 # ---------------------------------------------------------------------------
@@ -136,6 +148,7 @@ _PRESET_SYSADMIN: Dict[str, bool] = {
     # per-server safety classification (B3) still gates what those tools
     # may do once bridged.
     CAP_MCP_CLIENT: True,
+    CAP_TERMINAL_UNSANDBOXED: False,  # override-only: jail-less terminal needs a deliberate being.yml line
 }
 
 _PRESET_HOME: Dict[str, bool] = {
@@ -158,6 +171,7 @@ _PRESET_HOME: Dict[str, bool] = {
     # The home appliance talks to no external MCP servers: its surface
     # is the governed HA/Frigate tool set, not arbitrary bridged tools.
     CAP_MCP_CLIENT: False,
+    CAP_TERMINAL_UNSANDBOXED: False,  # override-only
 }
 
 

@@ -211,8 +211,11 @@ class TestRunCommandStreaming:
         queue = bus.subscribe("sess")
         executor = ToolExecutor()
 
+        # confirmed=True: `sleep` is not on the read-only list, and these
+        # tests are about timeouts, not about classification.
         result = await executor.execute(
-            "run_command", {"command": "sleep 5", "timeout": 1}, session_id="sess"
+            "run_command", {"command": "sleep 5", "timeout": 1},
+            session_id="sess", confirmed=True,
         )
         assert result.success is False
         assert "timed out" in (result.error or "").lower()
@@ -238,6 +241,8 @@ class TestRunCommandStreaming:
             "run_command",
             {"command": "exec 1>&- 2>&-; sleep 30", "timeout": 1},
             session_id="sess",
+            confirmed=True,  # `exec` is a wrapper head: not read-only. This
+            # test is about timeout bounding process exit, not classification.
         )
         elapsed = asyncio.get_event_loop().time() - started
 
@@ -336,8 +341,10 @@ class TestStateMachineTerminalRelay:
         """An SSE client that disconnects mid-command must not leak."""
         machine = _machine()
         sink = []
+        # confirmed=True: an unrecognised command prompts under the SEC-2
+        # classifier; this test is about stream teardown, not prompting.
         agen = machine._run_tool_streaming(
-            "run_command", {"command": "sleep 30"}, False, sink
+            "run_command", {"command": "sleep 30"}, True, sink
         )
 
         first = await agen.__anext__()
