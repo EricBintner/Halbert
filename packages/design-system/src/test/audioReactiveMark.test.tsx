@@ -20,6 +20,12 @@ let clock = 0
 
 function installFakeRaf() {
   pending = []
+  rafId = 0
+  clock = 0
+  // The component seeds its frame delta from performance.now(); tie it to
+  // the fake frame clock so the first frame after any effect (re)run is one
+  // real frame, not zero or a wall-clock-dependent clamp.
+  vi.spyOn(performance, 'now').mockImplementation(() => clock)
   vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
     rafId += 1
     pending.push([rafId, cb])
@@ -68,16 +74,25 @@ function stepSource(level: number, afterFrames: number, tines?: number[]): Audio
   }
 }
 
-/** Silent, then `level` on every tine for `frames` reads, then silent: one
- * strike with no sustained lean afterwards. */
-function burstSource(level: number, afterFrames: number, frames = 2): AudioEnergySource {
+/** Silent, then `level` on `tines` (default all) for `frames` reads, then
+ * silent: one strike with no sustained lean afterwards. */
+function burstSource(
+  level: number,
+  afterFrames: number,
+  tines?: number[],
+  frames = 2,
+): AudioEnergySource {
   let reads = 0
   return {
     start: vi.fn(),
     stop: vi.fn(),
     readEnergies(out) {
       reads += 1
-      out.fill(reads > afterFrames && reads <= afterFrames + frames ? level : 0)
+      out.fill(0)
+      if (reads > afterFrames && reads <= afterFrames + frames) {
+        if (tines) for (const k of tines) out[k] = level
+        else out.fill(level)
+      }
       return out.length
     },
   }
@@ -114,7 +129,10 @@ const OUTER_PROBE = 12
 
 describe('AudioReactiveHalbertMark', () => {
   beforeEach(installFakeRaf)
-  afterEach(() => vi.unstubAllGlobals())
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
 
   it('defaults to the medium density: 6 tine paths, static medium geometry', () => {
     const { container } = render(<AudioReactiveHalbertMark size={512} />)
@@ -207,22 +225,98 @@ describe('AudioReactiveHalbertMark', () => {
 
   it('keeps ringing and still strums when the source is swapped in the same render', () => {
     // The app hands the mark a new analyser (mic tap -> TTS tap) in the same
-    // render as a state change; the strings must not snap to rest.
+    // render as a state change; the strings must not snap to rest. The burst
+    // strikes lane 4 only, so any spine motion afterwards is the strum's.
     const { container, rerender } = render(
-      <AudioReactiveHalbertMark size={512} state="speaking" source={burstSource(0.4, 2)} />,
+      <AudioReactiveHalbertMark size={512} state="speaking" source={burstSource(0.4, 2, [4])} />,
     )
     const paths = container.querySelectorAll('path')
-    pump(8) // the burst has struck the outer arc, which rings for a second
-    const ringing = Math.abs(deviation(paths[5].getAttribute('d')!, 5, OUTER_PROBE))
-    expect(ringing).toBeGreaterThan(1)
+    pump(8) // lane 4 rings for most of a second
+    expect(Math.abs(deviation(paths[4].getAttribute('d')!, 4, LEG_PROBE))).toBeGreaterThan(3)
+    expect(paths[0].getAttribute('d')).toBe(MEDIUM_STATIC[0])
     rerender(
       <AudioReactiveHalbertMark size={512} state="recognized" source={constSource(0)} />,
     )
-    pump(1)
-    // still mid-ring, not reset to the static arc
-    expect(Math.abs(deviation(paths[5].getAttribute('d')!, 5, OUTER_PROBE))).toBeGreaterThan(0.5)
-    // and the strum fired on the spine
+    pump(2)
+    // lane 4 still mid-ring, not reset to rest
+    expect(Math.abs(deviation(paths[4].getAttribute('d')!, 4, LEG_PROBE))).toBeGreaterThan(1)
+    // and the strum has struck the spine
     expect(Math.abs(deviation(paths[0].getAttribute('d')!, 0, SPINE_PROBE))).toBeGreaterThan(1)
+  })
+
+  it('mounting directly in recognized strums too', () => {
+    const { container } = render(
+      <AudioReactiveHalbertMark size={512} state="recognized" source={constSource(0)} />,
+    )
+    const paths = container.querySelectorAll('path')
+    pump(2)
+    expect(Math.abs(deviation(paths[0].getAttribute('d')!, 0, SPINE_PROBE))).toBeGreaterThan(1)
+    pump(12)
+    expect(Math.abs(deviation(paths[5].getAttribute('d')!, 5, OUTER_PROBE))).toBeGreaterThan(1)
+  })
+
+  it('ramps the lean across a state change instead of popping', () => {
+    // speaking leans 0.3 x level; idle leans 1.0 x level. Switching must
+    // glide between them over a few frames, never jump.
+    const level = constSource(1)
+    const { container, rerender } = render(
+      <AudioReactiveHalbertMark size={512} state="speaking" source={level} />,
+    )
+    const spine = container.querySelectorAll('path')[0]
+    const probe = () => Math.abs(deviation(spine.getAttribute('d')!, 0, SPINE_PROBE))
+    pump(90) // the mount strike has died; only the settled lean remains
+    const lean = probe()
+    expect(lean).toBeGreaterThan(0.5)
+    rerender(<AudioReactiveHalbertMark size={512} state="idle" source={level} />)
+    pump(1)
+    expect(probe()).toBeLessThan(1.45 * lean) // an instant switch would be ~3.3x
+    pump(30)
+    expect(probe()).toBeGreaterThan(2.8 * lean)
+  })
+
+  it('sensitivity scales how hard strikes land; the ring never exceeds RING_MAX', () => {
+    const amp = TINE_AMPLITUDES.medium[2]
+    const { container } = render(
+      <AudioReactiveHalbertMark
+        size={512}
+        state="speaking"
+        sensitivity={1.2}
+        source={burstSource(0.5, 5, [2])}
+      />,
+    )
+    const path = container.querySelectorAll('path')[2]
+    let peak = 0
+    for (let i = 0; i < 40; i++) {
+      pump(1)
+      peak = Math.max(peak, Math.abs(deviation(path.getAttribute('d')!, 2, LEG_PROBE)))
+    }
+    expect(peak).toBeGreaterThan(0.7 * amp)
+    expect(peak).toBeLessThan(1.0 * amp)
+  })
+
+  it('switching density at runtime renders the new tine count with finite geometry', () => {
+    const level = constSource(0.5)
+    const { container, rerender } = render(
+      <AudioReactiveHalbertMark size={512} state="listening" source={level} />,
+    )
+    pump(10)
+    rerender(
+      <AudioReactiveHalbertMark size={512} state="listening" density="display" source={level} />,
+    )
+    pump(10)
+    const paths = container.querySelectorAll('path')
+    expect(paths).toHaveLength(10)
+    paths.forEach((p) => expect(p.getAttribute('d')).not.toMatch(/NaN/))
+    expect(container.querySelector('g')).toHaveAttribute('stroke-width', '26.67')
+  })
+
+  it('tolerates an unknown state from an untyped consumer', () => {
+    const { container } = render(
+      // @ts-expect-error — JSX callers can pass anything
+      <AudioReactiveHalbertMark size={512} state="dreaming" source={constSource(0.5)} />,
+    )
+    expect(() => pump(5)).not.toThrow()
+    expect(container.querySelectorAll('path')).toHaveLength(6)
   })
 
   it('idle plucks a string now and then on top of the breathing', () => {

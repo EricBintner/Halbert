@@ -79,13 +79,15 @@ describe('mark voice geometry — medium density (6 tines, the Voice Mode defaul
     }
   })
 
-  it('has stationary nodes: the mode shape depends on displacement alone', () => {
-    // A plucked string's nodes never move (design doc 17). The same
-    // displacement must always draw the same path — there is no phase input.
-    const a = tinePathD(2, 9, { density: 'medium' })
-    const b = tinePathD(2, 9, { density: 'medium' })
-    expect(a).toBe(b)
-    expect(tinePathD).toHaveLength(2) // (lane, displacement[, opts])
+  it('has stationary nodes: the spine midpoint never moves in its second mode', () => {
+    // A plucked string's nodes never move (design doc 17): with no phase
+    // input, the mode-2 spine's centre (u = 0.5, sample 16 of 32) stays on
+    // the axis at every displacement, and a leg's ends stay pinned.
+    for (const displacement of [-13, -4, 0, 4, 9, 13]) {
+      const spine = points(tinePathD(0, displacement, { density: 'medium' }))
+      expect(spine[16][0]).toBeCloseTo(512, 2)
+      expect(spine[16][1]).toBeCloseTo(296, 2)
+    }
   })
 
   it('positive displacement bows the legs outward (the strum direction)', () => {

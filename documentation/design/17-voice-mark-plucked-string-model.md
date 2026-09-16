@@ -74,16 +74,23 @@ outer arc swings ~30 frames per cycle and is still moving a second later.
 
 ### Two components per tine: ring + swell
 
-    displacement_k = A_k · sensitivity · ( ring_k + swellWeight · swell_k )
+    displacement_k = A_k · ( ring_k + swellWeight · swell_k )
 
 - **ring** — the string above, at rest target 0, excited only by plucks.
   A pluck of amplitude `a` injects velocity `a·ω_k`, so a given strike
-  displaces every tine by the same fraction of its `A_k` regardless of
-  pitch. An energy limiter caps `√(x² + (v/ω)²)` at 1.0 at injection time
-  (only `v` is clamped, never `x`, so nothing snaps).
+  displaces every tine by about the same fraction of its `A_k` regardless
+  of pitch (measured: 0.81 at the spine to 0.89 at the outer arc for a unit
+  strike — the 8 ms step's residual pitch dependence, within 10%). An
+  energy limiter caps `√(x² + (v/ω)²)` at 1.0 at injection time (only `v`
+  is clamped, never `x`, so nothing snaps).
 - **swell** — the old well-damped follower (`k=140, c=18.5`) of the band
   level, so a sustained vowel still shows as a gentle lean. Weighted per
-  state; never above 0.3 in the voiced states.
+  state; never above 0.3 in the voiced states. The weight itself glides to
+  each state's target with a 120 ms time constant, so speaking → idle
+  (0.3 → 1.0) never pops the lean.
+- **sensitivity** (the prop) scales the incoming level *before* both
+  components — strikes land harder and the lean goes further — so a loud
+  strike saturates the string's limiter instead of clipping the drawn path.
 
 `|ring| ≤ 1` and `swell ≤ 0.3` bound the multiplier at 1.3, so the geometry
 invariant becomes `1.3·(A_k + A_{k+1}) < inter-lane gap` (test-enforced) and
@@ -95,7 +102,7 @@ the amplitude tables are retuned to it.
 |---|---|---|---|---|
 | idle | none from the breathing source | — | 1.0 | sparse soft plucks: one random tine every 2.5–6 s, amplitude 0.25–0.45, weighted toward the outer (long-sustain) tines |
 | listening | band-level onsets | 2.0 | 0.3 | — |
-| recognized | — | — | 0.3 | on entry, a **strum**: every tine plucked at 0.7, spine first, 35 ms stagger outward |
+| recognized | — | — | 0.3 | on entry (including mounting in it), a **strum**: every tine plucked at 0.7, spine first, 35 ms stagger outward |
 | thinking | — | — | 0 | traveling bulges and the 0.94 contraction, unchanged |
 | speaking | band-level onsets | 2.5 | 0.3 | — |
 | error | — | — | 0 | tint only, unchanged |

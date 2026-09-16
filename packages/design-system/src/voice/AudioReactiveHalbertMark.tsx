@@ -19,6 +19,7 @@ import {
   PluckQueue,
   STATE_EXCITATION,
   strum,
+  type StateExcitation,
   type VoiceVisualState,
 } from './excitation'
 import type { AudioEnergySource } from './spectrum'
@@ -46,7 +47,12 @@ export interface AudioReactiveHalbertMarkProps
   /** Live audio energy source (mic for listening, TTS playback for
    * speaking). null/undefined -> synthesized idle breathing. */
   source?: AudioEnergySource | null
-  /** Displacement multiplier on the whole motion. @default 1 */
+  /**
+   * Scales how hard strikes land and how far the lean goes. It is applied
+   * to the incoming level, before the string's energy limiter, so a loud
+   * strike saturates the string rather than clipping the drawn path.
+   * @default 1
+   */
   sensitivity?: number
 }
 
@@ -59,6 +65,10 @@ const STROKE_BY_TONE: Record<Exclude<HalbertMarkTone, 'badge'>, string> = {
 const ERROR_STROKE = 'var(--color-status-error, #C83E2D)'
 const STROKE_BY_DENSITY: Record<VoiceDensity, number> = { medium: 48, display: 26.67 }
 
+/** The per-state lean weight glides to its target with this time constant,
+ * so a state change never pops the lean (speaking 0.3 -> idle 1.0). */
+const SWELL_WEIGHT_RAMP_SECONDS = 0.12
+
 interface ActiveBulge {
   tine: number
   start: number
@@ -67,22 +77,34 @@ interface ActiveBulge {
   width: number
 }
 
+function excitationFor(state: string): StateExcitation {
+  return STATE_EXCITATION[state as VoiceVisualState] ?? STATE_EXCITATION.idle
+}
+
 /**
  * Everything that must survive a source swap: the strings keep ringing and
  * a pending strum keeps walking when the app hands the mark a new analyser
- * (mic tap -> TTS tap) in the same render as a state change.
+ * (mic tap -> TTS tap) in the same render as a state change. Rebuilt only
+ * when the density changes; the frame loop reads density and amplitudes
+ * from here so a frame that lands between a density commit and the effect
+ * re-run still draws consistent geometry.
  */
 interface Engine {
   density: VoiceDensity
   count: number
+  amplitudes: readonly number[]
   ring: ResonatorBank
   swell: ResonatorBank
   onsets: OnsetPlucker
   queue: PluckQueue
   idle: IdlePlucker
   raw: Float32Array
-  /** The state the engine last acted on; transitions are detected against it. */
+  scaled: Float32Array
+  /** The state the engine last acted on. Seeded 'idle' so mounting in any
+   * other state counts as entering it (a mount in `recognized` strums). */
   seenState: VoiceVisualState
+  /** Current lean weight, ramping toward the state's target. */
+  swellWeight: number
   bulges: ActiveBulge[]
   /** Armed on the first thinking frame so it shares the frame clock. */
   nextSpawn: number | null
@@ -92,18 +114,21 @@ interface Engine {
   contractV: number
 }
 
-function createEngine(density: VoiceDensity, state: VoiceVisualState): Engine {
+function createEngine(density: VoiceDensity, initialState: string): Engine {
   const count = tineCount(density)
   return {
     density,
     count,
+    amplitudes: TINE_AMPLITUDES[density],
     ring: ResonatorBank.strings(STRING_LADDER[density]),
     swell: ResonatorBank.uniform(count, SWELL_SPRING),
     onsets: new OnsetPlucker(count),
     queue: new PluckQueue(),
     idle: new IdlePlucker(count),
     raw: new Float32Array(count),
-    seenState: state,
+    scaled: new Float32Array(count),
+    seenState: 'idle',
+    swellWeight: excitationFor(initialState).swellWeight,
     bulges: [],
     nextSpawn: null,
     bulgesByTine: Array.from({ length: count }, () => []),
@@ -144,10 +169,11 @@ export const AudioReactiveHalbertMark = React.forwardRef<
   const groupRef = React.useRef<SVGGElement | null>(null)
   const stateRef = React.useRef(state)
   stateRef.current = state
-  const engineRef = React.useRef<Engine | null>(null)
-  if (engineRef.current === null || engineRef.current.density !== density) {
-    engineRef.current = createEngine(density, state)
-  }
+  // The mount state only seeds the lean weight; later states are read live.
+  const initialStateRef = React.useRef(state)
+  const engine = React.useMemo(() => createEngine(density, initialStateRef.current), [density])
+  const engineRef = React.useRef(engine)
+  engineRef.current = engine
   const staticPaths = React.useMemo(() => staticTinePaths(density), [density])
 
   React.useEffect(() => {
@@ -163,18 +189,16 @@ export const AudioReactiveHalbertMark = React.forwardRef<
       console.warn('[voice-mark] energy source failed to start', err)
     }
 
-    const amplitudes = TINE_AMPLITUDES[density]
     let last = performance.now()
     let raf = 0
 
     const frame = (nowMs: number) => {
       raf = requestAnimationFrame(frame)
       const e = engineRef.current
-      if (!e) return
       const dt = Math.min(0.1, Math.max(0, (nowMs - last) / 1000))
       last = nowMs
       const t = nowMs / 1000
-      const { count, ring, swell, raw } = e
+      const { count, ring, swell, raw, scaled, amplitudes } = e
 
       const state = stateRef.current
       if (state !== e.seenState) {
@@ -182,13 +206,17 @@ export const AudioReactiveHalbertMark = React.forwardRef<
         if (e.seenState === 'idle') e.idle.reset()
         e.seenState = state
       }
-      const excitation = STATE_EXCITATION[state]
+      const excitation = excitationFor(state)
+      e.swellWeight +=
+        (excitation.swellWeight - e.swellWeight) *
+        (1 - Math.exp(-dt / SWELL_WEIGHT_RAMP_SECONDS))
 
       active.readEnergies(raw, t)
-      e.onsets.feed(raw, excitation.pluckGain, ring)
+      for (let k = 0; k < count; k++) scaled[k] = raw[k] * sensitivity
+      e.onsets.feed(scaled, excitation.pluckGain, ring)
       e.queue.flush(t, ring)
       if (state === 'idle') e.idle.tick(t, ring)
-      swell.setTargets(raw)
+      swell.setTargets(scaled)
       const ringAlpha = ring.step(dt)
       const swellAlpha = swell.step(dt)
 
@@ -234,12 +262,10 @@ export const AudioReactiveHalbertMark = React.forwardRef<
         if (!el) continue
         const opts: TinePathOptions =
           e.bulgesByTine[k].length > 0
-            ? { density, bulges: e.bulgesByTine[k] }
-            : { density }
+            ? { density: e.density, bulges: e.bulgesByTine[k] }
+            : { density: e.density }
         const unclamped =
-          sensitivity *
-          (ring.interpolated(k, ringAlpha) +
-            excitation.swellWeight * swell.interpolated(k, swellAlpha))
+          ring.interpolated(k, ringAlpha) + e.swellWeight * swell.interpolated(k, swellAlpha)
         const m = Math.max(
           -MAX_DISPLACEMENT_MULTIPLIER,
           Math.min(MAX_DISPLACEMENT_MULTIPLIER, unclamped),
