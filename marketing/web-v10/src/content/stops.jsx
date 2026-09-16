@@ -51,10 +51,10 @@ export const Headline = ({
   // centered — not a half column — so it carries more size than lg/xl.
   // >=640px wide is untouched entirely.
   const phone = {
-    xl: 'max-sm:text-[clamp(1.6rem,calc(4.2vh+max(0px,min(1.5vw,100vh_-_812px))),calc(2.4rem+max(0px,min(2vw,100vh_-_812px))))]',
-    lg: 'max-sm:text-[clamp(1.3rem,calc(3.7vh+max(0px,min(1.2vw,100vh_-_812px))),calc(1.9rem+max(0px,min(1.8vw,100vh_-_812px))))]',
-    md: 'max-sm:text-[clamp(1.25rem,calc(4vh+max(0px,min(1.2vw,100vh_-_812px))),calc(1.85rem+max(0px,min(1.8vw,100vh_-_812px))))]',
-    sm: 'max-sm:text-[clamp(1.05rem,calc(2.8vh+max(0px,min(1vw,100vh_-_812px))),calc(1.35rem+max(0px,min(1.5vw,100vh_-_812px))))]',
+    xl: 'max-sm:text-[clamp(1.6rem,calc(4.2vh+max(0px,min(1.2vw,100vh_-_812px))),calc(2.4rem+max(0px,min(1.5vw,100vh_-_812px))))]',
+    lg: 'max-sm:text-[clamp(1.3rem,calc(3.7vh+max(0px,min(1vw,100vh_-_812px))),calc(1.9rem+max(0px,min(1.3vw,100vh_-_812px))))]',
+    md: 'max-sm:text-[clamp(1.25rem,calc(4vh+max(0px,min(0.45vw,100vh_-_812px))),calc(1.85rem+max(0px,min(0.5vw,100vh_-_812px))))]',
+    sm: 'max-sm:text-[clamp(1.05rem,calc(2.8vh+max(0px,min(0.8vw,100vh_-_812px))),calc(1.35rem+max(0px,min(1vw,100vh_-_812px))))]',
   }[size] || '';
   return <h2 className={`font-display tracking-tight ${weight} ${leading} ${cls} ${phone} ${className}`} style={style}>{children}</h2>;
 };
