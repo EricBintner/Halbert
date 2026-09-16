@@ -42,8 +42,8 @@ We reverse-engineered the actual backend telemetry collectors in `halbert_core` 
 │ Proposed Visualizer  │ Required Data        │ Emitted? │ Gap / Reality      │
 ├──────────────────────┼──────────────────────┼──────────┼────────────────────┤
 │ Storage Multi-       │ Btrfs/Bcachefs/ZFS   │ YES      │ `storage.py` scans │
-│ Segment Allocation   │ Data vs Meta vs Free │          │ `btrfs fi df` &    │
-│                      │                      │          │ `bcachefs usage`.  │
+│ Segment Allocation   │ Data vs Meta vs Free │ (since   │ `btrfs fi df` &    │
+│                      │                      │ 09-15)   │ `bcachefs usage`.  │
 ├──────────────────────┼──────────────────────┼──────────┼────────────────────┤
 │ Disk Space Treemap   │ Directory tree size  │ NO       │ Running `du` at    │
 │ (Baobab/DaisyDisk)   │ breakdown            │          │ runtime kills disk │
@@ -69,6 +69,15 @@ We reverse-engineered the actual backend telemetry collectors in `halbert_core` 
 ```
 
 ### Critical Telemetry Gaps & How to Fix Them:
+
+> **Correction, 2026-09-15.** The first row above read `YES` from 2026-09-11,
+> and it was half true: `storage.py` ran both commands, but its parsers read
+> past the `total=` / `used=` figures and kept only the RAID profile string.
+> The byte split reached no payload, so the multi-segment gauge shipped to
+> Storybook with no data behind it and `Storage.tsx` kept a flat percentage
+> bar. Both parsers now keep the bytes and the filesystem payload carries an
+> `allocation` object. **Running a command is not the same as emitting its
+> output** — check the parser, not the argv, before marking a row `YES`.
 
 #### Gap 1: The Sparkline "Cold Start" Trap (Dashboard Vitals)
 - **The Defect:** `halbert_core/dashboard/routes/system.py` computes `_cpu_percent()` on demand. It stores zero historical samples. If the frontend attempts to render a 1-minute sparkline, it will only have 1 data point on initial page load, remaining empty or looking like a flat dot until the user has stayed on the page for 60 seconds.
