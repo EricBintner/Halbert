@@ -353,3 +353,86 @@ class TestTheReadOnlySpellingsStillRun:
     def test_the_observing_spelling_still_runs_unprompted(self, command):
         r = _classify(command)
         assert not _gated(r), (command, r)
+
+
+class TestVouchedVerbsThatReadSecretMaterial:
+    """`SENSITIVE_PATHS` and `_command_reads_secret` are filename-based; they
+    cannot see a secret that has no filename because it lives in a cluster.
+
+    `kubectl get secrets -o yaml` prints the secret's *contents*. The
+    redaction invariant is that secret material is scrubbed deterministically
+    before a model ever sees it, and a SAFE verdict here puts it straight
+    into the transcript.
+    """
+
+    @pytest.mark.parametrize("command", [
+        "kubectl get secrets -o yaml",
+        "kubectl get secret my-app -o json",
+        "kubectl describe secret my-app",
+    ])
+    def test_reading_cluster_secrets_is_not_vouched(self, command):
+        assert _gated(_classify(command)), command
+
+    @pytest.mark.parametrize("command", [
+        "kubectl get pods",
+        "kubectl get nodes -o wide",
+        "kubectl describe pod my-app",
+        "kubectl logs my-app",
+    ])
+    def test_ordinary_cluster_reads_still_run(self, command):
+        r = _classify(command)
+        assert not _gated(r), (command, r)
+
+
+class TestTheAdjudicatedCarveOuts:
+    """Pins for the three §3 items that were examined and found correct.
+
+    These lock in behaviour that was *verified* rather than changed, so that
+    a later edit cannot quietly reopen a question that has been answered.
+    """
+
+    @pytest.mark.parametrize("command,redirects", [
+        ("echo x > /etc/passwd", True),
+        ('echo "x" > /etc/passwd', True),
+        ("echo 'a > b'", False),
+        ('grep "a > b" file', False),
+        ("echo x \\> y", False),
+        ("echo x 2>/dev/null", True),
+        ("cat <<EOF", True),
+        ("echo 'don'\\''t > x'", False),
+    ])
+    def test_the_tokenizer_agrees_with_the_shell_about_redirects(
+            self, command, redirects):
+        from halbert_core.tools.safety import _has_unquoted_redirect
+
+        assert _has_unquoted_redirect(command) is redirects, command
+
+    @pytest.mark.parametrize("command", ["", "   ", "\t\n"])
+    def test_the_empty_carve_out_only_covers_an_empty_line(self, command):
+        """SAFE here exists so the voice gate does not refuse a guest speaker
+        for a command that does not exist. It must not reach anything else.
+        """
+        assert _classify(command).risk_level == RiskLevel.SAFE
+
+    @pytest.mark.parametrize("command", ["> /etc/passwd", ";", "&&", "| sh"])
+    def test_a_line_that_is_only_punctuation_is_not_empty(self, command):
+        assert _gated(_classify(command)), command
+
+    def test_nothing_agent_side_writes_the_owner_allowlist(self):
+        """The store is owner-authored. If the agent could write it, the
+        allowlist would be a way to vouch itself.
+        """
+        import pathlib
+
+        root = pathlib.Path(__file__).resolve().parents[1] / "halbert_core"
+        writers = []
+        for py in root.rglob("*.py"):
+            text = py.read_text(errors="ignore")
+            if "command-allowlist" not in text:
+                continue
+            for line in text.splitlines():
+                if "command-allowlist" in line and (
+                        "open(" in line and "'r'" not in line and '"r"' not in line
+                        or "write" in line or "dump" in line):
+                    writers.append(f"{py.name}: {line.strip()}")
+        assert writers == []

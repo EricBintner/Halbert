@@ -262,10 +262,15 @@ def _platform_sensitive_dirs() -> tuple:
 # `iptables -F` and `find / -name '*.key' -exec sh -c ...` all classified
 # SAFE on the strength of their first two letters. The default branch used to
 # run anything unmatched at MEDIUM, so every gap in the tables was an open
-# door. The default is now HIGH: an unrecognised command asks. Measured
-# against Halbert's own 262-command repertoire that lands at ~11% prompts
-# (the plan's unallowlisted `unknown -> HIGH` measured 82.8%, which is not a
-# gate an owner keeps), and the owner drains the residual through
+# door. The default is now HIGH: an unrecognised command asks.
+#
+# Measured against Halbert's own 262-command repertoire -- the `argv` set in
+# ``.handoff/research/sec-2-3/measurement/corpus.json`` -- THIS table prompts
+# on 41 of 262, 15.6%. The plan's unallowlisted `unknown -> HIGH` measured
+# 82.8% on the same corpus, which is not a gate an owner keeps. The ~11% that
+# stood here until 2026-09-15 was the research prototype's number
+# (``measurement/safety.patched.py``), not this table's: re-measure rather
+# than carry it forward. The owner drains the residual through
 # ``user_overrides`` (the "always allow this" store).
 # ---------------------------------------------------------------------------
 
@@ -532,6 +537,13 @@ EFFECTFUL_ARGS: Dict[str, Set[str]] = {
                 "--disable-fallback-verbosity", "--set-fallback-noreboot"},
     # `sort -o FILE` writes; every other sort spelling goes to stdout.
     "sort": {"-o", "--output"},
+    # Not effectful -- disclosing. `kubectl get secrets -o yaml` prints the
+    # secret's CONTENTS, and a secret that lives in a cluster has no filename
+    # for SENSITIVE_PATHS or `_command_reads_secret` to recognise. The
+    # redaction invariant is that secret material is scrubbed deterministically
+    # before a model sees it; a SAFE verdict puts it in the transcript instead.
+    # `kubectl get pods` is untouched -- only the resource name is named here.
+    "kubectl": {"secrets", "secret"},
 }
 
 #: Leading flags a binary may carry before its verb without changing what the
@@ -1490,8 +1502,8 @@ class ToolSafetyFramework:
         the whole direction of SEC-2: an unrecognised command is not a
         severity claim, it is the classifier declining to vouch -- which is
         what confirmation is for. The measured cost on Halbert's own
-        repertoire is ~11% prompts, drainable through the owner's
-        command-allowlist store.
+        262-command repertoire is 41 prompts, 15.6%, drainable through the
+        owner's command-allowlist store. See the lane header for the method.
         """
         command = command.strip()
         if not command:
