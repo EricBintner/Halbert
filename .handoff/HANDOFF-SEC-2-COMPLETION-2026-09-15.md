@@ -1,9 +1,9 @@
 # Handoff: SEC-2 completed and rebased — Fable review request
 
 > **Document:** `.handoff/HANDOFF-SEC-2-COMPLETION-2026-09-15.md`
-> **Status:** Review requested — the §3 table is closed, the branch is rebased onto current main, one item needs a founder ruling rather than a patch.
+> **Status:** Reviewed. A Fable pass found the §3 fix had left its own class open one level deeper, and closed it (§5a). Every §6 adjudication is decided except the one founder ruling, and one list needs a yes.
 > **Date:** 2026-09-15
-> **Branch:** `fix/sec-2-readonly-lane`, worktree `.claude/worktrees/sec-2-lane`. Ten commits on top of `fa6491dc`, which is main's tip. **Not 537 behind — this branch is current.**
+> **Branch:** `fix/sec-2-readonly-lane`, worktree `.claude/worktrees/sec-2-lane`. Thirteen commits on top of `fa6491dc`, which is main's tip and is now on origin. **Not 537 behind — this branch is current.**
 > **Supersedes:** `.handoff/HANDOFF-SEC-2-READONLY-LANE-REVIEW-2026-09-15.md`, whose §3 table is now closed and whose §3 "double classification" note was wrong in a way that matters (see §4).
 > **Retires:** `worktree-sec-1-one-door`. Do not merge it; see §1.
 
@@ -60,6 +60,7 @@ All against runs, not readings. Commits in order:
 | `38481cca` | The owner store's position between CRITICAL and HIGH, pinned |
 | `5c384f02` | Two of the four false positives the review named |
 | `868b4615` | Probes against the one token vouched by shape rather than value |
+| `5a40b458` | **The reviewer pass** — nothing after a vouched token is assumed; `mount`; `helm get` decided |
 
 **The nineteen bypasses.** Two mechanisms had failed. `True` vouches a whole binary, so the systemd `*ctl` family, `hostname` and `date` carried their writing verbs along; those became frozensets that keep the reporting spellings. `ifconfig`, `iwconfig`, `arp`, `dmesg`, `nvidia-smi`, `mokutil` and `sort -o` take the effect past a first operand that is an arbitrary interface or filename, so they are named in `EFFECTFUL_ARGS`.
 
@@ -73,7 +74,17 @@ Twenty-six read-only spellings are pinned alongside, plus twenty-three awkward o
 
 One was changed: **`kubectl get secrets -o yaml` prints the secret's contents**, and a secret living in a cluster has no filename for `SENSITIVE_PATHS` or `_command_reads_secret` to see — both are filename-based. That is the redaction invariant inverted. Only the resource name is named, so `kubectl get pods` is untouched. **`helm get` is the same shape and is deliberately NOT changed** — its exposure is less clear-cut, and it is raised here rather than guessed at.
 
-**The ~11% was wrong, and was already wrong before this branch.** Measured against the 262-command `argv` corpus the research itself mined: this table prompts on **41 of 262, 15.6%**. At the cherry-pick commit it was 40/262, 15.3% — so the bypass fixes cost 0.3 points and the gap was never theirs. ~11% was the research *prototype*'s number (`measurement/safety.patched.py`), carried into a comment about a different table. Both claim sites now state the corpus, the count and the method.
+### 5a. The reviewer pass
+
+The Fable pass began by attacking the mechanism §5 describes rather than re-running its tests, and found that `b9a03097` had reproduced the bug it fixed, one level deeper. A frozenset entry inspected **one** operand and returned. `SUBVERBS` inspected **one** token after the verb and returned. Everything later on the line went unread. Thirteen spellings from the same root cause classified SAFE, and the diagnosis was exact: the four `EFFECTFUL_ARGS`-backed controls (`iptables -L -F`, `ip route add`, `sort -o`, `kubectl … secrets`) gated correctly the whole time, because that table scans the whole line.
+
+Two were confirmed against a real git in a scratch repo, not reasoned about: `git remote -v add evil …` **added the remote** — git takes the first non-option as the subcommand, so `-v` is only verbose — and `git branch -v -m victim x` **renamed the branch**. `date -u -s …` is real on every Linux target. The rest (`git branch --list -D`, `git tag -l -d`) git refuses as conflicting modes; they are theoretical, and the classifier should not be relying on the binary to save it.
+
+The fix is one scan, `_remainder_vouched`, that walks every token against an allowlist and stops at the first stranger, using the file's existing `Dict[str, bool]` convention — `True` consumes one following value, but only a value that does not start with `-`, so `--list` cannot swallow `-D`. It serves two shapes, and **which shape a binary gets is now the stated rule for the table**: a frozenset is *verb-positional* (the first operand is the verb, the binary takes one, anything a flag could select must be in `EFFECTFUL_ARGS`); a dict is *flag-moded* (any token can carry the effect, every token is read). `date`, `hostname` and the systemd `*ctl` family moved to dicts — they had nothing in `EFFECTFUL_ARGS` behind them. `SUBVERBS` values became dicts under the same scan, with git's flag sets derived from `git <verb> -h`. Every dict entry vouches its **bare** invocation, which is why `scutil` stays off the table.
+
+Forty-nine tests, both directions. The end-to-end probe after the fix: original §3 table 19/19 gated, reviewer pass 13/13, `mount` writes 4/4.
+
+**The ~11% was wrong, and was already wrong before this branch.** Measured against the 262-command `argv` corpus the research itself mined: at `53d4ddff` this table prompted on 41 of 262, 15.6%; at the cherry-pick commit 40/262 — so the bypass fixes cost 0.3 points and the gap was never theirs. After the reviewer pass vouched `mount` it is **37 of 262, of which one is a corpus artefact** (a `|` inside a single `--grep` argv element that the corpus flattened and the splitter read as a pipe), so **36 of 262, 13.7%** on the argv Halbert actually issues. ~11% was the research *prototype*'s number (`measurement/safety.patched.py`), carried into a comment about a different table. Both claim sites now state the corpus, the count and the method.
 
 ## 6. What is left
 
@@ -83,19 +94,51 @@ One was changed: **`kubectl get secrets -o yaml` prints the secret's contents**,
 
 **Not exercisable here.** Nothing has run under bubblewrap: `bwrap` does not exist on this host (macOS, `sandbox-exec` only) and every sandbox test monkeypatches `platform.system()`. This needs a Linux box, not another session on this Mac.
 
-**For the reviewer to adjudicate.**
-- `helm get` — same shape as the `kubectl` change, left alone.
-- The 41 prompts include read-only commands that simply are not in the table — `mount`, `nvcc --version`, `conda env list`, `goenv version-name`, `kopia repository status`, `docker system df`. Each is a vouching decision, which is precisely the kind of decision this review exists to check, so none were added unilaterally. Adding them is how the 15.6% comes down.
-- Whether anything else in the tree compares a resolved path against an unresolved constant (§3).
+**Adjudicated by the reviewer pass.**
+- `helm get` — **decided, same call as `kubectl get secrets`.** `values` is where `--set password=…` lands; `manifest` renders every Secret's base64 data; `all` is both. Narrowed to `notes`/`hooks`/`metadata`; `helm list`/`status`/`history` untouched. Reversible in one `SUBVERBS` line.
+- The resolved-vs-unresolved sweep (§3) — **closed.** Every `realpath`/`resolve()` site outside tests was read: `selfmod.governed_roots()` is documented resolved; `lease.py` resolves both sides at both call sites; `skills/registry`, `persona/store`, `skills/loader`, `memory_purge`, `modules.py` resolve both sides; `chromadb_manager` resolves for a `/proc/mounts` lookup, not a gate; `register_host_project`'s `/etc/…` literals are things to *read*; `SENSITIVE_EXCLUDE_GLOBS` are globs. **`safety.py` was the only site with the hole.**
+- `mount` — **vouched**, as a dict: bare and `-t TYPE` list, any positional mounts, `-a`/`-o`/`--remount` write. Halbert's own `sharing.py` issues it four times.
+
+**For the founder — the 36 remaining prompts, grouped.** 12 are absolute paths or wrappers (`sudo -n`, `pkexec`, `bash -c`, `python3 -c`) and prompt by design. 5 are effectful and prompt correctly. 6 are pager-hosts, `dscl`, and `crontab -` (which *writes* from stdin), by design. **14 are read-only reporting commands not in the table, every one issued by Halbert's own scanners.** Nine are expressible today and need one yes; the exact entries:
+
+| Command | Proposed entry | Why this shape |
+|---|---|---|
+| `rustup default` | `"rustup": {"default": False, "show": True, "-V": False, "--version": False}` | bare shows; `rustup default stable` **sets** — a positional is refused |
+| `conda env list --json` | `"conda": {"env": False, "list": False, "info": False, "--json": False}` | `conda env remove` is not a key |
+| `goenv version-name` / `rbenv version-name` | `{"version-name": False, "version": False, "versions": False, "which": True}` | `goenv global 1.21` **sets** — `global` deliberately absent |
+| `nvcc --version` | `"nvcc": {"--version": False, "-V": False}` | `nvcc file.cu` compiles and writes |
+| `kopia repository status --json` | `"kopia": {"repository": False, "status": False, "--json": False}` | `connect`/`create` are not keys |
+| `docker system df --format json` | add `system` to docker's frozenset **and** `"docker": {"system": {"df": False, "info": False, "--format": True, "-v": False}}` in `SUBVERBS` | `docker system prune` — the whole reason `SUBVERBS` exists |
+| `dpkg-query -W -f …` | `"dpkg-query": True` | it only ever queries |
+| `tesseract stdin stdout --psm 6` | `"tesseract": {"stdin": False, "stdout": False, "--psm": True, "-l": True, "--oem": True}` | `tesseract in.png out` **writes** `out.txt` — a positional is refused |
+
+Five cannot be vouched with any shape the table has, and the reason is worth knowing:
+- `apt autoremove --dry-run`, `brew cleanup -n`, `snap refresh --list` — read-only **only because of the flag**; without it each one removes, deletes, or upgrades. An allowlist admits the flagless spelling too. These need a "required token" shape that does not exist, and note that **the owner allowlist cannot drain them safely either** — `{"apt": ["autoremove"]}` would vouch the destructive form. Leave prompting.
+- `iw X get power_save` — `iw`'s canonical read form is `iw dev X get …`; `wifi.py:330` omits `dev`, so the interface name lands in the verb position. A one-token change to the caller vouches it; the classifier should not.
+- `scutil --dns` — off the table because bare `scutil` is interactive, and every dict entry vouches its bare invocation. Leave prompting.
 
 ## 7. Verification
 
-- `test_classifier_read_only.py` — **182 passed**, up from 72. The nineteen bypasses, the twenty-six read-only spellings, the twenty-three awkward ones, the four resolution tests, the owner-store ordering, the substitution probes, and the pins for the adjudicated carve-outs.
-- Related suites (safety, applescript, mcp, skills, sandbox, secrets, terminal, editor, write-paths) — **1493 passed**, one failure, `test_executor_pool.py::test_background_kwarg_accepted`, which fails identically on the merge-base.
+- `test_classifier_read_only.py` — **231 passed**, up from 72. The nineteen bypasses, the twenty-six read-only spellings, the twenty-three awkward ones, the four resolution tests, the owner-store ordering, the substitution probes, the pins for the adjudicated carve-outs, and the reviewer pass's forty-nine (the thirteen, `mount` both ways, git's value-taking flags, helm both ways).
+- Related suites (safety, applescript, mcp, skills, sandbox, secrets, terminal, editor, write-paths) — **1583 passed**, one failure, `test_executor_pool.py::test_background_kwarg_accepted`, which fails identically on the merge-base.
 - Full suite vs. a merge-base baseline: see §8.
 - Invocation, from the worktree: `arch -arm64 /Volumes/4TB-BAD/Halbert/.venv/bin/python ./wt_pytest.py <paths>`. Bare `./wt_pytest.py` picks up the system Python, which has no `pytest-asyncio`, and silently skips the async tests.
 
 ## 8. Full-suite result
+
+**After the reviewer pass (`5a40b458`)** — the whole of `halbert_core/tests`, against the same saved merge-base baseline:
+
+| | branch after `5a40b458` | merge-base `fa6491dc` (main) |
+|---|---|---|
+| passed | **9789** | 9555 |
+| failed | **53** | 53 |
+| errors | 1 | 1 |
+| skipped / xfailed | 18 / 6 | 18 / 6 |
+| wall | 6m06s | 6m34s |
+
+**The failure sets are byte-identical**, both directions of `comm` empty. The +90 over the rebase-time run below is exactly the tests added since that run collected the file — it imported `test_classifier_read_only.py` as of `53d4ddff`, 141 tests; it is now 231 — so the delta is accounted for to the test. The run imported `safety.py` before the shape-contract comment in the docs commit was added; a comment cannot change behaviour, and the bypass suite was re-run on the exact final tree: 231 passed.
+
+The run below predates the reviewer pass (`5a40b458`) and is kept as the record of the rebase; the re-run above is what stands.
 
 Both runs are the whole of `halbert_core/tests`, on this machine, within half an hour of each other.
 

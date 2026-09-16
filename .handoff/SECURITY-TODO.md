@@ -62,7 +62,7 @@ Status key: `[ ]` not started · `[~]` in progress · `[x]` done, wired and test
       uid 501 through the real `PTYSession`.
 - [x] **Deny-by-default classification — LANDED** (`6d3a4914`, narrowed `b9a03097`). The nine
       prefix regexes are replaced by `READ_ONLY_COMMANDS`, an exact-name table; an unrecognised
-      command defaults HIGH (ask), not MEDIUM (run silently). **Measured cost: 41 of 262, 15.6%**
+      command defaults HIGH (ask), not MEDIUM (run silently). **Measured cost: 36 of 262, 13.7%** (37 measured; one is a corpus artefact — a `|` inside a single `--grep` argv element)
       on the `argv` corpus in `research/sec-2-3/measurement/corpus.json` — not the ~11% the
       research prototype produced, which had been carried into a comment about a different table.
       The plan's unallowlisted `unknown → HIGH` measured 82.8% on the same corpus. Owner drains
@@ -88,6 +88,17 @@ Status key: `[ ]` not started · `[~]` in progress · `[x]` done, wired and test
       `git branch -D`, `tailscale drive share`, `sort -o`, `xxd a b` and the rest. Root cause was
       structural: a frozenset constrains only the FIRST operand. `SUBVERBS` answers that class.
       Twenty-six read-only spellings pinned alongside so the narrowing cost nothing.
+- [x] **The reviewer pass: nothing after a vouched token is assumed** (`5a40b458`). `b9a03097`
+      left the class open one level deeper — a frozenset read ONE operand and returned, SUBVERBS
+      read ONE token after the verb and returned. Thirteen more spellings from the same cause,
+      two confirmed against a real git in a scratch repo: `git remote -v add evil …` **added the
+      remote**, `git branch -v -m victim x` **renamed the branch**; `date -u -s …` is real on
+      Linux. One scan, `_remainder_vouched`, now walks every token as an allowlist. The rule for
+      the table: a **frozenset** is verb-positional (one verb, effectful flags MUST be in
+      `EFFECTFUL_ARGS`); a **dict** is flag-moded (every token read). `date`, `hostname`, the
+      `*ctl` family moved to dicts; `mount` added (sharing.py calls it four times); `helm get`
+      narrowed to `notes`/`hooks`/`metadata` — same call as `kubectl get secrets`. The resolved-
+      vs-unresolved sweep across the tree found `safety.py` was the **only** site with the hole.
 - [ ] **Sandbox applied to the agent's own commands, not only the HTTP routes — STILL OPEN.**
       `_wrap_for_execution` is called from `dashboard/routes/terminal.py` and nowhere else;
       `tools/executor.py` and `streaming/agent_pool.py` never wrap. The "one door" of `101241da`

@@ -296,6 +296,10 @@ def _platform_sensitive_dirs() -> tuple:
 #:   reviewer pass moved `date`, `hostname`, `mount` and the systemd *ctl
 #:   family to, after finding that a frozenset's unread remainder was the
 #:   same hole as the unread first operand, one level deeper.
+#:   An EMPTY remainder is admitted: every dict entry vouches its bare
+#:   invocation. Right for `mount`, `date` and `hostnamectl`, which report
+#:   when bare; wrong for anything interactive or effectful when bare, which
+#:   is why `scutil` stays off the table rather than becoming a dict.
 #:
 #: A command absent from this table is not called safe.
 #:
