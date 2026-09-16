@@ -21,7 +21,7 @@ import { useScan } from '@/contexts/ScanContext'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Progress } from '@/components/ui/progress'
+import { TactileMeter, type TactileMeterTone, DataGridRow, DriveCassette, type DrivePartitionItem, StorageTierGroup } from '@halbert/design-system'
 import { Collapsible } from '@/components/ui/collapsible'
 import { api } from '@/lib/api'
 import { 
@@ -115,6 +115,7 @@ interface StorageItem {
 /** A single filesystem after deduplication */
 interface FilesystemEntry {
   id: string
+  device?: string
   mountpoint: string        // Canonical mount: "/" not "/btrfs/root"
   label: string             // User-friendly: "Root" or "Home"
   fstype: string
@@ -139,6 +140,12 @@ interface DiskGroup {
   dataProfile?: string | null  // btrfs: data profile (raid0, dup, single, etc.)
   metadataProfile?: string | null // btrfs: metadata profile (dup, raid1, etc.)
   arrayTiers?: Record<string, string[]>  // tier name -> device list (bcachefs)
+  tierTargets?: {
+    foreground?: string
+    background?: string
+    metadata?: string
+    promote?: string
+  }
   arrayMembers?: ArrayMember[]  // Full member info with labels/tiers
 }
 
@@ -443,6 +450,7 @@ function deduplicateFilesystems(filesystems: StorageItem[]): FilesystemEntry[] {
       // First occurrence
       seen.set(fingerprint, {
         id: fs.id,
+        device: fs.data.device || fs.data.source || '',
         mountpoint: isBtrfsSubvolumeDuplicate(mountpoint) 
           ? getCanonicalMountForPurpose(purpose) 
           : mountpoint,
@@ -506,6 +514,12 @@ function createDiskGroups(
     dataProfile: string | null
     metadataProfile: string | null
     arrayTiers: Record<string, string[]>
+    tierTargets?: {
+      foreground?: string
+      background?: string
+      metadata?: string
+      promote?: string
+    }
   }>()
   
   for (const fs of rawFilesystems) {
@@ -518,8 +532,9 @@ function createDiskGroups(
     const dataProfile = fs.data.data_profile || null
     const metadataProfile = fs.data.metadata_profile || null
     const arrayTiers = (fs.data.array_tiers || {}) as Record<string, string[]>
+    const tierTargets = fs.data.tier_targets
     if (mount) {
-      fsInfoMap.set(mount, { device, parentDisk, arrayMembers, arrayType, arrayProfile, dataProfile, metadataProfile, arrayTiers })
+      fsInfoMap.set(mount, { device, parentDisk, arrayMembers, arrayType, arrayProfile, dataProfile, metadataProfile, arrayTiers, tierTargets })
     }
   }
   
@@ -533,7 +548,8 @@ function createDiskGroups(
       arrayProfile: null,
       dataProfile: null,
       metadataProfile: null,
-      arrayTiers: {}
+      arrayTiers: {},
+      tierTargets: undefined,
     }
     
     // If we have array members from the backend, use those directly
@@ -628,6 +644,7 @@ function createDiskGroups(
     const dataProfile = primaryFsInfo?.dataProfile || null
     const metadataProfile = primaryFsInfo?.metadataProfile || null
     const arrayTiers = primaryFsInfo?.arrayTiers || {}
+    const tierTargets = primaryFsInfo?.tierTargets
     const arrayMembers = primaryFsInfo?.arrayMembers || []
     
     groups.push({
@@ -643,6 +660,7 @@ function createDiskGroups(
       dataProfile,
       metadataProfile,
       arrayTiers,
+      tierTargets,
       arrayMembers,
     })
   }
@@ -679,55 +697,65 @@ function getShortName(mountpoint: string): string {
   return parts[parts.length - 1] || mountpoint
 }
 
-/** Compact usage bar row for grid layout */
-function FilesystemUsageBar({ fs, showName = false }: { fs: FilesystemEntry; showName?: boolean }) {
+/** Two-Tier Vignelli usage row: clean decoupled baseline and 100% full-width meter */
+function FilesystemUsageRow({ 
+  fs, 
+  profileDetail 
+}: { 
+  fs: FilesystemEntry
+  profileDetail?: React.ReactNode 
+}) {
   const shortName = getShortName(fs.mountpoint)
   const { customNames, onRename } = useContext(CustomNamesContext)
   
+  const tone: TactileMeterTone = 
+    fs.severity === 'critical' 
+      ? 'critical' 
+      : fs.severity === 'warning' 
+        ? 'warning' 
+        : 'telemetry'
+
   return (
-    <>
-      {/* Column 1: name + mount (only for multi-fs groups) */}
-      {showName && (
-        <div className="flex items-center gap-1.5">
-          <Folder className="h-3.5 w-3.5 text-info shrink-0" />
-          <EditableName
-            id={`fs-${fs.mountpoint}`}
-            defaultName={shortName}
-            customNames={customNames}
-            onRename={onRename}
-            className="text-sm"
-          />
-          <span className="text-muted-foreground text-xs">
-            {fs.mountpoint}
-          </span>
-        </div>
-      )}
-      {/* Column 2: Progress bar */}
-      <Progress
-        value={fs.percent}
-        className={cn(
-          "h-2",
-          fs.severity === 'critical' && '[&>div]:bg-error',
-          fs.severity === 'warning' && '[&>div]:bg-warning',
-        )}
-      />
-      {/* Column 3: Size info */}
-      <span className="text-muted-foreground text-right text-xs">
-        {fs.used}/{fs.size}
-      </span>
-      {/* Column 4: Percent badge */}
-      <Badge
-        className={cn(
-          "text-xs w-14 justify-center",
-          fs.severity === 'critical' && 'bg-error',
-          fs.severity === 'warning' && 'bg-warning',
-          fs.severity === 'success' && 'bg-success',
-          !['critical', 'warning', 'success'].includes(fs.severity) && 'bg-info',
-        )}
-      >
-        {fs.percent}%
-      </Badge>
-    </>
+    <DataGridRow
+      variant="in-bar"
+      className="py-1.5 sm:py-2"
+      icon={<Folder className="h-4 w-4 text-muted-foreground shrink-0" />}
+      title={
+        <EditableName
+          id={`fs-${fs.mountpoint}`}
+          defaultName={shortName}
+          customNames={customNames}
+          onRename={onRename}
+          className="text-sm sm:text-[15px] font-medium text-foreground truncate"
+        />
+      }
+      detail={profileDetail ? `• ${profileDetail}` : undefined}
+      metrics={`${fs.used} / ${fs.size}`}
+      status={
+        <span
+          className={cn(
+            "font-mono text-xs sm:text-[13px] font-semibold tabular-nums",
+            fs.severity === 'critical'
+              ? 'text-status-critical font-bold'
+              : fs.severity === 'warning'
+                ? 'text-status-warning font-semibold'
+                : 'text-foreground',
+          )}
+        >
+          {fs.percent}%
+        </span>
+      }
+      meter={
+        <TactileMeter
+          value={fs.percent}
+          tone={tone}
+          size="thick"
+          inBarLeft={fs.mountpoint}
+          ticks={[25, 50, 75, 90]}
+          aria-label={`${shortName} (${fs.mountpoint}) capacity`}
+        />
+      }
+    />
   )
 }
 
@@ -751,12 +779,14 @@ function DiskItem({
   showNestedMembers = false,
   nested = false,
   memberInfo,
+  filesystems = [],
 }: { 
   disk: StorageItem
   allDisks?: StorageItem[]
   showNestedMembers?: boolean
   nested?: boolean
   memberInfo?: ArrayMember  // Tier info from array_members
+  filesystems?: FilesystemEntry[]
 }) {
   const showUUIDs = React.useContext(ShowUUIDsContext)
   const isRaid = disk.data.type === 'RAID'
@@ -768,9 +798,6 @@ function DiskItem({
     ? memberPaths.map(path => allDisks.find(d => d.data.device === path)).filter(Boolean) as StorageItem[]
     : []
   
-  // Format RAID level for display (raid0 -> RAID0) - no space for better centering
-  const raidBadgeText = raidLevel.toUpperCase()
-  
   // Get tier info from memberInfo prop - support multiple roles
   const tierRoles = memberInfo?.roles || (memberInfo?.role ? [memberInfo.role] : [])
   const tierLabel = memberInfo?.label || memberInfo?.tier
@@ -778,78 +805,52 @@ function DiskItem({
   const displayRoles = tierRoles
     .filter(r => TIER_ROLE_CONFIG[r])
     .filter((r, i, arr) => arr.indexOf(r) === i)
-  
+    .map(r => TIER_ROLE_CONFIG[r]?.label || r)
+
+  const smartStatus = isRaid ? raidLevel.toUpperCase() : (disk.data.smart_status || 'UNKNOWN')
+
+  // Find partitions if this disk has partitions in filesystems
+  const diskDev = disk.data.device || ''
+  const partitions: DrivePartitionItem[] | undefined = useMemo(() => {
+    if (!diskDev || filesystems.length === 0) return undefined
+    const matching = filesystems.filter(f => f.device && f.device.startsWith(diskDev) && f.device !== diskDev)
+    if (matching.length === 0) return undefined
+    return matching.map(f => ({
+      id: f.id,
+      device: f.device || f.mountpoint,
+      mountpoint: f.mountpoint,
+      fstype: f.fstype,
+      size: f.size,
+      used: f.used,
+      percent: f.percent,
+    }))
+  }, [diskDev, filesystems])
+
   return (
-    <div className={cn(
-      "rounded-lg border bg-muted/30",
-      isRaid && "border-info/30",
-      nested ? "py-1.5 px-2" : "pt-3 px-3 pb-4"
-    )}>
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2 min-w-0 flex-1">
-          <HardDrive className={cn(
-            "shrink-0",
-            nested ? "h-3.5 w-3.5" : "h-5 w-5",
-            isRaid ? "text-info" : "text-muted-foreground"
-          )} />
-          <div className="min-w-0 flex-1">
-            <p className={cn("font-medium truncate", nested ? "text-xs" : "text-sm")}>{disk.title}</p>
-            <div className={cn("flex items-center gap-1.5 flex-wrap", nested ? "mt-0.5" : "mt-1")}>
-              {/* Tier role badges - show all roles this device serves */}
-              {displayRoles.map(role => {
-                const config = TIER_ROLE_CONFIG[role]
-                return (
-                  <Badge 
-                    key={role}
-                    className={cn(
-                      "shrink-0 px-1.5 py-0",
-                      nested ? "text-[8px]" : "text-[10px]",
-                      config.color
-                    )}
-                  >
-                    {config.label}
-                  </Badge>
-                )
-              })}
-              <span className={cn("text-muted-foreground truncate", nested ? "text-[10px]" : "text-xs")}>
-                {disk.data.device} • {disk.data.size} • {disk.data.transport || disk.data.type}
-                {tierLabel && displayRoles.length === 0 && ` • ${tierLabel}`}
-              </span>
-            </div>
-            {/* UUID line - only shown when toggle is on */}
-            {showUUIDs && (disk.data.uuid || disk.data.wwn || disk.data.serial) && (
-              <p className={cn("text-muted-foreground/70 font-mono truncate", nested ? "text-[9px] mt-0.5" : "text-[10px] mt-1")}>
-                {disk.data.uuid || disk.data.wwn || disk.data.serial}
-              </p>
-            )}
-          </div>
-        </div>
-        <Badge
-          className={cn(
-            "shrink-0 min-w-[4.5rem] justify-center leading-none",
-            nested 
-              ? "text-[10px] px-1.5 py-1 min-w-[4.5rem]" 
-              : "text-xs px-2 py-1",
-            disk.data.smart_status === 'PASSED' && 'bg-success',
-            disk.data.smart_status === 'FAILED' && 'bg-error',
-            disk.data.smart_status === 'WARNING' && 'bg-warning',
-            disk.data.smart_status === 'UNKNOWN' && 'bg-muted',
-            disk.data.smart_status === 'NO_ACCESS' && 'bg-warning',
-            disk.data.smart_status === 'N/A' && 'bg-info',
-          )}
-        >
-          {isRaid ? raidBadgeText : (disk.data.smart_status || 'UNKNOWN')}
-        </Badge>
-      </div>
+    <div className={cn("w-full", nested && "pl-4 border-l-2 border-border/50")}>
+      <DriveCassette
+        device={disk.data.device || disk.title}
+        label={tierLabel}
+        model={disk.title !== disk.data.device ? disk.title : undefined}
+        transport={disk.data.transport || disk.data.type}
+        size={disk.data.size}
+        used={disk.data.used}
+        percent={disk.data.percent}
+        smartStatus={smartStatus}
+        roles={displayRoles}
+        serial={showUUIDs ? (disk.data.uuid || disk.data.wwn || disk.data.serial) : undefined}
+        partitions={partitions}
+      />
       
       {/* Nested member disks for MD arrays */}
       {showNestedMembers && isRaid && memberDisks.length > 0 && (
-        <div className="mt-1.5 -mx-1 space-y-1">
+        <div className="mt-2 space-y-2">
           {memberDisks.map(memberDisk => (
             <DiskItem 
               key={memberDisk.id} 
               disk={memberDisk} 
               nested={true}
+              filesystems={filesystems}
             />
           ))}
         </div>
@@ -857,7 +858,7 @@ function DiskItem({
       
       {/* Fallback: show member paths if disks not found */}
       {showNestedMembers && isRaid && memberDisks.length === 0 && memberPaths.length > 0 && (
-        <div className="mt-1.5 -mx-1 text-xs text-muted-foreground">
+        <div className="mt-1.5 text-xs text-muted-foreground font-mono">
           <span className="font-medium">Members:</span> {memberPaths.join(', ')}
         </div>
       )}
@@ -881,8 +882,11 @@ function DiskGroupSection({ group, allDisks }: { group: DiskGroup; allDisks: Sto
   // Count MD arrays vs regular disks for layout decisions
   const mdArrays = group.disks.filter(d => d.data.type === 'RAID')
   const nonMdDisks = group.disks.filter(d => d.data.type !== 'RAID')
-  // Use full width for single MD or when MDs have nested members (to prevent stacking)
-  const useFullWidth = mdArrays.length === 1 || (mdArrays.length > 0 && mdArrays.length <= 2)
+  
+  // Check if array has multiple defined tiers (bcachefs, tiered ZFS/md)
+  const hasMultipleTiers = useMemo(() => {
+    return !!(group.arrayTiers && Object.keys(group.arrayTiers).length > 1)
+  }, [group.arrayTiers])
   
   // Build device -> memberInfo map for tier badges
   const memberInfoMap = useMemo(() => {
@@ -937,7 +941,7 @@ function DiskGroupSection({ group, allDisks }: { group: DiskGroup; allDisks: Sto
     <div className="rounded-lg border bg-card text-card-foreground shadow-sm">
       {/* Header row - sticky when expanded, -top-8 to offset main padding, py-3 to match sidebar height */}
       <div className={cn(
-        "px-4 py-3 rounded-t-lg",
+        "px-4 sm:px-6 py-3.5 sm:py-4 rounded-t-lg",
         isOpen && "sticky -top-8 z-10 bg-card"
       )}>
         <div className="flex items-center justify-between">
@@ -1004,56 +1008,40 @@ function DiskGroupSection({ group, allDisks }: { group: DiskGroup; allDisks: Sto
         </div>
       </div>
       
-      {/* Usage bars - grid layout for alignment */}
-      <div className="px-4 pb-2">
-        {isSingleFs ? (
-          // Single filesystem - simple flex row with details below
-          <div className="space-y-0.5">
-            <div className="flex items-center gap-2 text-sm">
-              <FilesystemUsageBar fs={primaryFs} showName={false} />
-            </div>
-            {/* Filesystem details line - show metadata first, then data */}
-            <div className="text-[11px] text-muted-foreground pl-0.5">
-              {primaryFs.fstype.toUpperCase()}
-              {(group.dataProfile || group.metadataProfile) ? (
-                <>
-                  {group.metadataProfile && <span> • meta: {group.metadataProfile}</span>}
-                  {group.dataProfile && <span> • data: {group.dataProfile}</span>}
-                </>
-              ) : group.arrayProfile && group.arrayProfile !== 'single' && (
-                <span> • {group.arrayProfile}</span>
-              )}
-            </div>
-          </div>
-        ) : (
-          // Multiple filesystems - each FS with its own details below
-          <div className="space-y-1">
-            {group.filesystems.map((fs, idx) => (
-              <div key={fs.id} className="space-y-0">
-                {/* Filesystem row */}
-                <div 
-                  className="grid gap-x-3 items-center text-sm"
-                  style={{ gridTemplateColumns: 'auto 1fr auto auto' }}
-                >
-                  <FilesystemUsageBar fs={fs} showName={true} />
-                </div>
-                {/* FS type details below this filesystem - metadata first, then data */}
-                <div className="text-[11px] text-muted-foreground pl-5">
+      {/* Usage bars - Two-Tier Vignelli layout for absolute alignment */}
+      <div className="px-4 sm:px-6 pb-4 sm:pb-5 space-y-3 sm:space-y-4">
+        {group.filesystems.map((fs, idx) => {
+          let profileDetail: React.ReactNode = null
+          if (idx === 0) {
+            if (group.dataProfile || group.metadataProfile) {
+              profileDetail = (
+                <span>
                   {fs.fstype.toUpperCase()}
-                  {/* Show meta/data profiles for primary FS, or just fstype for others */}
-                  {idx === 0 && (group.dataProfile || group.metadataProfile) ? (
-                    <>
-                      {group.metadataProfile && <span> • meta: {group.metadataProfile}</span>}
-                      {group.dataProfile && <span> • data: {group.dataProfile}</span>}
-                    </>
-                  ) : idx === 0 && group.arrayProfile && group.arrayProfile !== 'single' && (
-                    <span> • {group.arrayProfile}</span>
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
+                  {group.metadataProfile && ` • meta: ${group.metadataProfile}`}
+                  {group.dataProfile && ` • data: ${group.dataProfile}`}
+                </span>
+              )
+            } else if (group.arrayProfile && group.arrayProfile !== 'single') {
+              profileDetail = (
+                <span>
+                  {fs.fstype.toUpperCase()} • {group.arrayProfile}
+                </span>
+              )
+            } else {
+              profileDetail = <span>{fs.fstype.toUpperCase()}</span>
+            }
+          } else {
+            profileDetail = <span>{fs.fstype.toUpperCase()}</span>
+          }
+
+          return (
+            <FilesystemUsageRow
+              key={fs.id}
+              fs={fs}
+              profileDetail={profileDetail}
+            />
+          )
+        })}
       </div>
       
       {/* Compact expand row - no dividers */}
@@ -1073,14 +1061,99 @@ function DiskGroupSection({ group, allDisks }: { group: DiskGroup; allDisks: Sto
         <span>{isOpen ? 'Hide' : 'Show'} {group.diskCount === 1 ? 'disk' : 'disks'}</span>
       </button>
       
-      {/* Expanded: physical disks - with nested MD members */}
+      {/* Expanded: physical disks - with nested MD members or storage tiers */}
       {isOpen && (
-        <div className="px-4 pb-3 pt-1 space-y-3">
-          {mdArrays.length > 0 && nonMdDisks.length > 0 ? (
+        <div className="px-4 pb-3 pt-1 space-y-4">
+          {hasMultipleTiers ? (
+            <div className="space-y-4">
+              {Object.entries(group.arrayTiers!).map(([tierName, deviceList], idx) => {
+                const tierDisks = deviceList
+                  .map(dev => group.disks.find(d => d.data.device === dev) || allDisks.find(d => d.data.device === dev))
+                  .filter(Boolean) as StorageItem[]
+
+                const lowerTier = tierName.toLowerCase()
+                let roleLabel = tierName.toUpperCase()
+                let subtitle = `${tierDisks.length} ${tierDisks.length === 1 ? 'drive' : 'drives'}`
+
+                if (lowerTier.includes('nvme') || lowerTier.includes('foreground') || lowerTier.includes('cache')) {
+                  roleLabel = 'WRITE CACHE'
+                  if (group.tierTargets?.foreground === tierName) {
+                    subtitle = `Target: foreground · ${tierDisks.length} ${tierDisks.length === 1 ? 'drive' : 'drives'}`
+                  }
+                } else if (lowerTier.includes('hdd') || lowerTier.includes('background') || lowerTier.includes('data')) {
+                  roleLabel = 'BULK DATA'
+                  if (group.tierTargets?.background === tierName) {
+                    subtitle = `Target: background · ${tierDisks.length} ${tierDisks.length === 1 ? 'drive' : 'drives'}`
+                  }
+                } else if (lowerTier.includes('promote')) {
+                  roleLabel = 'READ CACHE'
+                  if (group.tierTargets?.promote === tierName) {
+                    subtitle = `Target: promote · ${tierDisks.length} ${tierDisks.length === 1 ? 'drive' : 'drives'}`
+                  }
+                } else if (lowerTier.includes('meta')) {
+                  roleLabel = 'METADATA'
+                  if (group.tierTargets?.metadata === tierName) {
+                    subtitle = `Target: metadata · ${tierDisks.length} ${tierDisks.length === 1 ? 'drive' : 'drives'}`
+                  }
+                }
+
+                const tierNumber = String(idx + 1).padStart(2, '0')
+                const title = `Tier ${tierNumber}: ${tierName.charAt(0).toUpperCase() + tierName.slice(1)}`
+
+                return (
+                  <StorageTierGroup
+                    key={tierName}
+                    title={title}
+                    subtitle={subtitle}
+                    roleLabel={roleLabel}
+                    capacity={`${tierDisks.length} ${tierDisks.length === 1 ? 'drive' : 'drives'}`}
+                  >
+                    <div className="space-y-3">
+                      {tierDisks.map((disk) => (
+                        <DiskItem
+                          key={disk.id}
+                          disk={disk}
+                          allDisks={allDisks}
+                          filesystems={group.filesystems}
+                          showNestedMembers={true}
+                          memberInfo={getMemberInfo(disk)}
+                        />
+                      ))}
+                    </div>
+                  </StorageTierGroup>
+                )
+              })}
+              {/* Any disks not in a recognized tier */}
+              {(() => {
+                const tieredDevices = new Set(Object.values(group.arrayTiers!).flat())
+                const untieredDisks = group.disks.filter(d => !tieredDevices.has(d.data.device || ''))
+                if (untieredDisks.length === 0) return null
+                return (
+                  <div className="space-y-2 pt-2">
+                    <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                      Other Member Drives ({untieredDisks.length})
+                    </div>
+                    <div className="space-y-3">
+                      {untieredDisks.map((disk) => (
+                        <DiskItem
+                          key={disk.id}
+                          disk={disk}
+                          allDisks={allDisks}
+                          filesystems={group.filesystems}
+                          showNestedMembers={true}
+                          memberInfo={getMemberInfo(disk)}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                )
+              })()}
+            </div>
+          ) : mdArrays.length > 0 && nonMdDisks.length > 0 ? (
             // Mixed: show non-MD disks first, then MD arrays with nested members
             <>
               {/* Non-RAID disks */}
-              <div>
+              <div className="space-y-2">
                 <div className="flex items-center gap-2 mb-1.5">
                   <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
                     Direct Disks
@@ -1089,17 +1162,14 @@ function DiskGroupSection({ group, allDisks }: { group: DiskGroup; allDisks: Sto
                     ({nonMdDisks.length})
                   </span>
                 </div>
-                <div className={cn(
-                  "grid gap-2",
-                  useFullWidth ? "grid-cols-1" : "grid-cols-1 lg:grid-cols-2"
-                )}>
+                <div className="space-y-3">
                   {nonMdDisks.map((disk) => (
-                    <DiskItem key={disk.id} disk={disk} allDisks={allDisks} showNestedMembers={true} memberInfo={getMemberInfo(disk)} />
+                    <DiskItem key={disk.id} disk={disk} allDisks={allDisks} filesystems={group.filesystems} showNestedMembers={true} memberInfo={getMemberInfo(disk)} />
                   ))}
                 </div>
               </div>
               {/* MD arrays with nested members */}
-              <div>
+              <div className="space-y-2">
                 <div className="flex items-center gap-2 mb-1.5">
                   <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
                     RAID Arrays
@@ -1108,31 +1178,25 @@ function DiskGroupSection({ group, allDisks }: { group: DiskGroup; allDisks: Sto
                     ({mdArrays.length})
                   </span>
                 </div>
-                <div className={cn(
-                  "grid gap-2",
-                  useFullWidth ? "grid-cols-1" : "grid-cols-1 lg:grid-cols-2"
-                )}>
+                <div className="space-y-3">
                   {mdArrays.map((disk) => (
-                    <DiskItem key={disk.id} disk={disk} allDisks={allDisks} showNestedMembers={true} memberInfo={getMemberInfo(disk)} />
+                    <DiskItem key={disk.id} disk={disk} allDisks={allDisks} filesystems={group.filesystems} showNestedMembers={true} memberInfo={getMemberInfo(disk)} />
                   ))}
                 </div>
               </div>
             </>
           ) : mdArrays.length > 0 ? (
             // Only MD arrays
-            <div className={cn(
-              "grid gap-2",
-              useFullWidth ? "grid-cols-1" : "grid-cols-1 lg:grid-cols-2"
-            )}>
+            <div className="space-y-3">
               {mdArrays.map((disk) => (
-                <DiskItem key={disk.id} disk={disk} allDisks={allDisks} showNestedMembers={true} memberInfo={getMemberInfo(disk)} />
+                <DiskItem key={disk.id} disk={disk} allDisks={allDisks} filesystems={group.filesystems} showNestedMembers={true} memberInfo={getMemberInfo(disk)} />
               ))}
             </div>
           ) : group.disks.length > 0 ? (
             // Only regular disks
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-2">
+            <div className="space-y-3">
               {group.disks.map((disk) => (
-                <DiskItem key={disk.id} disk={disk} allDisks={allDisks} showNestedMembers={true} memberInfo={getMemberInfo(disk)} />
+                <DiskItem key={disk.id} disk={disk} allDisks={allDisks} filesystems={group.filesystems} showNestedMembers={true} memberInfo={getMemberInfo(disk)} />
               ))}
             </div>
           ) : (
@@ -1182,7 +1246,7 @@ function getDeviceIdNumber(device: string): number {
 }
 
 /** All physical devices section with sorting */
-function AllDevicesSection({ disks }: { disks: StorageItem[] }) {
+function AllDevicesSection({ disks, filesystems = [] }: { disks: StorageItem[]; filesystems?: FilesystemEntry[] }) {
   const [sortBy, setSortBy] = useState<SortOption>('name')
   const [groupByType, setGroupByType] = useState(true)
   const [groupMdDevices, setGroupMdDevices] = useState(true)
@@ -1300,8 +1364,6 @@ function AllDevicesSection({ disks }: { disks: StorageItem[] }) {
               
               // For RAID type when groupMD is on, show nested members
               const showNested = type === 'RAID' && groupMdDevices
-              // For RAID with nested members, use full width
-              const useFullWidthRaid = showNested && typeDisks.length <= 3
               
               return (
                 <div key={type}>
@@ -1313,15 +1375,13 @@ function AllDevicesSection({ disks }: { disks: StorageItem[] }) {
                       ({typeDisks.length})
                     </span>
                   </div>
-                  <div className={cn(
-                    "grid gap-2",
-                    useFullWidthRaid ? "grid-cols-1" : "grid-cols-1 lg:grid-cols-2"
-                  )}>
+                  <div className="space-y-3">
                     {typeDisks.map((disk) => (
                       <DiskItem 
                         key={disk.id} 
                         disk={disk} 
                         allDisks={disks}
+                        filesystems={filesystems}
                         showNestedMembers={showNested}
                       />
                     ))}
@@ -1331,12 +1391,13 @@ function AllDevicesSection({ disks }: { disks: StorageItem[] }) {
             })
           ) : (
             // Flat view
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-2">
+            <div className="space-y-3">
               {sortedDisks.map((disk) => (
                 <DiskItem 
                   key={disk.id} 
                   disk={disk} 
                   allDisks={disks}
+                  filesystems={filesystems}
                   showNestedMembers={groupMdDevices && disk.data.type === 'RAID'}
                 />
               ))}
@@ -1602,7 +1663,7 @@ export function Storage() {
   })
 
   // Process storage data
-  const { diskGroups, disks, unmountedVolumes, stats } = useMemo(() => {
+  const { diskGroups, disks, unmountedVolumes, filesystems, stats } = useMemo(() => {
     // Include both physical disks (disk-*) and MD RAID arrays (md-*)
     const allDisks = storage.filter(s => s.name.startsWith('disk-') || s.name.startsWith('md-'))
     const rawFilesystems = storage.filter(s => s.name.startsWith('fs-'))
@@ -1631,6 +1692,7 @@ export function Storage() {
       diskGroups: groups,
       disks: allDisks,
       unmountedVolumes: unmounted,
+      filesystems: dedupedFilesystems,
       stats: {
         totalDisks: physicalDisks.length,
         healthyDisks: physicalDisks.filter(d => d.data.smart_status === 'PASSED').length,
@@ -1719,7 +1781,7 @@ export function Storage() {
         )}
         
         {/* All Physical Devices (collapsed by default) */}
-        <AllDevicesSection disks={disks} />
+        <AllDevicesSection disks={disks} filesystems={filesystems} />
         
         {/* Unmounted Volumes */}
         <UnmountedSection 

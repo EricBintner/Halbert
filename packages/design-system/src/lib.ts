@@ -37,3 +37,30 @@ export function useId(provided?: string): string {
   const generated = React.useId()
   return provided ?? generated
 }
+
+/**
+ * Observe an element's rendered width in CSS pixels.
+ *
+ * Returns 0 until a real measurement lands, which is the honest answer during
+ * SSR, the first paint, and in jsdom — callers decide what to assume for that
+ * window rather than being handed a fabricated number. ResizeObserver is
+ * feature-detected because the test environment does not provide one.
+ */
+export function useMeasuredWidth(ref: React.RefObject<HTMLElement | null>): number {
+  const [width, setWidth] = React.useState(0)
+
+  React.useLayoutEffect(() => {
+    const el = ref.current
+    if (!el) return
+
+    const measure = () => setWidth(el.getBoundingClientRect().width)
+    measure()
+
+    if (typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(measure)
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [ref])
+
+  return width
+}

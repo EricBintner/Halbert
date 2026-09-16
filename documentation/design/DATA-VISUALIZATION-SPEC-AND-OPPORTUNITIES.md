@@ -224,14 +224,23 @@ All colors must resolve to tokens in `/shared-tokens/tokens.css`. Never use raw 
 
 | Chart Element | CSS Token | Purpose / Role |
 |---|---|---|
-| **Chart Ground** | `var(--color-surface)` / `var(--color-surface-sunken)` | Clean paper ground; sunken tray for recessed meters |
-| **Grid Lines & Axes** | `var(--color-border-subtle)` / `var(--color-border)` | Crisp 1px hairline scale marks; never heavy |
+| **Chart Ground** | `var(--color-surface)` / `var(--color-surface-subtle)` | Clean paper ground; sunken tray for recessed meters |
+| **Grid Lines & Axes** | `var(--color-line-subtle)` / `var(--color-line)` | Crisp 1px hairline scale marks; never heavy |
 | **Primary Data Series** | `var(--color-ink)` (#242220) | Main trendline, high-contrast primary metric |
 | **Focal Accent** | `var(--color-accent)` (#E05338) | Peak values, critical threshold crossing, active selection |
 | **Nominal Status** | `var(--color-status-nominal)` (#2D5A27) | Healthy capacity, normal temperatures, successful jobs |
 | **Warning Status** | `var(--color-status-warning)` (#8F5B1E) | Approaching capacity (>75%), elevated thermals |
 | **Critical Status** | `var(--color-status-critical)` (#9E2A2B) | Capacity critical (>90%), throttling, failed jobs |
 | **Secondary Series** | `var(--color-ink-tertiary)` (#66635F) | Background comparisons, previous period averages |
+
+**Mark colour vs. status chip.** A single-value gauge wears its series pigment
+(`--color-data-*`, or `telemetry` for an undifferentiated reading) while the
+metric is nominal, and recruits the status pigment the moment it crosses a
+warning or critical threshold. The status chip states the condition in text and
+pigment at all times. The two never disagree: a mark still wearing a data hue
+beside a chip reading `WARN` is a bug, not a decoupling. Categorical
+`--color-data-*` tones exist to tell *series* apart within one allocation
+(Data vs. Metadata vs. Snapshots), never to soften a threshold crossing.
 
 ### 5.2 Typography in Data Visualization
 Halbert enforces a strict typography triad:
