@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-engine = pytest.importorskip("haloysius.attunement.types")
+pytest.importorskip("haloysius.attunement.presence")
 
 from halbert_core.attunement.store import AttunementStore  # noqa: E402
 
@@ -108,9 +108,11 @@ def test_the_preview_says_so_without_the_engine(client, monkeypatch):
 
 
 def test_a_config_the_loader_refuses_is_a_400(client, monkeypatch):
-    from halbert_core.dashboard.routes import being as being_mod
-    monkeypatch.setattr(being_mod, "load_being_config", None, raising=False)
     import halbert_core.config.being_config as bc
-    monkeypatch.setattr(bc, "load_being_config", lambda *a, **k: (_ for _ in ()).throw(ValueError("presence must be an integer 0..10, got 11")))
+
+    def _refuse(*a, **k):
+        raise ValueError("presence must be an integer 0..10, got 11")
+
+    monkeypatch.setattr(bc, "load_being_config", _refuse)
     r = client.get("/api/being/presence/preview", params={"level": 3})
     assert r.status_code == 400 and "presence" in r.json()["detail"]

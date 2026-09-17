@@ -117,7 +117,7 @@ def preview_for_level(rows: Iterable[Dict[str, Any]], level: int, *, being_confi
             "source": r.get("source"), "severity": r.get("severity"),
             "context_key": r.get("context_key"),
             "impulse_class": cls.value, "verdict": verdict, "channel": channel,
-            "live_outcome": r.get("gate_outcome"),
+            "live_outcome": r.get("gate_outcome", r.get("outcome")),
         }))
 
     dated.sort(key=lambda pair: pair[0], reverse=True)   # chronological, not lexical

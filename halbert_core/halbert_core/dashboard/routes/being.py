@@ -304,7 +304,10 @@ def presence_preview(
     rows = _attunement_store().list_outcomes_raw(DEFAULT_PERSONA_ID, limit=_PREVIEW_ROWS, since=since)
     preview = preview_for_level(rows, level, being_config=config, days=days, now=now)
     if not preview["engine"]:
-        raise HTTPException(status_code=503, detail="attunement engine not installed")
+        raise HTTPException(
+            status_code=503,
+            detail="the attunement engine is installed but did not resolve a presence vector",
+        )
     preview.pop("engine", None)   # the frontend's Preview interface never declared it
     preview["items"] = preview["items"][:limit]
     preview["truncated"] = len(rows) >= _PREVIEW_ROWS

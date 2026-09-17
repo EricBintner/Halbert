@@ -11,7 +11,7 @@ import pytest
 from halbert_core.attunement.preview import preview_for_level
 from halbert_core.config.being_config import BeingConfig
 
-pytest.importorskip("haloysius.attunement.types")   # the preview needs the engine at call time
+pytest.importorskip("haloysius.attunement.presence")   # the preview needs the engine at call time
 
 NOW = datetime(2026, 9, 16, 12, 0, tzinfo=timezone.utc)
 
