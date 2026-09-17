@@ -32,6 +32,7 @@ const beingConfig = {
   purpose: '',
   senses: { vision: {} },
   persona_id: 'default',
+  presence: 3,
 }
 
 const personas = [{ id: 'default', display_name: 'Default' }]
@@ -58,6 +59,15 @@ function renderTab() {
     if (url.match(/^\/api\/persona\/[^/]+\/activate$/)) return jsonResponse({ status: 'ok' })
     if (url.match(/^\/api\/persona\/[^/]+$/) && init?.method === 'DELETE') {
       return jsonResponse({ status: 'ok' })
+    }
+    if (url === '/api/being/presence/rungs') {
+      return jsonResponse({ status: 'ok', rungs: [
+        { level: 0, name: 'mute', says: "I'll only speak for what can't wait.", why: 'Nothing interrupts you.', classifiable: true, admits: [], channel: {} },
+        { level: 3, name: 'morning', says: "I'll give you the morning report.", why: 'The default.', classifiable: true, admits: [], channel: {} },
+      ] })
+    }
+    if (url.startsWith('/api/being/presence/preview')) {
+      return jsonResponse({ status: 'ok', level: 3, days: 7, said: 0, shown: 0, held: 0, unclassified: 0, undated: 0, budget_per_day: 3, truncated: false, items: [] })
     }
     return jsonResponse({ status: 'ok' })
   })

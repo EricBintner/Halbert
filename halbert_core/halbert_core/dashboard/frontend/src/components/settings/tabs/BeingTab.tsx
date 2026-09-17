@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { apiUrl } from '@/lib/apiBase'
+import { PresenceCard } from './PresenceCard'
 import {
   Trash2,
   Brain,
@@ -22,6 +23,9 @@ import {
 } from 'lucide-react'
 
 const API_BASE = apiUrl('/api')
+
+const errorText = (detail: unknown, fallback: string): string =>
+  Array.isArray(detail) ? detail.map((d: any) => d?.msg ?? String(d)).join('; ') : (detail ? String(detail) : fallback)
 
 // The three machine roles, matching the onboarding multi-select and
 // identity.VALID_MACHINE_ROLES. API value `home_automation_hub` renders as
@@ -248,7 +252,7 @@ function BeingSettings() {
         setTimeout(() => setToast(null), 2000)
       } else {
         const err = await resp.json()
-        setToast(`Error: ${err.detail || 'Failed to save'}`)
+        setToast(`Error: ${errorText(err.detail, 'Failed to save')}`)
         setTimeout(() => setToast(null), 3000)
       }
     } catch (e) {
@@ -488,6 +492,10 @@ function BeingSettings() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Presence (spec 2026-09-16 v2 §15). Shadow-only in slice 1: the
+          Proactivity card below still governs what is heard (D1, D11). */}
+      <PresenceCard level={config.presence ?? 3} saving={saving} onChange={saveConfig} />
 
       {/* Proactivity Setting */}
       <Card>
