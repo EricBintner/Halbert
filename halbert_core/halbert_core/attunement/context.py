@@ -138,13 +138,18 @@ def presence_for(being_config: Any) -> Any:
     overrides = dict(getattr(being_config, "presence_overrides", None) or {})
     try:
         return resolve_presence(level, halbert_curve(), config.attachment, overrides)
-    except (TypeError, ValueError) as exc:
-        _warn_once(f"presence_overrides rejected by the engine ({exc}); resolving without them")
+    except (TypeError, ValueError) as first:
+        # `except ... as name` is implicitly deleted at the end of its own
+        # block (language spec, to break the traceback's reference cycle) —
+        # captured as a plain string so it survives to the message below.
+        first_message = str(first)
     try:
-        return resolve_presence(level, halbert_curve(), config.attachment, {})
+        vector = resolve_presence(level, halbert_curve(), config.attachment, {})
     except (TypeError, ValueError) as exc:
         _warn_once(f"presence level rejected by the engine ({exc}); the shadow lane is off for this event")
         return None
+    _warn_once(f"presence_overrides rejected by the engine ({first_message}); resolving without them")
+    return vector
 
 
 _last_warning: Optional[str] = None

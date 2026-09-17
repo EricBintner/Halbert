@@ -82,8 +82,8 @@ def classify(event: "ProactiveEvent", *, current_subject_paths: Sequence[str] = 
     from haloysius.attunement.types import ImpulseClass as C, Warrant as W
 
     ref = _citation(event)
-    etype = (getattr(event, "type", "") or "").lower()
-    severity = (getattr(event, "severity", "") or "info").lower()
+    etype = str(getattr(event, "type", "") or "").lower()
+    severity = str(getattr(event, "severity", "") or "info").lower()
 
     if life_safety_event(event):
         return C.LIFE_SAFETY, W.INTROSPECTED, ref

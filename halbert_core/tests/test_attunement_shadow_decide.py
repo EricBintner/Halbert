@@ -375,3 +375,26 @@ def test_a_class_capped_to_ambient_is_recorded_as_capped(store, monkeypatch):
     row = _row(store)
     assert row["impulse_class"] == "subject_linked"
     assert row["channel_resolved"] == "ambient" and row["channel_capped"] is True
+
+
+def test_a_not_admitted_row_resolves_no_channel(store):
+    """Nothing was resolved for a delivery that does not happen: None, not
+    "checked, not capped" (the file's own rule — a None is never a default)."""
+    cfg = _config(proactivity="off", presence=0)
+    ProactiveGate(cfg, recorder=_recorder(store, cfg)).should_notify(_event(severity="warning"))
+
+    row = _row(store)
+    assert row["reasons"][0] == "presence:not_admitted" and row["presence_level"] == 0
+    assert row["channel_resolved"] is None and row["channel_capped"] is None
+
+
+def test_a_gate_only_row_still_says_what_kind_of_thing_it_was(store):
+    """No engine ran, so the engine-derived fields are None; the class and
+    warrant come from the same classifier the engine path would have used."""
+    cfg = _config(proactivity="quiet")
+    ProactiveGate(cfg, recorder=SuppressionRecorder(store=store)).should_notify(_event(severity="info"))
+
+    row = _row(store)
+    assert row["decision_source"] == "gate"
+    assert (row["presence_level"], row["channel_resolved"], row["channel_capped"]) == (None, None, None)
+    assert (row["impulse_class"], row["warrant"]) == ("association", "inferred")

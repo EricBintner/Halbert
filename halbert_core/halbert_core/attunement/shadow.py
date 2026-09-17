@@ -254,8 +254,8 @@ class SuppressionRecorder:
                 "context_key": getattr(event, "finding_id", None),
                 # What kind of thing this was, on what warrant — recorded for
                 # every row, decider or not, so the preview can re-resolve it.
-                # From the shadow's own utterance when there is one, so the row
-                # and the decision cannot disagree about the class.
+                # From the shadow's own utterance when there is one, so on the
+                # decider path the row and the decision cannot disagree about the class.
                 **self._classification(event, context),
                 # What actually happened to the user.
                 "gate_outcome": gate_outcome,
@@ -308,12 +308,20 @@ class SuppressionRecorder:
             ),
             "activity": self._persistable_activity(context),
             "shadow_agrees": (outcome in SPEAKING_OUTCOMES) == (gate_outcome == "speak"),
+            # The context's level, which is the level the decision was made at:
+            # the shadow never dwells (build_context passes no previous_decision).
             "presence_level": getattr(getattr(context, "presence", None), "level", None),
             **self._resolved_channel(context),
         }
 
     @staticmethod
     def _classification(event: Any, context: Any = None) -> Dict[str, Any]:
+        """What kind of thing this was and on what warrant — from the shadow's
+        own utterance on the decider path, so the row and the decision's
+        ``impulse:`` stamp come from one ``classify`` call; from ``classify``
+        itself on a gate-only row. An absent engine is expected and quiet; any
+        other failure is a classifier bug and is logged, and the row survives
+        with the two fields None."""
         utterance = getattr(context, "utterance", None)
         if utterance is not None:
             return {
@@ -323,25 +331,31 @@ class SuppressionRecorder:
         try:
             from .impulses import classify
             cls, warrant, _ = classify(event)
-            return {"impulse_class": getattr(cls, "value", cls), "warrant": getattr(warrant, "value", warrant)}
-        except Exception:
+        except ImportError:
             return {"impulse_class": None, "warrant": None}
+        except Exception as exc:  # a bug, not an absence: say so
+            logger.warning("attunement: classify failed on a gate-only row: %s", exc)
+            return {"impulse_class": None, "warrant": None}
+        return {"impulse_class": getattr(cls, "value", cls), "warrant": getattr(warrant, "value", warrant)}
 
     @staticmethod
     def _resolved_channel(context: Any) -> Dict[str, Any]:
         """The channel the vector would deliver at, and whether that capped
-        the utterance's own (presence v2 §14). None when no engine context."""
+        the utterance's own (presence v2 §14) — the shadow's forecast, since
+        routing goes live in slice 2. None when no engine context, and None
+        when the class was not admitted: nothing was resolved for a delivery
+        that does not happen, and a None is never a default here."""
         utterance = getattr(context, "utterance", None)
         presence = getattr(context, "presence", None)
         if utterance is None or presence is None:
             return {"channel_resolved": None, "channel_capped": None}
-        own = getattr(utterance.channel_class, "value", utterance.channel_class)
         ceiling = presence.channel.get(utterance.impulse_class)
-        if ceiling is None:                      # not admitted: no ceiling to apply
-            return {"channel_resolved": own, "channel_capped": False}
+        if ceiling is None:                      # not admitted: no ceiling, no delivery
+            return {"channel_resolved": None, "channel_capped": None}
+        from haloysius.attunement.types import channel_rank   # the engine's ordering, not a second table
+        own = getattr(utterance.channel_class, "value", utterance.channel_class)
         ceiling = getattr(ceiling, "value", ceiling)
-        rank = {"pull": 0, "ambient": 1, "push": 2}
-        if rank[own] > rank[ceiling]:
+        if channel_rank(own) > channel_rank(ceiling):
             return {"channel_resolved": ceiling, "channel_capped": True}
         return {"channel_resolved": own, "channel_capped": False}
 
