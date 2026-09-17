@@ -135,6 +135,9 @@
     background-color: var(--color-surface);
     color: var(--color-ink);
   }
+  .dark input[type="range"] {
+    color-scheme: dark;
+  }
 
   /* The dashboard's only type="range" input; without this it paints in the
    * browser's own blue, off the one palette every other surface reads from. */

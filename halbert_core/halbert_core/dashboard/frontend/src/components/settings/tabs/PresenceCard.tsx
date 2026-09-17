@@ -78,7 +78,9 @@ interface Props {
  * the explanation beneath the rungs.
  *
  * The fine adjust writes once, when the drag ends: a range input's onChange
- * fires per step, and each write is a config save.
+ * fires per step, and each write is a config save. It is disabled while a
+ * save is in flight — not mid-gesture, since the write happens on release —
+ * because a drag released during one would otherwise be dropped in silence.
  */
 export function PresenceCard({ level, saving, onChange }: Props) {
   const [rungs, setRungs] = useState<PresenceRung[]>([])
@@ -123,11 +125,11 @@ export function PresenceCard({ level, saving, onChange }: Props) {
         })
         .then((body) => { setPreview(body); setPreviewError(null) })
         .catch((err) => {
-          if (err?.name === 'AbortError') return
+          if (err?.name === 'AbortError' || controller.signal.aborted) return
           setPreview(null)
           setPreviewError(
-            err?.status === 503 ? "I can't read my own log here — the part of me that keeps it isn't installed."
-              : err?.status === 400 && err?.detail ? `I can't read the log: ${err.detail}`
+            err?.status === 503 ? "I can't read my own log here — the part of me that keeps it isn't answering."
+              : err?.status === 400 ? "I can't read my configuration file — something in it is wrong."
                 : 'I could not read the log just now.')
         })
     }, PREVIEW_DEBOUNCE_MS)
@@ -189,6 +191,7 @@ export function PresenceCard({ level, saving, onChange }: Props) {
             max={10}
             step={1}
             value={sliderValue}
+            disabled={saving}
             onChange={(e) => setDraft(Number(e.target.value))}
             onPointerUp={commit}
             onKeyUp={commit}
@@ -201,7 +204,7 @@ export function PresenceCard({ level, saving, onChange }: Props) {
         <div className="space-y-1 rounded-md border p-3">
           <p className="text-sm">
             {preview
-              ? `Over the last ${preview.days} days at ${previewRung?.name ?? preview.level}, I would have said ${preview.said}, shown ${preview.shown}, and held ${preview.held}${preview.budget_per_day != null ? `, up to ${preview.budget_per_day} a day` : ''}.`
+              ? `Over the last ${preview.days} days at ${preview.level}${previewRung ? ` (${previewRung.name})` : ''}, I would have said ${preview.said}, shown ${preview.shown}, and held ${preview.held}${preview.budget_per_day != null ? `, up to ${preview.budget_per_day} a day` : ''}.`
               : previewError || 'No preview yet.'}
           </p>
           {preview && preview.unclassified > 0 && (
@@ -219,9 +222,9 @@ export function PresenceCard({ level, saving, onChange }: Props) {
                 const live = i.live_outcome
                 const disagrees = live != null && (i.verdict === 'said') !== (live === 'speak')
                 return (
-                  <li key={i.attempt_id} className="grid grid-cols-4 items-baseline gap-2">
-                    <span className="truncate text-muted-foreground">{new Date(i.ts).toLocaleString()}</span>
-                    <span className="truncate">{SOURCE_COPY[i.source] ?? 'something else'}</span>
+                  <li key={i.attempt_id} className="grid grid-cols-6 items-baseline gap-2">
+                    <span className="col-span-2 truncate text-muted-foreground">{new Date(i.ts).toLocaleString()}</span>
+                    <span className="col-span-2 truncate">{SOURCE_COPY[i.source] ?? 'something else'}</span>
                     <span className="capitalize">{i.verdict}</span>
                     <span className="truncate text-muted-foreground">
                       {disagrees ? (live === 'speak' ? 'I said it' : 'I stayed quiet') : ''}

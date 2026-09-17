@@ -53,6 +53,10 @@ describe('PresenceCard', () => {
     fireEvent.mouseEnter(think)          // hovering asks about a rung; it does not select one
     expect(morning.getAttribute('aria-pressed')).toBe('true')
     expect(think.getAttribute('aria-pressed')).toBe('false')
+
+    fireEvent.focus(think)               // and tabbing to one does not either — the case C1 was about
+    expect(morning.getAttribute('aria-pressed')).toBe('true')
+    expect(think.getAttribute('aria-pressed')).toBe('false')
   })
 
   it('choosing a rung saves its level', async () => {
@@ -101,7 +105,7 @@ describe('PresenceCard', () => {
 
   it('shows the preview counts for the current level, by name', async () => {
     render(<PresenceCard level={3} saving={false} onChange={() => {}} />)
-    await waitFor(() => expect(screen.getByText(/at morning/i)).toBeTruthy())
+    await waitFor(() => expect(screen.getByText(/at 3 \(morning\)/i)).toBeTruthy())
     expect(screen.getByText(/said 2/i)).toBeTruthy()
     expect(screen.getByText(/shown 1/i)).toBeTruthy()
     expect(screen.getByText(/held 4/i)).toBeTruthy()
@@ -111,7 +115,7 @@ describe('PresenceCard', () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 503, json: async () => ({}) })))
     render(<PresenceCard level={3} saving={false} onChange={() => {}} />)
     expect(await screen.findByRole('slider')).toBeTruthy()
-    await waitFor(() => expect(screen.getByText(/the part of me that keeps it isn't installed/i)).toBeTruthy())
+    await waitFor(() => expect(screen.getByText(/the part of me that keeps it isn't answering/i)).toBeTruthy())
     expect(screen.getByText(/could not read the levels/i)).toBeTruthy()
   })
 
