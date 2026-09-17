@@ -126,12 +126,15 @@ def test_the_policy_constants_are_importable_as_a_table():
 
 
 def test_impulse_class_values_match():
+    """A class the engine has that we lack is a value the settings UI can never
+    offer; one we have that the engine lacks is a 400 the resolver never returns."""
     from halbert_core.config.being_config import VALID_IMPULSE_CLASSES
 
     assert VALID_IMPULSE_CLASSES == _values(engine_types.ImpulseClass)
 
 
 def test_presence_unoverridable_matches_engine_always_admitted():
+    """C-10 is the engine's rule; the config refuses exactly the classes the engine refuses."""
     from halbert_core.config.being_config import _PRESENCE_UNOVERRIDABLE
 
     assert _PRESENCE_UNOVERRIDABLE == {c.value for c in engine_types.ALWAYS_ADMITTED}

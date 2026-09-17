@@ -50,7 +50,8 @@ _PRESENCE_UNOVERRIDABLE = {"life_safety", "critical"}
 
 
 def _is_presence_level(value: Any) -> bool:
-    """A non-bool int 0..10 — the same door the engine's resolver keeps."""
+    """A non-bool int 0..10. Stricter than the engine's clamp on purpose: a
+    config value is rejected, never rounded; bool is excluded as the engine does."""
     return not isinstance(value, bool) and isinstance(value, int) and 0 <= value <= 10
 
 
@@ -465,8 +466,11 @@ class BeingConfig:
         # ``{"enabled": false}`` is the off switch.
         if "morning_report" in known and known["morning_report"] is None:
             del known["morning_report"]
-        if known.get("presence_overrides") is None:
-            known.pop("presence_overrides", None)
+        # ``presence_overrides: null`` means none, not a None-typed field the
+        # shadow lane would trip on.  (``presence: null`` stays loud: a level
+        # that is not a level is rejected, not defaulted.)
+        if "presence_overrides" in known and known["presence_overrides"] is None:
+            del known["presence_overrides"]
         # Handle nested security config — guard against null / missing
         if "security" in known:
             if isinstance(known["security"], dict):

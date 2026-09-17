@@ -295,7 +295,7 @@ class TestPresence:
         BeingConfig(presence_overrides={"warning": 5, "association": 9}).validate()
         with pytest.raises(ValueError, match="Unknown impulse class"):
             BeingConfig(presence_overrides={"security": 5}).validate()
-        with pytest.raises(ValueError, match="0..10"):
+        with pytest.raises(ValueError, match=r"0\.\.10"):
             BeingConfig(presence_overrides={"warning": 12}).validate()
 
     def test_life_safety_and_critical_reject_overrides(self):

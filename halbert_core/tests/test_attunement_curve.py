@@ -4,11 +4,13 @@
 Halbert's copy, top budget 8, closes_after 5, and no social affect at any
 level (pass 3 P-2)."""
 
+import re
+
 import pytest
 
-engine = pytest.importorskip("haloysius.attunement.types")
+from halbert_core.attunement.curve import halbert_curve
 
-from halbert_core.attunement.curve import halbert_curve  # noqa: E402
+engine = pytest.importorskip("haloysius.attunement.types")
 
 C = engine.ImpulseClass
 
@@ -31,7 +33,7 @@ def test_level_three_is_the_default_and_admits_the_morning():
 
 def test_copy_is_first_person_and_every_rung_says_why():
     for r in halbert_curve().rungs:
-        assert r.says.startswith("I") and r.why
+        assert re.search(r"\bI('ll| )", r.says) and r.why   # the person, not the letter
 
 
 def test_top_rung_relaxes_the_engine_default():
@@ -41,3 +43,14 @@ def test_top_rung_relaxes_the_engine_default():
 
 def test_halbert_curve_is_cached():
     assert halbert_curve() is halbert_curve()
+
+
+def test_admission_channel_and_patience_agree_with_the_engine_vectors():
+    """The shape is the engine's, rung for rung; only budget, closes_after and
+    the copy are Halbert's to change. The engine's own 136 vectors say so."""
+    from haloysius.attunement.conformance import check_presence
+    from haloysius.attunement.presence import resolve_presence
+    from halbert_core.attunement.context import halbert_config
+    failures = check_presence(
+        lambda level, ov: resolve_presence(level, halbert_curve(), halbert_config().attachment, ov))
+    assert not failures, "\n".join(failures)
