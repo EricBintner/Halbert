@@ -3153,6 +3153,9 @@ class BeingConfigUpdate(BaseModel):
     quiet_hours: Optional[Dict[str, str]] = None
     morning_report: Optional[Dict[str, Any]] = None
     category_overrides: Optional[Dict[str, str]] = None
+    # Presence slider (spec 2026-09-16 v2 §15). Additive in slice 1.
+    presence: Optional[int] = None
+    presence_overrides: Optional[Dict[str, int]] = None
     # Personality
     personality_profile: Optional[Dict[str, float]] = None
     archetype_id: Optional[str] = None
@@ -3219,6 +3222,10 @@ async def update_being_config(update: BeingConfigUpdate) -> Dict[str, Any]:
                     cfg.morning_report = update.morning_report
                 if update.category_overrides is not None:
                     cfg.category_overrides = update.category_overrides
+                if update.presence is not None:
+                    cfg.presence = update.presence
+                if update.presence_overrides is not None:
+                    cfg.presence_overrides = dict(update.presence_overrides)
                 # Personality
                 if update.personality_profile is not None:
                     cfg.personality_profile = update.personality_profile
