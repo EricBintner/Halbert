@@ -62,9 +62,15 @@ SHADOW_CHANNEL_CLASS = ChannelClass.PUSH
 
 
 def engine_available() -> bool:
-    """Whether ``haloysius.attunement`` can be imported."""
+    """Whether the attunement engine is installed *and* new enough.
+
+    Probes ``attunement.presence`` rather than ``attunement.types``: the
+    retired dial engine has the latter, so a consumer paired with it would
+    otherwise look wired while every presence field came out null
+    (final review of the slice, 2026-09-17).
+    """
     try:
-        import haloysius.attunement.types  # noqa: F401
+        import haloysius.attunement.presence  # noqa: F401
     except ImportError:
         return False
     return True

@@ -80,7 +80,7 @@ compression = [
 # haloysius import in halbert_core/integrations is guarded, so the core runs
 # without it (cognition tick, app seam, and state trackers are simply skipped).
 cognition = [
-  "haloysius>=0.2.0",
+  "haloysius>=0.3.0",
 ]
 
 # Cryptographic identity and the tamper-evident audit log (integrity
@@ -94,7 +94,7 @@ cognition = [
 # haloysius is not on PyPI; install it from the sibling checkout, as for
 # `cognition` above.
 integrity = [
-  "haloysius>=0.2.0",
+  "haloysius>=0.3.0",
   "cryptography>=42.0",
 ]
 
