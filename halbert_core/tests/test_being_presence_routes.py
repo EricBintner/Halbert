@@ -91,3 +91,26 @@ def test_a_row_the_recorder_writes_is_a_row_the_preview_reads(client, store):
     SuppressionRecorder(store=store).record(ev, allowed=False)
     body = client.get("/api/being/presence/preview", params={"level": 0}).json()
     assert body["said"] == 1 and body["unclassified"] == 0
+
+
+def test_the_preview_says_so_without_the_engine(client, monkeypatch):
+    import builtins
+    real_import = builtins.__import__
+
+    def no_engine(name, *args, **kwargs):
+        if name.startswith("haloysius"):
+            raise ImportError("no engine here")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", no_engine)
+    r = client.get("/api/being/presence/preview", params={"level": 3})
+    assert r.status_code == 503 and "engine" in r.json()["detail"]
+
+
+def test_a_config_the_loader_refuses_is_a_400(client, monkeypatch):
+    from halbert_core.dashboard.routes import being as being_mod
+    monkeypatch.setattr(being_mod, "load_being_config", None, raising=False)
+    import halbert_core.config.being_config as bc
+    monkeypatch.setattr(bc, "load_being_config", lambda *a, **k: (_ for _ in ()).throw(ValueError("presence must be an integer 0..10, got 11")))
+    r = client.get("/api/being/presence/preview", params={"level": 3})
+    assert r.status_code == 400 and "presence" in r.json()["detail"]

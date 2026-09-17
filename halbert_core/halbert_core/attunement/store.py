@@ -346,7 +346,9 @@ class AttunementStore:
 
     def list_outcomes_raw(self, persona_id: str, subject_id: Optional[str] = None,
                           limit: int = 500, since: Optional[str] = None) -> List[Dict[str, Any]]:
-        """Attempts, newest first; ``since`` (ISO, tz-aware UTC) filters to ``ts >= since``, compared lexically like ``trim_outcomes``."""
+        """Attempts, newest first; ``since`` (ISO, tz-aware UTC) filters to
+        ``ts >= since``, compared lexically like ``trim_outcomes``.
+        """
         sql = "SELECT payload FROM outcomes WHERE persona_id=?"
         args: List[Any] = [persona_id]
         if subject_id is not None:

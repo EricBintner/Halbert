@@ -41,7 +41,14 @@ _VERDICT_BY_CHANNEL = {"push": "said", "ambient": "shown", "pull": "held"}
 
 def _parse(ts: Any) -> Optional[datetime]:
     """The store writes tz-aware UTC; a naive value reads as UTC, and a
-    trailing ``Z`` is accepted (``fromisoformat`` rejects it before 3.11)."""
+    trailing ``Z`` is accepted (``fromisoformat`` rejects it before 3.11).
+
+    When the caller pre-filters with the store's own ``since`` (as the
+    preview route does), a row whose ``ts`` cannot be parsed here has
+    already been included or excluded lexically by SQL, before this
+    function ever sees it — so ``undated`` below counts only what
+    survived that filter, not every unparsable row the store holds.
+    """
     text = str(ts)
     if text.endswith("Z"):
         text = text[:-1] + "+00:00"

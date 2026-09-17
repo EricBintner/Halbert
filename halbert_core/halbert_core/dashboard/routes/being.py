@@ -283,21 +283,33 @@ def presence_preview(
     wire. 503 without the engine, like the rungs; 400 on a config the
     loader refuses, like the settings GET. Plain ``def``: three synchronous
     reads (a SQLite open, the window, the YAML) stay off the event loop."""
+    try:
+        import haloysius.attunement.presence  # noqa: F401
+    except ImportError:
+        raise HTTPException(status_code=503, detail="attunement engine not installed")
+
     from datetime import datetime, timedelta, timezone
 
     from ...attunement.context import DEFAULT_PERSONA_ID
     from ...attunement.preview import preview_for_level
     from ...config.being_config import load_being_config
-    since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-    rows = _attunement_store().list_outcomes_raw(DEFAULT_PERSONA_ID, limit=_PREVIEW_ROWS, since=since)
+
     try:
         config = load_being_config()
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    preview = preview_for_level(rows, level, being_config=config, days=days)
+
+    now = datetime.now(timezone.utc)
+    since = (now - timedelta(days=days)).isoformat()
+    rows = _attunement_store().list_outcomes_raw(DEFAULT_PERSONA_ID, limit=_PREVIEW_ROWS, since=since)
+    preview = preview_for_level(rows, level, being_config=config, days=days, now=now)
     if not preview["engine"]:
         raise HTTPException(status_code=503, detail="attunement engine not installed")
+    preview.pop("engine", None)   # the frontend's Preview interface never declared it
     preview["items"] = preview["items"][:limit]
     preview["truncated"] = len(rows) >= _PREVIEW_ROWS
-    preview["status"] = "ok"   # the envelope last, so no preview key can shadow it
+    # the envelope last, so no preview key can shadow it; preview_for_level
+    # returns a fresh dict on every call, so setting a key here cannot
+    # corrupt a shared object
+    preview["status"] = "ok"
     return preview
