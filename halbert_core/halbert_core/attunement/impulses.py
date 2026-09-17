@@ -3,7 +3,7 @@
 """A ``ProactiveEvent`` as an impulse: which class, on what warrant, citing what.
 
 Spec: ``documentation/superpowers/specs/2026-09-16-presence-slider-design.md``
-§14 (classification) and §7.1 (warrant). Three of Halbert's judgments are
+§14 (classification) and §7.1 (warrant). Four of Halbert's judgments are
 made here and marked:
 
 * **Life safety is caller-set, never derived from severity** (A-HB-15). It
@@ -13,7 +13,13 @@ made here and marked:
   thing in the ledger that nothing in particular brought up; it is admitted
   only at the association rung, which is today's "assertive: all findings"
   — and it carries its finding id, so the stronger-than-default warrant is
-  cited (engine ``Utterance.__post_init__``).
+  cited (engine ``Utterance.__post_init__``). **Only a finding is a
+  citation.** An event id is identity, not provenance: it resolves to
+  nothing durable, so an info event with no finding behind it is honestly
+  ``INFERRED`` — a thought, not a fact.
+* **Recurrence reclassifies info, never a warning.** A warning that keeps
+  happening is still a warning: rung 1 pushes it, and would drop a
+  ``RECURRENCE``.
 * **``approval_request`` is a warning about the machine's own pending
   action** — introspected, not observed.
 
@@ -22,10 +28,15 @@ Nothing here imports the engine at module scope.
 
 from __future__ import annotations
 
-from typing import Any, Optional, Sequence, Tuple
+from typing import TYPE_CHECKING, Any, Optional, Sequence, Tuple
+
+if TYPE_CHECKING:  # pragma: no cover - the engine is optional at runtime
+    from haloysius.attunement.types import ImpulseClass, Warrant
+
+    from ..proactive.events import ProactiveEvent
 
 
-def life_safety_event(event: Any) -> bool:
+def life_safety_event(event: "ProactiveEvent") -> bool:
     """Whether this event is life safety. Never derived from severity (A-HB-15).
 
     Two sources, both of which ``ProactiveGate`` already honours: the
@@ -36,10 +47,10 @@ def life_safety_event(event: Any) -> bool:
     category = getattr(event, "category", None) or ""
     try:
         from ..integrations.modality_wiring import is_life_safety_event
-        if is_life_safety_event(category):
-            return True
-    except Exception:
-        pass
+    except ImportError:   # an optional integration; a bug in the predicate must not read as "not life safety"
+        is_life_safety_event = None
+    if is_life_safety_event is not None and is_life_safety_event(category):
+        return True
     if category == "acoustic":
         data = getattr(event, "data", None)
         if isinstance(data, dict) and data.get("anomaly_severity", 0) >= 2:
@@ -47,21 +58,23 @@ def life_safety_event(event: Any) -> bool:
     return False
 
 
-def _citation(event: Any) -> Optional[str]:
+def _citation(event: "ProactiveEvent") -> Optional[str]:
+    """A finding id, or nothing: an event id is identity, not provenance."""
     finding_id = getattr(event, "finding_id", None)
-    if finding_id:
-        return f"finding:{finding_id}"
-    event_id = getattr(event, "id", None)
-    return f"event:{event_id}" if event_id else None
+    return f"finding:{finding_id}" if finding_id else None
 
 
-def classify(event: Any, *, current_subject_paths: Sequence[str] = ()) -> Tuple[Any, Any, Optional[str]]:
+def classify(event: "ProactiveEvent", *, current_subject_paths: Sequence[str] = ()
+             ) -> "Tuple[ImpulseClass, Warrant, Optional[str]]":
     """``(ImpulseClass, Warrant, source_ref)`` for one event.
 
-    ``current_subject_paths`` is what the person is on right now (config
-    paths a summoned module shows, paths named in the current thread).
-    Empty in slice 1 — nothing on the proactive path carries it yet — so
-    ``SUBJECT_LINKED`` is reachable in principle and unreachable in fact.
+    Two classes have a branch here and no producer yet, so they are
+    reachable in principle and unreachable in fact in slice 1:
+    ``SUBJECT_LINKED`` needs ``current_subject_paths`` (what the person is on
+    right now — config paths a summoned module shows, paths named in the
+    current thread), which nothing on the proactive path carries; and
+    ``RECURRENCE`` needs ``data["recurrence_count"]``, which no detector sets.
+    The shadow log is what says when either starts arriving.
     """
     from haloysius.attunement.types import ImpulseClass as C, Warrant as W
 
@@ -78,6 +91,9 @@ def classify(event: Any, *, current_subject_paths: Sequence[str] = ()) -> Tuple[
     if etype == "approval_request":
         return C.WARNING, W.INTROSPECTED, ref
 
+    if severity == "warning":
+        return C.WARNING, W.INTROSPECTED, ref
+
     data = getattr(event, "data", None)
     if isinstance(data, dict):
         try:
@@ -85,9 +101,6 @@ def classify(event: Any, *, current_subject_paths: Sequence[str] = ()) -> Tuple[
                 return C.RECURRENCE, W.OBSERVED, ref
         except (TypeError, ValueError):
             pass
-
-    if severity == "warning":
-        return C.WARNING, W.INTROSPECTED, ref
 
     paths = set(getattr(event, "affected_paths", None) or [])
     if paths and paths & set(current_subject_paths):
@@ -99,8 +112,10 @@ def classify(event: Any, *, current_subject_paths: Sequence[str] = ()) -> Tuple[
     return C.ASSOCIATION, (W.OBSERVED if ref else W.INFERRED), ref
 
 
-#: Every class ``classify`` can return today — what the rungs endpoint uses
-#: to say which rungs are reachable (plan D8).  Value strings, not members:
+#: Every class ``classify`` has a branch for — what the rungs endpoint calls
+#: "reachable" (plan D8).  Reachable means the classifier can say it, not
+#: that a producer emits it today; the shadow log answers the second.
+#: Value strings, not members:
 #: ``ImpulseClass`` is a ``str`` enum, so ``"warning" == ImpulseClass.WARNING``
 #: and this set compares equal to the engine's without importing it.
 PRODUCED_CLASSES = frozenset({

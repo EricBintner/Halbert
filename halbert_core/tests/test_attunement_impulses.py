@@ -58,10 +58,10 @@ def test_an_unlinked_info_finding_is_an_observed_association():
     assert (cls, warrant, ref) == (C.ASSOCIATION, W.OBSERVED, "finding:f9")
 
 
-def test_an_unlinked_info_event_with_no_citation_falls_to_inferred():
-    e = ev(severity="info")
-    e.id = ""
-    assert classify(e)[1] is W.INFERRED
+def test_an_unlinked_info_event_with_no_finding_falls_to_inferred():
+    # An event id is identity, not provenance: only a finding is a citation.
+    cls, warrant, ref = classify(ev(severity="info"))
+    assert (cls, warrant, ref) == (C.ASSOCIATION, W.INFERRED, None)
 
 
 def test_confirmed_acoustic_anomaly_is_life_safety():
@@ -72,3 +72,34 @@ def test_confirmed_acoustic_anomaly_is_life_safety():
 def test_produced_classes_is_what_classify_can_return():
     assert PRODUCED_CLASSES == {C.LIFE_SAFETY, C.CRITICAL, C.WARNING, C.SCHEDULED,
                                 C.RECURRENCE, C.SUBJECT_LINKED, C.ASSOCIATION}
+
+
+def test_a_recurring_warning_stays_a_warning():
+    # Recurrence reclassifies info; a warning that keeps happening is still a warning (rung 1).
+    assert classify(ev(severity="warning", data={"recurrence_count": 3}))[0] is C.WARNING
+
+
+def test_a_warning_on_the_current_subject_stays_a_warning():
+    cls = classify(ev(severity="warning", affected_paths=["/etc/fstab"]), current_subject_paths=["/etc/fstab"])[0]
+    assert cls is C.WARNING
+
+
+def test_critical_outranks_every_type_and_data_hint():
+    # C-10: the engine derives CRITICAL from severity and refuses a contradicting class.
+    assert classify(ev(type="morning_report", severity="critical", data={"recurrence_count": 3}))[0] is C.CRITICAL
+
+
+def test_produced_classes_matches_what_classify_returns():
+    """Both directions, without the engine: every ``C.<NAME>`` returned by
+    ``classify`` is in the set, and nothing in the set is unreturned."""
+    import ast
+    import inspect
+    from halbert_core.attunement import impulses
+    tree = ast.parse(inspect.getsource(impulses.classify))
+    returned = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Return):
+            for sub in ast.walk(node):
+                if isinstance(sub, ast.Attribute) and isinstance(sub.value, ast.Name) and sub.value.id == "C":
+                    returned.add(sub.attr.lower())
+    assert returned == set(PRODUCED_CLASSES)
