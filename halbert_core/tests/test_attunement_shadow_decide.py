@@ -64,7 +64,7 @@ def test_the_row_carries_a_real_margin(store):
     """A-HB-26's exploration arm is "prefer ASK_FIRST over HOLD where the
     policy is near a threshold". With every margin at 0.0 no case is ever
     near one and the cheap source of positive counterfactuals is gone."""
-    cfg = _config(proactivity="balanced")
+    cfg = _config(presence=3)
     ProactiveGate(cfg, recorder=_recorder(store, cfg)).should_notify(_event())
 
     row = _row(store)
@@ -75,7 +75,7 @@ def test_the_row_carries_a_real_margin(store):
 def test_the_outcome_is_the_engines_six_valued_one(store):
     """`speak`/`silent` merges a HOLD — which can be released and engaged
     with, and so labelled wrong — into a SILENT, which cannot."""
-    cfg = _config(proactivity="balanced")
+    cfg = _config(presence=3)
     ProactiveGate(cfg, recorder=_recorder(store, cfg)).should_notify(_event())
 
     outcome = _row(store)["outcome"]
@@ -83,7 +83,7 @@ def test_the_outcome_is_the_engines_six_valued_one(store):
 
 
 def test_the_full_reason_tuple_is_recorded(store):
-    cfg = _config(proactivity="off")
+    cfg = _config(proactivity="off", presence=0)
     ProactiveGate(cfg, recorder=_recorder(store, cfg)).should_notify(_event())
 
     row = _row(store)
@@ -94,7 +94,7 @@ def test_the_full_reason_tuple_is_recorded(store):
 # --- and the gate's verdict is still legible beside it ---------------------
 
 def test_both_verdicts_land_on_one_row(store):
-    cfg = _config(proactivity="quiet")
+    cfg = _config(proactivity="quiet", presence=1)
     ProactiveGate(cfg, recorder=_recorder(store, cfg)).should_notify(
         _event(severity="info")
     )
@@ -109,20 +109,35 @@ def test_both_verdicts_land_on_one_row(store):
 def test_disagreement_is_recorded_as_a_flag_not_inferred_later(store):
     """Shadow mode's whole product is the disagreement. A reader should not
     have to re-derive which engine outcomes count as speech."""
-    cfg = _config(proactivity="off")
-    ProactiveGate(cfg, recorder=_recorder(store, cfg)).should_notify(_event())
+    cfg = _config(proactivity="off", presence=0)
+    ProactiveGate(cfg, recorder=_recorder(store, cfg)).should_notify(_event(severity="warning"))
 
     row = _row(store)
-    assert row["shadow_agrees"] is True  # both hold it at an off dial
+    assert row["shadow_agrees"] is True  # both hold a warning: off dial, mute level
+
+
+def test_a_critical_at_mute_disagrees_with_a_hard_off_gate(store):
+    """Hard off is not on the slider (spec §3.1). Level 0 admits a critical
+    and the shadow speaks; the live gate at ``off`` still suppresses. This
+    row is the first thing slice 1 exists to show (plan D6)."""
+    cfg = _config(proactivity="off", presence=0)
+    allowed, _ = ProactiveGate(cfg, recorder=_recorder(store, cfg)).should_notify(_event(severity="critical"))
+
+    assert allowed is False                      # live: unchanged
+    row = _row(store)
+    assert row["gate_outcome"] == "silent"
+    assert row["outcome"] == "speak"             # shadow: the new truth
+    assert row["shadow_agrees"] is False
+    assert "presence:0" in row["reasons"] and "impulse:critical" in row["reasons"]
 
 
 def test_shadow_mode_changes_no_behaviour(store):
     """Stage one decides, logs, and acts on nothing."""
     cases = [
-        (_config(proactivity="quiet"), _event(severity="info")),
-        (_config(proactivity="quiet"), _event(severity="critical")),
-        (_config(proactivity="balanced"), _event(severity="warning")),
-        (_config(proactivity="off"), _event(severity="critical")),
+        (_config(proactivity="quiet", presence=1), _event(severity="info")),
+        (_config(proactivity="quiet", presence=1), _event(severity="critical")),
+        (_config(proactivity="balanced", presence=3), _event(severity="warning")),
+        (_config(proactivity="off", presence=0), _event(severity="critical")),
     ]
     for cfg, event in cases:
         bare = ProactiveGate(cfg).should_notify(event)
@@ -318,3 +333,33 @@ def test_a_vision_derived_activity_never_reaches_the_row():
 
     assert R._persistable_activity(_Ctx()) is None
     assert R._persistable_activity(_SensorCtx()) == "idle"
+
+
+def test_the_row_carries_the_presence_fields(store):
+    cfg = _config(presence=3)
+    ProactiveGate(cfg, recorder=_recorder(store, cfg)).should_notify(_event(severity="warning"))
+
+    row = _row(store)
+    assert row["presence_level"] == 3
+    assert row["impulse_class"] == "warning"
+    assert row["warrant"] == "introspected"
+    assert row["channel_resolved"] == "push" and row["channel_capped"] is False
+
+
+def test_a_class_capped_to_ambient_is_recorded_as_capped(store):
+    """At level 4 SUBJECT_LINKED is admitted at AMBIENT; the shadow decision
+    is taken at PUSH, so the row says the channel would have been capped."""
+    from halbert_core.attunement import context as ctx_mod
+    cfg = _config(presence=4)
+    ev = _event(severity="info")
+    ev.affected_paths = ["/etc/fstab"]
+    original = ctx_mod.classify
+    try:
+        ctx_mod.classify = lambda e, **kw: original(e, current_subject_paths=["/etc/fstab"])
+        ProactiveGate(cfg, recorder=_recorder(store, cfg)).should_notify(ev)
+    finally:
+        ctx_mod.classify = original
+
+    row = _row(store)
+    assert row["impulse_class"] == "subject_linked"
+    assert row["channel_resolved"] == "ambient" and row["channel_capped"] is True

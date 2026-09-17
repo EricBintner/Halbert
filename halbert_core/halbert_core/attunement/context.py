@@ -16,10 +16,10 @@ is marked where it is made:
   ships a companion's numbers and says so; a sysadmin tool that muted itself
   for its first week would be silent exactly when a fresh install has the
   most to say.
-* **``life_safety`` is caller-set, never derived from severity** (A-HB-15).
-  It comes from the event's *category* and from the acoustic tagger's own
-  confirmation, which is what ``ProactiveGate`` already treats as life
-  safety.
+* **``life_safety`` is caller-set, never derived from severity** (A-HB-15;
+  made in ``impulses.py``). It comes from the event's *category* and from
+  the acoustic tagger's own confirmation, which is what ``ProactiveGate``
+  already treats as life safety.
 * **The subject of a proactive push is the primary user, unattributed.**
   Nobody spoke; there is no identity to resolve. UNATTRIBUTED is the honest
   confidence — a channel that implies the trusted default user — and it
@@ -32,7 +32,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from .impulses import life_safety_event
+from .impulses import classify, life_safety_event
 from .subject import DEFAULT_SUBJECT_ID
 from .surfaces import ChannelClass
 
@@ -50,8 +50,8 @@ MAX_PROACTIVE_PER_DAY = 24
 #: wired, voice and the auto-opening panel (PUSH). PUSH is the loudest
 #: surface an event here can reach, so it is the conservative choice for a
 #: suppression system — but the bias has a direction and it is worth
-#: knowing: the policy treats AMBIENT more permissively (a quiet dial
-#: yields SPEAK_MINIMAL rather than a hold, and the social cost applies to
+#: knowing: the policy treats AMBIENT more permissively (a low presence
+#: level yields SPEAK_MINIMAL rather than a hold, and the social cost applies to
 #: PUSH alone), so the shadow reads **quieter than the product would be**
 #: if it decided per surface. ``surfaces.SURFACE_CHANNEL`` is the map to use
 #: when a caller can say which surface it is about; none can today.
@@ -108,31 +108,33 @@ def halbert_config() -> Any:
     )
 
 
-def dial_for(being_config: Any) -> Any:
-    """``BeingConfig``'s dial and per-category overrides, in engine terms.
+def presence_for(being_config: Any) -> Any:
+    """``BeingConfig.presence`` and ``presence_overrides`` as the engine's vector, or None.
 
-    An override this repo accepts but the engine does not is dropped rather
-    than raising: a typo in ``being.yml`` must not take the proactive path
-    down. ``BeingConfig.validate()`` is the place that rejects one.
+    Resolves Halbert's own curve under Halbert's own ceilings
+    (:func:`halbert_config`). The values go to the resolver raw — it is the
+    door that coerces a level and an override key and refuses a ``bool`` —
+    and ``BeingConfig.validate()`` is where a bad ``being.yml`` is rejected
+    before it gets here. A config that slipped past both falls back to the
+    default level with no overrides, logged, rather than taking the
+    proactive path down.
     """
     try:
-        from haloysius.attunement.types import DialLevel, ProactivityDial
+        from haloysius.attunement.presence import resolve_presence
     except ImportError:
         return None
+    from .curve import halbert_curve
 
-    def _level(value: Any, fallback: Any = None) -> Any:
-        try:
-            return DialLevel(value)
-        except ValueError:
-            return fallback
-
-    level = _level(getattr(being_config, "proactivity", None), DialLevel.BALANCED)
-    overrides = {}
-    for category, value in (getattr(being_config, "category_overrides", None) or {}).items():
-        mapped = _level(value)
-        if mapped is not None:
-            overrides[str(category)] = mapped
-    return ProactivityDial(level=level, overrides=overrides)
+    config = halbert_config()
+    if config is None:
+        return None
+    level = getattr(being_config, "presence", 3)
+    overrides = dict(getattr(being_config, "presence_overrides", None) or {})
+    try:
+        return resolve_presence(level, halbert_curve(), config.attachment, overrides)
+    except (TypeError, ValueError) as exc:
+        logger.warning("presence config rejected by the engine (%s); using level 3 with no overrides", exc)
+        return resolve_presence(3, halbert_curve(), config.attachment, {})
 
 
 def utterance_for(
@@ -157,9 +159,11 @@ def utterance_for(
     from ..proactive.gate import _USER_REQUESTED_TYPES
 
     try:
-        severity = Severity(getattr(event, "severity", "info") or "info")
+        severity = Severity((getattr(event, "severity", "info") or "info").lower())
     except ValueError:
         severity = Severity.INFO
+
+    impulse_class, warrant, source_ref = classify(event)
 
     return Utterance(
         source=getattr(event, "type", "") or "proactive",
@@ -169,6 +173,9 @@ def utterance_for(
         life_safety=life_safety_event(event),
         channel_class=EngineChannel(channel_class.value),
         id=getattr(event, "id", None),
+        impulse_class=impulse_class,
+        warrant=warrant,
+        source_ref=source_ref,
     )
 
 
@@ -193,8 +200,8 @@ def build_context(
     ``signals`` is optional and is currently empty on the proactive path —
     nothing along it has a live view of the room. That is honest rather
     than lossy: an absent sensor reads as UNKNOWN activity and the decision
-    rests on the dial, the standing requests and the ceilings, which is
-    exactly the half of the policy that is wired.
+    rests on the presence vector, the standing requests and the ceilings,
+    which is exactly the half of the policy that is wired.
     """
     try:
         from haloysius.attunement.ledger import StandingRequestLedger
@@ -209,7 +216,9 @@ def build_context(
 
     now = now or datetime.now(timezone.utc).isoformat()
     config = halbert_config()
-    dial = dial_for(being_config)
+    presence = presence_for(being_config)
+    if presence is None:
+        return None
     ledger = StandingRequestLedger(store, persona_id, config)
 
     state = ledger.state(subject_id)
@@ -225,8 +234,8 @@ def build_context(
         utterance=utterance,
         signals=signals if signals is not None else SituationSignals(),
         active_requests=ledger.active(subject_id, now),
-        dial=dial,
-        invitation=ledger.invitation(subject_id, now, dial),
+        presence=presence,
+        invitation=ledger.invitation(subject_id, now, presence),
         config=config,
         quiet_hours_active=bool(quiet_hours_active),
         # Halbert has `extraversion` by that name; it has no trait that
