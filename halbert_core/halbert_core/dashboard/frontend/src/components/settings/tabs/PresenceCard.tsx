@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
@@ -17,6 +17,15 @@ const PREVIEW_ITEMS = 20
  *  while a sweep across the rungs asks the log for nothing. */
 const PREVIEW_DEBOUNCE_MS = 200
 
+/** What raised it, in the person's words. The row never shows the event's own
+ *  type token — the surface carries no enum names (spec §15). */
+const SOURCE_COPY: Record<string, string> = {
+  finding: 'a finding',
+  morning_report: 'the morning report',
+  approval_request: 'an approval',
+  system_anomaly: 'an anomaly',
+}
+
 export interface PresenceRung {
   level: number
   name: string
@@ -30,7 +39,7 @@ interface PreviewItem {
   ts: string
   source: string
   verdict: 'said' | 'shown' | 'held'
-  live_outcome: string
+  live_outcome: string | null
 }
 
 interface Preview {
@@ -62,9 +71,14 @@ interface Props {
  * behaviour in slice 1: the level is read by the shadow lane only, and the
  * proactivity card below still governs what is heard (D1, D11).
  *
+ * Two levels are in play and they are kept apart on purpose. ``level`` is
+ * what the config holds: it drives the selected mark, which a screen reader
+ * reads, so hovering never moves it. ``shown`` is what is being *asked
+ * about* — hovered, focused or dragged — and drives only the preview and
+ * the explanation beneath the rungs.
+ *
  * The fine adjust writes once, when the drag ends: a range input's onChange
- * fires per step, and each write is a config save. The dragged value lives
- * in ``draft`` until the saved ``level`` catches up.
+ * fires per step, and each write is a config save.
  */
 export function PresenceCard({ level, saving, onChange }: Props) {
   const [rungs, setRungs] = useState<PresenceRung[]>([])
@@ -73,16 +87,24 @@ export function PresenceCard({ level, saving, onChange }: Props) {
   const [draft, setDraft] = useState<number | null>(null)
   const [preview, setPreview] = useState<Preview | null>(null)
   const [previewError, setPreviewError] = useState<string | null>(null)
+  const sent = useRef<number | null>(null)
+  const wasSaving = useRef(saving)
 
   useEffect(() => {
     fetch(`${API_BASE}/being/presence/rungs`)
       .then((r) => (r.ok ? r.json() : null))
-      .then((body) => { setRungs(body?.rungs ?? []); setRungsFailed(!body?.rungs) })
+      .then((body) => { setRungs(body?.rungs ?? []); setRungsFailed(!body?.rungs?.length) })
       .catch(() => { setRungs([]); setRungsFailed(true) })
   }, [])
 
-  // The drag's value until the save round-trips; cleared when it does.
-  useEffect(() => { setDraft(null) }, [level])
+  // The drag's value stands until the save round-trips. Cleared when the
+  // saved level arrives — and when a save *ends* without it arriving, so a
+  // refused write cannot leave the control showing a level I do not hold.
+  useEffect(() => { setDraft(null); sent.current = null }, [level])
+  useEffect(() => {
+    if (wasSaving.current && !saving) { setDraft(null); sent.current = null }
+    wasSaving.current = saving
+  }, [saving])
 
   const sliderValue = draft ?? level
   const shown = hover ?? sliderValue
@@ -92,26 +114,35 @@ export function PresenceCard({ level, saving, onChange }: Props) {
     const timer = setTimeout(() => {
       fetch(`${API_BASE}/being/presence/preview?level=${shown}&days=${PREVIEW_DAYS}&limit=${PREVIEW_ITEMS}`,
             { signal: controller.signal })
-        .then((r) => {
+        .then(async (r) => {
           if (r.ok) return r.json()
-          throw new Error(r.status === 503
-            ? "I can't read the log — the attunement engine isn't installed here."
-            : 'I could not read the log just now.')
+          const body = await r.json().catch(() => ({}))
+          // Carry the status, not a message: the platform's own wording
+          // ("Failed to fetch") must not reach a surface I speak on.
+          throw Object.assign(new Error('preview unavailable'), { status: r.status, detail: body?.detail })
         })
         .then((body) => { setPreview(body); setPreviewError(null) })
         .catch((err) => {
           if (err?.name === 'AbortError') return
           setPreview(null)
-          setPreviewError(err?.message || 'I could not read the log just now.')
+          setPreviewError(
+            err?.status === 503 ? "I can't read my own log here — the part of me that keeps it isn't installed."
+              : err?.status === 400 && err?.detail ? `I can't read the log: ${err.detail}`
+                : 'I could not read the log just now.')
         })
     }, PREVIEW_DEBOUNCE_MS)
     return () => { clearTimeout(timer); controller.abort() }
   }, [shown])
 
-  const current = [...rungs].reverse().find((r) => r.level <= shown) ?? null
+  const rungAt = (n: number) => [...rungs].reverse().find((r) => r.level <= n) ?? null
+  const selected = rungAt(level)          // what the config holds
+  const current = rungAt(shown)           // what is being asked about
+  const previewRung = preview ? rungAt(preview.level) : null
 
   const commit = () => {
-    if (draft !== null && draft !== level) onChange({ presence: draft })
+    if (saving || draft === null || draft === level || draft === sent.current) return
+    sent.current = draft
+    onChange({ presence: draft })
   }
 
   return (
@@ -123,12 +154,12 @@ export function PresenceCard({ level, saving, onChange }: Props) {
       <CardContent className="space-y-4">
         <div className="space-y-2">
           <Label id="presence-rungs-label">How present</Label>
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-7" aria-labelledby="presence-rungs-label">
+          <div role="group" aria-labelledby="presence-rungs-label" className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-7">
             {rungs.map((r) => (
               <Button
                 key={r.name}
-                variant={current?.name === r.name ? 'default' : 'outline'}
-                aria-pressed={current?.name === r.name}
+                variant={selected?.name === r.name ? 'default' : 'outline'}
+                aria-pressed={selected?.name === r.name}
                 onClick={() => onChange({ presence: r.level })}
                 onMouseEnter={() => setHover(r.level)}
                 onMouseLeave={() => setHover(null)}
@@ -163,37 +194,38 @@ export function PresenceCard({ level, saving, onChange }: Props) {
             onKeyUp={commit}
             onBlur={commit}
             className="w-full"
-            aria-valuetext={`${sliderValue}${current ? `, ${current.name}` : ''}`}
+            aria-valuetext={`${sliderValue}${rungAt(sliderValue) ? `, ${rungAt(sliderValue)!.name}` : ''}`}
           />
         </div>
 
         <div className="space-y-1 rounded-md border p-3">
           <p className="text-sm">
             {preview
-              ? `Over the last ${preview.days} days at ${preview.level}, I would have said ${preview.said}, shown ${preview.shown}, and held ${preview.held}${preview.budget_per_day != null ? `, up to ${preview.budget_per_day} a day` : ''}.`
+              ? `Over the last ${preview.days} days at ${previewRung?.name ?? preview.level}, I would have said ${preview.said}, shown ${preview.shown}, and held ${preview.held}${preview.budget_per_day != null ? `, up to ${preview.budget_per_day} a day` : ''}.`
               : previewError || 'No preview yet.'}
           </p>
           {preview && preview.unclassified > 0 && (
-            <p className="text-xs text-muted-foreground">{preview.unclassified} rows I can't place, and haven't counted.</p>
+            <p className="text-xs text-muted-foreground">{preview.unclassified} rows I can't place yet, so I haven't counted them.</p>
           )}
           {preview && preview.undated > 0 && (
-            <p className="text-xs text-muted-foreground">{preview.undated} rows carry no readable time, and haven't counted.</p>
+            <p className="text-xs text-muted-foreground">{preview.undated} rows carry no readable time, so I haven't counted them.</p>
           )}
           {preview && preview.truncated && (
-            <p className="text-xs text-muted-foreground">Only the newest rows were read; the oldest days may be under-counted.</p>
+            <p className="text-xs text-muted-foreground">I only read the newest rows; the oldest days may be under-counted.</p>
           )}
           {preview && preview.items.length > 0 && (
             <ul className="mt-2 max-h-48 space-y-1 overflow-auto text-xs">
               {preview.items.map((i) => {
-                const disagrees = (i.verdict === 'said') !== (i.live_outcome === 'speak')
+                const live = i.live_outcome
+                const disagrees = live != null && (i.verdict === 'said') !== (live === 'speak')
                 return (
-                  <li key={i.attempt_id} className="flex justify-between gap-2">
-                    <span className="text-muted-foreground">{new Date(i.ts).toLocaleString()}</span>
-                    <span>{i.source}</span>
+                  <li key={i.attempt_id} className="grid grid-cols-4 items-baseline gap-2">
+                    <span className="truncate text-muted-foreground">{new Date(i.ts).toLocaleString()}</span>
+                    <span className="truncate">{SOURCE_COPY[i.source] ?? 'something else'}</span>
                     <span className="capitalize">{i.verdict}</span>
-                    {disagrees && (
-                      <span className="text-muted-foreground">{i.live_outcome === 'speak' ? 'I said it' : 'I stayed quiet'}</span>
-                    )}
+                    <span className="truncate text-muted-foreground">
+                      {disagrees ? (live === 'speak' ? 'I said it' : 'I stayed quiet') : ''}
+                    </span>
                   </li>
                 )
               })}

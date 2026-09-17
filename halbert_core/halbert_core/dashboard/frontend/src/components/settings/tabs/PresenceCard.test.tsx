@@ -43,11 +43,16 @@ describe('PresenceCard', () => {
     expect(recall.hasAttribute('disabled')).toBe(false)
   })
 
-  it('marks the current rung for a screen reader, not only by colour', async () => {
+  it('marks the saved rung for a screen reader, and keeps the mark there while another is hovered', async () => {
     render(<PresenceCard level={3} saving={false} onChange={() => {}} />)
     const morning = await screen.findByRole('button', { name: /morning/i })
+    const think = await screen.findByRole('button', { name: /think/i })
     expect(morning.getAttribute('aria-pressed')).toBe('true')
-    expect((await screen.findByRole('button', { name: /think/i })).getAttribute('aria-pressed')).toBe('false')
+    expect(think.getAttribute('aria-pressed')).toBe('false')
+
+    fireEvent.mouseEnter(think)          // hovering asks about a rung; it does not select one
+    expect(morning.getAttribute('aria-pressed')).toBe('true')
+    expect(think.getAttribute('aria-pressed')).toBe('false')
   })
 
   it('choosing a rung saves its level', async () => {
@@ -65,8 +70,19 @@ describe('PresenceCard', () => {
     fireEvent.change(slider, { target: { value: '5' } })
     expect(onChange).not.toHaveBeenCalled()          // a drag is not a save
     fireEvent.pointerUp(slider)
+    fireEvent.blur(slider)                           // the backstop must not write again
     expect(onChange).toHaveBeenCalledTimes(1)
     expect(onChange).toHaveBeenCalledWith({ presence: 5 })
+  })
+
+  it('snaps back when a save ends without changing the level', async () => {
+    const { rerender } = render(<PresenceCard level={3} saving={false} onChange={() => {}} />)
+    fireEvent.change(await screen.findByRole('slider'), { target: { value: '7' } })
+    expect(screen.getByText(/Fine adjust: 7/)).toBeTruthy()
+
+    rerender(<PresenceCard level={3} saving={true} onChange={() => {}} />)
+    rerender(<PresenceCard level={3} saving={false} onChange={() => {}} />)   // refused: the level never arrived
+    expect(screen.getByText(/Fine adjust: 3/)).toBeTruthy()
   })
 
   it('hovering a rung previews it without choosing it', async () => {
@@ -83,21 +99,26 @@ describe('PresenceCard', () => {
     await waitFor(() => expect(lastPreviewUrl()).toContain('level=0'))
   })
 
-  it('shows the preview counts for the current level', async () => {
+  it('shows the preview counts for the current level, by name', async () => {
     render(<PresenceCard level={3} saving={false} onChange={() => {}} />)
-    await waitFor(() => expect(screen.getByText(/said 2/i)).toBeTruthy())
+    await waitFor(() => expect(screen.getByText(/at morning/i)).toBeTruthy())
+    expect(screen.getByText(/said 2/i)).toBeTruthy()
     expect(screen.getByText(/shown 1/i)).toBeTruthy()
     expect(screen.getByText(/held 4/i)).toBeTruthy()
   })
 
-  it('says so when it cannot read the log, and keeps the fine adjust', async () => {
-    vi.stubGlobal('fetch', vi.fn(async (url: string) =>
-      String(url).includes('/presence/rungs')
-        ? { ok: false, status: 503, json: async () => ({}) }
-        : { ok: false, status: 503, json: async () => ({}) }))
+  it('says so in its own words when it cannot read the log, and keeps the fine adjust', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 503, json: async () => ({}) })))
     render(<PresenceCard level={3} saving={false} onChange={() => {}} />)
     expect(await screen.findByRole('slider')).toBeTruthy()
-    await waitFor(() => expect(screen.getByText(/attunement engine isn't installed/i)).toBeTruthy())
+    await waitFor(() => expect(screen.getByText(/the part of me that keeps it isn't installed/i)).toBeTruthy())
     expect(screen.getByText(/could not read the levels/i)).toBeTruthy()
+  })
+
+  it("never puts the platform's own wording on the surface", async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('Failed to fetch') }))
+    render(<PresenceCard level={3} saving={false} onChange={() => {}} />)
+    await waitFor(() => expect(screen.getByText(/could not read the log just now/i)).toBeTruthy())
+    expect(screen.queryByText(/Failed to fetch/)).toBeNull()
   })
 })
