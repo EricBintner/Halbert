@@ -345,13 +345,16 @@ class AttunementStore:
         return out
 
     def list_outcomes_raw(self, persona_id: str, subject_id: Optional[str] = None,
-                          limit: int = 500) -> List[Dict[str, Any]]:
-        """Attempts, newest first."""
+                          limit: int = 500, since: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Attempts, newest first; ``since`` (ISO, tz-aware UTC) filters to ``ts >= since``, compared lexically like ``trim_outcomes``."""
         sql = "SELECT payload FROM outcomes WHERE persona_id=?"
         args: List[Any] = [persona_id]
         if subject_id is not None:
             sql += " AND subject_id=?"
             args.append(subject_id)
+        if since is not None:
+            sql += " AND ts >= ?"
+            args.append(since)
         sql += " ORDER BY ts DESC, rowid DESC LIMIT ?"
         args.append(int(limit))
         with self._read() as conn:

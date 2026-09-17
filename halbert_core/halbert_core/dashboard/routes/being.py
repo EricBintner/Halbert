@@ -236,12 +236,13 @@ def _attunement_store():
 
 
 @router.get("/being/presence/rungs")
-async def presence_rungs() -> dict:
+def presence_rungs() -> dict:
     """The curve's rungs with their first-person copy — the settings surface
-    never hardcodes it (plan D8) — and whether each rung is reachable yet:
-    a rung is reachable when every class it newly admits has a classification
-    branch (``PRODUCED_CLASSES``); whether a producer emits it today is the
-    shadow log's question, not this endpoint's."""
+    never hardcodes it (plan D8) — and whether each rung is *classifiable*
+    yet: every class it newly admits has a classification branch
+    (``PRODUCED_CLASSES``). Whether a producer emits the class today is the
+    shadow log's question, not this endpoint's. Plain ``def``: Starlette
+    runs it off the event loop, like ``findings.py``'s handlers."""
     try:
         from ...attunement.curve import halbert_curve
         from ...attunement.impulses import PRODUCED_CLASSES
@@ -257,30 +258,46 @@ async def presence_rungs() -> dict:
             "channel": {c.value: ch.value for c, ch in r.channel.items()},
             "budget_per_day": r.budget_per_day, "patience_s": r.patience_s,
             "closes_after": r.closes_after,
-            "reachable": newly <= PRODUCED_CLASSES,   # str-enum members compare equal to their value strings
+            "classifiable": newly <= PRODUCED_CLASSES,   # str-enum members compare equal to their value strings
         })
         previous = set(r.admits)
-    return {"status": "ok", "owner": curve.owner, "rungs": rungs}
+    return {"status": "ok", "rungs": rungs}   # the curve's owner id is internal, not a surface string
 
 
-_PREVIEW_ROWS = 5000
+#: A safety cap on rows read for one preview; the window itself is a ``since``
+#: filter in SQL, so this binds only a store far busier than a month of
+#: proactive events. When it binds, ``truncated`` says so on the wire.
+_PREVIEW_ROWS = 20000
 
 
 @router.get("/being/presence/preview")
-async def presence_preview(
+def presence_preview(
     level: int = Query(..., ge=0, le=10),
     days: int = Query(7, ge=1, le=30),
     limit: int = Query(50, ge=1, le=500),
 ) -> dict:
     """What I would have said, shown and held over the last ``days`` at
     ``level`` — admission and channel re-run over the shadow log. The counts
-    see every row in the window; ``items`` is cut to ``limit`` for the wire.
-    ``truncated`` says the store had more rows than were read (newest
-    first), so the oldest days of the window may be under-counted."""
+    see every row in the window (a ``since`` filter in SQL; ``truncated``
+    only if the safety cap bound); ``items`` is cut to ``limit`` for the
+    wire. 503 without the engine, like the rungs; 400 on a config the
+    loader refuses, like the settings GET. Plain ``def``: three synchronous
+    reads (a SQLite open, the window, the YAML) stay off the event loop."""
+    from datetime import datetime, timedelta, timezone
+
     from ...attunement.context import DEFAULT_PERSONA_ID
     from ...attunement.preview import preview_for_level
     from ...config.being_config import load_being_config
-    rows = _attunement_store().list_outcomes_raw(DEFAULT_PERSONA_ID, limit=_PREVIEW_ROWS)
-    preview = preview_for_level(rows, level, being_config=load_being_config(), days=days)
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    rows = _attunement_store().list_outcomes_raw(DEFAULT_PERSONA_ID, limit=_PREVIEW_ROWS, since=since)
+    try:
+        config = load_being_config()
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    preview = preview_for_level(rows, level, being_config=config, days=days)
+    if not preview["engine"]:
+        raise HTTPException(status_code=503, detail="attunement engine not installed")
     preview["items"] = preview["items"][:limit]
-    return {"status": "ok", "truncated": len(rows) >= _PREVIEW_ROWS, **preview}
+    preview["truncated"] = len(rows) >= _PREVIEW_ROWS
+    preview["status"] = "ok"   # the envelope last, so no preview key can shadow it
+    return preview

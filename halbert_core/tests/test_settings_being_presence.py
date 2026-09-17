@@ -49,9 +49,14 @@ def test_the_old_dial_field_still_saves_in_slice_one(client):
     assert client.get("/api/settings/being").json()["config"]["proactivity"] == "quiet"
 
 
-@pytest.mark.parametrize("bad", [True, "6", 6.5])
+@pytest.mark.parametrize("bad", [True, "6", 6.0])
 def test_a_wrong_type_is_refused_before_it_can_be_laundered(client, bad):
     # Pydantic's lax int would read true as 1; StrictInt makes a wrong type a 422
     # and leaves the range check to validate()'s 400.
     assert client.post("/api/settings/being", json={"presence": bad}).status_code == 422
     assert client.get("/api/settings/being").json()["config"]["presence"] == 3
+
+
+@pytest.mark.parametrize("bad", [True, "6", 6.0])
+def test_an_override_value_of_the_wrong_type_is_also_refused(client, bad):
+    assert client.post("/api/settings/being", json={"presence_overrides": {"warning": bad}}).status_code == 422

@@ -116,8 +116,8 @@ def classify(event: "ProactiveEvent", *, current_subject_paths: Sequence[str] = 
 
 
 #: Every class ``classify`` has a branch for — what the rungs endpoint calls
-#: "reachable" (plan D8).  Reachable means the classifier can say it, not
-#: that a producer emits it today; the shadow log answers the second.
+#: "classifiable" (plan D8).  Classifiable means the classifier can say it,
+#: not that a producer emits it today; the shadow log answers the second.
 #: Value strings, not members:
 #: ``ImpulseClass`` is a ``str`` enum, so ``"warning" == ImpulseClass.WARNING``
 #: and this set compares equal to the engine's without importing it.

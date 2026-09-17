@@ -68,6 +68,24 @@ def test_outcomes_append_and_list_newest_first(store):
     assert [r["attempt_id"] for r in rows] == ["a2", "a1", "a0"]
 
 
+def test_list_outcomes_raw_since_filters_to_the_window(store):
+    old = datetime.now(timezone.utc) - timedelta(days=2)
+    new = datetime.now(timezone.utc) - timedelta(days=1)
+    store.record_outcome_raw({
+        "attempt_id": "old", "persona_id": "halbert", "subject_id": "primary",
+        "source": "consumer_event", "severity": "warning", "channel_class": "push",
+        "outcome": "hold", "ts": _iso(old),
+    })
+    store.record_outcome_raw({
+        "attempt_id": "new", "persona_id": "halbert", "subject_id": "primary",
+        "source": "consumer_event", "severity": "warning", "channel_class": "push",
+        "outcome": "hold", "ts": _iso(new),
+    })
+    since = _iso(datetime.now(timezone.utc) - timedelta(days=1, hours=12))
+    rows = store.list_outcomes_raw("halbert", since=since)
+    assert [r["attempt_id"] for r in rows] == ["new"]
+
+
 def test_suppressed_attempts_are_recorded_with_their_reasons(store):
     """A-HB-25: every non-SPEAK decision is written, or 'why did I not hear
     about this' stays unanswerable."""
