@@ -4,7 +4,8 @@
 Being configuration — how the user lives with their computer.
 
 Controls voice (first_person / the_computer / hybrid), proactivity dial,
-quiet hours, morning report, purpose, and per-category overrides.
+quiet hours, morning report, purpose, per-category overrides, and the
+presence level and per-class overrides.
 
 Default path: ~/.config/halbert/being.yml (or platform equivalent)
 
@@ -46,6 +47,12 @@ VALID_IMPULSE_CLASSES = {
     "open_loop", "association", "affect_state", "affect_social", "absence", "spontaneous",
 }
 _PRESENCE_UNOVERRIDABLE = {"life_safety", "critical"}
+
+
+def _is_presence_level(value: Any) -> bool:
+    """A non-bool int 0..10 — the same door the engine's resolver keeps."""
+    return not isinstance(value, bool) and isinstance(value, int) and 0 <= value <= 10
+
 
 #: A vision registry id (VIS-1). Same grammar as ``persona/private_sources``
 #: and ``vision/sources``; spelled here so being_config does not import either.
@@ -351,18 +358,18 @@ class BeingConfig:
                     f"Invalid proactivity override '{level}' for category '{cat}'. "
                     f"Must be one of: {VALID_PROACTIVITY}"
                 )
-        if isinstance(self.presence, bool) or not isinstance(self.presence, int) or not 0 <= self.presence <= 10:
+        if not _is_presence_level(self.presence):
             raise ValueError(f"presence must be an integer 0..10, got {self.presence!r}")
-        for cls, level in (self.presence_overrides or {}).items():
+        for cls, level in self.presence_overrides.items():
             if cls not in VALID_IMPULSE_CLASSES:
                 raise ValueError(
                     f"Unknown impulse class '{cls}' in presence_overrides. "
                     f"Must be one of: {sorted(VALID_IMPULSE_CLASSES)}"
                 )
             if cls in _PRESENCE_UNOVERRIDABLE:
-                raise ValueError(f"'{cls}' rejects presence overrides (C-10)")
-            if isinstance(level, bool) or not isinstance(level, int) or not 0 <= level <= 10:
-                raise ValueError(f"presence override for '{cls}' must be an integer 0..10, got {level!r}")
+                raise ValueError(f"presence_overrides: '{cls}' rejects overrides (C-10)")
+            if not _is_presence_level(level):
+                raise ValueError(f"presence_overrides['{cls}'] must be an integer 0..10, got {level!r}")
         # Personality validation
         for trait, value in self.personality_profile.items():
             if trait not in ("openness", "conscientiousness", "extraversion",
@@ -458,6 +465,8 @@ class BeingConfig:
         # ``{"enabled": false}`` is the off switch.
         if "morning_report" in known and known["morning_report"] is None:
             del known["morning_report"]
+        if known.get("presence_overrides") is None:
+            known.pop("presence_overrides", None)
         # Handle nested security config — guard against null / missing
         if "security" in known:
             if isinstance(known["security"], dict):

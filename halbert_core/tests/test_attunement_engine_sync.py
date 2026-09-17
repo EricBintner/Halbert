@@ -123,3 +123,15 @@ def test_the_policy_constants_are_importable_as_a_table():
 
     table = constants()
     assert table, "the engine exports no constants table"
+
+
+def test_impulse_class_values_match():
+    from halbert_core.config.being_config import VALID_IMPULSE_CLASSES
+
+    assert VALID_IMPULSE_CLASSES == _values(engine_types.ImpulseClass)
+
+
+def test_presence_unoverridable_matches_engine_always_admitted():
+    from halbert_core.config.being_config import _PRESENCE_UNOVERRIDABLE
+
+    assert _PRESENCE_UNOVERRIDABLE == {c.value for c in engine_types.ALWAYS_ADMITTED}

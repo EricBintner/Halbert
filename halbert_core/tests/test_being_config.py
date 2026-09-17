@@ -288,22 +288,27 @@ class TestPresence:
 
     @pytest.mark.parametrize("bad", [-1, 11, "3", True, 3.5])
     def test_presence_must_be_an_int_in_range(self, bad):
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="presence must be an integer 0..10"):
             BeingConfig(presence=bad).validate()
 
     def test_overrides_are_keyed_by_impulse_class(self):
         BeingConfig(presence_overrides={"warning": 5, "association": 9}).validate()
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="Unknown impulse class"):
             BeingConfig(presence_overrides={"security": 5}).validate()
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="0..10"):
             BeingConfig(presence_overrides={"warning": 12}).validate()
 
     def test_life_safety_and_critical_reject_overrides(self):
         for cls in ("life_safety", "critical"):
-            with pytest.raises(ValueError):
+            # match= so this cannot pass through the unknown-class branch if a name were dropped
+            with pytest.raises(ValueError, match="C-10"):
                 BeingConfig(presence_overrides={cls: 0}).validate()
 
     def test_round_trips_through_dict(self):
         cfg = BeingConfig(presence=6, presence_overrides={"subject_linked": 8})
         back = BeingConfig.from_dict(cfg.to_dict())
         assert back.presence == 6 and back.presence_overrides == {"subject_linked": 8}
+
+    def test_a_null_overrides_map_on_disk_loads_as_empty(self):
+        cfg = BeingConfig.from_dict({"presence_overrides": None})
+        assert cfg.presence_overrides == {}
