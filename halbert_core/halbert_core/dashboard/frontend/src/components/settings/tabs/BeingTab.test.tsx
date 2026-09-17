@@ -62,8 +62,8 @@ function renderTab() {
     }
     if (url === '/api/being/presence/rungs') {
       return jsonResponse({ status: 'ok', rungs: [
-        { level: 0, name: 'mute', says: "I'll only speak for what can't wait.", why: 'Nothing interrupts you.', classifiable: true, admits: [], channel: {} },
-        { level: 3, name: 'morning', says: "I'll give you the morning report.", why: 'The default.', classifiable: true, admits: [], channel: {} },
+        { level: 0, name: 'mute', says: "I'll only speak for what can't wait.", why: 'Nothing interrupts you.', classifiable: true },
+        { level: 3, name: 'morning', says: "I'll give you the morning report.", why: 'The default.', classifiable: true },
       ] })
     }
     if (url.startsWith('/api/being/presence/preview')) {

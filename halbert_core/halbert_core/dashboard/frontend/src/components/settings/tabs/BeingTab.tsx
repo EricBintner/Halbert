@@ -25,7 +25,7 @@ import {
 const API_BASE = apiUrl('/api')
 
 const errorText = (detail: unknown, fallback: string): string =>
-  Array.isArray(detail) ? detail.map((d: any) => d?.msg ?? String(d)).join('; ') : (detail ? String(detail) : fallback)
+  (Array.isArray(detail) ? detail.map((d: any) => d?.msg ?? String(d)).join('; ') : (detail ? String(detail) : '')) || fallback
 
 // The three machine roles, matching the onboarding multi-select and
 // identity.VALID_MACHINE_ROLES. API value `home_automation_hub` renders as
@@ -228,7 +228,7 @@ function BeingSettings() {
         await loadPersonas()
       } else {
         const err = await resp.json()
-        setToast(`Error: ${err.detail || 'Failed to delete'}`)
+        setToast(`Error: ${errorText(err.detail, 'Failed to delete')}`)
         setTimeout(() => setToast(null), 3000)
       }
     } catch (e) {
@@ -739,7 +739,7 @@ function SensesSettings() {
         setTimeout(() => setToast(null), 2000)
       } else {
         const err = await resp.json()
-        setToast(`Error: ${err.detail || 'Failed to save'}`)
+        setToast(`Error: ${errorText(err.detail, 'Failed to save')}`)
         setTimeout(() => setToast(null), 3000)
       }
     } catch (e) {

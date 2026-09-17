@@ -135,7 +135,13 @@
     background-color: var(--color-surface);
     color: var(--color-ink);
   }
-  
+
+  /* The dashboard's only type="range" input; without this it paints in the
+   * browser's own blue, off the one palette every other surface reads from. */
+  input[type="range"] {
+    accent-color: hsl(var(--primary));
+  }
+
   /* Desktop App Typography — Space Grotesk takes headings, chrome, and body
    * for high-legibility, precision engineering UI. Vintage serif (Fraunces) is
    * reserved strictly for editorial marketing pages. */
