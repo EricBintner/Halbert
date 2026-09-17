@@ -252,6 +252,11 @@ class SuppressionRecorder:
                 "severity": getattr(event, "severity", "") or "",
                 "channel_class": channel_class.value,
                 "context_key": getattr(event, "finding_id", None),
+                # What kind of thing this was, on what warrant — recorded for
+                # every row, decider or not, so the preview can re-resolve it.
+                # From the shadow's own utterance when there is one, so the row
+                # and the decision cannot disagree about the class.
+                **self._classification(event, context),
                 # What actually happened to the user.
                 "gate_outcome": gate_outcome,
                 "gate_reasons": gate_keys,
@@ -285,6 +290,9 @@ class SuppressionRecorder:
                 "receptivity_level": None,
                 "activity": None,
                 "shadow_agrees": None,
+                "presence_level": None,
+                "channel_resolved": None,
+                "channel_capped": None,
             }
 
         outcome = getattr(decision.outcome, "value", decision.outcome)
@@ -300,7 +308,42 @@ class SuppressionRecorder:
             ),
             "activity": self._persistable_activity(context),
             "shadow_agrees": (outcome in SPEAKING_OUTCOMES) == (gate_outcome == "speak"),
+            "presence_level": getattr(getattr(context, "presence", None), "level", None),
+            **self._resolved_channel(context),
         }
+
+    @staticmethod
+    def _classification(event: Any, context: Any = None) -> Dict[str, Any]:
+        utterance = getattr(context, "utterance", None)
+        if utterance is not None:
+            return {
+                "impulse_class": getattr(utterance.impulse_class, "value", utterance.impulse_class),
+                "warrant": getattr(utterance.warrant, "value", utterance.warrant),
+            }
+        try:
+            from .impulses import classify
+            cls, warrant, _ = classify(event)
+            return {"impulse_class": getattr(cls, "value", cls), "warrant": getattr(warrant, "value", warrant)}
+        except Exception:
+            return {"impulse_class": None, "warrant": None}
+
+    @staticmethod
+    def _resolved_channel(context: Any) -> Dict[str, Any]:
+        """The channel the vector would deliver at, and whether that capped
+        the utterance's own (presence v2 §14). None when no engine context."""
+        utterance = getattr(context, "utterance", None)
+        presence = getattr(context, "presence", None)
+        if utterance is None or presence is None:
+            return {"channel_resolved": None, "channel_capped": None}
+        own = getattr(utterance.channel_class, "value", utterance.channel_class)
+        ceiling = presence.channel.get(utterance.impulse_class)
+        if ceiling is None:                      # not admitted: no ceiling to apply
+            return {"channel_resolved": own, "channel_capped": False}
+        ceiling = getattr(ceiling, "value", ceiling)
+        rank = {"pull": 0, "ambient": 1, "push": 2}
+        if rank[own] > rank[ceiling]:
+            return {"channel_resolved": ceiling, "channel_capped": True}
+        return {"channel_resolved": own, "channel_capped": False}
 
     @staticmethod
     def _persistable_activity(context: Any) -> Optional[str]:
