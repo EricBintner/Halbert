@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any, Dict, Optional
 
 from .impulses import classify, life_safety_event
 from .subject import DEFAULT_SUBJECT_ID
@@ -125,6 +125,19 @@ def presence_for(being_config: Any) -> Any:
     (``decision_source: gate``) rather than something wrong. Logged once
     per distinct rejection, not per event.
     """
+    return resolve_vector(getattr(being_config, "presence", 3),
+                          dict(getattr(being_config, "presence_overrides", None) or {}))
+
+
+def resolve_vector(level: Any, overrides: Dict[str, Any]) -> Any:
+    """``level`` through Halbert's curve under Halbert's ceilings, or None.
+
+    The one place the drop rule lives (the preview asks the same question
+    at a hypothetical level): refused overrides are dropped and the level
+    kept; a refused level is None. Each rejection is logged once. If both
+    are refused only the level's warning fires — the override rejection is
+    moot for an event the shadow lane sits out.
+    """
     try:
         from haloysius.attunement.presence import resolve_presence
     except ImportError:
@@ -134,15 +147,10 @@ def presence_for(being_config: Any) -> Any:
     config = halbert_config()
     if config is None:
         return None
-    level = getattr(being_config, "presence", 3)
-    overrides = dict(getattr(being_config, "presence_overrides", None) or {})
     try:
         return resolve_presence(level, halbert_curve(), config.attachment, overrides)
     except (TypeError, ValueError) as first:
-        # `except ... as name` is implicitly deleted at the end of its own
-        # block (language spec, to break the traceback's reference cycle) —
-        # captured as a plain string so it survives to the message below.
-        first_message = str(first)
+        first_message = str(first)   # the name `first` is unbound once its except block ends
     try:
         vector = resolve_presence(level, halbert_curve(), config.attachment, {})
     except (TypeError, ValueError) as exc:

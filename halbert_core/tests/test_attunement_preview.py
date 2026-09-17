@@ -8,10 +8,10 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-engine = pytest.importorskip("haloysius.attunement.types")
+from halbert_core.attunement.preview import preview_for_level
+from halbert_core.config.being_config import BeingConfig
 
-from halbert_core.attunement.preview import preview_for_level  # noqa: E402
-from halbert_core.config.being_config import BeingConfig  # noqa: E402
+pytest.importorskip("haloysius.attunement.types")   # the preview needs the engine at call time
 
 NOW = datetime(2026, 9, 16, 12, 0, tzinfo=timezone.utc)
 
@@ -71,3 +71,18 @@ def test_overrides_from_the_config_apply():
     cfg = BeingConfig(presence_overrides={"spontaneous": 10})
     p = preview_for_level(ROWS, 0, being_config=cfg, days=7, now=NOW)
     assert p["said"] == 2   # critical + the overridden spontaneous
+
+
+def test_the_budget_rides_beside_the_counts_and_undated_rows_are_counted():
+    rows = ROWS + [{"attempt_id": "nots", "impulse_class": "warning", "gate_outcome": "silent"},
+                   {**row(1, "warning", attempt="z"), "ts": NOW.isoformat().replace("+00:00", "Z")}]
+    p = preview_for_level(rows, 3, being_config=BeingConfig(), days=7, now=NOW)
+    assert p["budget_per_day"] == 3 and p["undated"] == 1
+    assert p["said"] == 4   # the Z-suffixed row is read, not dropped
+
+
+def test_items_are_newest_first_by_time_not_by_string():
+    mixed = [{**row(1, "warning", attempt="p"), "ts": "2026-09-15T13:30:00+02:00"},   # 11:30 UTC
+             {**row(1, "critical", attempt="q"), "ts": "2026-09-15T12:00:00+00:00"}]  # 12:00 UTC — newer
+    p = preview_for_level(mixed, 3, being_config=BeingConfig(), days=7, now=NOW)
+    assert [i["impulse_class"] for i in p["items"]] == ["critical", "warning"]
