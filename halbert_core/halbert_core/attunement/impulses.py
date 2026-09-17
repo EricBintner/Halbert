@@ -75,6 +75,9 @@ def classify(event: "ProactiveEvent", *, current_subject_paths: Sequence[str] = 
     current thread), which nothing on the proactive path carries; and
     ``RECURRENCE`` needs ``data["recurrence_count"]``, which no detector sets.
     The shadow log is what says when either starts arriving.
+
+    Contract: every class this can return appears literally as ``C.<MEMBER>``
+    in a ``return`` — the ``PRODUCED_CLASSES`` test reads them by AST.
     """
     from haloysius.attunement.types import ImpulseClass as C, Warrant as W
 

@@ -127,12 +127,17 @@ def test_a_critical_at_mute_disagrees_with_a_hard_off_gate(store):
     row = _row(store)
     assert row["gate_outcome"] == "silent"
     assert row["outcome"] == "speak"             # shadow: the new truth
+    assert row["reasons"][0] == "margin:speak"   # on its margin — not a life-safety bypass
     assert row["shadow_agrees"] is False
     assert "presence:0" in row["reasons"] and "impulse:critical" in row["reasons"]
 
 
 def test_shadow_mode_changes_no_behaviour(store):
     """Stage one decides, logs, and acts on nothing."""
+    # The dial↔level pairing is a fixture convention, not a claim: balanced↔3
+    # is spec §20 row 5; off↔0 is D6's deliberate mismatch; quiet (gate
+    # threshold: critical-only) has no exact rung, 1 is the nearest. The
+    # assertion below is independent of the pairing.
     cases = [
         (_config(proactivity="quiet", presence=1), _event(severity="info")),
         (_config(proactivity="quiet", presence=1), _event(severity="critical")),
@@ -335,6 +340,16 @@ def test_a_vision_derived_activity_never_reaches_the_row():
     assert R._persistable_activity(_SensorCtx()) == "idle"
 
 
+def test_a_config_the_engine_refuses_keeps_the_level_and_drops_the_overrides():
+    """The fallback is a belt for validate()'s braces: an unvalidated fixture
+    or a class-name skew must not stamp rows with a level the person never
+    chose. The level survives; the overrides go; a refused level means None."""
+    from halbert_core.attunement.context import presence_for
+    v = presence_for(_config(presence=8, presence_overrides={"not_a_class": 5}))
+    assert v is not None and v.level == 8
+    assert presence_for(_config(presence=True)) is None
+
+
 def test_the_row_carries_the_presence_fields(store):
     cfg = _config(presence=3)
     ProactiveGate(cfg, recorder=_recorder(store, cfg)).should_notify(_event(severity="warning"))
@@ -346,7 +361,7 @@ def test_the_row_carries_the_presence_fields(store):
     assert row["channel_resolved"] == "push" and row["channel_capped"] is False
 
 
-def test_a_class_capped_to_ambient_is_recorded_as_capped(store):
+def test_a_class_capped_to_ambient_is_recorded_as_capped(store, monkeypatch):
     """At level 4 SUBJECT_LINKED is admitted at AMBIENT; the shadow decision
     is taken at PUSH, so the row says the channel would have been capped."""
     from halbert_core.attunement import context as ctx_mod
@@ -354,11 +369,8 @@ def test_a_class_capped_to_ambient_is_recorded_as_capped(store):
     ev = _event(severity="info")
     ev.affected_paths = ["/etc/fstab"]
     original = ctx_mod.classify
-    try:
-        ctx_mod.classify = lambda e, **kw: original(e, current_subject_paths=["/etc/fstab"])
-        ProactiveGate(cfg, recorder=_recorder(store, cfg)).should_notify(ev)
-    finally:
-        ctx_mod.classify = original
+    monkeypatch.setattr(ctx_mod, "classify", lambda e, **kw: original(e, current_subject_paths=["/etc/fstab"]))
+    ProactiveGate(cfg, recorder=_recorder(store, cfg)).should_notify(ev)
 
     row = _row(store)
     assert row["impulse_class"] == "subject_linked"

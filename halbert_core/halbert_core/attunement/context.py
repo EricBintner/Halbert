@@ -76,11 +76,13 @@ def halbert_config() -> Any:
 
     ``max_proactive_per_day`` — the engine's 3 rations attention to stop a
     companion cultivating attachment. Halbert's failure mode is the
-    opposite one: a missed critical. The dial is already the volume policy
-    (``off``/``quiet``/``balanced``/``assertive`` with per-category
-    overrides), so the cap's remaining job is to catch a detector loop.
-    24 is one an hour averaged over a day: a runaway is visible, an ordinary
-    day is not rationed.
+    opposite one: a missed critical. Live gate, slice 1: the dial is
+    already the volume policy (``off``/``quiet``/``balanced``/``assertive``
+    with per-category overrides), so the cap's remaining job is to catch a
+    detector loop. 24 is one an hour averaged over a day: a runaway is
+    visible, an ordinary day is not rationed. In the shadow the vector's
+    own ``budget_per_day`` (Halbert's top rung: 8) is the volume policy and
+    the 24 never binds.
 
     ``new_relationship_sessions`` / ``new_relationship_days`` — the engine
     mutes a companion for its first five sessions and seven days so
@@ -115,9 +117,13 @@ def presence_for(being_config: Any) -> Any:
     (:func:`halbert_config`). The values go to the resolver raw — it is the
     door that coerces a level and an override key and refuses a ``bool`` —
     and ``BeingConfig.validate()`` is where a bad ``being.yml`` is rejected
-    before it gets here. A config that slipped past both falls back to the
-    default level with no overrides, logged, rather than taking the
-    proactive path down.
+    before it gets here. A config that slipped past both — a fixture built
+    without ``validate()``, or a class-name skew between this repo's mirror
+    and the engine — keeps the person's *level* and drops the overrides,
+    so no durable row is stamped with a level they never chose; if the
+    level itself is refused the answer is None and the row says nothing
+    (``decision_source: gate``) rather than something wrong. Logged once
+    per distinct rejection, not per event.
     """
     try:
         from haloysius.attunement.presence import resolve_presence
@@ -133,8 +139,23 @@ def presence_for(being_config: Any) -> Any:
     try:
         return resolve_presence(level, halbert_curve(), config.attachment, overrides)
     except (TypeError, ValueError) as exc:
-        logger.warning("presence config rejected by the engine (%s); using level 3 with no overrides", exc)
-        return resolve_presence(3, halbert_curve(), config.attachment, {})
+        _warn_once(f"presence_overrides rejected by the engine ({exc}); resolving without them")
+    try:
+        return resolve_presence(level, halbert_curve(), config.attachment, {})
+    except (TypeError, ValueError) as exc:
+        _warn_once(f"presence level rejected by the engine ({exc}); the shadow lane is off for this event")
+        return None
+
+
+_last_warning: Optional[str] = None
+
+
+def _warn_once(message: str) -> None:
+    """A skewed config would otherwise log on every proactive event."""
+    global _last_warning
+    if message != _last_warning:
+        logger.warning(message)
+        _last_warning = message
 
 
 def utterance_for(
@@ -159,7 +180,7 @@ def utterance_for(
     from ..proactive.gate import _USER_REQUESTED_TYPES
 
     try:
-        severity = Severity((getattr(event, "severity", "info") or "info").lower())
+        severity = Severity(str(getattr(event, "severity", "info") or "info").lower())
     except ValueError:
         severity = Severity.INFO
 
