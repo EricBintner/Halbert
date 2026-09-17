@@ -1,0 +1,109 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
+"""A ``ProactiveEvent`` as an impulse: which class, on what warrant, citing what.
+
+Spec: ``documentation/superpowers/specs/2026-09-16-presence-slider-design.md``
+§14 (classification) and §7.1 (warrant). Three of Halbert's judgments are
+made here and marked:
+
+* **Life safety is caller-set, never derived from severity** (A-HB-15). It
+  comes from the event's category and from the acoustic tagger's own
+  confirmation — what ``ProactiveGate`` already treats as life safety.
+* **An unlinked info finding is an *observed* association.** It is a real
+  thing in the ledger that nothing in particular brought up; it is admitted
+  only at the association rung, which is today's "assertive: all findings"
+  — and it carries its finding id, so the stronger-than-default warrant is
+  cited (engine ``Utterance.__post_init__``).
+* **``approval_request`` is a warning about the machine's own pending
+  action** — introspected, not observed.
+
+Nothing here imports the engine at module scope.
+"""
+
+from __future__ import annotations
+
+from typing import Any, Optional, Sequence, Tuple
+
+
+def life_safety_event(event: Any) -> bool:
+    """Whether this event is life safety. Never derived from severity (A-HB-15).
+
+    Two sources, both of which ``ProactiveGate`` already honours: the
+    engine's life-safety category set, and a confirmed acoustic anomaly
+    (tagger severity >= 2), which the wake chain treats as life safety
+    because a glass break at 3am is exactly when it matters.
+    """
+    category = getattr(event, "category", None) or ""
+    try:
+        from ..integrations.modality_wiring import is_life_safety_event
+        if is_life_safety_event(category):
+            return True
+    except Exception:
+        pass
+    if category == "acoustic":
+        data = getattr(event, "data", None)
+        if isinstance(data, dict) and data.get("anomaly_severity", 0) >= 2:
+            return True
+    return False
+
+
+def _citation(event: Any) -> Optional[str]:
+    finding_id = getattr(event, "finding_id", None)
+    if finding_id:
+        return f"finding:{finding_id}"
+    event_id = getattr(event, "id", None)
+    return f"event:{event_id}" if event_id else None
+
+
+def classify(event: Any, *, current_subject_paths: Sequence[str] = ()) -> Tuple[Any, Any, Optional[str]]:
+    """``(ImpulseClass, Warrant, source_ref)`` for one event.
+
+    ``current_subject_paths`` is what the person is on right now (config
+    paths a summoned module shows, paths named in the current thread).
+    Empty in slice 1 — nothing on the proactive path carries it yet — so
+    ``SUBJECT_LINKED`` is reachable in principle and unreachable in fact.
+    """
+    from haloysius.attunement.types import ImpulseClass as C, Warrant as W
+
+    ref = _citation(event)
+    etype = (getattr(event, "type", "") or "").lower()
+    severity = (getattr(event, "severity", "") or "info").lower()
+
+    if life_safety_event(event):
+        return C.LIFE_SAFETY, W.INTROSPECTED, ref
+    if severity == "critical":
+        return C.CRITICAL, W.INTROSPECTED, ref
+    if etype in ("morning_report", "guest_session"):
+        return C.SCHEDULED, W.INTROSPECTED, ref
+    if etype == "approval_request":
+        return C.WARNING, W.INTROSPECTED, ref
+
+    data = getattr(event, "data", None)
+    if isinstance(data, dict):
+        try:
+            if int(data.get("recurrence_count", 0) or 0) > 1:
+                return C.RECURRENCE, W.OBSERVED, ref
+        except (TypeError, ValueError):
+            pass
+
+    if severity == "warning":
+        return C.WARNING, W.INTROSPECTED, ref
+
+    paths = set(getattr(event, "affected_paths", None) or [])
+    if paths and paths & set(current_subject_paths):
+        return C.SUBJECT_LINKED, W.OBSERVED, ref
+
+    # An observed thing brought up by no particular association. Stronger
+    # than ASSOCIATION's default warrant, so it must cite; with nothing to
+    # cite it is honestly inferred.
+    return C.ASSOCIATION, (W.OBSERVED if ref else W.INFERRED), ref
+
+
+#: Every class ``classify`` can return today — what the rungs endpoint uses
+#: to say which rungs are reachable (plan D8).  Value strings, not members:
+#: ``ImpulseClass`` is a ``str`` enum, so ``"warning" == ImpulseClass.WARNING``
+#: and this set compares equal to the engine's without importing it.
+PRODUCED_CLASSES = frozenset({
+    "life_safety", "critical", "warning", "scheduled",
+    "recurrence", "subject_linked", "association",
+})

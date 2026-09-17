@@ -32,6 +32,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Optional
 
+from .impulses import life_safety_event
 from .subject import DEFAULT_SUBJECT_ID
 from .surfaces import ChannelClass
 
@@ -134,28 +135,6 @@ def dial_for(being_config: Any) -> Any:
     return ProactivityDial(level=level, overrides=overrides)
 
 
-def _life_safety(event: Any) -> bool:
-    """Whether this event is life safety. Never derived from severity (A-HB-15).
-
-    Two sources, both of which ``ProactiveGate`` already honours: the
-    engine's life-safety category set, and a confirmed acoustic anomaly
-    (tagger severity >= 2), which the wake chain treats as life safety
-    because a glass break at 3am is exactly when it matters.
-    """
-    category = getattr(event, "category", None) or ""
-    try:
-        from ..integrations.modality_wiring import is_life_safety_event
-        if is_life_safety_event(category):
-            return True
-    except Exception:
-        pass
-    if category == "acoustic":
-        data = getattr(event, "data", None)
-        if isinstance(data, dict) and data.get("anomaly_severity", 0) >= 2:
-            return True
-    return False
-
-
 def utterance_for(
     event: Any, *, channel_class: ChannelClass = SHADOW_CHANNEL_CLASS
 ) -> Any:
@@ -187,7 +166,7 @@ def utterance_for(
         severity=severity,
         user_requested=getattr(event, "type", None) in _USER_REQUESTED_TYPES,
         category=getattr(event, "category", None) or None,
-        life_safety=_life_safety(event),
+        life_safety=life_safety_event(event),
         channel_class=EngineChannel(channel_class.value),
         id=getattr(event, "id", None),
     )
