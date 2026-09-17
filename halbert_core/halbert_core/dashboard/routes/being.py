@@ -222,3 +222,65 @@ async def recent_events(limit: int = Query(50, ge=1, le=200)):
     bus = get_event_bus()
     events = [e for e in bus.get_recent(limit=200) if _should_stream(e)]
     return {"status": "ok", "events": [e.to_dict() for e in events[-limit:]]}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Presence (spec 2026-09-16 v2 §15). Read-only; the level itself is written
+# through /api/settings/being.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _attunement_store():
+    """The shadow log. A function so tests can point it at a temp DB."""
+    from ...attunement.store import AttunementStore
+    return AttunementStore()
+
+
+@router.get("/being/presence/rungs")
+async def presence_rungs() -> dict:
+    """The curve's rungs with their first-person copy — the settings surface
+    never hardcodes it (plan D8) — and whether each rung is reachable yet:
+    a rung is reachable when every class it newly admits has a classification
+    branch (``PRODUCED_CLASSES``); whether a producer emits it today is the
+    shadow log's question, not this endpoint's."""
+    try:
+        from ...attunement.curve import halbert_curve
+        from ...attunement.impulses import PRODUCED_CLASSES
+        curve = halbert_curve()
+    except ImportError:
+        raise HTTPException(status_code=503, detail="attunement engine not installed")
+    rungs, previous = [], set()
+    for r in curve.rungs:
+        newly = set(r.admits) - previous
+        rungs.append({
+            "level": r.level, "name": r.name, "says": r.says, "why": r.why,
+            "admits": sorted(c.value for c in r.admits),
+            "channel": {c.value: ch.value for c, ch in r.channel.items()},
+            "budget_per_day": r.budget_per_day, "patience_s": r.patience_s,
+            "closes_after": r.closes_after,
+            "reachable": newly <= PRODUCED_CLASSES,   # str-enum members compare equal to their value strings
+        })
+        previous = set(r.admits)
+    return {"status": "ok", "owner": curve.owner, "rungs": rungs}
+
+
+_PREVIEW_ROWS = 5000
+
+
+@router.get("/being/presence/preview")
+async def presence_preview(
+    level: int = Query(..., ge=0, le=10),
+    days: int = Query(7, ge=1, le=30),
+    limit: int = Query(50, ge=1, le=500),
+) -> dict:
+    """What I would have said, shown and held over the last ``days`` at
+    ``level`` — admission and channel re-run over the shadow log. The counts
+    see every row in the window; ``items`` is cut to ``limit`` for the wire.
+    ``truncated`` says the store had more rows than were read (newest
+    first), so the oldest days of the window may be under-counted."""
+    from ...attunement.context import DEFAULT_PERSONA_ID
+    from ...attunement.preview import preview_for_level
+    from ...config.being_config import load_being_config
+    rows = _attunement_store().list_outcomes_raw(DEFAULT_PERSONA_ID, limit=_PREVIEW_ROWS)
+    preview = preview_for_level(rows, level, being_config=load_being_config(), days=days)
+    preview["items"] = preview["items"][:limit]
+    return {"status": "ok", "truncated": len(rows) >= _PREVIEW_ROWS, **preview}
