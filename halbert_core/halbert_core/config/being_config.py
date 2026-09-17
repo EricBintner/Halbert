@@ -39,6 +39,14 @@ VALID_AUTONOMY_LEVELS = {"observe", "suggest", "act", "orchestrate"}
 VALID_OPERATIONAL_TIERS = {"cloud_ok", "local_only", "redact"}
 VALID_SECRET_TIERS = {"local_only", "cloud_ok_acknowledged"}
 
+#: Presence slider (documentation/superpowers/specs/2026-09-16-presence-slider-design.md §14).
+#: Spelled here so being_config never imports the engine, which is optional.
+VALID_IMPULSE_CLASSES = {
+    "life_safety", "critical", "warning", "scheduled", "recurrence", "subject_linked",
+    "open_loop", "association", "affect_state", "affect_social", "absence", "spontaneous",
+}
+_PRESENCE_UNOVERRIDABLE = {"life_safety", "critical"}
+
 #: A vision registry id (VIS-1). Same grammar as ``persona/private_sources``
 #: and ``vision/sources``; spelled here so being_config does not import either.
 _VISION_SOURCE_ID = re.compile(r"^[a-z][a-z0-9_]*:[A-Za-z0-9_.:-]{1,120}$")
@@ -220,6 +228,10 @@ class BeingConfig:
         default_factory=lambda: {"enabled": True, "time": "08:00"}
     )
     category_overrides: Dict[str, str] = field(default_factory=dict)
+    # Presence slider, 0..10. Read by the shadow lane in slice 1; the live
+    # gate still reads ``proactivity`` until slice 2 retires it (plan D1).
+    presence: int = 3
+    presence_overrides: Dict[str, int] = field(default_factory=dict)  # impulse class -> level
     timezone: str = "local"  # IANA tz name, or "local" for system timezone
 
     # --- Personality ---
@@ -339,6 +351,18 @@ class BeingConfig:
                     f"Invalid proactivity override '{level}' for category '{cat}'. "
                     f"Must be one of: {VALID_PROACTIVITY}"
                 )
+        if isinstance(self.presence, bool) or not isinstance(self.presence, int) or not 0 <= self.presence <= 10:
+            raise ValueError(f"presence must be an integer 0..10, got {self.presence!r}")
+        for cls, level in (self.presence_overrides or {}).items():
+            if cls not in VALID_IMPULSE_CLASSES:
+                raise ValueError(
+                    f"Unknown impulse class '{cls}' in presence_overrides. "
+                    f"Must be one of: {sorted(VALID_IMPULSE_CLASSES)}"
+                )
+            if cls in _PRESENCE_UNOVERRIDABLE:
+                raise ValueError(f"'{cls}' rejects presence overrides (C-10)")
+            if isinstance(level, bool) or not isinstance(level, int) or not 0 <= level <= 10:
+                raise ValueError(f"presence override for '{cls}' must be an integer 0..10, got {level!r}")
         # Personality validation
         for trait, value in self.personality_profile.items():
             if trait not in ("openness", "conscientiousness", "extraversion",

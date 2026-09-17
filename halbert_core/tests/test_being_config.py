@@ -274,3 +274,36 @@ class TestMorningReportDefault:
             assert "morning_report" in path.read_text()
             loaded = load_being_config(str(path))
             assert loaded.morning_report == {"enabled": True, "time": "08:00"}
+
+
+class TestPresence:
+    def test_default_is_three(self):
+        cfg = BeingConfig()
+        assert cfg.presence == 3 and cfg.presence_overrides == {}
+
+    def test_old_dial_fields_still_exist_in_slice_one(self):
+        # D1: the live gate still reads these; retirement is slice 2.
+        cfg = BeingConfig()
+        assert cfg.proactivity == "balanced"
+
+    @pytest.mark.parametrize("bad", [-1, 11, "3", True, 3.5])
+    def test_presence_must_be_an_int_in_range(self, bad):
+        with pytest.raises(ValueError):
+            BeingConfig(presence=bad).validate()
+
+    def test_overrides_are_keyed_by_impulse_class(self):
+        BeingConfig(presence_overrides={"warning": 5, "association": 9}).validate()
+        with pytest.raises(ValueError):
+            BeingConfig(presence_overrides={"security": 5}).validate()
+        with pytest.raises(ValueError):
+            BeingConfig(presence_overrides={"warning": 12}).validate()
+
+    def test_life_safety_and_critical_reject_overrides(self):
+        for cls in ("life_safety", "critical"):
+            with pytest.raises(ValueError):
+                BeingConfig(presence_overrides={cls: 0}).validate()
+
+    def test_round_trips_through_dict(self):
+        cfg = BeingConfig(presence=6, presence_overrides={"subject_linked": 8})
+        back = BeingConfig.from_dict(cfg.to_dict())
+        assert back.presence == 6 and back.presence_overrides == {"subject_linked": 8}
