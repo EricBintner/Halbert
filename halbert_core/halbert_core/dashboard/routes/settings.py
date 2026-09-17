@@ -10,7 +10,7 @@ Provides REST API for:
 """
 
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, StrictInt
 from typing import Any, Dict, List, NamedTuple, Optional, Tuple
 from pathlib import Path
 import asyncio
@@ -3153,9 +3153,15 @@ class BeingConfigUpdate(BaseModel):
     quiet_hours: Optional[Dict[str, str]] = None
     morning_report: Optional[Dict[str, Any]] = None
     category_overrides: Optional[Dict[str, str]] = None
-    # Presence slider (spec 2026-09-16 v2 §15). Additive in slice 1.
-    presence: Optional[int] = None
-    presence_overrides: Optional[Dict[str, int]] = None
+    # Presence slider (spec 2026-09-16 v2 §15). Additive in slice 1. Strict:
+    # Pydantic's lax int accepts true (→ 1) and "6"; the config module and the
+    # engine's door refuse a bool, and the route must not launder one first.
+    # A wrong *type* is therefore a 422 here; a wrong *range* is validate()'s 400.
+    # presence_overrides replaces the whole map: {} clears it, and null (the
+    # field absent) means "leave it" here — unlike a null in being.yml, which
+    # means "none" (from_dict).
+    presence: Optional[StrictInt] = None
+    presence_overrides: Optional[Dict[str, StrictInt]] = None
     # Personality
     personality_profile: Optional[Dict[str, float]] = None
     archetype_id: Optional[str] = None
@@ -3197,7 +3203,12 @@ async def get_being_config() -> Dict[str, Any]:
 
 @router.post("/being")
 async def update_being_config(update: BeingConfigUpdate) -> Dict[str, Any]:
-    """Update being configuration. Validates and persists to being.yml."""
+    """Update being configuration. Validates and persists to being.yml.
+
+    Errors: a wrong *type* in the body is FastAPI's 422, whose `detail` is a
+    list of `{loc, msg, type}`; a value the config refuses (range, an unknown
+    class, C-10) is a 400 whose `detail` is one sentence naming the field.
+    """
     try:
         # The being_config composite holds the cross-process advisory lock
         # across the whole load-modify-save cycle (REV-01 F4), so a stale

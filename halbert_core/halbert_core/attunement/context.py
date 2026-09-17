@@ -30,11 +30,14 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Mapping, Optional
 
 from .impulses import classify, life_safety_event
 from .subject import DEFAULT_SUBJECT_ID
 from .surfaces import ChannelClass
+
+if TYPE_CHECKING:  # pragma: no cover - the engine is optional at runtime
+    from haloysius.attunement.types import PresenceVector
 
 logger = logging.getLogger("halbert.attunement.context")
 
@@ -129,7 +132,7 @@ def presence_for(being_config: Any) -> Any:
                           dict(getattr(being_config, "presence_overrides", None) or {}))
 
 
-def resolve_vector(level: Any, overrides: Dict[str, Any]) -> Any:
+def resolve_vector(level: Any, overrides: Mapping[str, Any]) -> "Optional[PresenceVector]":
     """``level`` through Halbert's curve under Halbert's ceilings, or None.
 
     The one place the drop rule lives (the preview asks the same question

@@ -81,6 +81,13 @@ def test_the_budget_rides_beside_the_counts_and_undated_rows_are_counted():
     assert p["said"] == 4   # the Z-suffixed row is read, not dropped
 
 
+def test_a_refused_override_is_dropped_and_the_preview_still_answers():
+    from types import SimpleNamespace
+    cfg = SimpleNamespace(presence_overrides={"not_a_class": 5})   # never validate()d
+    p = preview_for_level(ROWS, 0, being_config=cfg, days=7, now=NOW)
+    assert p["engine"] is True and p["said"] == 1   # critical only; the override went
+
+
 def test_items_are_newest_first_by_time_not_by_string():
     mixed = [{**row(1, "warning", attempt="p"), "ts": "2026-09-15T13:30:00+02:00"},   # 11:30 UTC
              {**row(1, "critical", attempt="q"), "ts": "2026-09-15T12:00:00+00:00"}]  # 12:00 UTC — newer
