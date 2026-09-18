@@ -16,6 +16,7 @@ Append-only. One line per decision, dated, with its source. Status values: **dec
 | 2026-08-27 | Tier 2 (secrets) is answered by a deterministic template, never a model; scrub before the model; local-first. | tiered sensitivity |
 | 2026-08-30 | Never `Co-Authored-By` or generation trailers in commits. | CLAUDE.md |
 | 2026-09-01 | Full Rust rebuild deferred; Linux OS far future; current features completed and tested first. | founder |
+| 2026-09-18 | **No brown in the data-viz palette — use a purple; orange is reserved for the warning state.** Asked four times before it stuck, because the brown had two hiding places: a categorical slot (`--color-data-amber`, marigold `#CB6C04`) and the warning status painting itself out of that same categorical ramp. Both are gone: slot 2 is orchid `#A81CA0`, warning is coral (`#EA580C` mark, `#C2410C` text), and the ochre brown steps are deleted from `tokens.css` so there is nothing left to pick. A status tone never borrows a categorical pigment. New categorical hues go through the data-viz palette validator, not the eye. | founder |
 
 ## Decided
 
