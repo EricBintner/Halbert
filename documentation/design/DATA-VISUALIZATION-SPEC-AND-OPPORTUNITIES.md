@@ -233,6 +233,15 @@ All colors must resolve to tokens in `/shared-tokens/tokens.css`. Never use raw 
 | **Critical Status** | `var(--color-status-critical)` (#9E2A2B) | Capacity critical (>90%), throttling, failed jobs |
 | **Secondary Series** | `var(--color-ink-tertiary)` (#66635F) | Background comparisons, previous period averages |
 
+**Text never goes on the mark.** A gauge's mark is a mark: labels, paths and
+readings live in the row header above it or the tabular legend below it, never
+laid over the fill. This was tried in 2026-09 and reverted — a label only fits
+while the bar is nearly full, so the case it has to survive (a fresh, mostly
+empty volume with a long path) is exactly the case it fails, and white text
+sliding off a short fill onto the empty track is unreadable. It also duplicated
+a path the row header already carried. If a slice needs naming, the legend
+names it.
+
 **Mark colour vs. status chip.** A single-value gauge wears its series pigment
 (`--color-data-*`, or `telemetry` for an undifferentiated reading) while the
 metric is nominal, and recruits the status pigment the moment it crosses a
