@@ -6,7 +6,7 @@
  * THE SINGLE SOURCE OF TRUTH for the Olivetti Vermilion & Bone identity.
  *
  * Zero dependencies. Plain CSS custom properties. Consumed by:
- *   - marketing/web-v7          (Tailwind v4, via ./tailwind-v4.css)
+ *   - sites/marketing         (Tailwind v4, via ./tailwind-v4.css)
  *   - halbert_core/.../frontend (Tailwind v3, via tailwind.config.js)
  *
  * Every colour pair here is verified by `scripts/check_contrast.py`, the

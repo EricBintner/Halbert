@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
-"""Assemble marketing/shared/researchCitations.json from verified records.
+"""Assemble sites/shared/researchCitations.json from verified records.
 
 One-shot builder used 2026-09-15 to land the v10 dossier citation dictionary
 from the 38-agent verification/grounding workflow (run wf_2fd19a21-682).
@@ -21,7 +21,7 @@ import re
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-OUT = REPO_ROOT / "marketing" / "shared" / "researchCitations.json"
+OUT = REPO_ROOT / "sites" / "shared" / "researchCitations.json"
 
 SCHEMA_NOTE = (
     "Halbert research citation dictionary. Schema, join rules and copy "

@@ -27,9 +27,8 @@ SOURCE = REPO_ROOT / "shared-tokens" / "fonts"
 
 CONSUMERS = [
     REPO_ROOT / "halbert_core/halbert_core/dashboard/frontend/public/fonts",
-    REPO_ROOT / "marketing/web-v7/public/fonts",
-    REPO_ROOT / "marketing/web-v10/public/fonts",
-    REPO_ROOT / "marketing/feature-reference/public/fonts",
+    REPO_ROOT / "sites/marketing/public/fonts",
+    REPO_ROOT / "sites/feature-reference/public/fonts",
     REPO_ROOT / "packages/design-system/public/fonts",
 ]
 

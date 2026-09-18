@@ -2,7 +2,7 @@
 
 **Date:** 2026-09-16
 **Status:** Implemented 2026-09-16; see §6 for what was verified and §8 for deviations
-**Scope:** `packages/design-system/.storybook/`, `packages/design-system/src/`, `marketing/web-v10/src/`
+**Scope:** `packages/design-system/.storybook/`, `packages/design-system/src/`, `sites/marketing/src/`
 **Reads with:**
 - [BRAND-GUIDELINES-AND-AESTHETIC.md](BRAND-GUIDELINES-AND-AESTHETIC.md) — colour law, typography, voice
 - [`/shared-tokens/tokens.css`](../../shared-tokens/tokens.css) — the only source of colour values
@@ -202,7 +202,7 @@ provenance row. Trademarks stay with their owners.
 
 ## 5. Marketing page
 
-- `marketing/web-v10/src/components/CornerDock.jsx` builds the four items and
+- `sites/marketing/src/components/CornerDock.jsx` builds the four items and
   renders `IconDock` **twice**: a base copy, fixed bottom-right, and a masked
   copy in `--color-ink-on-stroke` inside a full-viewport `fixed inset-0`
   layer with `mask-image: url(#stroke-intersection-mask)` — the same mask the
@@ -228,7 +228,7 @@ provenance row. Trademarks stay with their owners.
 
 - `packages/design-system`: `npm run typecheck`, `npm test`,
   `npm run build-storybook -- --quiet` (the CI trio).
-- `marketing/web-v10`: `npm run build`.
+- `sites/marketing`: `npm run build`.
 - Browser, built Storybook served statically: brand line and sidebar in both
   modes, an autodocs page in both modes, tab title, favicon.
 - Browser, marketing dev server: the corner at desktop and phone widths, both

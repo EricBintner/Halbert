@@ -2,7 +2,7 @@
 
 **Document Status:** Approved & Implemented  
 **Date:** 2026-09-14 (feature-reference suite added same day)  
-**Target Surfaces:** `marketing/web-v10` (`index.html`, `public/llms.txt`, `public/robots.txt`, `public/sitemap.xml`, `public/privacy.html`, `public/terms.html`) and `marketing/feature-reference` (same suite under `/features/`)
+**Target Surfaces:** `sites/marketing` (`index.html`, `public/llms.txt`, `public/robots.txt`, `public/sitemap.xml`, `public/privacy.html`, `public/terms.html`) and `sites/feature-reference` (same suite under `/features/`)
 
 ---
 

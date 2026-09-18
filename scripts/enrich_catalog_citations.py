@@ -4,7 +4,7 @@
 """Enrich catalog.json with citationIds and stopIds (plan Step 1b).
 
 The join direction is one way (plan §3.1): catalog features carry
-``citationIds`` referencing entries in marketing/shared/researchCitations.json.
+``citationIds`` referencing entries in sites/shared/researchCitations.json.
 This script inverts the per-stop codebase-grounding pass (workflow run
 wf_2fd19a21-682, journal relatedFeatureIds) into those citationIds, derives
 ``stopIds`` per feature (the stops its citations sit at, optionally widened
@@ -25,8 +25,8 @@ import json
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-CATALOG = REPO_ROOT / "marketing" / "feature-reference" / "src" / "catalog.json"
-CITATIONS = REPO_ROOT / "marketing" / "shared" / "researchCitations.json"
+CATALOG = REPO_ROOT / "sites" / "feature-reference" / "src" / "catalog.json"
+CITATIONS = REPO_ROOT / "sites" / "shared" / "researchCitations.json"
 
 # feature id -> citation ids, inverted from the grounding pass's measured
 # relatedFeatureIds (journal, ground:* agents). Every value here came from an

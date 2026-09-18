@@ -2,21 +2,21 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "marketing-v10",
+      "name": "marketing",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev", "--prefix", "marketing/web-v10", "--", "--port", "5188"],
+      "runtimeArgs": ["run", "dev", "--prefix", "sites/marketing", "--", "--port", "5188"],
       "port": 5188
     },
     {
-      "name": "marketing-v10-verify",
+      "name": "marketing-verify",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev", "--prefix", "marketing/web-v10", "--", "--port", "5191"],
+      "runtimeArgs": ["run", "dev", "--prefix", "sites/marketing", "--", "--port", "5191"],
       "port": 5191
     },
     {
-      "name": "marketing-v10-check",
+      "name": "marketing-check",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev", "--prefix", "marketing/web-v10", "--", "--port", "5193"],
+      "runtimeArgs": ["run", "dev", "--prefix", "sites/marketing", "--", "--port", "5193"],
       "port": 5193
     },
     {

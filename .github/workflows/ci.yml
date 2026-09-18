@@ -251,8 +251,8 @@ jobs:
       # runner image and are opt-in, unbuilt-by-default audio-workstream code.
       - run: cargo test --locked
 
-  marketing-web-v7:
-    name: Marketing web-v7 (build smoke)
+  marketing-web:
+    name: Marketing site (build smoke)
     # No test/typecheck scripts exist for this app (plain JS, no tsconfig), and
     # it consumes @halbert/design-system straight from source via a vite alias
     # — a build here is the cheapest gate against a design-system API change
@@ -260,7 +260,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: marketing/web-v7
+        working-directory: sites/marketing
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

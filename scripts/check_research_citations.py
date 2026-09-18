@@ -28,7 +28,7 @@ Checks (exit 1 on any failure):
   shipped means code today, and the prose names the file).
 * Copy directives (DECISIONS.md standing directives, binding on prose):
   no "sovereign" in any case; no unverified corpus counts ("14k" et al.).
-* Cross-file joins — every ``stopId`` matches ``marketing/web-v10``'s
+* Cross-file joins — every ``stopId`` matches ``sites/marketing``'s
   storyboard; the reverse feature join is derived, not stored, so a stray
   ``relatedFeatureIds`` key on a citation is rejected (one join direction
   only — features carry ``citationIds``).
@@ -38,7 +38,7 @@ Usage::
     python3 scripts/check_research_citations.py            # check, exit 1 on failure
     python3 scripts/check_research_citations.py --verbose  # list every citation
 
-The catalogue side (``marketing/feature-reference/src/catalog.json``) is
+The catalogue side (``sites/feature-reference/src/catalog.json``) is
 checked when ``--catalog`` is given: every ``citationIds`` entry must exist
 here, and no feature may carry ``relatedCitationIds`` (the mirrored, wrong
 join direction).
@@ -53,9 +53,9 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-CITATIONS_JSON = REPO_ROOT / "marketing" / "shared" / "researchCitations.json"
-CATALOG_JSON = REPO_ROOT / "marketing" / "feature-reference" / "src" / "catalog.json"
-STORYBOARD_JS = REPO_ROOT / "marketing" / "web-v10" / "src" / "lib" / "storyboard.js"
+CITATIONS_JSON = REPO_ROOT / "sites" / "shared" / "researchCitations.json"
+CATALOG_JSON = REPO_ROOT / "sites" / "feature-reference" / "src" / "catalog.json"
+STORYBOARD_JS = REPO_ROOT / "sites" / "marketing" / "src" / "lib" / "storyboard.js"
 
 # From the plan §3.1 schema. The storyboard's own stop ids are read from
 # storyboard.js rather than restated here, so adding a stop cannot silently

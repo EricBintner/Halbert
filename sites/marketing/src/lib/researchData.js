@@ -2,8 +2,8 @@
  * researchData — the dossier's pure data layer (no React).
  *
  * One copy of each dataset, aliased in from both marketing sites (plan
- * §6 Step 2): the citation dictionary lives in marketing/shared, the
- * feature catalog in marketing/feature-reference/src. Nothing here edits
+ * §6 Step 2): the citation dictionary lives in sites/shared, the
+ * feature catalog in sites/feature-reference/src. Nothing here edits
  * either file; everything is derived at load, and every count the UI
  * shows is computed from these arrays — never typed in a string.
  *

@@ -1,7 +1,17 @@
 # Deployment: Netlify + Cloudflare (halbert.computer)
 
-**Status:** infrastructure prepared, first deploy pending your Netlify + Cloudflare setup (§2–§4).
-**Owner:** Eric Bintner · **Site:** `marketing/web-v10` · **Domain:** `halbert.computer` (Cloudflare)
+**Status:** live. **Owner:** Eric Bintner · **Site:** `sites/marketing` · **Domain:** `halbert.computer` (Cloudflare)
+
+**2026-09-18 — the site moved.** This directory was `marketing/web-v10`
+until every pre-v10 iteration was archived to `sites/archive/` and v10 was
+promoted to `sites/marketing`. Every path in this repo (this doc,
+`netlify.toml`, `scripts/deploy.sh`, `.claude/launch.json`, `ci.yml`) has
+been updated to match — **except Netlify's own dashboard settings**, which
+live outside the repo and only you can change. Before the next deploy,
+open *Site settings → Build & deploy* and confirm the base directory (or
+the netlify.toml lookup path, whichever Netlify shows as configured) reads
+`sites/marketing`, not `marketing/web-v10` — otherwise the build will fail
+to find its config.
 
 ---
 
@@ -26,7 +36,7 @@ The script refuses to deploy if:
 
 - the target commit is not on `origin/main` (Netlify builds the remote —
   an unpushed commit would deploy something invisible),
-- the working tree has uncommitted changes under `marketing/`, `docs/`,
+- the working tree has uncommitted changes under `sites/`, `docs/`,
   `scripts/`, or the root `netlify.toml`.
 
 ## 2. One-time Netlify setup (~5 minutes)
@@ -40,12 +50,12 @@ The script refuses to deploy if:
    *Branches* → *Production branch*. **Do not** add `main` as an
    additional deploy branch.
 3. **Build settings** — the repo's root `netlify.toml` (copied to
-   `marketing/web-v10/netlify.toml`, deployed copy wins) already
+   `sites/marketing/netlify.toml`, deployed copy wins) already
    defines everything; confirm Netlify shows:
    - Base directory: `.` (repo root)
    - Build command: `python3 scripts/sync_fonts.py && npm --prefix
-     marketing/web-v10 install && npm --prefix marketing/web-v10 run build`
-   - Publish directory: `marketing/web-v10/dist`
+     sites/marketing install && npm --prefix sites/marketing run build`
+   - Publish directory: `sites/marketing/dist`
    - Node 22 / Python 3.11 (build environment)
 4. **Note the site URL** (`<something>.netlify.app`) — needed for DNS in §3.
 
@@ -103,10 +113,10 @@ load **https://halbert.computer** when it finishes.
 
 The deployed commit's copy of these files governs the build:
 
-- `marketing/web-v10/netlify.toml` — build command, publish dir, headers,
+- `sites/marketing/netlify.toml` — build command, publish dir, headers,
   apex redirects (Netlify reads it from the deployed ref)
 - `scripts/sync_fonts.py` and `shared-tokens/fonts/` — the typefaces
-- `marketing/web-v10/src/**` — the site itself
+- `sites/marketing/src/**` — the site itself
 - `packages/design-system/**` — consumed via a vite alias, so a
   design-system change deploys the site against it
 

@@ -2,7 +2,7 @@
 #
 # Deployed by scripts/deploy.sh (moves the deploy/main ref); a plain
 # `git push origin main` never triggers a build. This file is read from
-# the deployed commit's marketing/web-v10/, with the repo root as base.
+# the deployed commit's sites/marketing/, with the repo root as base.
 
 [build]
   base = "."
@@ -11,8 +11,8 @@
   # scripts/sync_fonts.py. CI runs the same sync (ci.yml --check), so a
   # stale copy fails the pull request, and the deploy build regenerates
   # it here.
-  command = "python3 scripts/sync_fonts.py && npm --prefix marketing/web-v10 install && npm --prefix marketing/web-v10 run build"
-  publish = "marketing/web-v10/dist"
+  command = "python3 scripts/sync_fonts.py && npm --prefix sites/marketing install && npm --prefix sites/marketing run build"
+  publish = "sites/marketing/dist"
 
 [build.environment]
   NODE_VERSION = "22"

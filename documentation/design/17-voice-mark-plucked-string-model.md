@@ -180,7 +180,7 @@ available.
 `createSpeechBurstSource()` — seeded syllable bursts at roughly four a second,
 sharp attack and exponential decay, each with its own spectral centre — so the
 demo plucks the way speech does. It replaces the smooth formant sweep that was
-copied into `marketing/web-v10/src/content/ui.jsx`; the marketing plate now
+copied into `sites/marketing/src/content/ui.jsx`; the marketing plate now
 imports it from the design system. The app needs no change: it feeds live
 analyser energy through the same onset path.
 

@@ -63,8 +63,9 @@ Each of these has exactly one choke point. Route new code through it rather than
 - `halbert_core/` — the product. FastAPI backend plus the React/Tauri dashboard under `halbert_core/halbert_core/dashboard/`.
 - `packages/model-picker`, `packages/design-system` — independently consumable libraries. Keep their dependencies narrow enough that they install standalone.
 - `crates/` — `halbert-ffi`, `halbert-mqtt`, `halbert-sandbox`, `halbert-snapshots`, `halbert-telemetry`. The full Rust rebuild is **deferred**; current features get finished and tested first.
-- `marketing/web-v7` is the live direction. `marketing/archive` holds superseded sites 1–6 — don't revive one.
-- `web/feature-reference` is a reference viewer, not a shipping surface.
+- `sites/marketing` is the live site (`halbert.computer`). `sites/archive` holds every superseded version — don't revive one.
+- `sites/feature-reference` is the features page — the seed for a future `docs.halbert.computer`, not yet deployed on its own. The live site already consumes its catalog data at build time via a vite alias.
+- `pay.halbert.computer` has no site yet.
 - `.handoff/` is correspondence between sessions: useful history, zero authority.
 - `documentation/` is the durable docs tree.
 

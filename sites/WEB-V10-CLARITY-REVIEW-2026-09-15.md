@@ -1,7 +1,7 @@
 # Web v10 clarity review
 
 **Date:** 2026-09-15
-**Reviewed:** `marketing/web-v10` at commit `52c48591`, served by the local dev server, walked at 1024×768 and 375×812.
+**Reviewed:** `sites/marketing` at commit `52c48591`, served by the local dev server, walked at 1024×768 and 375×812.
 **Status:** Proposal. Nothing on the site has been changed. Every suggested copy line below is a draft for the founder to accept, edit or reject.
 **Question asked:** Is it clear to a first-time visitor what Halbert actually is?
 
@@ -224,13 +224,13 @@ Each finding was checked against the code, not just the screen.
 
    Note `og-image.png` may carry the title in pixels (commit `52c48591` enlarged its typography) and would need regenerating if the title changes. Decision D2.
 
-**F4. The README describes a different product.** `README.md` lines 11–15 and 43: "An AI assistant that actually knows your computer"; "By default, Halbert uses a hybrid AI architecture: fast, capable cloud models handle everyday conversation"; cloud models named as Claude, OpenAI, Gemini, DeepSeek; "16,000+" documentation guides. The site says local-first and private by construction, the directives say never an assistant and never name a model, and the metadata review settled on "thousands". Reader A's second click is GitHub, so this is a clarity problem for the site even though the file is not in `marketing/`. Decision D3.
+**F4. The README describes a different product.** `README.md` lines 11–15 and 43: "An AI assistant that actually knows your computer"; "By default, Halbert uses a hybrid AI architecture: fast, capable cloud models handle everyday conversation"; cloud models named as Claude, OpenAI, Gemini, DeepSeek; "16,000+" documentation guides. The site says local-first and private by construction, the directives say never an assistant and never name a model, and the metadata review settled on "thousands". Reader A's second click is GitHub, so this is a clarity problem for the site even though the file is not in `sites/marketing/`. Decision D3.
 
 **F5. BYOK is unexpanded at first use.** Stop 4 sub-headline and stop 8 footer, both in `src/content/stops.jsx`. The stop 4 body does expand it, but after the acronym.
 
 **F6. The dossier trigger has no visible label.** `src/components/TechnicalDossierModal.jsx` renders a `BookOpen` icon with `aria-label="Research & Architecture Dossier"`. Screen readers get the label; sighted users get a book. The dossier holds the clearest product description on the page (the catalog one-liners: "Halbert exposes its own tools and resources for external agents to consume via the Model Context Protocol", "37 Pluggable System Scanners"). It is the best content for Reader A and nothing invites them to open it.
 
-**F7. The dossier names seven AI vendors.** `marketing/feature-reference/src/catalog.json`, feature `hot-swap-providers`, `oneLine`: "Switch between Ollama, LM Studio, Apple Foundation Models, OpenAI, Anthropic, Google, and Azure without restarting." `howItWorks` repeats the list. `air-gapped-private-execution.howItWorks` names Ollama. `llms.txt` and the JSON-LD name "Claude, Cursor" as MCP consumers. The 2026-08-25 directive says never name or recommend AI models on any user-facing surface, connection slots not model menus. Strictly these are providers and clients, not models, but "Apple Foundation Models" is a model family and the directive's intent is slots not menus. Decision D4.
+**F7. The dossier names seven AI vendors.** `sites/feature-reference/src/catalog.json`, feature `hot-swap-providers`, `oneLine`: "Switch between Ollama, LM Studio, Apple Foundation Models, OpenAI, Anthropic, Google, and Azure without restarting." `howItWorks` repeats the list. `air-gapped-private-execution.howItWorks` names Ollama. `llms.txt` and the JSON-LD name "Claude, Cursor" as MCP consumers. The 2026-08-25 directive says never name or recommend AI models on any user-facing surface, connection slots not model menus. Strictly these are providers and clients, not models, but "Apple Foundation Models" is a model family and the directive's intent is slots not menus. Decision D4.
 
 **F8. The intro body breaks voice.** "Halbert bridges…" then "I monitor…" in one paragraph. `git log` shows commit `0669c1d3` split it into voice plus a serif coda and `4cc803ba` merged it back. Proposal in Stop 1 above.
 
@@ -269,7 +269,7 @@ Each finding was checked against the code, not just the screen.
 | R8 | Stop label legibility over the stroke field: a canvas-coloured pill behind the label, or ink-on-stroke when the label's field is stroke | `src/components/ScrollHUD.jsx` | small | none |
 | R9 | One corpus number in the Knowledge plate | `src/content/ui.jsx` | trivial | pick the number |
 | R10 | README realignment | `README.md` | medium | D3, own packet |
-| R11 | Reword provider lists | `marketing/feature-reference/src/catalog.json`, `public/llms.txt`, JSON-LD in `index.html` | trivial | D4 |
+| R11 | Reword provider lists | `sites/feature-reference/src/catalog.json`, `public/llms.txt`, JSON-LD in `index.html` | trivial | D4 |
 
 Netlify Forms note for R1: the SPA renders the form client-side, so Netlify's build-time form detection needs a hidden static `<form name="early-build" netlify netlify-honeypot="…" hidden>` in `index.html` with the same field names, and the React form posts to `/` with `form-name=early-build` encoded. Alternatively post to a Netlify Function. Either is under an hour.
 
@@ -293,7 +293,7 @@ Verification for each step: walk all eight stops at 1024×768 and 375×812, run 
 - Dev server already running on port 5188; attached rather than started a second copy.
 - Stop centres at 1024×768, from `stopCenterS(i, aspect)` in `src/lib/cameraEngine.js`, as scroll offsets: 211, 1177, 2284, 3267, 4251, 5375, 6499, 7940 px.
 - Dossier opened on stop 1: two SPEC rows (Wyoming Protocol, Model Context Protocol Specification) and three FEATURE rows (Built-in MCP Server, Instant Local Voice Pipeline, Acoustic Environment Sensing). Detail pane for Built-in MCP Server shows category "One mind across every machine" and source `mcp/server.py, mcp/camera_gate.py`.
-- Citation counts per stop from `marketing/shared/researchCitations.json`: hop 6, diagonal 4, cap 4, all others 2. Total 24.
+- Citation counts per stop from `sites/shared/researchCitations.json`: hop 6, diagonal 4, cap 4, all others 2. Total 24.
 - HUD overlap check on stop 1: label box `[877,260,972,281]`, plate box `[560,109,967,651]`, overlap true, label colour `rgb(28,25,23)`.
 - Form wiring grep across `src/` and `index.html`: no matches.
 - `gh repo view`: visibility PUBLIC, description "An LLM brain for your computer." `gh release list`: empty.
@@ -303,6 +303,6 @@ Verification for each step: walk all eight stops at 1024×768 and 375×812, run 
 
 - `public/privacy.html` and `public/terms.html` content.
 - `og-image.png` pixels. Whether it carries the title text was not confirmed.
-- `marketing/feature-reference` as a site.
+- `sites/feature-reference` as a site.
 - Performance, bundle size, and accessibility beyond the dossier's focus trap and the HUD label.
 - Whether "Instant Local Voice Pipeline" and other catalog `shipped` statuses match the current state of the app. The feature strip in R3 depends on that status being accurate.

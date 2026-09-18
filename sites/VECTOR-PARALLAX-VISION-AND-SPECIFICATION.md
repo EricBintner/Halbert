@@ -3,7 +3,7 @@
 **Document Version:** 2.2.0
 **Date:** 2026-08-25
 **Author:** Eric Bintner (Art Direction & Creative Vision)
-**Location:** [`marketing/web-v7/`](file:///Volumes/4TB-BAD/Halbert/marketing/web-v7/)
+**Location:** [`sites/archive/web-v7/`](file:///Volumes/4TB-BAD/Halbert/sites/archive/web-v7/)
 **Supersedes:** v1.0.0 (the hand-tuned five-phase camera in `cameraMotion.js`, now removed)
 
 ---

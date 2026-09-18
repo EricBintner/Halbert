@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 #
-# Deploy the marketing site (marketing/web-v10) to production.
+# Deploy the marketing site (sites/marketing) to production.
 #
 # The contract: `git push origin main` ONLY syncs code. Production
 # deploys ONLY happen through this script — never as a side effect of a
@@ -49,7 +49,7 @@ REV="$(git -C "$REPO_ROOT" rev-parse --verify --quiet "$COMMIT^{commit}" \
 SHORT="$(echo "$REV" | cut -c1-12)"
 
 # Clean tree — uncommitted work must not ride along with a deploy.
-if [ -n "$(git -C "$REPO_ROOT" status --porcelain -- marketing docs scripts netlify.toml)" ]; then
+if [ -n "$(git -C "$REPO_ROOT" status --porcelain -- sites docs scripts netlify.toml)" ]; then
   die "working tree has uncommitted changes; commit or stash before deploying."
 fi
 
