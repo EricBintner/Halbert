@@ -299,7 +299,7 @@ export const STOP_CONTENT = {
       </>
     ),
     stroke: (
-      <div className="pt-8 sm:pt-14 md:pt-20 flex flex-col items-center">
+      <div className="cap-tagline pt-8 sm:pt-14 md:pt-20 flex flex-col items-center">
         <div className="font-display italic text-[clamp(1.25rem,2.4vw,2.25rem)]">“Your machines, thinking together.”</div>
         <Kicker className="mt-3">Shared local models · Peer routing</Kicker>
       </div>

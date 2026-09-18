@@ -159,6 +159,16 @@
   }
 }
 
+/* Cap stop tagline, phones held portrait: nudge the stack 20px further
+   into the band. Portrait is expressed the way the rest of the site does
+   it — aspect, not device orientation — so a sub-640px landscape window
+   (half-height bands) keeps the authored padding. */
+@media (max-width: 639.98px) and (orientation: portrait) {
+  .cap-tagline {
+    padding-top: calc(2rem + 20px);
+  }
+}
+
 /* Custom Scrollbar */
 ::-webkit-scrollbar {
   width: 6px;
