@@ -138,6 +138,12 @@ export function WhyOverlay({
     <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
       <DialogPrimitive.Portal>
         <DialogPrimitive.Overlay
+          // Same React-tree bubbling as the content below: without this,
+          // dismissing the overlay by clicking the backdrop also opens the
+          // row's detail sheet.
+          onClick={(e) => e.stopPropagation()}
+          onPointerDown={(e) => e.stopPropagation()}
+          onMouseDown={(e) => e.stopPropagation()}
           className={cn(
             'fixed inset-0 z-50 bg-background/80 backdrop-blur-sm',
             'data-[state=open]:animate-in data-[state=open]:fade-in-0',

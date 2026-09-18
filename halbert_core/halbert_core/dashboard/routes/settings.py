@@ -774,9 +774,20 @@ def _run_background_scan():
             _scan_state["current_phase"] = "Populating self-knowledge..."
             _scan_state["progress_percent"] = 92
         logger.info("Populating self-knowledge from profile...")
-        knowledge_counts = bootstrap_from_profile(profile)
-        total_knowledge = sum(knowledge_counts.values())
-        logger.info(f"Self-knowledge populated: {total_knowledge} entries")
+        # Scoped, because this phase is the last 8% of the scan and the
+        # profile and discovery results are already saved. The store now
+        # raises when a write cannot land — which is right — but letting
+        # that reach the outer handler would report the whole scan as
+        # failed and throw away two phases that genuinely succeeded.
+        knowledge_error: Optional[str] = None
+        total_knowledge = 0
+        try:
+            knowledge_counts = bootstrap_from_profile(profile)
+            total_knowledge = sum(knowledge_counts.values())
+            logger.info(f"Self-knowledge populated: {total_knowledge} entries")
+        except Exception as e:
+            knowledge_error = str(e)
+            logger.error(f"Self-knowledge could not be populated: {e}")
         
         # Done
         with _scan_lock:
@@ -789,6 +800,11 @@ def _run_background_scan():
                 "saved_to": str(save_path),
                 "discoveries_scanned": discovery_count,
                 "self_knowledge_added": total_knowledge,
+                # Named rather than folded into the summary: a scan that
+                # profiled and discovered but could not write what it learned
+                # is not a clean run, and the operator should be told which
+                # part did not land.
+                "self_knowledge_error": knowledge_error,
             }
         logger.info("Background system scan complete")
         
