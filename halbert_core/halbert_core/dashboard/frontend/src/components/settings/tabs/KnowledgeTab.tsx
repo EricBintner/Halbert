@@ -277,11 +277,11 @@ export function KnowledgeTab({
                     </div>
                   </div>
                   <div className="space-y-2">
-                    <Label>Why does it exist? (optional)</Label>
+                    <Label>Rationale (optional)</Label>
                     <Input
                       value={newKnowledge.rationale}
                       onChange={(e: React.ChangeEvent<HTMLInputElement>) => setNewKnowledge({...newKnowledge, rationale: e.target.value})}
-                      placeholder="The reason or purpose behind this..."
+                      placeholder="Why this is worth remembering"
                     />
                   </div>
                   <Button
@@ -317,7 +317,7 @@ export function KnowledgeTab({
                         </div>
                         <p className="text-sm text-muted-foreground line-clamp-2">{entry.content}</p>
                         {entry.rationale && entry.rationale !== entry.content && (
-                          <p className="text-xs text-muted-foreground mt-1 italic">Why: {entry.rationale}</p>
+                          <p className="text-xs text-muted-foreground mt-1 italic">Rationale: {entry.rationale}</p>
                         )}
                       </div>
                       {entry.source === 'user' && (

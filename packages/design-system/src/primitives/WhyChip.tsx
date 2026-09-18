@@ -114,7 +114,7 @@ export function WhyChip({ provenance, onExpand, className }: WhyChipProps) {
       <button
         onClick={() => setExpanded(!expanded)}
         className="hb-why-chip__trigger"
-        title={`${provenance.length} provenance ref${provenance.length > 1 ? 's' : ''}`}
+        title={`${provenance.length} source${provenance.length > 1 ? 's' : ''}`}
       >
         <BookOpenIcon />
         <span>{provenance.length}</span>
@@ -129,7 +129,7 @@ export function WhyChip({ provenance, onExpand, className }: WhyChipProps) {
           />
           {/* Popover */}
           <div className="hb-why-chip__popover">
-            <div className="hb-why-chip__heading">Evidence &amp; Sources</div>
+            <div className="hb-why-chip__heading">Evidence and sources</div>
             <div className="hb-why-chip__list">
               {provenance.map((ref, i) => {
                 const Icon = REF_ICON[ref.type] || FileTextIcon

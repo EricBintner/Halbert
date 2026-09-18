@@ -2,12 +2,13 @@
 // Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 /**
  * WhyBrain Component
- * 
- * A brain icon that indicates whether an item has a "Why" explanation.
- * - Grey: No explanation (undefined)
- * - Pink/Magenta: Has explanation (defined)
- * 
- * Clicking opens the WhyOverlay to view/edit the explanation.
+ *
+ * Marks whether an item carries a recorded rationale — the operator's note on
+ * what it is for and why it is set that way.
+ * - Grey: nothing recorded
+ * - Pink/Magenta: a rationale is on file
+ *
+ * Clicking opens the WhyOverlay to read or edit it.
  */
 import * as React from 'react'
 import { Brain } from 'lucide-react'
@@ -78,8 +79,8 @@ export function WhyBrain({
             : "text-muted-foreground/60 hover:text-muted-foreground",
           className
         )}
-        title={isDefined ? "View/edit why this exists" : "Add explanation for why this exists"}
-        aria-label={isDefined ? `Why: ${currentWhy}` : "Add why explanation"}
+        title={isDefined ? "Edit rationale" : "Add rationale"}
+        aria-label={isDefined ? `Rationale for ${itemName}` : `Add rationale for ${itemName}`}
       >
         <Brain 
           className={cn(

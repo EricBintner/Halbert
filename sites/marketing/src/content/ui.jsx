@@ -135,7 +135,7 @@ export function EventRow({ severity = 'info', title, body, actions = true, phone
   );
 }
 
-/** Label / value row for evidence lists (mirrors WhyChip's "Evidence & Sources"). */
+/** Label / value row for evidence lists (mirrors WhyChip's "Evidence and sources"). */
 export function EvidenceRow({ label, refText }) {
   return (
     <div className="flex items-baseline justify-between gap-3 py-1 text-[11px]">
@@ -193,7 +193,7 @@ export function VitalsPlate() {
 /** 04 — "I remember why you changed that." Rationale + provenance for one config item. */
 export function RationalePlate() {
   return (
-    <AppWindow title="Why does this exist?" meta="config · sshd_config.d/50-custom.conf">
+    <AppWindow title="Rationale" meta="config · sshd_config.d/50-custom.conf">
       <div className="flex items-center justify-between gap-3">
         <div className="font-mono text-[11px]" style={{ color: PAPER.ink }}>
           <span style={{ color: PAPER.ink3 }}>Port 22</span> → <strong>Port 2222</strong>
@@ -202,13 +202,13 @@ export function RationalePlate() {
       </div>
       <div className="mt-3 rounded-md p-2.5 text-[12px] leading-snug" style={{ backgroundColor: PAPER.accentTint, color: PAPER.ink }}>
         <div className="text-[10px] font-mono uppercase tracking-wider mb-1" style={{ color: PAPER.accentStrong }}>
-          Your rationale
+          In your words
         </div>
         “The auth log was filling with scan attempts on 22. Moved it. It's been quiet since.”
       </div>
       <div className="mt-3">
         <div className="text-[10px] font-mono uppercase tracking-wider mb-1" style={{ color: PAPER.ink3 }}>
-          Evidence &amp; Sources
+          Evidence and sources
         </div>
         <EvidenceRow label="Config line" refText="/etc/ssh/sshd_config.d/50-custom.conf:3" />
         <EvidenceRow label="Journal window" refText="2026-07-14 04:00 → 06:12 · 4,212 failed logins" />

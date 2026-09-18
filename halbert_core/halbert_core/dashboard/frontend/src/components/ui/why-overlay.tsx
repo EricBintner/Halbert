@@ -2,9 +2,18 @@
 // Copyright (C) 2024-2026 Eric Bintner and Halbert Contributors
 /**
  * WhyOverlay Component
- * 
- * Full-screen overlay for editing "Why" explanations.
- * Provides a simple text input for explaining why something exists.
+ *
+ * Full-screen editor for the rationale recorded against one item.
+ *
+ * The rationale is the OPERATOR's note, in their words — what a thing is for
+ * and why it is set the way it is — kept so the machine can hand it back
+ * months later. It is not one of the Four Whys, which are the machine
+ * justifying its own claims; that is WhyChip's job, and it cites evidence
+ * rather than asking a person anything.
+ *
+ * The copy deliberately avoids asking whether something should exist. Put to
+ * an operator about their own disk or service, that question is both
+ * unanswerable and faintly absurd, and it is not what the field records.
  */
 import * as React from 'react'
 import { Brain, X, Save, Sparkles } from 'lucide-react'
@@ -119,7 +128,7 @@ export function WhyOverlay({
               )} />
             </div>
             <div>
-              <h2 className="text-lg font-semibold">Why does this exist?</h2>
+              <h2 className="text-lg font-semibold">Rationale</h2>
               <p className="text-sm text-muted-foreground">
                 {itemType}: <span className="font-medium text-foreground">{itemName}</span>
               </p>
@@ -142,7 +151,7 @@ export function WhyOverlay({
               htmlFor="why-input" 
               className="text-sm font-medium text-muted-foreground"
             >
-              Explain the purpose or rationale for this {itemType.toLowerCase()}
+              What it is for, and why it is set this way
             </label>
             <textarea
               ref={textareaRef}
@@ -150,7 +159,7 @@ export function WhyOverlay({
               value={why}
               onChange={(e) => setWhy(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder={`Why does "${itemName}" exist? What purpose does it serve?`}
+              placeholder="In your own words"
               className={cn(
                 "w-full min-h-[120px] p-3 rounded-lg border bg-background resize-none",
                 "placeholder:text-muted-foreground/50",
