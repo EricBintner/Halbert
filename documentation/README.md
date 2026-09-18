@@ -29,6 +29,7 @@ The key innovation: **the LLM identifies as the computer itself**, not as an ext
 | [ARCHITECTURE.md](ARCHITECTURE.md) | High-level system design |
 | [design/macos-strategy.md](design/macos-strategy.md) | macOS tiers, config physiology & multi-session design |
 | [INSTALLATION.md](INSTALLATION.md) | Getting started guide |
+| [deployment/README.md](deployment/README.md) | Deployment topologies & Home Automation Server guide |
 | [CONFIGURATION.md](CONFIGURATION.md) | Configuration reference |
 | [CLI-REFERENCE.md](CLI-REFERENCE.md) | Command-line interface |
 | [API-REFERENCE.md](API-REFERENCE.md) | Dashboard REST API |
@@ -59,6 +60,19 @@ The key innovation: **the LLM identifies as the computer itself**, not as an ext
 | [guides/dashboard-pages.md](guides/dashboard-pages.md) | Dashboard pages |
 | [guides/model-selection.md](guides/model-selection.md) | Choosing LLMs |
 | [guides/troubleshooting.md](guides/troubleshooting.md) | Common issues |
+
+---
+
+## Deployment
+
+| Document | Description |
+|----------|-------------|
+| [deployment/README.md](deployment/README.md) | Deployment topologies & hardware selection matrix |
+| [deployment/home-automation-server.md](deployment/home-automation-server.md) | Dedicated mini-PC server (N100/N150, Ubuntu/Debian + Docker Sidecar) |
+| [deployment/proxmox-homelab.md](deployment/proxmox-homelab.md) | Proxmox VE homelab (HAOS VM + Halbert VM/LXC) |
+| [deployment/existing-ha-appliance.md](deployment/existing-ha-appliance.md) | Distributed pairing (existing HA Green/Yellow/Pi + Workstation) |
+| [deployment/macos-server.md](deployment/macos-server.md) | macOS always-on server (Mac mini Apple Silicon + UTM bridged VM) |
+| [deployment/nas-and-containers.md](deployment/nas-and-containers.md) | Storage NAS container deployment (Synology, TrueNAS, Unraid) |
 
 ---
 
