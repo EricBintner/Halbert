@@ -97,6 +97,7 @@ export function stopPose(rawStop, aspect) {
   const stop = resolveStop(rawStop, aspect);
   const { at } = stop;
   const zoom = stop.zoom ?? 1;
+  const offsetY = stop.offsetY ?? 0;
 
   if (at.full) {
     // Portrait stops may raise the zoom so the mark spans most of a phone's
@@ -109,6 +110,7 @@ export function stopPose(rawStop, aspect) {
       scale: stop.scale ?? fitScale(aspect, 0.44) * span,
       normal: { x: 0, y: 0 },
       layout: { kind: 'full', strokeSide: 'none', angle: 0 },
+      offsetY,
     };
   }
 
@@ -126,6 +128,7 @@ export function stopPose(rawStop, aspect) {
       scale,
       normal: c.toStroke,
       layout: { kind: 'cap', strokeSide: 'bottom', angle: 90 },
+      offsetY,
     };
   }
 
@@ -148,6 +151,7 @@ export function stopPose(rawStop, aspect) {
     layout,
     edge,
     u,
+    offsetY,
   };
 }
 
@@ -171,7 +175,13 @@ function movePose(A, B, pa, pb, aspect, t) {
     // Zoom breathes with the edge orientation so exactly one boundary stays on screen.
     let scale = requiredScale(p.toStroke, edgeClearance(pa.edge, u), aspect) * lerp(pa.zoom ?? 1, pb.zoom ?? 1, t);
     if (A.scale != null || B.scale != null) scale = logLerp(pa.scale, pb.scale, t);
-    return { cx: p.x, cy: p.y, scale: scale * dipFactor, normal: p.toStroke };
+    return {
+      cx: p.x,
+      cy: p.y,
+      scale: scale * dipFactor,
+      normal: p.toStroke,
+      offsetY: lerp(pa.offsetY ?? 0, pb.offsetY ?? 0, t),
+    };
   }
 
   if (via === 'follow' && typeof console !== 'undefined') {
@@ -184,6 +194,7 @@ function movePose(A, B, pa, pb, aspect, t) {
     cy: lerp(pa.cy, pb.cy, t),
     scale,
     normal: t < 0.5 ? pa.normal : pb.normal,
+    offsetY: lerp(pa.offsetY ?? 0, pb.offsetY ?? 0, t),
   };
 }
 
@@ -212,7 +223,7 @@ export function getCameraState(sRaw, aspect = 16 / 9, timeline = timelineFor(asp
     const pose = poses[seg.stop];
     return {
       cx: pose.cx,
-      cy: pose.cy,
+      cy: pose.cy + (pose.offsetY ?? 0),
       scale: pose.scale,
       rotation: 0,
       normal: pose.normal,
@@ -248,7 +259,7 @@ export function getCameraState(sRaw, aspect = 16 / 9, timeline = timelineFor(asp
 
   return {
     cx: pose.cx,
-    cy: pose.cy,
+    cy: pose.cy + (pose.offsetY ?? 0),
     scale: pose.scale,
     rotation: 0,
     normal: pose.normal,

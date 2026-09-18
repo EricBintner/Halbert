@@ -14,6 +14,10 @@
  *   via       how we get here from the previous stop
  *               'follow'  ride the edge (only possible on the same edge)
  *               'fly'     straight line to the new focal point
+ *   offsetY   mark units — shift the rendered mark up (positive) or down
+ *             (negative) from the exact screen centre. The shift rides the
+ *             pose through moves like cx/cy/scale, so no jump at the
+ *             boundary. Default 0.
  *   dip       0..1 — pull the zoom back mid-move so the lanes sweep past;
  *             0 keeps the zoom locked (default for follow)
  *   zoom      multiplier on the derived single-line zoom (1 = strict; <1 lets
@@ -41,7 +45,11 @@ export const STOPS = [
     portrait: {
       // phones: start at apex of lane 1's inner edge
       at: { edge: { lane: 1, side: 'inner' }, angle: 90 },
-      // horizontal split: canvas TOP, stroke BOTTOM
+      // horizontal split: canvas TOP, stroke BOTTOM.
+      // Drop the crest a touch below the exact centre so the raised
+      // device reads as sitting on the curve with more canvas room above
+      // for the headline block. One mark unit is ~19px at phone zoom.
+      offsetY: -1,
     },
   },
   {

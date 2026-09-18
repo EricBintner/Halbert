@@ -8,16 +8,16 @@
       "port": 5188
     },
     {
-      "name": "marketing-v10-worktree",
+      "name": "marketing-v10-verify",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev", "--prefix", "/Volumes/4TB-BAD/Halbert/.claude/worktrees/seven-line-mark-web-v10/marketing/web-v10", "--", "--port", "5189"],
-      "port": 5189
+      "runtimeArgs": ["run", "dev", "--prefix", "marketing/web-v10", "--", "--port", "5191"],
+      "port": 5191
     },
     {
-      "name": "storybook-worktree",
+      "name": "marketing-v10-check",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "storybook", "--prefix", "/Volumes/4TB-BAD/Halbert/.claude/worktrees/seven-line-mark-web-v10/packages/design-system", "--", "--port", "6007"],
-      "port": 6007
+      "runtimeArgs": ["run", "dev", "--prefix", "marketing/web-v10", "--", "--port", "5193"],
+      "port": 5193
     },
     {
       "name": "storybook",

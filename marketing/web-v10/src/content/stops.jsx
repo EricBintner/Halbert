@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useLayoutEffect, useRef, useState } from 'react';
 import { ProactiveEventsPlate, VitalsPlate, RationalePlate, KnowledgePlate, VoiceModePlate } from './ui';
 
 /**
@@ -30,6 +30,7 @@ export const Headline = ({
   leading = size === 'sm' ? 'leading-snug' : 'leading-[0.95]',
   className = '',
   style,
+  ref,
 }) => {
   const cls = {
     xl: 'text-[clamp(3rem,9vw,9rem)]',
@@ -56,7 +57,7 @@ export const Headline = ({
     md: 'max-sm:text-[clamp(1.25rem,calc(4vh+max(0px,min(0.45vw,100vh_-_812px))),calc(1.85rem+max(0px,min(0.5vw,100vh_-_812px))))]',
     sm: 'max-sm:text-[clamp(1.05rem,calc(2.8vh+max(0px,min(0.8vw,100vh_-_812px))),calc(1.35rem+max(0px,min(1vw,100vh_-_812px))))]',
   }[size] || '';
-  return <h2 className={`font-display tracking-tight ${weight} ${leading} ${cls} ${phone} ${className}`} style={style}>{children}</h2>;
+  return <h2 ref={ref} className={`font-display tracking-tight ${weight} ${leading} ${cls} ${phone} ${className}`} style={style}>{children}</h2>;
 };
 
 export const Body = ({ children }) => (
@@ -66,6 +67,66 @@ export const Body = ({ children }) => (
 export const Cue = ({ children }) => (
   <div className="mt-8 text-[11px] font-mono font-bold tracking-widest uppercase opacity-70">{children}</div>
 );
+
+/**
+ * A headline sized by measurement: on phones the line is scaled so it fills
+ * the slot's width exactly — the smallest screens get a full-width line,
+ * wider phones get a proportionally bigger one, and wrapping or overflow is
+ * impossible by construction (the size comes from the text's own measured
+ * extent at the authored phone size, not a vw guess). >=640px keeps the
+ * authored clamp sizes. The scale rides a CSS variable; the observer
+ * watches the SLOT, so a font-size change never re-triggers the fit (the
+ * element's own resize can't feed back into the measurement).
+ */
+function HeadlineFit({ children, ...rest }) {
+  const ref = useRef(null);
+  const [scale, setScale] = useState(1);
+
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const slot = el.closest('[data-slot]');
+    if (!slot) return;
+    const fit = () => {
+      // Portrait phones only (<640px wide). Desktop/tablet keep authored sizes.
+      if (window.innerWidth >= 640) {
+        setScale(1);
+        return;
+      }
+      // Force the authored size for the measurement: the !important class
+      // beats the inline variable without mutating what React owns. A block
+      // h2 reports its slot width, so measure the text through a Range.
+      el.classList.add('headline-fitting');
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      const natural = range.getBoundingClientRect().width;
+      el.classList.remove('headline-fitting');
+      const target = slot.clientWidth;
+      if (natural > 0 && target > 0) {
+        // A hair under fill so tracking's last letter-space can't tip a wrap.
+        setScale(Math.min(1.12, (0.98 * target) / natural));
+      }
+    };
+    fit();
+    // Watch the slot, not the element: font-size changes the element's box,
+    // which would re-trigger the fit and oscillate. The slot's width changes
+    // only with the viewport.
+    const ro = new ResizeObserver(fit);
+    ro.observe(slot);
+    return () => ro.disconnect();
+  }, []);
+
+  return (
+    <Headline
+      ref={ref}
+      {...rest}
+      className={`headline-fit ${rest.className ?? ''}`}
+      style={{ ...(rest.style ?? {}), ['--headline-fit']: String(scale) }}
+    >
+      {children}
+    </Headline>
+  );
+}
 
 function EarlyAccessForm() {
   const [email, setEmail] = useState('');
@@ -108,7 +169,7 @@ export const STOP_CONTENT = {
     canvas: (
       <div className="stage-enter">
         <Kicker>// Native MCP & host intelligence</Kicker>
-        <Headline>I am the computer.</Headline>
+        <HeadlineFit>I am the computer.</HeadlineFit>
         <Headline size="sm" weight="font-semibold" className="mt-[0.05em]" style={{ marginTop: '0.05em' }}>
           And I put the smart in your home.
         </Headline>

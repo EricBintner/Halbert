@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useLayoutEffect, useRef } from 'react';
 import { Mic, Keyboard } from 'lucide-react';
 import { VoiceModeLoop } from '@halbert/design-system';
 
@@ -248,24 +248,49 @@ export function KnowledgePlate() {
  *
  * The surround (bezel, status strip, caption ribbon, touch bar) is a mock in
  * the same sense as the plates above; the mark is the real thing — the
- * shipped audio-reactive mark from the design system, mid-thought. Sizing
- * lives in index.css (.voice-plate) because the width budget depends on the
- * slot geometry: a full-height column on the vertical split, a half-height
- * band on the horizontal one.
+ * shipped audio-reactive mark from the design system, mid-thought.
+ *
+ * True scale model: the device is authored once at 480x640 — every internal
+ * size below is the exact px value verified there — and the layout effect
+ * fits that rasterized layout to the frame with a single CSS scale. Layout
+ * never reflows: the pill row that fits at 480px fits identically at 175px,
+ * so the screen can never wrap or crowd at small sizes. The frame's own
+ * width budget lives in index.css (.voice-plate).
  */
 export function VoiceModePlate() {
   const glassEdge = 'color-mix(in srgb, var(--color-canvas) 20%, transparent)';
+  const frameRef = useRef(null);
+  const deviceRef = useRef(null);
+
+  useLayoutEffect(() => {
+    const frame = frameRef.current;
+    const device = deviceRef.current;
+    if (!frame || !device) return;
+    const fit = () => {
+      const w = frame.clientWidth;
+      if (w > 0) device.style.transform = `scale(${w / 480})`;
+    };
+    fit();
+    const ro = new ResizeObserver(fit);
+    ro.observe(frame);
+    return () => ro.disconnect();
+  }, []);
+
   return (
-    <div
-      className="voice-plate relative"
-      style={{
-        aspectRatio: '3 / 4',
-        padding: '4%',
-        borderRadius: 24,
-        backgroundColor: PAPER.ink,
-        boxShadow: 'var(--shadow-plate)',
-      }}
-    >
+    <div ref={frameRef} className="voice-plate relative">
+      <div
+        ref={deviceRef}
+        className="voice-device relative"
+        style={{
+          width: 480,
+          height: 640,
+          padding: 20,
+          borderRadius: 24,
+          backgroundColor: PAPER.ink,
+          boxShadow: 'var(--shadow-plate)',
+          transformOrigin: 'top left',
+        }}
+      >
       <div
         className="voice-screen relative flex h-full w-full flex-col overflow-hidden"
         style={{
@@ -274,14 +299,14 @@ export function VoiceModePlate() {
           border: `1px solid ${glassEdge}`,
         }}
       >
-        {/* status strip */}
-        <div
-          className="flex items-center justify-between px-[6%] pt-[4%] text-[0.625em] font-mono uppercase tracking-[var(--tracking-label)]"
-          style={{ color: 'color-mix(in srgb, var(--color-canvas) 55%, transparent)' }}
-        >
-          <span>Voice</span>
-          <span>10:47 AM</span>
-        </div>
+          {/* status strip */}
+          <div
+            className="flex items-center justify-between px-[30px] pt-[24px] text-[10px] font-mono uppercase tracking-[var(--tracking-label)]"
+            style={{ color: 'color-mix(in srgb, var(--color-canvas) 55%, transparent)' }}
+          >
+            <span>Halbert</span>
+            <span>10:47 AM</span>
+          </div>
 
         {/* the mark — the design system's Voice Mode loop (listening,
          * recognized, thinking, speaking), the same component Storybook shows,
@@ -292,44 +317,57 @@ export function VoiceModePlate() {
           </div>
         </div>
 
-        {/* caption */}
-        <p
-          className="px-[8%] pb-[2%] text-center text-[0.6875em] leading-snug"
-          style={{ color: 'color-mix(in srgb, var(--color-canvas) 90%, transparent)' }}
-        >
-          Looking over what changed while you were out…
-        </p>
+          {/* caption */}
+          <p
+            className="px-[38px] pb-[12px] text-center text-[11px] leading-snug"
+            style={{ color: 'color-mix(in srgb, var(--color-canvas) 90%, transparent)' }}
+          >
+            Looking over what changed while you were out…
+          </p>
 
-        {/* touch-bar hint */}
-        <div className="flex items-center justify-center gap-[0.5em] pb-[6%]">
+          {/* touch-bar hint */}
+          <div className="flex items-center justify-center gap-[10px] pb-[36px]">
+            <span
+              className="inline-flex items-center gap-[6px] rounded-full border px-[12px] py-[5px] text-[10px] font-medium"
+              style={{
+                color: 'var(--color-canvas)',
+                borderColor: 'color-mix(in srgb, var(--color-accent) 45%, transparent)',
+                backgroundColor: 'color-mix(in srgb, var(--color-accent) 16%, transparent)',
+              }}
+            >
+              <Mic className="h-[12px] w-[12px]" aria-hidden="true" style={{ color: 'var(--color-accent)' }} />
+              Tap to speak
+            </span>
+            <span
+              className="inline-flex items-center gap-[6px] rounded-full border px-[12px] py-[5px] text-[10px] font-medium"
+              style={{
+                color: 'color-mix(in srgb, var(--color-canvas) 40%, transparent)',
+                borderColor: glassEdge,
+              }}
+            >
+              <Keyboard className="h-[12px] w-[12px]" aria-hidden="true" />
+              Keyboard
+            </span>
+          </div>
+
+          {/* home indicator */}
           <span
-            className="inline-flex items-center gap-[0.6em] rounded-full border px-[1.2em] py-[0.4em] text-[0.625em] font-medium"
-            style={{
-              color: 'var(--color-canvas)',
-              borderColor: 'color-mix(in srgb, var(--color-accent) 45%, transparent)',
-              backgroundColor: 'color-mix(in srgb, var(--color-accent) 16%, transparent)',
-            }}
-          >
-            <Mic className="h-[1.2em] w-[1.2em]" aria-hidden="true" style={{ color: 'var(--color-accent)' }} />
-            Tap to speak
-          </span>
-          <span
-            className="inline-flex items-center gap-[0.6em] rounded-full border px-[1.2em] py-[0.4em] text-[0.625em] font-medium"
-            style={{
-              color: 'color-mix(in srgb, var(--color-canvas) 40%, transparent)',
-              borderColor: glassEdge,
-            }}
-          >
-            <Keyboard className="h-[1.2em] w-[1.2em]" aria-hidden="true" />
-            Keyboard
-          </span>
+            className="absolute bottom-[10px] left-1/2 h-[3px] w-[26%] -translate-x-1/2 rounded-full"
+            style={{ backgroundColor: 'color-mix(in srgb, var(--color-canvas) 35%, transparent)' }}
+          />
         </div>
+      </div>
 
-        {/* home indicator */}
-        <span
-          className="absolute bottom-[1.5%] left-1/2 h-[0.1875em] w-[26%] -translate-x-1/2 rounded-full"
-          style={{ backgroundColor: 'color-mix(in srgb, var(--color-canvas) 35%, transparent)' }}
-        />
+      {/* platform line — eyebrow type (Kicker's exact classes), absolutely
+         placed below the frame so neither the device's fit-to-frame scale
+         nor the slot's flow is affected at any viewport. Phones widen the
+         box to the band (see .voice-platform in index.css) so the line can
+         never overflow the narrower scale-model frame. */}
+      <div
+        className="voice-platform absolute inset-x-0 text-center text-[13px] font-mono font-bold uppercase tracking-[0.2em] opacity-80 max-sm:tracking-[0.12em] whitespace-nowrap"
+        style={{ top: 'calc(100% + 10px)' }}
+      >
+        Mac • Linux • Home Assistant
       </div>
     </div>
   );

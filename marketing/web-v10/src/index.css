@@ -72,35 +72,33 @@
   animation-delay: calc(var(--duration-shutter) * 0.6);
 }
 
-/* Voice Mode kiosk plate — a scale model, not a reflowing layout. The
-   internals are authored in em against .voice-screen's font-size (1em =
-   16px at the 30rem desktop cap), so the whole device grows and shrinks
-   as one unit. The max() on the font-size is the phone floor: strict
-   uniform scale of the 480px model is unreadable at a 230px render, so
-   small plates hold text at a legible size and only the device geometry
-   keeps scaling. The plate is its own inline-size container; the cqh on
-   its width resolves against the slot (a safe size container — stretched
-   by fixed / 1fr grid tracks). Every cq declaration keeps a
-   no-container-query fallback first: an unsupported cq unit would drop
-   the whole min() it appears in. */
+/* Voice Mode kiosk plate — a true scale model. The device is authored at
+   480x640 in ui.jsx and fitted to this frame with a single CSS scale
+   (see VoiceModePlate's layout effect), so layout never reflows: what
+   fits at 480px fits identically at any render size. The frame keeps the
+   3:4 aspect so the scaled device exactly fills it and the cqh width
+   budget resolves against the slot (a safe size container — stretched
+   by fixed / 1fr grid tracks). The fallback width first: an unsupported
+   cq unit would drop the whole min() it is in. */
 [data-slot] {
   container-type: size;
 }
 
 .voice-plate {
-  container-type: inline-size;
+  position: relative;
   width: min(100%, 30rem);
   width: min(100%, 30rem, 75cqh);
   aspect-ratio: 3 / 4;
   margin-inline: auto; /* phones: centered in the horizontal band */
 }
 
-.voice-screen {
-  font-size: 1rem; /* fallback: authored size */
-  /* cqw measures the plate's *content box* — 480px visual width minus
-     the 4% bezel padding each side = 415px at the desktop cap — so the
-     factor is authored against that box for exactly 16px there. */
-  font-size: max(3.855cqw, 12px);
+/* transform: scale() doesn't affect layout — without absolute positioning
+   the unscaled 640px-tall device would stretch the frame. The device
+   paints from the frame's top-left; the scale hook sizes it to fit. */
+.voice-device {
+  position: absolute;
+  top: 0;
+  left: 0;
 }
 
 /* Desktop (vertical split): match the other plates — flush with the
@@ -110,6 +108,55 @@
 [data-stop='intro'][data-layout='vertical'] .voice-plate {
   margin-left: 0;
   margin-right: 0;
+}
+
+/* Phones (horizontal split): rest the device on the mark's crest. The
+   bezel's natural top sits below the curve's apex by the stroke band's
+   own padding plus the intro stop's offsetY drop (the camera rests the
+   crest slightly below centre) — lift by both plus a hair of overlap so
+   the device reads as sitting on the curve. cqh of the slot tracks the
+   same viewport geometry the camera uses, so the relationship holds
+   across phone heights. The slot keeps enough slack below that the home
+   indicator stays inside the band. */
+[data-stop='intro'][data-layout='horizontal'] .voice-plate {
+  margin-top: -13.5cqh;
+}
+
+/* Phones: the platform line's box is the plate's width, but the nowrap
+   mono line can run wider than the scale-model frame on real-device font
+   metrics — it overflows asymmetrically and reads as drifting left.
+   Widen the box to the whole band instead: the label's containing block
+   is the plate (centered in the band), so left:50% + translateX(-50%)
+   with width:100cqw (the slot container's content width) lands the box
+   exactly on the band and the text centers on the screen. Desktop keeps
+   the plate-width box — the line centers on the iPad there. Browsers
+   without container queries drop only the width and keep the centered
+   fallback. */
+[data-stop='intro'][data-layout='horizontal'] .voice-platform {
+  left: 50%;
+  right: auto;
+  width: 100cqw;
+  transform: translateX(-50%);
+}
+
+/* Intro headline, phones: measured fit — HeadlineFit (stops.jsx) writes
+   --headline-fit so the line fills the band's width. The authored phone
+   clamp (the lg step) is re-expressed here multiplied by the variable;
+   only the one headline carries .headline-fit, so nothing else is
+   touched. >=640px keeps the authored Tailwind clamp. */
+@media (max-width: 639.98px) {
+  .headline-fit {
+    font-size: calc(
+      clamp(1.3rem, calc(3.7vh + max(0px, min(1vw, 100vh - 812px))), calc(1.9rem + max(0px, min(1.3vw, 100vh - 812px)))) *
+      var(--headline-fit, 1)
+    );
+  }
+  /* Measurement override: forces the authored size (variable ignored) so
+     the fit measures the text's natural extent. !important beats both the
+     rule above and the inline variable. */
+  .headline-fitting {
+    font-size: clamp(1.3rem, calc(3.7vh + max(0px, min(1vw, 100vh - 812px))), calc(1.9rem + max(0px, min(1.3vw, 100vh - 812px)))) !important;
+  }
 }
 
 /* Custom Scrollbar */
