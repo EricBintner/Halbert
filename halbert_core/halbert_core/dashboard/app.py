@@ -1311,7 +1311,7 @@ def create_app(enable_cors: bool = True) -> FastAPI:
 
     # Register routes
     from ..federation import compute_endpoint
-    from .routes import approvals, jobs, memory, settings, system, websocket, persona, discovery, terminal, alerts, rag, services, web_search, gpu, containers, development, editor, storage, downloads, agent, compression, being, modules, llm, legal, compute, vision, home, frigate, instance, peers, fleet, audio, conversations, devices, findings, state, mcp as mcp_status_routes, guest as guest_persona, entity, replica as replica_routes, backup
+    from .routes import approvals, jobs, memory, settings, system, websocket, persona, discovery, terminal, alerts, rag, services, web_search, gpu, containers, development, editor, storage, downloads, agent, compression, being, modules, llm, legal, compute, vision, home, frigate, instance, peers, fleet, audio, conversations, devices, findings, state, mcp as mcp_status_routes, guest as guest_persona, entity, replica as replica_routes, backup, why as why_routes
 
     mount_api(system.router, prefix="/api", tags=["system"])
     mount_api(agent.router, tags=["agent"])  # Phase 36: Agent state machine
@@ -1319,6 +1319,7 @@ def create_app(enable_cors: bool = True) -> FastAPI:
     mount_api(jobs.router, prefix="/api/jobs", tags=["jobs"])
     mount_api(memory.router, prefix="/api/memory", tags=["memory"])
     mount_api(state.router, prefix="/api/state", tags=["state"])  # LEDGER-1: "why is X configured this way"
+    mount_api(why_routes.router, prefix="/api", tags=["why"])  # the operator's own note on one item
     mount_api(settings.router, prefix="/api/settings", tags=["settings"])
     mount_api(discovery.router, prefix="/api/discoveries", tags=["discoveries"])  # Phase 11
     mount_api(terminal.router, prefix="/api/terminal", tags=["terminal"])  # Phase 11

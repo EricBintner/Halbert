@@ -82,6 +82,30 @@ def _reset_capability_registry(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _reset_self_knowledge_store():
+    """No test's self-knowledge survives into the next test.
+
+    ``knowledge/self_knowledge.py`` caches its instance on the class
+    (``SelfKnowledge.__new__``) and reads the JSON store exactly once per
+    process. Three things then leak across tests: the entries one test
+    recorded, the data path it resolved — captured at construction, so a
+    later test's ``HALBERT_DATA_DIR`` is simply ignored — and the
+    ``_load_error`` flag, which a corrupt-store test would otherwise leave
+    set for the rest of the session, making every later store unwritable.
+
+    Reset on the way in and on the way out: on the way in so a singleton
+    built by an earlier module cannot serve this test, on the way out so a
+    singleton this test built, pointing at a ``tmp_path`` that is about to be
+    removed, cannot serve the next one.
+    """
+    from halbert_core.knowledge.self_knowledge import reset_self_knowledge
+
+    reset_self_knowledge()
+    yield
+    reset_self_knowledge()
+
+
+@pytest.fixture(autouse=True)
 def _no_declared_workspace_layer(monkeypatch):
     """No suite inherits a workspace layer from the developer's shell.
 

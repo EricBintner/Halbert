@@ -16,13 +16,28 @@ from __future__ import annotations
 import json
 import logging
 import os
+import tempfile
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from ..utils.paths import data_dir, data_subdir
+
 logger = logging.getLogger(__name__)
+
+
+class KnowledgeUnavailable(Exception):
+    """The knowledge store could not be read, or could not be written.
+
+    Distinct from "nothing recorded" on purpose, and mirrors
+    :class:`continuity.recall.LedgerUnavailable`. A caller that renders a
+    store failure as an empty result turns "I could not look" into "there is
+    nothing"; a caller that renders a *write* failure as success tells the
+    operator their rationale was kept when nothing reached the disk. Both are
+    the same lie in different directions, and both are worse than an error.
+    """
 
 
 class MemoryOperation(str, Enum):
@@ -114,6 +129,11 @@ class SelfKnowledge:
         
         self._initialized = True
         self._knowledge: Dict[str, KnowledgeEntry] = {}
+        #: Set when the store exists on disk but could not be read. It gates
+        #: every write: an unreadable file may hold the operator's whole
+        #: recorded rationale, and overwriting it with the empty dict we
+        #: failed to fill would destroy the only recoverable copy.
+        self._load_error: Optional[str] = None
         self._data_path = self._get_data_path()
         self._chroma_collection = None
         
@@ -131,17 +151,48 @@ class SelfKnowledge:
         
         logger.info(f"SelfKnowledge initialized with {len(self._knowledge)} entries")
     
+    @property
+    def readable(self) -> bool:
+        """False when the store exists but could not be read.
+
+        A caller must check this before treating an empty result as "nothing
+        recorded". The two are not the same answer, and the singleton loads
+        once per process, so a read failure is permanent for this process
+        rather than something the next request retries into truth.
+        """
+        return self._load_error is None
+
+    @property
+    def load_error(self) -> Optional[str]:
+        """Why the store could not be read, or None when it was read."""
+        return self._load_error
+
     def _get_data_path(self) -> Path:
-        """Get path to knowledge store."""
-        data_dir = Path.home() / ".local" / "share" / "halbert" / "knowledge"
-        data_dir.mkdir(parents=True, exist_ok=True)
-        return data_dir / "self_knowledge.json"
-    
+        """Where the store lives. Resolves, and writes nothing.
+
+        Routed through ``utils.paths`` rather than ``Path.home()``: that
+        resolver is the one place ``HALBERT_DATA_DIR`` is honoured, and
+        hardcoding home meant a test — or any run with the data dir
+        redirected — wrote the operator's real knowledge file.
+
+        The directory is created by :meth:`_save_to_disk` (via
+        ``data_subdir``), not here. Constructing a ``SelfKnowledge`` is a
+        read, and a read must not leave a directory behind on a machine that
+        has never recorded anything.
+        """
+        return Path(data_dir()) / "knowledge" / "self_knowledge.json"
+
     def _load_from_disk(self):
-        """Load knowledge from JSON file."""
+        """Load knowledge from JSON file.
+
+        A failure to read is recorded on the instance, not just logged.
+        Swallowing it meant a corrupt or unreadable store answered every
+        later question with "nothing recorded" — and the next save then
+        replaced the recoverable file with an empty one.
+        """
         if not self._data_path.exists():
             return
-        
+
         try:
             with open(self._data_path, 'r') as f:
                 data = json.load(f)
@@ -165,27 +216,90 @@ class SelfKnowledge:
             
             logger.info(f"Loaded {len(self._knowledge)} knowledge entries from disk")
         except Exception as e:
-            logger.error(f"Failed to load knowledge: {e}")
-    
+            # Half a file may already be in ``self._knowledge``. Drop it:
+            # a partial load presented as the whole store is the same
+            # conflation as an empty one, one degree quieter.
+            self._knowledge.clear()
+            self._load_error = str(e)
+            logger.error(f"Failed to load knowledge from {self._data_path}: {e}")
+
     def _save_to_disk(self):
-        """Persist knowledge to JSON file."""
+        """Persist knowledge to JSON, atomically, or raise.
+
+        Two changes from the version that logged and returned:
+
+        *Atomic.* Serialize first, write a temp file in the same directory,
+        flush and fsync it, then ``os.replace``. The truncate-then-write it
+        replaces left a half-written store on any crash mid-write — of a file
+        whose entire job is to be the durable record. This is the house
+        pattern; ``mcp/config.py::_atomic_write_yaml`` is the reference.
+
+        *Loud.* A failed write raises :class:`KnowledgeUnavailable` instead of
+        logging, because every caller above returns an id or a success flag
+        and had no way to tell that nothing reached the disk.
+
+        A store we failed to READ is never written. See ``_load_error``.
+        """
+        if self._load_error is not None:
+            raise KnowledgeUnavailable(
+                f"the knowledge store at {self._data_path} could not be read "
+                f"({self._load_error}), so it will not be overwritten. Writing "
+                f"now would replace records that are still recoverable with an "
+                f"empty file. Move or repair that file, then try again"
+            )
+
+        data = {
+            'version': 1,
+            'updated_at': datetime.now().isoformat(),
+            'entries': [asdict(e) for e in self._knowledge.values()]
+        }
         try:
-            data = {
-                'version': 1,
-                'updated_at': datetime.now().isoformat(),
-                'entries': [asdict(e) for e in self._knowledge.values()]
-            }
-            with open(self._data_path, 'w') as f:
-                json.dump(data, f, indent=2, default=str)
+            text = json.dumps(data, indent=2, default=str)
         except Exception as e:
-            logger.error(f"Failed to save knowledge: {e}")
-    
+            raise KnowledgeUnavailable(
+                f"the knowledge could not be serialized ({e}), so nothing was "
+                f"written and the store on disk is unchanged"
+            ) from e
+
+        temp_name = None
+        try:
+            # ``data_subdir`` is the choke point that both resolves the data
+            # dir and creates it -- called here, at the write, rather than in
+            # the path getter.
+            directory = Path(data_subdir("knowledge"))
+            fd, temp_name = tempfile.mkstemp(
+                prefix=self._data_path.name + ".", suffix=".tmp",
+                dir=str(directory))
+            with os.fdopen(fd, "w") as f:
+                f.write(text)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(temp_name, self._data_path)
+        except Exception as e:
+            if temp_name is not None:
+                try:
+                    os.unlink(temp_name)
+                except OSError:
+                    pass
+            raise KnowledgeUnavailable(
+                f"the knowledge store at {self._data_path} could not be "
+                f"written ({e}), so this was not recorded. The previous "
+                f"contents are intact. Check that the directory exists and is "
+                f"writable, then try again"
+            ) from e
+
     def _init_chromadb(self):
         """Initialize ChromaDB collection for semantic search."""
         try:
             import chromadb
-            
-            persist_dir = str(Path.home() / ".local" / "share" / "halbert" / "chromadb")
+
+            # Same treatment as _get_data_path: through utils.paths, so a run
+            # with HALBERT_DATA_DIR set does not index into the operator's
+            # real collection. ``data_subdir`` creates the directory, which
+            # is right here -- chromadb's PersistentClient creates and writes
+            # its own store regardless, so this branch was never side-effect
+            # free and pretending otherwise would only hide where it writes.
+            persist_dir = data_subdir("chromadb")
             client = chromadb.PersistentClient(path=persist_dir)
             
             self._chroma_collection = client.get_or_create_collection(
@@ -218,13 +332,27 @@ class SelfKnowledge:
     # ─────────────────────────────────────────────────────────────
     
     def add(self, entry: KnowledgeEntry) -> str:
-        """Add or update a knowledge entry."""
+        """Add or update a knowledge entry, or raise.
+
+        Raises :class:`KnowledgeUnavailable` when the entry did not reach the
+        disk. In-memory state is rolled back first, so a failed write leaves
+        no entry that this process would report as recorded and that a later
+        successful write would persist without anyone having asked.
+        """
         if entry.id in self._knowledge:
             entry.updated_at = datetime.now().isoformat()
-        
+
+        previous = self._knowledge.get(entry.id)
         self._knowledge[entry.id] = entry
-        self._save_to_disk()
-        
+        try:
+            self._save_to_disk()
+        except KnowledgeUnavailable:
+            if previous is None:
+                self._knowledge.pop(entry.id, None)
+            else:
+                self._knowledge[entry.id] = previous
+            raise
+
         # Update ChromaDB
         if self._chroma_collection:
             try:
@@ -426,12 +554,22 @@ class SelfKnowledge:
             return []
     
     def delete(self, knowledge_id: str) -> bool:
-        """Delete a knowledge entry."""
+        """Delete a knowledge entry.
+
+        Returns False when there was nothing to delete — that is not a
+        failure, and a second delete of the same id is a no-op. Raises
+        :class:`KnowledgeUnavailable` when the removal could not be
+        persisted, with the entry put back so memory still matches disk.
+        """
         if knowledge_id not in self._knowledge:
             return False
-        
-        del self._knowledge[knowledge_id]
-        self._save_to_disk()
+
+        removed = self._knowledge.pop(knowledge_id)
+        try:
+            self._save_to_disk()
+        except KnowledgeUnavailable:
+            self._knowledge[knowledge_id] = removed
+            raise
         self._memory_stats[MemoryOperation.DELETE.value] += 1
         logger.info(f"Memory DELETE: {knowledge_id}")
         
@@ -661,6 +799,18 @@ class SelfKnowledge:
 def get_self_knowledge() -> SelfKnowledge:
     """Get the singleton SelfKnowledge instance."""
     return SelfKnowledge()
+
+
+def reset_self_knowledge() -> None:
+    """Drop the process-wide instance so the next call builds a fresh one.
+
+    ``SelfKnowledge`` caches itself on the class and loads from disk exactly
+    once, which is right for a long-lived process and impossible for a test
+    suite: whichever test constructed it first owned the data path, the
+    loaded entries and the read-failure flag for every test after it. The
+    autouse fixture in ``halbert_core/tests/conftest.py`` calls this.
+    """
+    SelfKnowledge._instance = None
 
 
 # ─────────────────────────────────────────────────────────────
@@ -1045,8 +1195,7 @@ def parse_config_comments(config_path: str) -> List[Dict[str, str]]:
         List of {setting, value, comment} dicts
     """
     from pathlib import Path
-    import re
-    
+
     results = []
     path = Path(config_path)
     
