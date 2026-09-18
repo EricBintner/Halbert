@@ -54,7 +54,7 @@ export interface DriveCassetteProps extends React.HTMLAttributes<HTMLDivElement>
  * - Clear, semi-isolated containment with generous breathing room.
  * - Hardware identity (device node, model, transport bus, serial).
  * - Live physical diagnostics (SMART status pip, temperature in Celsius).
- * - Thick in-bar gauge track carrying machine identifiers and capacity numbers.
+ * - Thick calibrated gauge track; identifiers live in the header, not on the mark.
  * - Integrated partition map grouping when physical drives contain partition tables.
  */
 export const DriveCassette = React.forwardRef<HTMLDivElement, DriveCassetteProps>(function DriveCassette(
@@ -207,7 +207,7 @@ export const DriveCassette = React.forwardRef<HTMLDivElement, DriveCassetteProps
               value={percent ?? 0}
               tone={isCritical ? 'critical' : isWarning ? 'warning' : 'telemetry'}
               size="thick"
-              inBarLeft={label ? `${label} · ${device}` : device}
+              aria-label={label ? `${label} · ${device} capacity` : `${device} capacity`}
               ticks={[25, 50, 75, 90]}
             />
           </div>

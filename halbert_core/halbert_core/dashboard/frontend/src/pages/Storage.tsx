@@ -734,21 +734,20 @@ export function allocationSegments(
 ): { segments: SegmentItem[]; total: number } | null {
   if (!allocation) return null
 
-  const slices: Array<[keyof FilesystemAllocation, string, string, SegmentItem['tone']]> = [
-    ['data_bytes', 'Data', 'Data', 'data-1'],
-    ['metadata_bytes', 'Metadata', 'Meta', 'data-3'],
-    ['cached_bytes', 'Cached', 'Cache', 'data-5'],
-    ['system_bytes', 'System', 'Sys', 'data-6'],
+  const slices: Array<[keyof FilesystemAllocation, string, SegmentItem['tone']]> = [
+    ['data_bytes', 'Data', 'data-1'],
+    ['metadata_bytes', 'Metadata', 'data-3'],
+    ['cached_bytes', 'Cached', 'data-5'],
+    ['system_bytes', 'System', 'data-6'],
   ]
 
   const segments: SegmentItem[] = []
-  for (const [key, label, shortLabel, tone] of slices) {
+  for (const [key, label, tone] of slices) {
     const bytes = allocation[key]
     if (typeof bytes !== 'number' || bytes <= 0) continue
     segments.push({
       id: key,
       label,
-      shortLabel,
       value: bytes / GIB,
       tone,
       pattern: key === 'metadata_bytes' ? 'hatched' : 'solid',
@@ -791,7 +790,7 @@ function FilesystemUsageRow({
 
   return (
     <DataGridRow
-      variant="in-bar"
+      variant="two-tier"
       className="py-1.5 sm:py-2"
       icon={<Folder className="h-4 w-4 text-muted-foreground shrink-0" />}
       title={
@@ -803,7 +802,9 @@ function FilesystemUsageRow({
           className="text-sm sm:text-[15px] font-medium text-foreground truncate"
         />
       }
-      detail={profileDetail ? `• ${profileDetail}` : undefined}
+      // `detail` takes a node — interpolating one into a template string renders
+      // "[object Object]", and DataGridRow draws its own separator already.
+      detail={profileDetail ?? undefined}
       metrics={`${fs.used} / ${fs.size}`}
       status={
         <span
@@ -826,8 +827,6 @@ function FilesystemUsageRow({
             total={breakdown.total}
             unit="GiB"
             size="thick"
-            showInSegmentLabels
-            showLegend={false}
             freeHeadroomLabel="Free Headroom"
             aria-label={`${shortName} (${fs.mountpoint}) allocation`}
           />
@@ -836,7 +835,6 @@ function FilesystemUsageRow({
             value={fs.percent}
             tone={tone}
             size="thick"
-            inBarLeft={fs.mountpoint}
             ticks={[25, 50, 75, 90]}
             aria-label={`${shortName} (${fs.mountpoint}) capacity`}
           />

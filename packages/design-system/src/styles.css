@@ -1049,78 +1049,6 @@
 .hb-tactile-meter--xl .hb-tactile-meter__track { height: 24px; }
 .hb-tactile-meter--thick .hb-tactile-meter__track { height: 28px; }
 .hb-tactile-meter--hero .hb-tactile-meter__track { height: 32px; }
-
-.hb-tactile-meter__in-bar {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: flex-start;
-  padding: 0 var(--space-3);
-  z-index: 3;
-  pointer-events: none;
-  min-width: 0;
-  overflow: hidden;
-}
-
-.hb-tactile-meter__in-bar-left {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  white-space: nowrap;
-  background: none;
-  border: none;
-  box-shadow: none;
-  padding: 0;
-  color: var(--color-ink-on-accent);
-  font-family: var(--font-mono);
-  font-size: 13.5px;
-  font-weight: 600;
-  line-height: 1;
-  letter-spacing: -0.01em;
-  text-shadow: none;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.hb-tactile-meter--thick .hb-tactile-meter__in-bar-left,
-.hb-tactile-meter--hero .hb-tactile-meter__in-bar-left {
-  font-size: 14px;
-}
-
-.hb-tactile-meter--xl .hb-tactile-meter__in-bar-left {
-  font-size: 13px;
-}
-
-.hb-tactile-meter--lg .hb-tactile-meter__in-bar-left {
-  font-size: 12px;
-}
-
-.hb-tactile-meter__in-bar-right {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  white-space: nowrap;
-  background: none;
-  border: none;
-  box-shadow: none;
-  padding: 0;
-  color: var(--color-ink-on-accent);
-  font-family: var(--font-mono);
-  font-size: 13.5px;
-  font-weight: 600;
-  line-height: 1;
-  letter-spacing: -0.01em;
-  text-shadow: none;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  flex-shrink: 0;
-  margin-left: auto;
-}
-
 .hb-tactile-meter__fill {
   height: 100%;
   background-color: var(--color-data-blue);
@@ -1226,52 +1154,6 @@
   background-color: var(--color-surface-subtle);
   border-right: 1px dashed var(--color-line);
 }
-
-.hb-segmented-bar__segment-label {
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
-  padding: 0 var(--space-2);
-  white-space: nowrap;
-  font-family: var(--font-mono);
-  font-size: 12.5px;
-  font-weight: 600;
-  color: var(--color-ink-on-accent);
-  text-shadow: none;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  pointer-events: none;
-  height: 100%;
-}
-
-.hb-segmented-bar--thick .hb-segmented-bar__segment-label,
-.hb-segmented-bar--hero .hb-segmented-bar__segment-label {
-  font-size: 13.5px;
-}
-
-.hb-segmented-bar__segment-label--val-only {
-  justify-content: center;
-  padding: 0 4px;
-}
-
-.hb-segmented-bar__segment-label--free {
-  color: var(--color-ink-secondary);
-  text-shadow: none;
-}
-
-.hb-segmented-bar__segment-name {
-  font-weight: 600;
-  letter-spacing: -0.01em;
-}
-
-.hb-segmented-bar__segment-val {
-  opacity: 0.88;
-  font-variant-numeric: tabular-nums;
-}
-
 .hb-segmented-bar__segment--neutral,
 .hb-segmented-bar__segment--data-neutral { background-color: var(--color-data-neutral); }
 .hb-segmented-bar__segment--critical     { background-color: var(--color-status-critical); }
@@ -1415,11 +1297,11 @@
 }
 
 /* In-Bar variant (Recommended for single-resource rows) */
-.hb-data-row--in-bar {
+.hb-data-row--two-tier {
   gap: 6px;
 }
 
-.hb-data-row__in-bar-header {
+.hb-data-row__two-tier-header {
   display: flex;
   align-items: baseline;
   justify-content: space-between;

@@ -72,10 +72,6 @@ export interface TactileMeterProps extends React.HTMLAttributes<HTMLDivElement> 
    * By default, a pure meter track with no label or sub will NOT render an empty header.
    */
   showReadout?: boolean
-  /** Text or element rendered directly inside the left of the physical meter track. */
-  inBarLeft?: React.ReactNode
-  /** Text or element rendered directly inside the right of the physical meter track. */
-  inBarRight?: React.ReactNode
 }
 
 /**
@@ -102,8 +98,6 @@ export const TactileMeter = React.forwardRef<HTMLDivElement, TactileMeterProps>(
     labelWidth,
     statusBadge,
     showReadout = false,
-    inBarLeft,
-    inBarRight,
     className,
     style,
     id,
@@ -117,13 +111,11 @@ export const TactileMeter = React.forwardRef<HTMLDivElement, TactileMeterProps>(
   const labelId = label ? `${meterId}-label` : undefined
 
   // The name belongs on the node carrying role="meter", not the wrapper the
-  // caller's props spread onto. A caller's explicit name wins; otherwise the
-  // rendered label names it; a meter shown with only an in-bar path — as the
-  // drive cassettes do — would otherwise be announced as a bare number.
+  // caller's props spread onto. A caller's explicit name wins, else the
+  // rendered label names it; an unlabelled meter would otherwise be announced
+  // as a bare number.
   const describedByLabel = ariaLabelledBy ?? labelId
-  const meterLabel = describedByLabel
-    ? undefined
-    : (ariaLabel ?? (typeof inBarLeft === 'string' ? inBarLeft : 'Gauge reading'))
+  const meterLabel = describedByLabel ? undefined : (ariaLabel ?? 'Gauge reading')
   const clamped = Math.max(0, Math.min(100, isNaN(value) ? 0 : value))
 
   // Determine tone
@@ -143,7 +135,6 @@ export const TactileMeter = React.forwardRef<HTMLDivElement, TactileMeterProps>(
       : {}),
   }
 
-  const hasInBar = Boolean(inBarLeft || inBarRight)
   const hasHeader = Boolean(label || sub || valueLabel !== undefined || statusBadge || showReadout)
 
   return (
@@ -154,7 +145,6 @@ export const TactileMeter = React.forwardRef<HTMLDivElement, TactileMeterProps>(
         'hb-tactile-meter',
         `hb-tactile-meter--${size}`,
         `hb-tactile-meter--${resolvedTone}`,
-        hasInBar && 'hb-tactile-meter--has-in-bar',
         labelWidth != null && 'hb-tactile-meter--has-label-width',
         offline && 'is-offline',
         className,
@@ -215,12 +205,6 @@ export const TactileMeter = React.forwardRef<HTMLDivElement, TactileMeterProps>(
         })}
 
         {/* In-Bar Overlay Content */}
-        {(inBarLeft || inBarRight) && !offline && (
-          <div className="hb-tactile-meter__in-bar" aria-hidden="true">
-            {inBarLeft && <div className="hb-tactile-meter__in-bar-left">{inBarLeft}</div>}
-            {inBarRight && <div className="hb-tactile-meter__in-bar-right">{inBarRight}</div>}
-          </div>
-        )}
 
         {offline && (
           <div className="hb-tactile-meter__offline-strip" aria-hidden="true">

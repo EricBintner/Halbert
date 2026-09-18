@@ -7,23 +7,6 @@ import { DataGridRow } from '../primitives/DataGridRow'
 import { DriveCassette } from '../primitives/DriveCassette'
 import { StorageTierGroup } from '../primitives/StorageTierGroup'
 
-/**
- * jsdom lays nothing out, so every element measures 0 and the component falls
- * back to its assumed width. Pin a real width for the render to exercise the
- * measured path.
- */
-function withTrackWidth(width: number, run: () => void) {
-  const original = HTMLElement.prototype.getBoundingClientRect
-  HTMLElement.prototype.getBoundingClientRect = function () {
-    return { ...original.call(this), width } as DOMRect
-  }
-  try {
-    run()
-  } finally {
-    HTMLElement.prototype.getBoundingClientRect = original
-  }
-}
-
 describe('TactileMeter', () => {
   it('renders with meter role and correct ARIA values', () => {
     render(
@@ -173,13 +156,6 @@ describe('SegmentedBar', () => {
     expect(container.querySelectorAll('.hb-segmented-bar__segment').length).toBe(0)
   })
 
-  it('names a TactileMeter shown with only an in-bar path', () => {
-    // How the drive cassettes use it: no label column, just the device on the
-    // mark. Without this the meter announces as a bare number.
-    const { container } = render(<TactileMeter value={31} inBarLeft="/dev/nvme0n1" size="thick" />)
-    expect(container.querySelector('[role="meter"]')).toHaveAttribute('aria-label', '/dev/nvme0n1')
-  })
-
   it('names the meter node itself, not the wrapper around it', () => {
     // The accessible name has to land on the element carrying role="meter";
     // on the wrapper a screen reader announces a bare number.
@@ -205,79 +181,6 @@ describe('SegmentedBar', () => {
     expect(container.firstElementChild).not.toHaveAttribute('aria-label')
   })
 
-  it('handles smart tiered label fitting inside segments without clipping', () => {
-    const tieredSegments: SegmentItem[] = [
-      { id: 'wide', label: 'Primary Core Workload', value: 600, tone: 'data-blue' }, // 60% -> Full
-      { id: 'short', label: 'Secondary Ingestion Buffer', shortLabel: 'Buffer', value: 180, tone: 'data-amber' }, // 18% -> Short
-      { id: 'val', label: 'Compaction Journal Table', value: 120, tone: 'data-teal' }, // 12% -> Val only
-      { id: 'sliver', label: 'Micro-Checkpoint Log', value: 40, tone: 'data-purple' }, // 4% -> No label
-    ]
-
-    render(
-      <SegmentedBar
-        segments={tieredSegments}
-        total={1000}
-        unit="GB"
-        showInSegmentLabels
-        showLegend={false}
-      />
-    )
-
-    // Wide segment has full label and value
-    expect(screen.getByText('Primary Core Workload')).toBeInTheDocument()
-    expect(screen.getByText('600.0 GB')).toBeInTheDocument()
-
-    // Short-label segment uses shortLabel instead of clipped full label
-    expect(screen.getByText('Buffer')).toBeInTheDocument()
-    expect(screen.queryByText('Secondary Ingestion Buffer')).not.toBeInTheDocument()
-    expect(screen.getByText('180.0 GB')).toBeInTheDocument()
-
-    // Val-only segment renders numeric value without clipped label
-    expect(screen.getByText('120.0 GB')).toBeInTheDocument()
-    expect(screen.queryByText('Compaction Journal Table')).not.toBeInTheDocument()
-
-    // Sliver segment renders pure mark without text collision
-    expect(screen.queryByText('Micro-Checkpoint Log')).not.toBeInTheDocument()
-    expect(screen.queryByText('40.0 GB')).not.toBeInTheDocument()
-  })
-
-  it('degrades the same slices further when the track itself is narrow', () => {
-    // Identical percentages to the test above. The ladder must answer in
-    // pixels, so a 320px sidebar track drops labels a 800px column keeps —
-    // a percentage-only threshold would clip them instead.
-    const tieredSegments: SegmentItem[] = [
-      { id: 'wide', label: 'Primary Core Workload', shortLabel: 'Core', value: 600, tone: 'data-blue' },
-      { id: 'short', label: 'Secondary Ingestion Buffer', shortLabel: 'Buffer', value: 180, tone: 'data-amber' },
-      { id: 'val', label: 'Compaction Journal Table', value: 120, tone: 'data-teal' },
-      { id: 'sliver', label: 'Micro-Checkpoint Log', value: 40, tone: 'data-purple' },
-    ]
-
-    withTrackWidth(320, () =>
-      render(
-        <SegmentedBar
-          segments={tieredSegments}
-          total={1000}
-          unit="GB"
-          showInSegmentLabels
-          showLegend={false}
-        />
-      )
-    )
-
-    // 60% of 320px is 192px — the full name no longer fits, the short one does.
-    expect(screen.queryByText('Primary Core Workload')).not.toBeInTheDocument()
-    expect(screen.getByText('Core')).toBeInTheDocument()
-    expect(screen.getByText('600.0 GB')).toBeInTheDocument()
-
-    // 18% of 320px is 58px — under the 76px even a bare value needs, so the
-    // slice that carried 'Buffer' on a wide track is now a bare mark.
-    expect(screen.queryByText('Buffer')).not.toBeInTheDocument()
-    expect(screen.queryByText('180.0 GB')).not.toBeInTheDocument()
-
-    // The narrower slices stay marks too.
-    expect(screen.queryByText('120.0 GB')).not.toBeInTheDocument()
-    expect(screen.queryByText('40.0 GB')).not.toBeInTheDocument()
-  })
 })
 
 describe('DataGridRow', () => {
@@ -341,49 +244,33 @@ describe('TactileMeter Grid Alignment', () => {
     expect(container.querySelector('.hb-tactile-meter__status')).toBeInTheDocument()
   })
 
-  it('renders inBarLeft and inBarRight overlays inside meter track', () => {
-    const { container } = render(
-      <TactileMeter
-        value={45.0}
-        size="thick"
-        inBarLeft={<span data-testid="in-bar-path">/ · btrfs</span>}
-        inBarRight={<span data-testid="in-bar-metrics">142 GB / 500 GB</span>}
-      />
-    )
-
-    expect(container.querySelector('.hb-tactile-meter--thick')).toBeInTheDocument()
-    expect(container.querySelector('.hb-tactile-meter--has-in-bar')).toBeInTheDocument()
-    expect(screen.getByTestId('in-bar-path')).toBeInTheDocument()
-    expect(screen.getByTestId('in-bar-metrics')).toBeInTheDocument()
-    expect(container.querySelector('.hb-tactile-meter__in-bar')).toBeInTheDocument()
-  })
 })
 
 describe('DataGridRow Variants', () => {
-  it('renders variant="in-bar" with spacious two-tier layout', () => {
+  it('renders variant="two-tier" with a full-width meter under the header deck', () => {
     const { container } = render(
       <DataGridRow
-        variant="in-bar"
+        variant="two-tier"
         title="Root Volume"
         detail="Subvol 256 · zstd:3"
+        metrics="142 GB / 500 GB"
         status={<span data-testid="status-indicator">● HEALTHY</span>}
         meter={
           <TactileMeter
             value={28.4}
             size="thick"
-            inBarLeft="/ · btrfs"
-            inBarRight="142 GB / 500 GB"
           />
         }
       />
     )
 
-    expect(container.querySelector('.hb-data-row--in-bar')).toBeInTheDocument()
+    expect(container.querySelector('.hb-data-row--two-tier')).toBeInTheDocument()
     expect(screen.getByText('Root Volume')).toBeInTheDocument()
     expect(screen.getByText('· Subvol 256 · zstd:3')).toBeInTheDocument()
     expect(screen.getByTestId('status-indicator')).toBeInTheDocument()
-    expect(screen.getByText('/ · btrfs')).toBeInTheDocument()
     expect(screen.getByText('142 GB / 500 GB')).toBeInTheDocument()
+    // The mark carries no text of its own.
+    expect(container.querySelector('.hb-tactile-meter__track')?.textContent).toBe('')
   })
 
   it('renders variant="dual-deck" with lower subdeck', () => {
@@ -406,30 +293,8 @@ describe('DataGridRow Variants', () => {
   })
 })
 
-describe('SegmentedBar In-Segment Labels', () => {
-  it('renders labels directly inside colored segments on thick tracks', () => {
-    const segments = [
-      { id: 'data', label: 'User Data', value: 300, tone: 'data-blue' as const },
-      { id: 'meta', label: 'Metadata', value: 50, tone: 'data-teal' as const },
-    ]
-
-    const { container } = render(
-      <SegmentedBar
-        segments={segments}
-        total={500}
-        size="thick"
-        showInSegmentLabels
-      />
-    )
-
-    expect(container.querySelector('.hb-segmented-bar--thick')).toBeInTheDocument()
-    const inSegmentLabels = container.querySelectorAll('.hb-segmented-bar__segment-label')
-    expect(inSegmentLabels.length).toBeGreaterThanOrEqual(2)
-  })
-})
-
 describe('DriveCassette', () => {
-  it('renders physical drive hardware identity, diagnostics, and in-bar gauge', () => {
+  it('renders physical drive hardware identity, diagnostics, and gauge', () => {
     const { container } = render(
       <DriveCassette
         device="/dev/nvme0n1"

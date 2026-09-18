@@ -24,6 +24,19 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "storybook", "--prefix", "packages/design-system", "--", "--port", "6016"],
       "port": 6016
+    },
+    {
+      "name": "halbert-backend",
+      "runtimeExecutable": "arch",
+      "runtimeArgs": ["-arm64", "/Volumes/4TB-BAD/Halbert/.venv/bin/python", "-m", "uvicorn", "halbert_core.dashboard.app:app", "--host", "127.0.0.1", "--port", "8000", "--reload"],
+      "cwd": "halbert_core",
+      "port": 8000
+    },
+    {
+      "name": "halbert-dashboard",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev", "--prefix", "halbert_core/halbert_core/dashboard/frontend", "--", "--port", "5173", "--strictPort"],
+      "port": 5173
     }
   ]
 }

@@ -35,12 +35,13 @@ export interface DataGridRowProps extends Omit<React.HTMLAttributes<HTMLDivEleme
   /**
    * Layout presentation variant:
    * - 'standard': 5-column rigid unigrid line above full-width meter (default).
-   * - 'in-bar': Spacious avionics layout. Top deck has Title/Details (left) and Metrics/Status (right),
-   *   meter track carries Path (inBarLeft) directly on the mark without grey/black boxes.
+   * - 'two-tier': Spacious layout. Top deck has Title/Details (left) and
+   *   Metrics/Status (right); the meter runs full width beneath them, carrying
+   *   no text of its own.
    * - 'dual-deck': Top deck has Title (left) and Metrics/Status (right),
    *   lower sub-deck has Path and Details.
    */
-  variant?: 'standard' | 'in-bar' | 'dual-deck'
+  variant?: 'standard' | 'two-tier' | 'dual-deck'
   /** Optional tertiary metadata or technical flags rendered below the meter. */
   subdeck?: React.ReactNode
 }
@@ -76,16 +77,16 @@ export const DataGridRow = React.forwardRef<HTMLDivElement, DataGridRowProps>(fu
   },
   ref,
 ) {
-  if (variant === 'in-bar') {
+  if (variant === 'two-tier') {
     return (
       <div
         ref={ref}
-        className={cx('hb-data-row', 'hb-data-row--in-bar', className)}
+        className={cx('hb-data-row', 'hb-data-row--two-tier', className)}
         style={style}
         {...props}
       >
         {/* Upper Deck: Title + Detail on left, Metrics + Status on right */}
-        <div className="hb-data-row__in-bar-header">
+        <div className="hb-data-row__two-tier-header">
           <div className="hb-data-row__title-cell">
             {icon && <span className="hb-data-row__icon">{icon}</span>}
             <span className="hb-data-row__title">{title}</span>

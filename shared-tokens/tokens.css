@@ -95,11 +95,11 @@
 
   /* Categorical data visualization pigments (Vibrant, high-separation palette) */
   --cobalt-600:     #1D6FD8;  --cobalt-400:     #5EA2F8;
-  --marigold-600:   #A65903;  --marigold-400:   #FBBF24;
-  --cyan-teal-600:  #077792;  --cyan-teal-400:  #22D3EE;
+  --marigold-600:   #CB6C04;  --marigold-400:   #FBBF24;
+  --cyan-teal-600:  #0891B2;  --cyan-teal-400:  #22D3EE;
   --amethyst-600:   #7C3AED;  --amethyst-400:   #A78BFA;
-  --emerald-600:    #048059;  --emerald-400:    #34D399;
-  --coral-600:      #C0480A;  --coral-400:      #FB923C;
+  --emerald-600:    #059669;  --emerald-400:    #34D399;
+  --coral-600:      #EA580C;  --coral-400:      #FB923C;
   --slate-600:      #78716C;  --slate-400:      #A8A29E;
 
   /* Recessed dark chips. A translucent wash over `surface` in dark mode lands
