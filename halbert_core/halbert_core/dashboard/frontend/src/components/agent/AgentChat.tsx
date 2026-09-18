@@ -38,7 +38,7 @@ import { groupInspections, INSPECTION_TOOLS } from './groupInspections';
 import { StatusStrip } from './StatusStrip';
 import { ConfirmationDialog } from './ConfirmationDialog';
 import { ThinkingPanel } from './ThinkingPanel';
-import { WhyChip, type ProvenanceRef } from '../WhyChip';
+import { WhyChip, type ProvenanceRef } from '@halbert/design-system';
 import { ModuleRenderer } from '../ModuleRenderer';
 import { ConfidenceIndicator } from './ConfidenceIndicator';
 import { ChatModelPill } from '../llm/ChatModelPill';

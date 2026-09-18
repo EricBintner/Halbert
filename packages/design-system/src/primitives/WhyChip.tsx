@@ -8,7 +8,7 @@
  * clickable — opens the source (file viewer, log viewer, etc).
  */
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { cx } from '../lib'
 
 export interface ProvenanceRef {
@@ -107,17 +107,40 @@ const REF_ICON: Record<string, typeof FileTextIcon> = {
 export function WhyChip({ provenance, onExpand, className }: WhyChipProps) {
   const [expanded, setExpanded] = useState(false)
 
+  // Escape closes it. Without this the popover is dismissable only by pointer:
+  // the backdrop is a bare div with an onClick, which a keyboard never reaches,
+  // so a keyboard user who opened the chip could not shut it again.
+  useEffect(() => {
+    if (!expanded) return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setExpanded(false)
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => document.removeEventListener('keydown', onKeyDown)
+  }, [expanded])
+
   if (!provenance || provenance.length === 0) return null
+
+  const count = provenance.length
+  const label = `${count} source${count > 1 ? 's' : ''}`
 
   return (
     <div className={cx('hb-why-chip', className)} style={{ display: 'inline-flex', position: 'relative' }}>
       <button
+        type="button"
         onClick={() => setExpanded(!expanded)}
         className="hb-why-chip__trigger"
-        title={`${provenance.length} source${provenance.length > 1 ? 's' : ''}`}
+        title={label}
+        // Without this the button's accessible name is the bare count, so a
+        // screen reader announces the chip as "3, button" and the reader has
+        // no idea what three of anything means. `title` cannot supply the name
+        // here: an element with text content takes its name from that text.
+        aria-label={label}
+        aria-expanded={expanded}
+        aria-haspopup="true"
       >
         <BookOpenIcon />
-        <span>{provenance.length}</span>
+        <span aria-hidden="true">{count}</span>
       </button>
 
       {expanded && (
@@ -131,22 +154,13 @@ export function WhyChip({ provenance, onExpand, className }: WhyChipProps) {
           <div className="hb-why-chip__popover">
             <div className="hb-why-chip__heading">Evidence and sources</div>
             <div className="hb-why-chip__list">
-              {provenance.map((ref, i) => {
+              {provenance.map((ref) => {
                 const Icon = REF_ICON[ref.type] || FileTextIcon
-                return (
-                  <button
-                    key={i}
-                    onClick={() => {
-                      if (onExpand && EXPANDABLE_REF_TYPES.has(ref.type)) {
-                        onExpand(ref)
-                        setExpanded(false)
-                      } else if (ref.url) {
-                        window.open(ref.url, '_blank')
-                        setExpanded(false)
-                      }
-                    }}
-                    className="hb-why-chip__ref"
-                  >
+                const expandsInline = Boolean(onExpand) && EXPANDABLE_REF_TYPES.has(ref.type)
+                const actionable = expandsInline || Boolean(ref.url)
+
+                const body = (
+                  <>
                     <span className="hb-why-chip__ref-icon"><Icon /></span>
                     <span className="hb-why-chip__ref-body">
                       <span className="hb-why-chip__ref-label">{ref.label || ref.ref}</span>
@@ -155,6 +169,41 @@ export function WhyChip({ provenance, onExpand, className }: WhyChipProps) {
                     {ref.url && (
                       <span className="hb-why-chip__ref-link"><ExternalLinkIcon /></span>
                     )}
+                  </>
+                )
+
+                // Keyed by what the ref IS, not by its position: keying on the
+                // array index remounts every row below one that is removed.
+                const key = `${ref.type}:${ref.ref}`
+
+                // A row with nowhere to go is not a control. Rendering it as a
+                // button would put it in the tab order and promise a click that
+                // does nothing — the popover is already its own detail view.
+                if (!actionable) {
+                  return (
+                    <div key={key} className="hb-why-chip__ref" aria-disabled="true">
+                      {body}
+                    </div>
+                  )
+                }
+
+                return (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => {
+                      if (expandsInline) {
+                        onExpand?.(ref)
+                      } else if (ref.url) {
+                        // noopener/noreferrer: without them the opened tab gets
+                        // a handle on this window through window.opener.
+                        window.open(ref.url, '_blank', 'noopener,noreferrer')
+                      }
+                      setExpanded(false)
+                    }}
+                    className="hb-why-chip__ref"
+                  >
+                    {body}
                   </button>
                 )
               })}
