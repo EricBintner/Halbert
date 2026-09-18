@@ -45,10 +45,12 @@ class HalbertChannelCapability:
         audio_pipeline: Optional[object] = None,
         is_desktop: bool = True,
         wyoming_active: bool = False,
+        kiosk: bool = False,
     ):
         self._audio_pipeline = audio_pipeline
         self._is_desktop = is_desktop
         self._wyoming_active = wyoming_active
+        self._kiosk = kiosk
 
     # ------------------------------------------------------------------
     # ChannelCapability Protocol
@@ -95,6 +97,23 @@ class HalbertChannelCapability:
         True for the Tauri desktop app. False for satellite-only deployments.
         """
         return self._is_desktop
+
+    def has_private_screen(self) -> bool:
+        """Is the screen one only the person who asked can read?
+
+        ``has_screen`` answers whether there is a surface to render on.
+        This answers whether what lands there stays with the person who
+        asked for it, and the engine depends on the difference: its
+        demuxer keeps ``display_text`` verbatim and runs the
+        multi-occupant redaction on the SPOKEN stream only, on the stated
+        assumption of "authenticated screen viewing" (spec 5.13). A
+        wall-mounted kiosk in a hallway answers True to ``has_screen``
+        and breaks that assumption without anything noticing.
+
+        True for the Tauri desktop shell in its own window. False for a
+        kiosk deployment and for every screenless satellite.
+        """
+        return self._is_desktop and not self._kiosk
 
     def has_keyboard(self) -> bool:
         """Can the user type?

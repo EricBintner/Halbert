@@ -851,3 +851,36 @@ def take_barge_in_note(session_id: str) -> Optional[str]:
     if not facts:
         return None
     return barge_in_note(*facts)
+
+
+# ---------------------------------------------------------------------------
+# Screen privacy — present is not the same as private
+# ---------------------------------------------------------------------------
+
+
+def screen_is_private() -> bool:
+    """Whether this body's screen is one only the operator can read.
+
+    Fails CLOSED. No engine, no seam, no capability, or a capability too
+    old to answer all mean "assume a bystander can read it" — the cost of
+    being wrong in that direction is a redaction nobody needed, and in the
+    other direction it is a secret on a wall.
+    """
+    if not _engine_available():
+        return False
+    try:
+        from haloysius.seam import resolve_channel_capability
+        cap = resolve_channel_capability()
+    except Exception as e:
+        logger.debug(f"channel capability unavailable: {e}")
+        return False
+    if cap is None:
+        return False
+    getter = getattr(cap, "has_private_screen", None)
+    if getter is None:
+        return False
+    try:
+        return bool(getter())
+    except Exception as e:
+        logger.debug(f"has_private_screen raised: {e}")
+        return False

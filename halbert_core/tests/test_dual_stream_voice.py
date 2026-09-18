@@ -29,3 +29,35 @@ could be flipped:
 """
 
 import pytest
+
+from halbert_core.integrations.channel_capability import HalbertChannelCapability
+
+
+# ---------------------------------------------------------------------------
+# Task 1: present vs private
+# ---------------------------------------------------------------------------
+
+def test_desktop_screen_is_both_present_and_private():
+    cap = HalbertChannelCapability(is_desktop=True)
+    assert cap.has_screen() is True
+    assert cap.has_private_screen() is True
+
+
+def test_kiosk_has_a_screen_but_it_is_not_private():
+    cap = HalbertChannelCapability(is_desktop=True, kiosk=True)
+    assert cap.has_screen() is True
+    assert cap.has_private_screen() is False
+
+
+def test_satellite_has_neither():
+    cap = HalbertChannelCapability(is_desktop=False, wyoming_active=True)
+    assert cap.has_screen() is False
+    assert cap.has_private_screen() is False
+
+
+def test_screen_is_private_degrades_closed_without_a_seam(monkeypatch):
+    """No engine, no seam, no answer -- so the answer is 'not private'."""
+    from halbert_core.integrations import modality_wiring
+
+    monkeypatch.setattr(modality_wiring, "_engine_available", lambda: False)
+    assert modality_wiring.screen_is_private() is False

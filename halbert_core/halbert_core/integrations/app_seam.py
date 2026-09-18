@@ -419,8 +419,17 @@ class HalbertAppSeam:
         if self._channel_capability is not None:
             return self._channel_capability
         try:
+            import os
             from .channel_capability import HalbertChannelCapability
-            self._channel_capability = HalbertChannelCapability()
+            # A kiosk is a deployment fact, not a runtime state: the same
+            # binary on the same host is a kiosk or it is not. An env flag
+            # set by the unit file is the honest shape, and the default is
+            # the safe one for a desktop (private) while an operator who
+            # wall-mounts a panel opts out.
+            self._channel_capability = HalbertChannelCapability(
+                kiosk=os.environ.get("HALBERT_KIOSK", "").strip().lower()
+                in ("1", "true", "yes"),
+            )
             return self._channel_capability
         except Exception as e:
             logger.debug(f"Channel capability not available: {e}")
