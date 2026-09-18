@@ -10,7 +10,10 @@ import { StatusBadge } from '../primitives/StatusBadge'
 import { Input } from '../primitives/Input'
 import { Select } from '../primitives/Select'
 import { ParametricSlider } from '../primitives/ParametricSlider'
-import { HalbertMark } from '../primitives/HalbertMark'
+import { HalbertMark, halbertMarkGeometry } from '../primitives/HalbertMark'
+
+import mark7 from '../../../../assets/brand/halbert-mark-7lines.svg?raw'
+import mark4 from '../../../../assets/brand/halbert-mark-compact.svg?raw'
 
 describe('Button', () => {
   it('does not fire while loading, and reports it as busy', async () => {
@@ -262,3 +265,28 @@ describe('HalbertMark', () => {
   })
 })
 
+describe('HalbertMark geometry', () => {
+  // The component and assets/brand are two renderings of one mark. They are
+  // held together here rather than by habit: a drifted path is invisible until
+  // a favicon and a header stop matching, and by then both are shipped.
+  //
+  // The stroke width is compared as a number, not as text. The generated
+  // 4-line assets carry 80.01 where the table says 80.00 — one hundredth of a
+  // unit in 1024, which no renderer can show — and pinning the string would
+  // fail on that rounding while still missing a real change of tier.
+  const strokeWidthOf = (svg: string) => Number(/stroke-width="([\d.]+)"/.exec(svg)?.[1])
+
+  it.each([
+    ['7-line primary', 7 as const, mark7],
+    ['4-line micro', 4 as const, mark4],
+  ])('matches the shipped %s asset', (_name, lines, svg) => {
+    const geometry = halbertMarkGeometry(lines)
+    expect(svg).toContain(`d="${geometry.d}"`)
+    expect(svg).toContain(`viewBox="${geometry.viewBox}"`)
+    expect(strokeWidthOf(svg)).toBeCloseTo(geometry.strokeWidth, 1)
+  })
+
+  it('defaults to the primary tier', () => {
+    expect(halbertMarkGeometry().d).toBe(halbertMarkGeometry(7).d)
+  })
+})

@@ -19,6 +19,9 @@ export type HalbertMarkDensity =
 
 export type HalbertMarkTone = 'accent' | 'ink' | 'canvas' | 'current' | 'badge'
 
+/** The line counts the mark is drawn at. Brand: 7 (primary) / 4 (micro). */
+export type HalbertMarkLines = 3 | 4 | 5 | 6 | 7 | 8 | 10
+
 export interface HalbertMarkProps extends React.SVGAttributes<SVGSVGElement> {
   /**
    * Rendered size in pixels (or CSS unit string).
@@ -44,7 +47,7 @@ export interface HalbertMarkProps extends React.SVGAttributes<SVGSVGElement> {
    * Explicit numeric line count shortcut (3 | 4 | 5 | 6 | 7 | 8 | 10).
    * Overrides `density` if provided.
    */
-  lines?: 3 | 4 | 5 | 6 | 7 | 8 | 10
+  lines?: HalbertMarkLines
 
   /**
    * Color semantic tone preset:
@@ -147,6 +150,31 @@ const CONFIG_BY_LINE_COUNT: Record<number, { paths: string; strokeWidth: number 
   5: { paths: PATHS_5, strokeWidth: 60.00 },
   4: { paths: PATHS_4, strokeWidth: 80.00 },
   3: { paths: PATHS_3, strokeWidth: 116.00 },
+}
+
+/** Every tier is drawn in this square. */
+export const HALBERT_MARK_VIEWBOX = '0 0 1024 1024'
+/** One side of that square, for callers that scale the mark themselves. */
+export const HALBERT_MARK_UNITS = 1024
+
+export interface HalbertMarkGeometry {
+  viewBox: string
+  /** Concatenated path data — one `d` for the whole tier. */
+  d: string
+  strokeWidth: number
+}
+
+/**
+ * The raw geometry of a tier, for the callers that cannot use the component:
+ * an SVG `<mask>`, a canvas, a generated asset.
+ *
+ * Exported so the paths keep one source. A second copy of them is exactly how
+ * a brand mark drifts, and `src/test/primitives.test.tsx` holds this function
+ * against the shipped file in assets/brand.
+ */
+export function halbertMarkGeometry(lines: HalbertMarkLines = 7): HalbertMarkGeometry {
+  const config = CONFIG_BY_LINE_COUNT[lines] ?? CONFIG_BY_LINE_COUNT[7]
+  return { viewBox: HALBERT_MARK_VIEWBOX, d: config.paths, strokeWidth: config.strokeWidth }
 }
 
 function resolveLineCount(density: HalbertMarkDensity, lines?: number, size?: number | string): number {

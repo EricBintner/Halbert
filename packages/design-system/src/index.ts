@@ -17,6 +17,13 @@ export type {
   HalbertMarkProps,
   HalbertMarkDensity,
   HalbertMarkTone,
+  HalbertMarkLines,
+  HalbertMarkGeometry,
+} from './primitives/HalbertMark'
+export {
+  halbertMarkGeometry,
+  HALBERT_MARK_VIEWBOX,
+  HALBERT_MARK_UNITS,
 } from './primitives/HalbertMark'
 
 // Voice Mode (audio-reactive mark engine)
