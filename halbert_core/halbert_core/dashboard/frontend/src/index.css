@@ -40,7 +40,7 @@
     --muted-foreground:       25 5.9% 39.6%;  /* ink-tertiary */
     --accent:                 42.4 32.1% 89.6%;  /* surface-subtle */
     --accent-foreground:      24 9.8% 10%;  /* ink */
-    --destructive:            6.6 63.3% 48%;  /* status-critical */
+    --destructive:            352.5 69.6% 45.1%;  /* status-critical */
     --destructive-foreground: 0 0% 100%;  /* ink-on-accent */
     --border:                 40 11.7% 84.9%;  /* line */
     --input:                  40 11.7% 84.9%;  /* line */
@@ -52,13 +52,13 @@
     --text-subtle:            25 5.9% 39.6%;  /* ink-tertiary */
     --text-base:              24 9.8% 10%;  /* ink */
     --border-subtle:          40 17.6% 90%;  /* line-subtle */
-    --success:                151.9 46.1% 32.7%;  /* status-nominal */
+    --success:                151.2 61.5% 30.6%;  /* status-nominal */
     --success-muted:          150 30.8% 94.9%;  /* status-nominal-bg */
-    --error:                  6.6 63.3% 48%;  /* status-critical */
+    --error:                  352.5 69.6% 45.1%;  /* status-critical */
     --error-muted:            9.2 76.5% 96.7%;  /* status-critical-bg */
-    --warning:                32.8 75.3% 33.3%;  /* status-warning */
+    --warning:                17.5 88.3% 40.4%;  /* status-warning */
     --warning-muted:          36.9 76.5% 96.7%;  /* status-warning-bg */
-    --info:                   202 42.3% 38%;  /* status-telemetry */
+    --info:                   213.1 70.7% 40.2%;  /* status-telemetry */
     --info-muted:             200 42.9% 95.9%;  /* status-telemetry-bg */
   }
 
@@ -78,7 +78,7 @@
       --muted-foreground:       33.3 8.2% 56.9%;  /* ink-tertiary */
       --accent:                 30 5.6% 7.1%;  /* surface-subtle */
       --accent-foreground:      40 31.6% 92.5%;  /* ink */
-      --destructive:            6.8 63.5% 59.2%;  /* status-critical */
+      --destructive:            352 78.9% 62.7%;  /* status-critical */
       --destructive-foreground: 30 8.3% 9.4%;  /* ink-on-accent */
       --border:                 36 4.7% 21%;  /* line */
       --input:                  36 4.7% 21%;  /* line */
@@ -90,13 +90,13 @@
       --text-subtle:            33.3 8.2% 56.9%;  /* ink-tertiary */
       --text-base:              40 31.6% 92.5%;  /* ink */
       --border-subtle:          30 5.1% 15.3%;  /* line-subtle */
-      --success:                152.2 46.4% 41%;  /* status-nominal */
+      --success:                152.3 51.5% 45.3%;  /* status-nominal */
       --success-muted:          147.3 19.3% 11.2%;  /* status-nominal-bg */
-      --error:                  6.8 63.5% 59.2%;  /* status-critical */
+      --error:                  352 78.9% 62.7%;  /* status-critical */
       --error-muted:            10 26.5% 13.3%;  /* status-critical-bg */
-      --warning:                32.7 75.6% 43.3%;  /* status-warning */
+      --warning:                27 96% 61%;  /* status-warning */
       --warning-muted:          32.7 37.9% 11.4%;  /* status-warning-bg */
-      --info:                   201.9 42.3% 50.4%;  /* status-telemetry */
+      --info:                   212 83.3% 64.7%;  /* status-telemetry */
       --info-muted:             201.8 17.5% 12.4%;  /* status-telemetry-bg */
   }
   /* END generated */
