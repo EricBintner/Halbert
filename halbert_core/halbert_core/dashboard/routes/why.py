@@ -143,16 +143,21 @@ def _store() -> SelfKnowledge:
     construction from ``HALBERT_DATA_DIR``, and a module-level handle would
     outlive the answer to that question.
 
-    ``readable`` is checked explicitly. The store loads once per process, so
-    a read failure is not something the next request retries into truth — it
-    would answer "nothing recorded" for the life of the process.
+    ``readable`` is checked explicitly, because the store loads once per
+    process: left alone, a read failure would answer "nothing recorded" for
+    the life of the process rather than saying it could not look.
+
+    A failed load is retried once here before we answer 503. Both 503 texts
+    tell the operator to repair the file and try again, and without the retry
+    that instruction could not work — they would repair it, retry, and get the
+    same error until someone restarted the backend.
     """
     try:
         sk = get_self_knowledge()
     except Exception as e:  # constructing it is itself a read of the disk
         logger.warning(f"rationale store could not be opened: {e}")
         raise KnowledgeUnavailable(str(e)) from e
-    if not sk.readable:
+    if not sk.readable and not sk.retry_load():
         raise KnowledgeUnavailable(sk.load_error or "the store could not be read")
     return sk
 

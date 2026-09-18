@@ -24,6 +24,13 @@ interface WhyBrainProps {
   itemType: string
   /** Current "why" explanation (undefined if not set) */
   why?: string
+  /**
+   * The rationale store could not be read, so this icon must not claim that
+   * nothing is recorded. Absence of data is a fact worth stating; an empty
+   * state here would tell an operator their note is gone when in truth
+   * nobody could look for it.
+   */
+  unavailable?: boolean
   /** Callback when why is saved */
   onWhySaved?: (why: string) => void
   /** Size variant */
@@ -37,6 +44,7 @@ export function WhyBrain({
   itemName,
   itemType,
   why,
+  unavailable = false,
   onWhySaved,
   size = 'md',
   className,
@@ -81,13 +89,30 @@ export function WhyBrain({
           'inline-flex items-center justify-center rounded-md transition-colors',
           buttonSizeClasses[size],
           'hover:bg-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-focus',
-          isDefined ? 'text-status-telemetry' : 'text-ink-ghost hover:text-ink-tertiary',
+          unavailable
+            ? 'text-ink-ghost cursor-not-allowed'
+            : isDefined
+              ? 'text-status-telemetry'
+              : 'text-ink-ghost hover:text-ink-tertiary',
           className,
         )}
-        title={isDefined ? 'Edit rationale' : 'Add rationale'}
-        aria-label={isDefined ? `Rationale for ${itemName}` : `Add rationale for ${itemName}`}
+        disabled={unavailable}
+        title={
+          unavailable
+            ? 'Rationale unavailable. The store could not be read, so nothing can be shown or recorded.'
+            : isDefined
+              ? 'Edit rationale'
+              : 'Add rationale'
+        }
+        aria-label={
+          unavailable
+            ? `Rationale for ${itemName} unavailable`
+            : isDefined
+              ? `Rationale for ${itemName}`
+              : `Add rationale for ${itemName}`
+        }
       >
-        <Brain className={cn(sizeClasses[size], isDefined && 'fill-status-telemetry-bg')} />
+        <Brain className={cn(sizeClasses[size], isDefined && 'fill-status-telemetry-line')} />
       </button>
 
       {/* Mounted only while open. These icons are rendered inside per-row maps,

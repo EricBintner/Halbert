@@ -125,6 +125,10 @@ export function Services() {
   // WhyBrain call site uses. Read once per page load — a scan refresh reloads
   // the services, not the operator's notes about them.
   const [rationales, setRationales] = useState<Record<string, { why: string }>>({})
+  // The store answered 503: it could not be read. That is not the same as
+  // "no notes recorded", and an icon that renders its empty state here would
+  // say the second while the first is true.
+  const [rationalesUnavailable, setRationalesUnavailable] = useState(false)
 
   // Subscribe to queue changes
   useEffect(() => {
@@ -197,6 +201,7 @@ export function Services() {
       })
       .catch((error) => {
         console.error('Failed to load service rationales:', error)
+        setRationalesUnavailable(true)
       })
     return () => {
       cancelled = true
@@ -628,6 +633,7 @@ export function Services() {
                         itemName={service.name}
                         itemType="service"
                         why={rationales[`service:${service.name}`]?.why}
+                        unavailable={rationalesUnavailable}
                         onWhySaved={(why) => recordRationale(`service:${service.name}`, why)}
                         size="sm"
                       />

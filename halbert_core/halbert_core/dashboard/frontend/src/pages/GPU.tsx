@@ -147,6 +147,10 @@ export function GPU() {
   // WhyBrain call site uses. Read once per page load: an operator's note is an
   // annotation, not part of the hardware read, so the 5s poll leaves it alone.
   const [rationales, setRationales] = useState<Record<string, { why: string }>>({})
+  // The store answered 503: it could not be read. That is not the same as
+  // "no notes recorded", and an icon that renders its empty state here would
+  // say the second while the first is true.
+  const [rationalesUnavailable, setRationalesUnavailable] = useState(false)
 
   const loadGPUData = async () => {
     try {
@@ -190,6 +194,7 @@ export function GPU() {
       })
       .catch((err) => {
         console.error('Failed to load GPU rationales:', err)
+        setRationalesUnavailable(true)
       })
     return () => {
       cancelled = true
@@ -365,6 +370,7 @@ export function GPU() {
                       itemName={gpu.model}
                       itemType="gpu"
                       why={rationales[`gpu:${gpu.pci_id}`]?.why}
+                      unavailable={rationalesUnavailable}
                       onWhySaved={(why) => recordRationale(`gpu:${gpu.pci_id}`, why)}
                       size="sm"
                     />

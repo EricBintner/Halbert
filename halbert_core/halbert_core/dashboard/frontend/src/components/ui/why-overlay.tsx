@@ -107,6 +107,25 @@ export function WhyOverlay({
     }
   }
 
+  /**
+   * Clearing the box and pressing Save cannot do this: an empty note is
+   * rejected, which is right — a blank rationale is not a rationale. Removal
+   * is its own act, so it gets its own control.
+   */
+  const handleRemove = async () => {
+    setIsSaving(true)
+    setError(null)
+    try {
+      await api.deleteRationale(itemId)
+      onSave?.('')
+      onOpenChange(false)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
   // Save on Ctrl+Enter / Cmd+Enter
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
@@ -127,6 +146,15 @@ export function WhyOverlay({
           )}
         />
         <DialogPrimitive.Content
+          // Radix portals the dialog to document.body, but React synthetic
+          // events bubble the REACT tree, not the DOM one — so without this a
+          // click on the textarea still reaches the row this overlay was
+          // opened from, and Services/Network rows open their detail sheet
+          // underneath. WhyBrain's own trigger stops the opening click; these
+          // stop every click after it.
+          onClick={(e) => e.stopPropagation()}
+          onPointerDown={(e) => e.stopPropagation()}
+          onMouseDown={(e) => e.stopPropagation()}
           onOpenAutoFocus={(e) => {
             // Radix would land on the first tabbable node, which is the close
             // button. The operator opened this to type.
@@ -209,15 +237,28 @@ export function WhyOverlay({
                 role="alert"
                 className="rounded-md border border-error/40 bg-error-muted px-3 py-2 text-sm text-error"
               >
-                Saving failed. Nothing was recorded, and your note is still in the box
-                above. Try again, and if it keeps failing check that the backend is
-                running. <span className="text-error/80">{error}</span>
+                Saving failed. Nothing was recorded, and your note is still in the
+                box above. <span className="font-mono text-xs">{error}</span>
               </p>
             ) : null}
           </div>
 
           {/* Footer */}
           <div className="flex items-center justify-end gap-2 p-4 border-t bg-muted/30">
+            {initialWhy ? (
+              <button
+                onClick={handleRemove}
+                disabled={isSaving}
+                className={cn(
+                  'mr-auto px-3 py-2 text-sm rounded-lg transition-colors',
+                  'text-error hover:bg-error-muted',
+                  'focus:outline-none focus-visible:ring-2 focus-visible:ring-focus',
+                  'disabled:opacity-50 disabled:cursor-not-allowed',
+                )}
+              >
+                Remove
+              </button>
+            ) : null}
             <DialogPrimitive.Close
               className={cn(
                 'px-3 py-2 text-sm rounded-lg hover:bg-accent transition-colors',

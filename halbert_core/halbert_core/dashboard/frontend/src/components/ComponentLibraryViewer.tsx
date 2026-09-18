@@ -252,7 +252,7 @@ text-info        /* Info */`,
               <h4 className="text-sm font-medium mb-3">Size: sm (used in row actions)</h4>
               <div className="flex items-center gap-4 p-3 bg-muted/30 rounded-lg">
                 <div className="flex items-center gap-0">
-                  <WhyBrain itemId="sizing-demo" itemName="Demo" itemType="service" size="sm" />
+                  <WhyBrain itemId="demo:whybrain-sm" itemName="Demo" itemType="demo" size="sm" />
                   <SystemItemActions item={{ name: 'Demo', type: 'service', id: 'demo' }} size="sm" />
                 </div>
                 <code className="text-xs bg-muted text-foreground px-2 py-1 rounded border">
@@ -264,7 +264,7 @@ text-info        /* Info */`,
               <h4 className="text-sm font-medium mb-3">Size: default</h4>
               <div className="flex items-center gap-4 p-3 bg-muted/30 rounded-lg">
                 <div className="flex items-center gap-0">
-                  <WhyBrain itemId="sizing-demo-2" itemName="Demo" itemType="service" size="md" />
+                  <WhyBrain itemId="demo:whybrain-md" itemName="Demo" itemType="demo" size="md" />
                   <SystemItemActions item={{ name: 'Demo', type: 'service', id: 'demo' }} />
                 </div>
                 <code className="text-xs bg-muted text-foreground px-2 py-1 rounded border">
@@ -421,12 +421,15 @@ hoverColors: {
           <div className="space-y-4">
             <div className="flex items-center gap-4">
               <span className="text-sm text-muted-foreground w-32">undefined (sm):</span>
-              <WhyBrain itemId="demo-undefined" itemName="Demo" itemType="service" size="sm" />
+              {/* These brains are live: pressing Save writes a real note. Keyed
+                  under demo: with itemType "demo" so they can never collide with
+                  a real item, and never appear in any page's by-type listing. */}
+              <WhyBrain itemId="demo:whybrain-empty" itemName="Demo" itemType="demo" size="sm" />
             </div>
             <div className="flex items-center gap-4">
               <span className="text-sm text-muted-foreground w-32">with SystemItemActions:</span>
               <div className="flex items-center gap-0">
-                <WhyBrain itemId="demo-combo" itemName="Demo" itemType="service" size="sm" />
+                <WhyBrain itemId="demo:whybrain-combo" itemName="Demo" itemType="demo" size="sm" />
                 <SystemItemActions 
                   item={{ name: 'Demo', type: 'service', id: 'demo' }}
                   size="sm"

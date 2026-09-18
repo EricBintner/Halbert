@@ -151,6 +151,10 @@ export function Network() {
   // both WhyBrain call sites use. Read once per page load — a scan refresh
   // reloads the interfaces, not the operator's notes about them.
   const [rationales, setRationales] = useState<Record<string, { why: string }>>({})
+  // The store answered 503: it could not be read. That is not the same as
+  // "no notes recorded", and an icon that renders its empty state here would
+  // say the second while the first is true.
+  const [rationalesUnavailable, setRationalesUnavailable] = useState(false)
 
   // Cache helpers for persistent explanations
   const CACHE_KEY = 'halbert_network_explanations'
@@ -191,6 +195,7 @@ export function Network() {
       })
       .catch((error) => {
         console.error('Failed to load network rationales:', error)
+        setRationalesUnavailable(true)
       })
     return () => {
       cancelled = true
@@ -538,6 +543,7 @@ export function Network() {
                         itemName={iface.title}
                         itemType="network"
                         why={rationales[`network:${iface.data.interface || iface.name}`]?.why}
+                        unavailable={rationalesUnavailable}
                         onWhySaved={(why) =>
                           recordRationale(`network:${iface.data.interface || iface.name}`, why)
                         }
@@ -612,6 +618,7 @@ export function Network() {
                       itemName={iface.title}
                       itemType="network"
                       why={rationales[`network:${iface.data.interface || iface.name}`]?.why}
+                      unavailable={rationalesUnavailable}
                       onWhySaved={(why) =>
                         recordRationale(`network:${iface.data.interface || iface.name}`, why)
                       }

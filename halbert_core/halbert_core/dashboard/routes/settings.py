@@ -1823,9 +1823,12 @@ async def delete_knowledge(entry_id: str):
         from ...knowledge import get_self_knowledge
         sk = get_self_knowledge()
         
-        if entry_id in sk._knowledge:
-            del sk._knowledge[entry_id]
-            sk._save()
+        # sk.delete(), not a hand-rolled pop: this used to remove the entry
+        # from memory and then call sk._save(), which has never existed. The
+        # AttributeError became a 500, but the entry was already gone from
+        # memory, so the next unrelated save persisted a deletion the operator
+        # had been told had failed. delete() persists or puts the entry back.
+        if sk.delete(entry_id):
             return {"success": True, "deleted": entry_id}
         else:
             raise HTTPException(status_code=404, detail=f"Knowledge entry not found: {entry_id}")

@@ -958,6 +958,12 @@ function DiskItem({
 interface RationaleShelf {
   /** Recorded rationales keyed by item id. */
   map: Record<string, { why: string }>
+  /**
+   * The store could not be read. Carried down so the brain says so rather
+   * than rendering the empty state, which would claim nothing is recorded
+   * when the truth is that nobody could look.
+   */
+  unavailable: boolean
   /** Fold a just-saved rationale in so the brain colours without a refetch. */
   onSaved: (itemId: string, why: string) => void
 }
@@ -1077,6 +1083,7 @@ function DiskGroupSection({ group, allDisks, rationales }: { group: DiskGroup; a
               itemName={group.semanticName}
               itemType="storage"
               why={rationales.map[`storage:${storageItemId}`]?.why}
+              unavailable={rationales.unavailable}
               onWhySaved={(why) => rationales.onSaved(`storage:${storageItemId}`, why)}
               size="sm"
             />
@@ -1711,6 +1718,7 @@ export function Storage() {
   // the WhyBrain call site uses. Read once per page load — a scan refresh
   // reloads the storage, not the operator's notes about it.
   const [rationales, setRationales] = useState<Record<string, { why: string }>>({})
+  const [rationalesUnavailable, setRationalesUnavailable] = useState(false)
 
   // Handle renaming a volume/filesystem
   const handleRename = useCallback((id: string, name: string) => {
@@ -1743,6 +1751,7 @@ export function Storage() {
       })
       .catch((error) => {
         console.error('Failed to load storage rationales:', error)
+        setRationalesUnavailable(true)
       })
     return () => {
       cancelled = true
@@ -1906,7 +1915,7 @@ export function Storage() {
               key={group.id}
               group={group}
               allDisks={disks}
-              rationales={{ map: rationales, onSaved: recordRationale }}
+              rationales={{ map: rationales, unavailable: rationalesUnavailable, onSaved: recordRationale }}
             />
           ))
         )}

@@ -141,6 +141,10 @@ export function Containers() {
   // the WhyBrain call site uses. Read once per page load: an operator's note is
   // an annotation, not live container state, so the 5s poll leaves it alone.
   const [rationales, setRationales] = useState<Record<string, { why: string }>>({})
+  // The store answered 503: it could not be read. That is not the same as
+  // "no notes recorded", and an icon that renders its empty state here would
+  // say the second while the first is true.
+  const [rationalesUnavailable, setRationalesUnavailable] = useState(false)
 
   const loadContainers = async () => {
     try {
@@ -178,6 +182,7 @@ export function Containers() {
       })
       .catch((err) => {
         console.error('Failed to load container rationales:', err)
+        setRationalesUnavailable(true)
       })
     return () => {
       cancelled = true
@@ -616,6 +621,7 @@ export function Containers() {
                         itemName={container.name}
                         itemType="container"
                         why={rationales[`container:${container.id}`]?.why}
+                        unavailable={rationalesUnavailable}
                         onWhySaved={(why) => recordRationale(`container:${container.id}`, why)}
                         size="sm"
                       />

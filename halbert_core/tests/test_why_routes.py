@@ -393,3 +393,91 @@ class TestTheStoreItself:
         first = get_self_knowledge()
         sk_mod.reset_self_knowledge()
         assert get_self_knowledge() is not first
+
+
+class TestRecoveringFromAFailedRead:
+    """Both 503 texts say "repair it, then try again". That has to be true."""
+
+    def test_a_repaired_store_answers_without_a_restart(self, client, store):
+        client.post("/api/why", json=_note())
+        good = store.read_text()
+
+        _corrupt(store)
+        assert client.get("/api/why", params={"item_id": "gpu:0"}).status_code == 503
+
+        # Exactly what the message tells the operator to do, and nothing else:
+        # no restart, no reset_self_knowledge(), just the file put back.
+        store.write_text(good)
+
+        read = client.get("/api/why", params={"item_id": "gpu:0"})
+        assert read.status_code == 200
+        assert read.json()["found"] is True
+        assert read.json()["why"] == _note()["why"]
+
+    def test_a_still_broken_store_stays_503(self, client, store):
+        _corrupt(store)
+        assert client.get("/api/why", params={"item_id": "gpu:0"}).status_code == 503
+        assert client.get("/api/why", params={"item_id": "gpu:0"}).status_code == 503
+
+    def test_a_retry_that_fails_leaves_nothing_half_loaded(self, client, store):
+        client.post("/api/why", json=_note())
+
+        # A file whose first entry parses and whose second does not.
+        store.write_text('{"entries": [{"id": "a", "type": "identity", "subject": "s",'
+                         ' "content": "c"}, {"id": "b", "brok')
+        sk_mod.reset_self_knowledge()
+        sk = sk_mod.get_self_knowledge()
+
+        assert sk.readable is False
+        assert sk.retry_load() is False
+        # Not "one entry recorded" — a partial load presented as the whole
+        # store is the same lie as an empty one, one degree quieter.
+        assert sk._knowledge == {}
+
+
+class TestAStoreThatCannotBeSearched:
+    """Path.exists() answers False for a directory this uid cannot search."""
+
+    @pytest.mark.skipif(os.geteuid() == 0, reason="root can search any directory")
+    def test_an_unsearchable_directory_is_unreadable_not_empty(self, client, store):
+        client.post("/api/why", json=_note())
+        assert store.exists()
+
+        sk_mod.reset_self_knowledge()
+        os.chmod(store.parent, 0o000)
+        try:
+            # The bug this pins: .exists() swallows the OSError and answers
+            # False, so the store reported "nothing recorded" and the next
+            # save wrote an empty file over a note that was still there.
+            read = client.get("/api/why", params={"item_id": "gpu:0"})
+            assert read.status_code == 503, "an unsearchable store must not read as empty"
+
+            save = client.post("/api/why", json=_note(why="overwrite"))
+            assert save.status_code == 503
+            assert "saved" not in save.json()
+        finally:
+            os.chmod(store.parent, stat.S_IRWXU)
+
+        # The original note is still on disk, untouched.
+        sk_mod.reset_self_knowledge()
+        assert client.get("/api/why", params={"item_id": "gpu:0"}).json()["why"] == _note()["why"]
+
+
+class TestDeletingThroughTheKnowledgeSettingsRoute:
+    """The neighbouring delete route called a method that never existed."""
+
+    def test_it_deletes_and_persists_instead_of_500ing(self, client, store):
+        client.post("/api/why", json=_note())
+
+        gone = client.delete("/api/settings/knowledge/rationale:gpu:0")
+        assert gone.status_code == 200, gone.text
+        assert gone.json()["success"] is True
+
+        # It reached the disk, not just memory — the old handler popped the
+        # entry, raised AttributeError on sk._save(), returned 500, and let
+        # the next unrelated save persist a deletion it had denied.
+        sk_mod.reset_self_knowledge()
+        assert client.get("/api/why", params={"item_id": "gpu:0"}).json()["found"] is False
+
+    def test_deleting_something_absent_is_404_not_500(self, client, store):
+        assert client.delete("/api/settings/knowledge/rationale:nope").status_code == 404

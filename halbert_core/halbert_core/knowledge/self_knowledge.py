@@ -156,10 +156,27 @@ class SelfKnowledge:
         """False when the store exists but could not be read.
 
         A caller must check this before treating an empty result as "nothing
-        recorded". The two are not the same answer, and the singleton loads
-        once per process, so a read failure is permanent for this process
-        rather than something the next request retries into truth.
+        recorded". The two are not the same answer.
         """
+        return self._load_error is None
+
+    def retry_load(self) -> bool:
+        """Read the store again after a failure, and report whether it worked.
+
+        The singleton loads once per process, so without this a read failure
+        outlives whatever caused it: an operator repairs a truncated file,
+        retries as the error told them to, and gets the same error until the
+        backend restarts. That makes the remediation we print a lie.
+
+        A no-op when the last load succeeded, so callers may guard with it
+        freely. On a repeat failure the error is refreshed rather than
+        cleared, and any half-parsed entries are dropped as on first load.
+        """
+        if self._load_error is None:
+            return True
+        self._load_error = None
+        self._knowledge.clear()
+        self._load_from_disk()
         return self._load_error is None
 
     @property
@@ -190,12 +207,18 @@ class SelfKnowledge:
         later question with "nothing recorded" — and the next save then
         replaced the recoverable file with an empty one.
         """
-        if not self._data_path.exists():
-            return
-
         try:
-            with open(self._data_path, 'r') as f:
-                data = json.load(f)
+            # Opened directly rather than guarded by .exists(). Path.exists()
+            # swallows OSError and answers False, so a directory this uid can
+            # no longer search — root-owned after one sudo run, a stale mount —
+            # was indistinguishable from a first run: the store reported
+            # "nothing recorded" and the next save wrote an empty file over
+            # notes that were still there. Only a genuine absence is silent.
+            try:
+                with open(self._data_path, 'r') as f:
+                    data = json.load(f)
+            except FileNotFoundError:
+                return
             
             for entry_data in data.get('entries', []):
                 entry = KnowledgeEntry(
