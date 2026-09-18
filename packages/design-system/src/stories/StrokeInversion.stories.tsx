@@ -3,216 +3,115 @@
 import * as React from 'react'
 import type { Meta, StoryObj } from '@storybook/react'
 
-import { HalbertMark, halbertMarkGeometry, HALBERT_MARK_UNITS } from '../primitives/HalbertMark'
-import { IconDock, type IconDockItem } from '../surfaces/IconDock'
-import { GitHubIcon, StorybookIcon, XIcon, RedditIcon } from '../icons/brands'
-import { useId, useMeasuredWidth } from '../lib'
+import { HalbertMark } from '../primitives/HalbertMark'
+import { ParametricSlider } from '../primitives/ParametricSlider'
+import { useMeasuredWidth } from '../lib'
 
 /**
- * The mark's stroke is a ground, not a background.
+ * Two grounds, one mark, two inks.
  *
- * This page is a technique, not an exported component: the field below is
- * assembled here from the pieces that do ship — the mark geometry, the icon
- * dock, the tokens. The marketing site runs the same three layers at full
- * viewport, against a scrolling camera.
+ * The page is a technique rather than an exported component: a field split
+ * between paper and vermilion, with the mark drawn twice so each half wears
+ * the ink its ground licenses.
  */
-
-const MARK = halbertMarkGeometry(7)
-
-const DOCK_ITEMS: IconDockItem[] = [
-  { id: 'github', label: 'GitHub', icon: GitHubIcon, href: 'https://github.com/EricBintner/Halbert' },
-  { id: 'storybook', label: 'Storybook', icon: StorybookIcon, href: 'https://storybook.halbert.computer' },
-  { id: 'x', label: 'X', icon: XIcon, disabled: true },
-  { id: 'reddit', label: 'Reddit', icon: RedditIcon, disabled: true },
-]
-
-/* React's useId yields ":r0:", and a colon cannot appear inside url(#…). */
-const cssSafeId = (id: string) => id.replace(/:/g, '')
-
-/* The decorative copy must not hand assistive tech or the tab key a second set
- * of the same controls. aria-hidden takes it out of the tree; inert takes its
- * links out of the tab order. */
-const DECORATIVE = { inert: '' } as unknown as React.HTMLAttributes<HTMLDivElement>
 
 interface FieldArgs {
-  /** Width of the mark, as a percentage of the field's width. */
-  markScale: number
-  /** Horizontal centre of the mark, as a percentage of the field's width. */
-  markX: number
-  /** Vertical nudge from the centred position, in pixels. */
-  markY: number
+  /** Rendered size of the mark, in pixels. */
+  markSize: number
+  /** How far the edge leans, as a percentage of the field's width. 0 is a vertical edge. */
+  tilt: number
 }
 
 /**
- * Where the mark sits vertically when `markY` is 0.
+ * The vermilion field: everything to the right of one straight edge.
  *
- * The lanes fan outward as they descend, so the interesting band — several
- * lanes wide, still vertical — is around 0.30 of the way down the square.
- * Anchoring that band to the middle of the field keeps one set of args
- * working at any field height, which is what lets the anatomy panels below
- * reuse the args from the overlay above.
+ * `split` sweeps that edge from just off the right of the frame (0, all paper)
+ * to just off the left (100, all vermilion). The right-hand points run well
+ * past the frame so the polygon stays simple at every position — pinned at
+ * 100% they cross the frame's own edge and the shape folds over on itself.
  */
-const LANE_BAND = 0.3
-
-type Layer = 'composite' | 'ink' | 'mask'
-
-function StrokeField({
-  markScale,
-  markX,
-  markY,
-  height,
-  layer = 'composite',
-  children,
-}: FieldArgs & { height: number; layer?: Layer; children?: React.ReactNode }) {
-  const ref = React.useRef<HTMLDivElement>(null)
-  const width = useMeasuredWidth(ref)
-  const maskId = `halbert-stroke-mask-${cssSafeId(useId())}`
-
-  // useMeasuredWidth is honest about not having measured yet, so the first
-  // paint has no width to scale against. Draw nothing rather than a degenerate
-  // SVG; the real geometry lands on the next frame.
-  const measured = width > 0
-  // Sized against the field, not in absolute pixels: the story canvas, the
-  // docs page and a phone are three different widths, and a fixed size that
-  // frames well on one of them overruns another.
-  const size = (width * markScale) / 100
-  const left = (width * markX) / 100 - size / 2
-  const top = height / 2 - size * LANE_BAND + markY
-  const transform = `translate(${left} ${top}) scale(${size / HALBERT_MARK_UNITS})`
-
-  const strokes = (stroke: string) => (
-    <g
-      transform={transform}
-      fill="none"
-      stroke={stroke}
-      strokeWidth={MARK.strokeWidth}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d={MARK.d} />
-    </g>
-  )
-
-  return (
-    <div
-      ref={ref}
-      style={{
-        position: 'relative',
-        height,
-        overflow: 'hidden',
-        borderRadius: 'var(--radius-lg)',
-        border: '1px solid var(--color-line)',
-        background: layer === 'mask' ? 'var(--color-surface-subtle)' : 'var(--color-canvas)',
-      }}
-    >
-      {measured && layer !== 'ink' && (
-        <svg
-          width={width}
-          height={height}
-          viewBox={`0 0 ${width} ${height}`}
-          style={{ position: 'absolute', inset: 0 }}
-          aria-hidden="true"
-        >
-          <defs>
-            {/* White here is a mask channel, not a colour: in a luminance mask
-             * it means "fully opaque". No palette value belongs in a mask. */}
-            <mask id={maskId} maskUnits="userSpaceOnUse" x={0} y={0} width={width} height={height}>
-              {strokes('white')}
-            </mask>
-          </defs>
-          {strokes(layer === 'mask' ? 'var(--color-ink)' : 'var(--color-accent)')}
-        </svg>
-      )}
-
-      {layer !== 'mask' && (
-        <div style={{ position: 'absolute', inset: 0, color: 'var(--color-ink)' }}>{children}</div>
-      )}
-
-      {measured && layer === 'composite' && (
-        <div
-          {...DECORATIVE}
-          aria-hidden="true"
-          style={{
-            position: 'absolute',
-            inset: 0,
-            pointerEvents: 'none',
-            color: 'var(--color-ink-on-accent)',
-            WebkitMaskImage: `url(#${maskId})`,
-            maskImage: `url(#${maskId})`,
-          }}
-        >
-          {children}
-        </div>
-      )}
-    </div>
-  )
+function wedge(split: number, tilt: number): string {
+  const top = (100 + tilt) * (1 - split / 100)
+  return `polygon(${top}% 0%, 400% 0%, 400% 100%, ${top - tilt}% 100%)`
 }
 
-/**
- * The specimen that crosses the stroke: the wordmark as the folio bar sets it,
- * and the links dock. Centred rather than pinned to the corners, so the
- * crossing holds at any width — a corner-pinned copy misses the mark entirely
- * on a wide canvas, which is the one thing this page must not do.
- */
-function FieldContent() {
+/** Both copies sit in the same centred box, so they land on the same pixels. */
+function MarkLayer({ size, ink, clipPath }: { size: number; ink: string; clipPath?: string }) {
   return (
     <div
+      aria-hidden="true"
       style={{
         position: 'absolute',
         inset: 0,
         display: 'flex',
-        flexDirection: 'column',
         alignItems: 'center',
         justifyContent: 'center',
-        gap: 'var(--space-6)',
+        color: ink,
+        clipPath,
       }}
     >
-      <span
-        style={{
-          display: 'inline-flex',
-          alignItems: 'center',
-          gap: 'var(--space-3)',
-          fontFamily: 'var(--font-mono)',
-          fontSize: 14,
-          fontWeight: 700,
-          letterSpacing: 'var(--tracking-label)',
-        }}
-      >
-        <HalbertMark size={22} lines={6} tone="current" />
-        HALBERT
-      </span>
-
-      <IconDock items={DOCK_ITEMS} label="Halbert elsewhere" />
+      <HalbertMark size={size} lines={7} tone="current" />
     </div>
   )
 }
 
+const FIELD_HEIGHT = 200
+
 /**
- * A labelled panel in the anatomy diagram.
+ * Which ground the mark is standing on, worked out rather than guessed.
  *
- * The illustration is decorative: three panels showing the same specimen would
- * otherwise put three identically named navigation landmarks in the tree and
- * twelve duplicate links in the tab order. The caption carries the meaning,
- * and the working copy is the Overlay story above.
+ * The slider's preview is the half of it that says what the setting *does*, so
+ * a threshold picked by eye would be the one dishonest line on a page about
+ * honest pairs. The edge leans, so it meets the mark's box at two different
+ * x positions; the mark is crossed when that span overlaps the box at all.
  */
-function Caption({ label, children }: { label: string; children: React.ReactNode }) {
+function stateOf(split: number, tilt: number, markSize: number, width: number): string {
+  const top = (100 + tilt) * (1 - split / 100)
+  const halfW = width > 0 ? (markSize / 2 / width) * 100 : 0
+  const halfH = (markSize / 2 / FIELD_HEIGHT) * 100
+  const atMarkTop = top - (tilt * (50 - halfH)) / 100
+  const atMarkBottom = top - (tilt * (50 + halfH)) / 100
+
+  if (atMarkBottom > 50 + halfW) return 'The mark is clear of the edge, drawn in ink on paper.'
+  if (atMarkTop < 50 - halfW) return 'The mark is clear of the edge, drawn in on-accent ink on vermilion.'
+  return 'The edge crosses the mark. Each half wears the ink its ground licenses.'
+}
+
+function InversionDemo({ markSize, tilt }: FieldArgs) {
+  const [split, setSplit] = React.useState(50)
+  const fieldRef = React.useRef<HTMLDivElement>(null)
+  const width = useMeasuredWidth(fieldRef)
+  const clip = wedge(split, tilt)
+  const state = (value: number) => stateOf(value, tilt, markSize, width)
+
   return (
-    <div>
-      <p
+    <div style={{ width: 'min(460px, 100%)', display: 'grid', gap: 'var(--space-5)' }}>
+      <div
+        ref={fieldRef}
+        role="img"
+        aria-label="The Halbert mark across the edge between the paper field and the vermilion field"
         style={{
-          margin: '0 0 var(--space-2)',
-          fontFamily: 'var(--font-mono)',
-          fontSize: 11,
-          letterSpacing: 'var(--tracking-label)',
-          textTransform: 'uppercase',
-          color: 'var(--color-ink-tertiary)',
+          position: 'relative',
+          height: FIELD_HEIGHT,
+          overflow: 'hidden',
+          borderRadius: 'var(--radius-lg)',
+          border: '1px solid var(--color-line)',
+          background: 'var(--color-canvas)',
         }}
       >
-        {label}
-      </p>
-      <div {...DECORATIVE} aria-hidden="true">
-        {children}
+        <div style={{ position: 'absolute', inset: 0, background: 'var(--color-accent)', clipPath: clip }} />
+        <MarkLayer size={markSize} ink="var(--color-ink)" />
+        <MarkLayer size={markSize} ink="var(--color-ink-on-accent)" clipPath={clip} />
       </div>
+
+      <ParametricSlider
+        label="Vermilion field"
+        value={split}
+        onValueChange={setSplit}
+        formatValue={(v) => `${v}%`}
+        ariaValueText={(v) => `${v} percent vermilion. ${state(v)}`}
+        preview={state}
+      />
     </div>
   )
 }
@@ -221,89 +120,44 @@ const meta: Meta<FieldArgs> = {
   title: 'Brand/Stroke inversion',
   tags: ['autodocs'],
   parameters: {
-    layout: 'padded',
-    controls: { expanded: true },
+    layout: 'centered',
     docs: {
       description: {
         component: [
-          "The mark's stroke is a ground, not a background. Anything that crosses it — the wordmark, a",
-          'nav label, an icon — flips to the on-accent ink for exactly the pixels the stroke covers, so one',
-          'element reads correctly on paper and on vermilion at the same time.',
+          'Paper and vermilion are two grounds, and no single ink is legible on both. Ink on the accent',
+          'measures 4.30:1 and fails; on-accent ink on paper is worse. A mark that lies across the edge',
+          'between them therefore cannot be drawn once.',
           '',
-          'It is drawn three times over: the stroke itself in the identity shade, the content in ink, and a',
-          'second copy of that content in `--color-ink-on-accent`, masked to the stroke. The masked copy is',
-          'decorative — `aria-hidden` and `inert` — so its duplicate controls never reach a screen reader or',
-          'the tab order.',
+          'So it is drawn twice. One copy in `--color-ink`, a second in `--color-ink-on-accent` clipped to',
+          'exactly the vermilion region, laid on the same pixels. Each copy is then a licensed pair, and the',
+          'seam falls precisely on the colour change. Drag the slider and watch the mark hand itself over.',
           '',
           'Switch the toolbar to After hours. The accent lifts, `--color-ink-on-accent` flips to the dark',
-          'ground, and the inverted copy goes dark instead of light. Nothing in the technique changes; the',
+          'ground, and the inverted half goes dark instead of light. The technique does not change; the',
           'tokens carry it.',
           '',
-          'The mask draws from `halbertMarkGeometry()`, the same path data the `HalbertMark` component',
-          'renders, so the stroke a visitor sees and the stroke that does the cutting cannot drift apart.',
-          '',
-          'The accessibility panel reports contrast here as *incomplete* rather than passing, and it is right',
-          'to: no automated check can resolve a colour pair when the ground is an SVG that changes under every',
-          'glyph. That is the argument for the technique rather than against it. One ink over two grounds',
-          'would have to lose on one of them; drawing the content twice makes each copy a licensed pair —',
-          'ink on canvas, on-accent ink on the accent — so contrast holds by construction instead of by',
-          'measurement.',
+          'The marketing site runs this at full viewport, where the clip is the mark itself at hero scale',
+          'and the content crossing it is the folio bar and the links dock. The mechanism is the one here.',
         ].join('\n'),
       },
     },
   },
-  args: { markScale: 72, markX: 50, markY: 0 },
+  args: { markSize: 96, tilt: 60 },
   argTypes: {
-    markScale: {
-      control: { type: 'range', min: 20, max: 400, step: 2 },
-      description: "Width of the mark, as a percentage of the field's width. Past roughly 250 the lanes stop reading as a mark and become one vermilion ground with a curved edge, which is the scale the marketing hero runs at",
+    markSize: {
+      control: { type: 'range', min: 32, max: 160, step: 4 },
+      description: 'Rendered size of the mark, in pixels',
     },
-    markX: {
-      control: { type: 'range', min: -20, max: 120, step: 1 },
-      description: "Horizontal centre of the mark, as a percentage of the field's width",
-    },
-    markY: {
-      control: { type: 'range', min: -240, max: 240, step: 4 },
-      description: 'Vertical nudge from the centred position, in pixels',
+    tilt: {
+      control: { type: 'range', min: 0, max: 120, step: 5 },
+      description: "How far the edge leans, as a percentage of the field's width. 0 is a vertical edge",
     },
   },
 }
 export default meta
 type Story = StoryObj<FieldArgs>
 
-/**
- * Drag the mark across the field and watch the glyphs and the wordmark flip as
- * each lane passes under them.
- */
-export const Overlay: Story = {
-  render: (args) => (
-    <StrokeField {...args} height={320}>
-      <FieldContent />
-    </StrokeField>
-  ),
-}
-
-/** The three layers, pulled apart. */
-export const Anatomy: Story = {
-  parameters: { controls: { disable: true } },
-  render: (args) => {
-    const height = 190
-    return (
-      <div style={{ display: 'grid', gap: 'var(--space-6)' }}>
-        <Caption label="1 — the content, in ink">
-          <StrokeField {...args} height={height} layer="ink">
-            <FieldContent />
-          </StrokeField>
-        </Caption>
-        <Caption label="2 — the stroke, as a mask">
-          <StrokeField {...args} height={height} layer="mask" />
-        </Caption>
-        <Caption label="3 — composite: a second copy in on-accent ink, cut to that mask">
-          <StrokeField {...args} height={height}>
-            <FieldContent />
-          </StrokeField>
-        </Caption>
-      </div>
-    )
-  },
+/** Drag the slider to sweep the vermilion across the mark. */
+export const Inversion: Story = {
+  render: (args) => <InversionDemo {...args} />,
 }
