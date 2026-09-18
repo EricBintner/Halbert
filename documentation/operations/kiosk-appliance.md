@@ -50,7 +50,39 @@ systemctl --user daemon-reload
 Edit `~/.config/systemd/user/halbert-kiosk.service` and set the `HALBERT_PORT`
 environment variable to match your backend port (default: 8000).
 
-### 4. Enable and start
+### 4. Tell the backend it is a wall panel
+
+Set `HALBERT_KIOSK=1` on the **backend** unit — `deploy/halbert-home.service`
+or `deploy/halbert-host.service`, whichever serves this appliance:
+
+```ini
+# In the backend unit's [Service] section
+Environment=HALBERT_KIOSK=1
+```
+
+Not on `halbert-kiosk.service`. That unit starts Chromium; the flag is read by
+the Python process that builds the channel capability, and an environment
+variable set on the browser never reaches it.
+
+What it changes: a desk screen is assumed private, so the display stream keeps
+full values — passwords, keys, addresses — while only the spoken stream is
+redacted. A hallway panel breaks that assumption, and this flag is the only
+thing that tells the backend so. Unset, a wall-mounted appliance reports a
+private screen and shows secrets to whoever walks past.
+
+Accepted spellings: `1`, `true`, `yes`, `on`, `y`, `enable`, `enabled` (case
+insensitive). Anything else reads as unset, which is the permissive answer —
+so confirm it took:
+
+```bash
+systemctl --user show halbert-home -p Environment | grep KIOSK
+```
+
+The flag is per-process, not per-viewer. One backend answers the same way for
+every browser that reaches it, so on a host that is both wall-mounted and used
+at a desk, set it and accept the redaction on both surfaces.
+
+### 5. Enable and start
 
 ```bash
 # Enable auto-start on login
@@ -60,7 +92,7 @@ systemctl --user enable halbert-kiosk
 systemctl --user start halbert-kiosk
 ```
 
-### 5. Auto-login (headless appliance)
+### 6. Auto-login (headless appliance)
 
 For a dedicated appliance that boots directly into the kiosk:
 

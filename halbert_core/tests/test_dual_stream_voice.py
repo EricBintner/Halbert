@@ -61,3 +61,102 @@ def test_screen_is_private_degrades_closed_without_a_seam(monkeypatch):
 
     monkeypatch.setattr(modality_wiring, "_engine_available", lambda: False)
     assert modality_wiring.screen_is_private() is False
+
+
+def test_a_satellite_turn_is_not_a_private_screen():
+    """The one non-private body production can actually produce.
+
+    ``is_desktop`` has no caller outside tests and ``kiosk`` needs an env
+    flag on the backend unit, so both stay at their defaults on a running
+    host. ``set_wyoming_active`` is different: ``wyoming_agent`` calls it
+    around every satellite turn (``wyoming_agent.py:381`` / ``:482``).
+    Until it was checked here, a turn spoken into a room with no screen in
+    it still answered True.
+    """
+    cap = HalbertChannelCapability(is_desktop=True)
+    assert cap.has_private_screen() is True
+    cap.set_wyoming_active(True)
+    assert cap.has_private_screen() is False
+    cap.set_wyoming_active(False)
+    assert cap.has_private_screen() is True
+
+
+@pytest.mark.parametrize(
+    "value", ["1", "true", "TRUE", " True ", "yes", "on", "y", "enable", "enabled"]
+)
+def test_every_accepted_kiosk_spelling_reaches_the_backend(monkeypatch, value):
+    """An unrecognised spelling here does not cost a feature, it leaves a
+    wall panel reporting a private screen. So the accepted set is wider
+    than the repo's usual three."""
+    from halbert_core.integrations.app_seam import HalbertAppSeam
+
+    monkeypatch.setenv("HALBERT_KIOSK", value)
+    cap = HalbertAppSeam().get_channel_capability()
+    assert cap.has_private_screen() is False
+
+
+@pytest.mark.parametrize("value", ["", "0", "false", "no", "off"])
+def test_kiosk_unset_or_false_keeps_the_desk_default(monkeypatch, value):
+    from halbert_core.integrations.app_seam import HalbertAppSeam
+
+    monkeypatch.setenv("HALBERT_KIOSK", value)
+    cap = HalbertAppSeam().get_channel_capability()
+    assert cap.has_private_screen() is True
+
+
+# --- screen_is_private: every branch that has to fail closed ---------------
+
+class _PrivateCap:
+    def has_private_screen(self):
+        return True
+
+
+class _RaisingCap:
+    def has_private_screen(self):
+        raise RuntimeError("capability blew up")
+
+
+class _OldCap:
+    """A capability from before this accessor existed."""
+
+
+def _wire_resolver(monkeypatch, resolver):
+    """Point `screen_is_private` at a resolver of our choosing."""
+    pytest.importorskip("haloysius.seam")
+    import haloysius.seam as seam
+
+    from halbert_core.integrations import modality_wiring
+
+    monkeypatch.setattr(modality_wiring, "_engine_available", lambda: True)
+    monkeypatch.setattr(seam, "resolve_channel_capability", resolver)
+    return modality_wiring
+
+
+def test_screen_is_private_says_yes_when_the_capability_does(monkeypatch):
+    """The positive control. Without it the four tests below would pass
+    just as well against a function that returned False unconditionally."""
+    wiring = _wire_resolver(monkeypatch, lambda: _PrivateCap())
+    assert wiring.screen_is_private() is True
+
+
+def test_screen_is_private_fails_closed_when_there_is_no_capability(monkeypatch):
+    wiring = _wire_resolver(monkeypatch, lambda: None)
+    assert wiring.screen_is_private() is False
+
+
+def test_screen_is_private_fails_closed_on_a_capability_too_old_to_answer(monkeypatch):
+    wiring = _wire_resolver(monkeypatch, lambda: _OldCap())
+    assert wiring.screen_is_private() is False
+
+
+def test_screen_is_private_fails_closed_when_resolution_raises(monkeypatch):
+    def _boom():
+        raise RuntimeError("seam blew up")
+
+    wiring = _wire_resolver(monkeypatch, _boom)
+    assert wiring.screen_is_private() is False
+
+
+def test_screen_is_private_fails_closed_when_the_getter_raises(monkeypatch):
+    wiring = _wire_resolver(monkeypatch, lambda: _RaisingCap())
+    assert wiring.screen_is_private() is False

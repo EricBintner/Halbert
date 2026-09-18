@@ -45,6 +45,16 @@ from .sourceprep_client import SourcePrepClient
 
 logger = logging.getLogger(__name__)
 
+#: Accepted spellings of a true ``HALBERT_KIOSK``. Wider than the repo's
+#: usual ``("1", "true", "yes")`` on purpose, and for one reason: every
+#: other env flag in the tree turns a FEATURE on, so a spelling that is not
+#: recognised costs the operator the feature and nothing else. This one
+#: turns a REDACTION on. An unrecognised spelling here does not disable a
+#: convenience, it leaves a wall panel reporting a private screen — the
+#: failure this flag exists to prevent. `obs/audit.py` already reaches for
+#: the wider set where the same asymmetry applies.
+_KIOSK_TRUTHY = frozenset({"1", "true", "yes", "on", "y", "enable", "enabled"})
+
 
 class HalbertGovernancePolicy:
     """Permissive governance policy for Halbert.
@@ -419,16 +429,20 @@ class HalbertAppSeam:
         if self._channel_capability is not None:
             return self._channel_capability
         try:
-            import os
             from .channel_capability import HalbertChannelCapability
             # A kiosk is a deployment fact, not a runtime state: the same
             # binary on the same host is a kiosk or it is not. An env flag
             # set by the unit file is the honest shape, and the default is
             # the safe one for a desktop (private) while an operator who
             # wall-mounts a panel opts out.
+            #
+            # It goes on the BACKEND unit, which is where this code runs —
+            # `scripts/halbert-kiosk.service` launches Chromium, a
+            # different process, so setting it there would reach nothing.
+            # `documentation/operations/kiosk-appliance.md` says so too.
             self._channel_capability = HalbertChannelCapability(
                 kiosk=os.environ.get("HALBERT_KIOSK", "").strip().lower()
-                in ("1", "true", "yes"),
+                in _KIOSK_TRUTHY,
             )
             return self._channel_capability
         except Exception as e:

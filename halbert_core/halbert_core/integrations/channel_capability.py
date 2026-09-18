@@ -112,7 +112,24 @@ class HalbertChannelCapability:
 
         True for the Tauri desktop shell in its own window. False for a
         kiosk deployment and for every screenless satellite.
+
+        ``wyoming_active`` is checked first and is the only one of the
+        three that production actually sets: ``wyoming_agent`` calls
+        ``set_wyoming_active`` around every satellite turn, so a turn
+        arriving from a speaker in a room answers False here even though
+        the process-wide ``is_desktop`` is still True. Without that check
+        the docstring's "every screenless satellite" was a claim no
+        shipped deployment could produce.
+
+        Scope, so the next caller does not overread it: this capability is
+        per-PROCESS and memoised by the seam, while privacy is per-VIEWER.
+        One backend serves whatever browsers reach it, so ``kiosk`` says
+        "this installation is a wall panel", not "this particular reader
+        is a bystander". A host that is both wall-mounted and desktop-used
+        must set the flag and accept the redaction on both.
         """
+        if self._wyoming_active:
+            return False
         return self._is_desktop and not self._kiosk
 
     def has_keyboard(self) -> bool:

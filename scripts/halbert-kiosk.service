@@ -8,6 +8,17 @@ Type=simple
 Environment=HALBERT_PORT=8000
 Environment=DISPLAY=:0
 
+# HALBERT_KIOSK does NOT belong here. This unit starts Chromium; the flag is
+# read by the BACKEND process, which builds the channel capability and decides
+# whether the screen it renders to is private. Set it on the backend unit
+# (deploy/halbert-home.service or deploy/halbert-host.service):
+#
+#   Environment=HALBERT_KIOSK=1
+#
+# Without it the backend reports a private screen and the display stream keeps
+# full secret values — correct at a desk, wrong on a wall. See
+# documentation/operations/kiosk-appliance.md.
+
 # Disable screen blanking and DPMS — the display power daemon (P2) takes
 # over DPMS management once it is running.
 ExecStartPre=/usr/bin/xset s off
