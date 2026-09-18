@@ -5,15 +5,6 @@ import type { Meta, StoryObj } from '@storybook/react'
 
 import { HalbertMark } from '../primitives/HalbertMark'
 import { ParametricSlider } from '../primitives/ParametricSlider'
-import { useMeasuredWidth } from '../lib'
-
-/**
- * Two grounds, one mark, two inks.
- *
- * The page is a technique rather than an exported component: a field split
- * between paper and vermilion, with the mark drawn twice so each half wears
- * the ink its ground licenses.
- */
 
 interface FieldArgs {
   /** Rendered size of the mark, in pixels. */
@@ -21,6 +12,8 @@ interface FieldArgs {
   /** How far the edge leans, as a percentage of the field's width. 0 is a vertical edge. */
   tilt: number
 }
+
+const FIELD_HEIGHT = 240
 
 /**
  * The vermilion field: everything to the right of one straight edge.
@@ -55,39 +48,21 @@ function MarkLayer({ size, ink, clipPath }: { size: number; ink: string; clipPat
   )
 }
 
-const FIELD_HEIGHT = 200
-
 /**
- * Which ground the mark is standing on, worked out rather than guessed.
- *
- * The slider's preview is the half of it that says what the setting *does*, so
- * a threshold picked by eye would be the one dishonest line on a page about
- * honest pairs. The edge leans, so it meets the mark's box at two different
- * x positions; the mark is crossed when that span overlaps the box at all.
+ * Nothing below the slider, and nothing that grows or shrinks with its value:
+ * a caption that rewrapped between one line and two moved the whole field on
+ * every drag, which is the one thing a demo of a moving edge cannot do.
  */
-function stateOf(split: number, tilt: number, markSize: number, width: number): string {
-  const top = (100 + tilt) * (1 - split / 100)
-  const halfW = width > 0 ? (markSize / 2 / width) * 100 : 0
-  const halfH = (markSize / 2 / FIELD_HEIGHT) * 100
-  const atMarkTop = top - (tilt * (50 - halfH)) / 100
-  const atMarkBottom = top - (tilt * (50 + halfH)) / 100
-
-  if (atMarkBottom > 50 + halfW) return 'The mark is clear of the edge, drawn in ink on paper.'
-  if (atMarkTop < 50 - halfW) return 'The mark is clear of the edge, drawn in on-accent ink on vermilion.'
-  return 'The edge crosses the mark. Each half wears the ink its ground licenses.'
-}
-
 function InversionDemo({ markSize, tilt }: FieldArgs) {
   const [split, setSplit] = React.useState(50)
-  const fieldRef = React.useRef<HTMLDivElement>(null)
-  const width = useMeasuredWidth(fieldRef)
   const clip = wedge(split, tilt)
-  const state = (value: number) => stateOf(value, tilt, markSize, width)
 
   return (
-    <div style={{ width: 'min(460px, 100%)', display: 'grid', gap: 'var(--space-5)' }}>
+    // A definite width, not a percentage: the centred story layout shrink-wraps
+    // its child, so `min(540px, 100%)` resolves its 100% against a parent whose
+    // width is the content — and the field collapses to the slider's label.
+    <div style={{ width: 540, maxWidth: '100%', display: 'grid', gap: 'var(--space-5)' }}>
       <div
-        ref={fieldRef}
         role="img"
         aria-label="The Halbert mark across the edge between the paper field and the vermilion field"
         style={{
@@ -109,8 +84,6 @@ function InversionDemo({ markSize, tilt }: FieldArgs) {
         value={split}
         onValueChange={setSplit}
         formatValue={(v) => `${v}%`}
-        ariaValueText={(v) => `${v} percent vermilion. ${state(v)}`}
-        preview={state}
       />
     </div>
   )
@@ -124,28 +97,17 @@ const meta: Meta<FieldArgs> = {
     docs: {
       description: {
         component: [
-          'Paper and vermilion are two grounds, and no single ink is legible on both. Ink on the accent',
-          'measures 4.30:1 and fails; on-accent ink on paper is worse. A mark that lies across the edge',
-          'between them therefore cannot be drawn once.',
-          '',
-          'So it is drawn twice. One copy in `--color-ink`, a second in `--color-ink-on-accent` clipped to',
-          'exactly the vermilion region, laid on the same pixels. Each copy is then a licensed pair, and the',
-          'seam falls precisely on the colour change. Drag the slider and watch the mark hand itself over.',
-          '',
-          'Switch the toolbar to After hours. The accent lifts, `--color-ink-on-accent` flips to the dark',
-          'ground, and the inverted half goes dark instead of light. The technique does not change; the',
-          'tokens carry it.',
-          '',
-          'The marketing site runs this at full viewport, where the clip is the mark itself at hero scale',
-          'and the content crossing it is the folio bar and the links dock. The mechanism is the one here.',
+          'Paper and vermilion are two grounds, and no single ink is legible on both. The mark is drawn',
+          'twice — once in `--color-ink`, once in `--color-ink-on-accent` clipped to the vermilion — so each',
+          'copy is a licensed pair and the seam falls exactly on the colour change.',
         ].join('\n'),
       },
     },
   },
-  args: { markSize: 96, tilt: 60 },
+  args: { markSize: 116, tilt: 60 },
   argTypes: {
     markSize: {
-      control: { type: 'range', min: 32, max: 160, step: 4 },
+      control: { type: 'range', min: 32, max: 200, step: 4 },
       description: 'Rendered size of the mark, in pixels',
     },
     tilt: {
@@ -157,7 +119,6 @@ const meta: Meta<FieldArgs> = {
 export default meta
 type Story = StoryObj<FieldArgs>
 
-/** Drag the slider to sweep the vermilion across the mark. */
 export const Inversion: Story = {
   render: (args) => <InversionDemo {...args} />,
 }
