@@ -36,6 +36,7 @@ import {
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { apiUrl } from '@/lib/apiBase'
+import { api } from '@/lib/api'
 import { SystemItemActions, PageHeader } from '@/components/domain'
 import { Select } from '@/components/ui/select'
 import { WhyBrain } from '@/components/ui/why-brain'
@@ -142,6 +143,10 @@ export function GPU() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [refreshing, setRefreshing] = useState(false)
+  // Recorded rationales for this page's GPUs, keyed by the same item id the
+  // WhyBrain call site uses. Read once per page load: an operator's note is an
+  // annotation, not part of the hardware read, so the 5s poll leaves it alone.
+  const [rationales, setRationales] = useState<Record<string, { why: string }>>({})
 
   const loadGPUData = async () => {
     try {
@@ -171,6 +176,30 @@ export function GPU() {
     const interval = setInterval(loadGPUData, 5000)
     return () => clearInterval(interval)
   }, [])
+
+  // The rationale is an annotation on the page, never a gate in front of it:
+  // if the store cannot be read the icons stay in their nothing-recorded state
+  // and the GPU content renders exactly as it always did.
+  useEffect(() => {
+    let cancelled = false
+    api
+      .getRationalesByType('gpu')
+      .then((res) => {
+        if (cancelled) return
+        setRationales(res.rationales || {})
+      })
+      .catch((err) => {
+        console.error('Failed to load GPU rationales:', err)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  /** Fold a just-saved rationale in, so the brain colours without a refetch. */
+  const recordRationale = (itemId: string, why: string) => {
+    setRationales((prev) => ({ ...prev, [itemId]: { ...prev[itemId], why } }))
+  }
 
   const handleRefresh = () => {
     setRefreshing(true)
@@ -335,6 +364,8 @@ export function GPU() {
                       itemId={`gpu:${gpu.pci_id}`}
                       itemName={gpu.model}
                       itemType="gpu"
+                      why={rationales[`gpu:${gpu.pci_id}`]?.why}
+                      onWhySaved={(why) => recordRationale(`gpu:${gpu.pci_id}`, why)}
                       size="sm"
                     />
                     <SystemItemActions

@@ -54,6 +54,35 @@ export interface AgentStreamResult {
   error?: string
 }
 
+export interface SavedRationale {
+  item_id: string
+  saved: boolean
+  updated_at: string
+}
+
+/** `found: false` means no rationale was ever written for this item. A store
+ *  that cannot be read answers 503 and `request` throws, so absence here is
+ *  never a silent read failure. */
+export interface Rationale {
+  item_id: string
+  found: boolean
+  why: string | null
+  item_name: string | null
+  item_type: string | null
+  updated_at: string | null
+}
+
+export interface RationalesByType {
+  item_type: string
+  count: number
+  rationales: Record<string, { why: string; item_name: string; updated_at: string }>
+}
+
+export interface DeletedRationale {
+  item_id: string
+  deleted: boolean
+}
+
 export const api = {
   // -----------------------------------------------------------------
   // Discoveries
@@ -355,15 +384,34 @@ export const api = {
   },
 
   // -----------------------------------------------------------------
-  // "Why" annotations
-  // NOTE: no backend endpoint exists for this yet (verified 2026-08-22;
-  // the WhyBrain/WhyOverlay UI is live but persistence was never built).
-  // Planned to be backed by the knowledge layer in Phase 2.
+  // Rationales — the operator's note on what an item is for and why it is
+  // set that way, keyed by item id. Backed by /api/why.
+  //
+  // The store answers 503 when it cannot be read or written, never a 200
+  // that reads as "nothing recorded", so `found: false` genuinely means
+  // nobody has written a rationale for this item.
   // -----------------------------------------------------------------
-  saveWhy(itemId: string, itemName: string, itemType: string, why: string) {
+  saveRationale(
+    itemId: string,
+    itemName: string,
+    itemType: string,
+    why: string,
+  ): Promise<SavedRationale> {
     return request('/api/why', {
       method: 'POST',
       body: JSON.stringify({ item_id: itemId, item_name: itemName, item_type: itemType, why }),
     })
+  },
+
+  getRationale(itemId: string): Promise<Rationale> {
+    return request(`/api/why?item_id=${encodeURIComponent(itemId)}`)
+  },
+
+  getRationalesByType(itemType: string): Promise<RationalesByType> {
+    return request(`/api/why/by-type?item_type=${encodeURIComponent(itemType)}`)
+  },
+
+  deleteRationale(itemId: string): Promise<DeletedRationale> {
+    return request(`/api/why?item_id=${encodeURIComponent(itemId)}`, { method: 'DELETE' })
   },
 }

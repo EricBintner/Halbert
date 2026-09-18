@@ -121,6 +121,10 @@ export function Services() {
   const [activeAiTab, setActiveAiTab] = useState<'explanation' | 'diagnosis'>('explanation')
   const [, forceUpdate] = useState({})  // Force re-render on queue changes
   const [queueCount, setQueueCount] = useState(0)
+  // Recorded rationales for this page's services, keyed by the same item id the
+  // WhyBrain call site uses. Read once per page load — a scan refresh reloads
+  // the services, not the operator's notes about them.
+  const [rationales, setRationales] = useState<Record<string, { why: string }>>({})
 
   // Subscribe to queue changes
   useEffect(() => {
@@ -179,6 +183,30 @@ export function Services() {
   useEffect(() => {
     loadServices()
   }, [])
+
+  // The rationale is an annotation on the page, never a gate in front of it:
+  // if the store cannot be read the icons stay in their nothing-recorded state
+  // and the service list renders exactly as it always did.
+  useEffect(() => {
+    let cancelled = false
+    api
+      .getRationalesByType('service')
+      .then((res) => {
+        if (cancelled) return
+        setRationales(res.rationales || {})
+      })
+      .catch((error) => {
+        console.error('Failed to load service rationales:', error)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  /** Fold a just-saved rationale in, so the brain colours without a refetch. */
+  const recordRationale = (itemId: string, why: string) => {
+    setRationales((prev) => ({ ...prev, [itemId]: { ...prev[itemId], why } }))
+  }
 
   // Refresh when system-wide scan completes (via context)
   useEffect(() => {
@@ -599,6 +627,8 @@ export function Services() {
                         itemId={`service:${service.name}`}
                         itemName={service.name}
                         itemType="service"
+                        why={rationales[`service:${service.name}`]?.why}
+                        onWhySaved={(why) => recordRationale(`service:${service.name}`, why)}
                         size="sm"
                       />
                       <SystemItemActions

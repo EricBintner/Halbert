@@ -147,6 +147,11 @@ export function Network() {
   const [saving, setSaving] = useState(false)
   const { copiedId: copied, copy: copyToClipboard } = useCopyToClipboard()
 
+  // Recorded rationales for this page's interfaces, keyed by the same item id
+  // both WhyBrain call sites use. Read once per page load — a scan refresh
+  // reloads the interfaces, not the operator's notes about them.
+  const [rationales, setRationales] = useState<Record<string, { why: string }>>({})
+
   // Cache helpers for persistent explanations
   const CACHE_KEY = 'halbert_network_explanations'
   
@@ -172,6 +177,30 @@ export function Network() {
   useEffect(() => {
     loadNetwork()
   }, [])
+
+  // The rationale is an annotation on the page, never a gate in front of it:
+  // if the store cannot be read the icons stay in their nothing-recorded state
+  // and the interface lists render exactly as they always did.
+  useEffect(() => {
+    let cancelled = false
+    api
+      .getRationalesByType('network')
+      .then((res) => {
+        if (cancelled) return
+        setRationales(res.rationales || {})
+      })
+      .catch((error) => {
+        console.error('Failed to load network rationales:', error)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  /** Fold a just-saved rationale in, so the brain colours without a refetch. */
+  const recordRationale = (itemId: string, why: string) => {
+    setRationales((prev) => ({ ...prev, [itemId]: { ...prev[itemId], why } }))
+  }
 
   // Refresh when system-wide scan completes (via context)
   useEffect(() => {
@@ -508,6 +537,10 @@ export function Network() {
                         itemId={`network:${iface.data.interface || iface.name}`}
                         itemName={iface.title}
                         itemType="network"
+                        why={rationales[`network:${iface.data.interface || iface.name}`]?.why}
+                        onWhySaved={(why) =>
+                          recordRationale(`network:${iface.data.interface || iface.name}`, why)
+                        }
                         size="sm"
                       />
                       <ChevronRight className="h-4 w-4 text-muted-foreground" />
@@ -578,6 +611,10 @@ export function Network() {
                       itemId={`network:${iface.data.interface || iface.name}`}
                       itemName={iface.title}
                       itemType="network"
+                      why={rationales[`network:${iface.data.interface || iface.name}`]?.why}
+                      onWhySaved={(why) =>
+                        recordRationale(`network:${iface.data.interface || iface.name}`, why)
+                      }
                       size="sm"
                     />
                     <SystemItemActions

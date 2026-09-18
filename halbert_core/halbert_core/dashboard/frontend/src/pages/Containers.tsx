@@ -49,6 +49,7 @@ import {
 import { cn } from '@/lib/utils'
 import { WhyBrain } from '@/components/ui/why-brain'
 import { apiUrl } from '@/lib/apiBase'
+import { api } from '@/lib/api'
 
 interface ContainerInfo {
   id: string
@@ -136,6 +137,10 @@ export function Containers() {
   const [containerLogs, setContainerLogs] = useState<string>('')
   const [logsLoading, setLogsLoading] = useState(false)
   const [actionLoading, setActionLoading] = useState<string | null>(null)
+  // Recorded rationales for this page's containers, keyed by the same item id
+  // the WhyBrain call site uses. Read once per page load: an operator's note is
+  // an annotation, not live container state, so the 5s poll leaves it alone.
+  const [rationales, setRationales] = useState<Record<string, { why: string }>>({})
 
   const loadContainers = async () => {
     try {
@@ -159,6 +164,30 @@ export function Containers() {
     const interval = setInterval(loadContainers, 5000)
     return () => clearInterval(interval)
   }, [])
+
+  // The rationale is an annotation on the page, never a gate in front of it:
+  // if the store cannot be read the icons stay in their nothing-recorded state
+  // and the container list renders exactly as it always did.
+  useEffect(() => {
+    let cancelled = false
+    api
+      .getRationalesByType('container')
+      .then((res) => {
+        if (cancelled) return
+        setRationales(res.rationales || {})
+      })
+      .catch((err) => {
+        console.error('Failed to load container rationales:', err)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  /** Fold a just-saved rationale in, so the brain colours without a refetch. */
+  const recordRationale = (itemId: string, why: string) => {
+    setRationales((prev) => ({ ...prev, [itemId]: { ...prev[itemId], why } }))
+  }
 
   // Also refresh when system-wide scan completes (via context)
   useEffect(() => {
@@ -586,6 +615,8 @@ export function Containers() {
                         itemId={`container:${container.id}`}
                         itemName={container.name}
                         itemType="container"
+                        why={rationales[`container:${container.id}`]?.why}
+                        onWhySaved={(why) => recordRationale(`container:${container.id}`, why)}
                         size="sm"
                       />
                       <SystemItemActions

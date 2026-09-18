@@ -951,13 +951,24 @@ function DiskItem({
   )
 }
 
+/**
+ * The page's recorded rationales, handed down to the brain on each card.
+ * The card renders the note; the page owns reading and holding it.
+ */
+interface RationaleShelf {
+  /** Recorded rationales keyed by item id. */
+  map: Record<string, { why: string }>
+  /** Fold a just-saved rationale in so the brain colours without a refetch. */
+  onSaved: (itemId: string, why: string) => void
+}
+
 /** 
  * Compact disk group card.
  * Header: semantic name + mount point (for single fs) + disk count
  * Body: usage bar(s)
  * Footer: small expand link for physical disks
  */
-function DiskGroupSection({ group, allDisks }: { group: DiskGroup; allDisks: StorageItem[] }) {
+function DiskGroupSection({ group, allDisks, rationales }: { group: DiskGroup; allDisks: StorageItem[]; rationales: RationaleShelf }) {
   const [isOpen, setIsOpen] = useState(false)
   const { customNames, onRename } = useContext(CustomNamesContext)
   
@@ -1065,6 +1076,8 @@ function DiskGroupSection({ group, allDisks }: { group: DiskGroup; allDisks: Sto
               itemId={`storage:${storageItemId}`}
               itemName={group.semanticName}
               itemType="storage"
+              why={rationales.map[`storage:${storageItemId}`]?.why}
+              onWhySaved={(why) => rationales.onSaved(`storage:${storageItemId}`, why)}
               size="sm"
             />
             <SystemItemActions
@@ -1694,6 +1707,10 @@ export function Storage() {
   const [showUnmounted, setShowUnmounted] = useState(false)
   const [showUUIDs, setShowUUIDs] = useState(false)
   const [customNames, setCustomNames] = useState<Record<string, string>>(() => loadCustomNames())
+  // Recorded rationales for this page's disk groups, keyed by the same item id
+  // the WhyBrain call site uses. Read once per page load — a scan refresh
+  // reloads the storage, not the operator's notes about it.
+  const [rationales, setRationales] = useState<Record<string, { why: string }>>({})
 
   // Handle renaming a volume/filesystem
   const handleRename = useCallback((id: string, name: string) => {
@@ -1711,6 +1728,30 @@ export function Storage() {
 
   useEffect(() => {
     loadStorage()
+  }, [])
+
+  // The rationale is an annotation on the page, never a gate in front of it:
+  // if the store cannot be read the icons stay in their nothing-recorded state
+  // and the disk groups render exactly as they always did.
+  useEffect(() => {
+    let cancelled = false
+    api
+      .getRationalesByType('storage')
+      .then((res) => {
+        if (cancelled) return
+        setRationales(res.rationales || {})
+      })
+      .catch((error) => {
+        console.error('Failed to load storage rationales:', error)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  /** Fold a just-saved rationale in, so the brain colours without a refetch. */
+  const recordRationale = useCallback((itemId: string, why: string) => {
+    setRationales((prev) => ({ ...prev, [itemId]: { ...prev[itemId], why } }))
   }, [])
 
   // Refresh when system-wide scan completes (via context)
@@ -1861,7 +1902,12 @@ export function Storage() {
           </Card>
         ) : (
           diskGroups.map((group) => (
-            <DiskGroupSection key={group.id} group={group} allDisks={disks} />
+            <DiskGroupSection
+              key={group.id}
+              group={group}
+              allDisks={disks}
+              rationales={{ map: rationales, onSaved: recordRationale }}
+            />
           ))
         )}
         
