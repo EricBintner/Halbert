@@ -24,6 +24,8 @@ import {
   Check,
   Palette,
   Box,
+  Brain,
+  MessageCircle,
   Sparkles,
   Ruler,
 } from 'lucide-react'
@@ -76,13 +78,19 @@ const DESIGN_SYSTEM = {
   },
   // Inactive state for all action icons
   inactiveColor: 'text-muted-foreground/60',
-  // Hover colors by action type
+  // Hover colors by action type. This page states these as the source of
+  // truth AND renders them, so a value that drifts from the component is the
+  // page lying about the component. Change both together.
   hoverColors: {
-    mention: 'hover:text-blue-500 hover:bg-blue-500/10',
+    mention: 'hover:text-info hover:bg-info/10',
     chat: 'hover:text-primary hover:bg-primary/10',
     research: 'hover:text-purple-500 hover:bg-purple-500/10',
-    whyDefined: 'text-pink-500 hover:text-pink-400',
-    whyUndefined: 'text-muted-foreground/60 hover:text-muted-foreground',
+    // WhyBrain. The telemetry tone is the recorded-provenance tone: it means
+    // a rationale exists here. No hover shift on that state -- the colour is
+    // itself the signal -- and the glyph fills with the matching tint.
+    whyDefined: 'text-status-telemetry',
+    whyDefinedFill: 'fill-status-telemetry-bg',
+    whyUndefined: 'text-ink-ghost hover:text-ink-tertiary',
   },
 }
 
@@ -190,15 +198,15 @@ h4 { @apply text-base font-semibold; }
               <div className="space-y-2">
                 <p className="text-xs text-muted-foreground uppercase tracking-wide">Brand Accents</p>
                 <div className="flex items-center gap-2">
-                  <div className="w-8 h-8 rounded bg-pink-500" />
-                  <span className="text-xs">Brain Pink</span>
+                  <div className="w-8 h-8 rounded bg-status-telemetry" />
+                  <span className="text-xs">Recorded rationale</span>
                 </div>
                 <div className="flex items-center gap-2">
                   <div className="w-8 h-8 rounded bg-purple-500" />
                   <span className="text-xs">Research</span>
                 </div>
                 <div className="flex items-center gap-2">
-                  <div className="w-8 h-8 rounded bg-blue-500" />
+                  <div className="w-8 h-8 rounded bg-info" />
                   <span className="text-xs">Mention</span>
                 </div>
               </div>
@@ -206,10 +214,10 @@ h4 { @apply text-base font-semibold; }
             <div className="pt-4 border-t space-y-2">
               <p className="text-xs text-muted-foreground uppercase tracking-wide">Status</p>
               <div className="flex gap-4">
-                <span className="text-green-500">Success</span>
-                <span className="text-yellow-500">Warning</span>
-                <span className="text-red-500">Error</span>
-                <span className="text-blue-500">Info</span>
+                <span className="text-success">Success</span>
+                <span className="text-warning">Warning</span>
+                <span className="text-error">Error</span>
+                <span className="text-info">Info</span>
               </div>
             </div>
           </div>
@@ -223,14 +231,15 @@ bg-muted / text-muted-foreground  /* Subdued */
 bg-destructive                    /* Danger */
 
 /* Brand Accents */
-text-pink-500    /* WhyBrain, AI */
-text-purple-500  /* Research */
-text-blue-500    /* Mentions */
+text-status-telemetry  /* WhyBrain -- a rationale is recorded */
+text-purple-500        /* Research */
+text-info              /* Mentions */
 
 /* Status Colors */
-text-green-500   /* Success */
-text-yellow-500  /* Warning */
-text-red-500     /* Error */`,
+text-success     /* Success */
+text-warning     /* Warning */
+text-error       /* Error */
+text-info        /* Info */`,
       },
       {
         id: 'icon-button-sizing',
@@ -302,38 +311,40 @@ const DESIGN_SYSTEM = {
             </div>
             <div className="flex items-center gap-3">
               <div className={cn("w-8 h-8 rounded flex items-center justify-center text-primary bg-primary/10")}>
-                <span className="text-sm">★</span>
+                <MessageCircle className="h-4 w-4" />
               </div>
               <span className="text-sm">Chat: <code className="text-xs bg-muted text-foreground px-1 rounded border">primary</code></span>
             </div>
             <div className="flex items-center gap-3">
               <div className={cn("w-8 h-8 rounded flex items-center justify-center text-purple-500 bg-purple-500/10")}>
-                <span className="text-sm">✨</span>
+                <Sparkles className="h-4 w-4" />
               </div>
               <span className="text-sm">Research: <code className="text-xs bg-muted text-foreground px-1 rounded border">purple-500</code></span>
             </div>
             <div className="flex items-center gap-3">
-              <div className={cn("w-8 h-8 rounded flex items-center justify-center text-pink-500")}>
-                <span className="text-sm">🧠</span>
+              <div className={cn("w-8 h-8 rounded flex items-center justify-center", DESIGN_SYSTEM.hoverColors.whyDefined)}>
+                <Brain className={cn("h-4 w-4", DESIGN_SYSTEM.hoverColors.whyDefinedFill)} />
               </div>
-              <span className="text-sm">Why (defined): <code className="text-xs bg-muted text-foreground px-1 rounded border">pink-500</code></span>
+              <span className="text-sm">Why, rationale recorded: <code className="text-xs bg-muted text-foreground px-1 rounded border">status-telemetry</code></span>
             </div>
             <div className="flex items-center gap-3">
-              <div className={cn("w-8 h-8 rounded flex items-center justify-center text-muted-foreground/60")}>
-                <span className="text-sm">🧠</span>
+              <div className={cn("w-8 h-8 rounded flex items-center justify-center text-ink-ghost")}>
+                <Brain className="h-4 w-4" />
               </div>
-              <span className="text-sm">Inactive: <code className="text-xs bg-muted text-foreground px-1 rounded border">muted-foreground/60</code></span>
+              <span className="text-sm">Why, nothing recorded: <code className="text-xs bg-muted text-foreground px-1 rounded border">ink-ghost</code></span>
             </div>
           </div>
         ),
         props: [],
         code: `// Hover colors by action type
 hoverColors: {
-  mention: 'hover:text-blue-500 hover:bg-blue-500/10',
+  mention: 'hover:text-info hover:bg-info/10',
   chat: 'hover:text-primary hover:bg-primary/10',
   research: 'hover:text-purple-500 hover:bg-purple-500/10',
-  whyDefined: 'text-pink-500 hover:text-pink-400',
-  whyUndefined: 'text-muted-foreground/60 hover:text-muted-foreground',
+  // The recorded state carries no hover shift -- the colour is the signal.
+  whyDefined: 'text-status-telemetry',
+  whyDefinedFill: 'fill-status-telemetry-bg',
+  whyUndefined: 'text-ink-ghost hover:text-ink-tertiary',
 }`,
       },
     ],

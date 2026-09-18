@@ -148,7 +148,7 @@ describe('KnowledgeTab', () => {
       expect(screen.queryByText('Main pool')).not.toBeInTheDocument()
     })
 
-    it('the Teach Something New form toggles and Save is disabled until subject and content are filled', async () => {
+    it('the teach-something-new form toggles and Save is disabled until subject and content are filled', async () => {
       const user = userEvent.setup()
       const setShowAddKnowledge = vi.fn()
       const { rerender } = render(
@@ -156,7 +156,7 @@ describe('KnowledgeTab', () => {
       )
       expect(screen.queryByText('Save Knowledge')).not.toBeInTheDocument()
 
-      await user.click(screen.getByText('Teach Something New'))
+      await user.click(screen.getByText('Teach something new'))
       expect(setShowAddKnowledge).toHaveBeenCalledWith(true)
 
       rerender(<KnowledgeTab {...baseProps()} showAddKnowledge />)
@@ -243,7 +243,7 @@ describe('KnowledgeTab', () => {
       )
       expect(screen.getByText('Arch Wiki')).toBeInTheDocument()
       expect(screen.getByText('My Docs')).toBeInTheDocument()
-      expect(screen.getByText('Custom Added (1)')).toBeInTheDocument()
+      expect(screen.getByText('Custom added (1)')).toBeInTheDocument()
     })
 
     it('renders RAG search indexes when present', () => {
@@ -376,7 +376,7 @@ describe('KnowledgeTab', () => {
       const user = userEvent.setup()
       const setShowAddKnowledgeSource = vi.fn()
       render(<KnowledgeTab {...baseProps()} setShowAddKnowledgeSource={setShowAddKnowledgeSource} />)
-      await user.click(screen.getByText('Add Custom Documentation'))
+      await user.click(screen.getByText('Add custom documentation'))
       expect(setShowAddKnowledgeSource).toHaveBeenCalledWith(true)
     })
 

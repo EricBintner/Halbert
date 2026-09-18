@@ -36,7 +36,9 @@
 .hb-select:focus-visible,
 .hb-slider__input:focus-visible,
 .hb-window__toggle:focus-visible,
-.hb-dock__btn:focus-visible {
+.hb-dock__btn:focus-visible,
+.hb-why-chip__trigger:focus-visible,
+.hb-why-chip__ref:focus-visible {
   outline: var(--focus-ring-width) solid var(--color-focus-ring);
   outline-offset: var(--focus-ring-offset);
 }

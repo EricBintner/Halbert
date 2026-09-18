@@ -234,7 +234,7 @@ export function KnowledgeTab({
           <CardTitle className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Brain className="h-5 w-5" />
-              Self-Knowledge
+              Self-knowledge
             </div>
             <Button variant="ghost" size="sm" onClick={onLoadSelfKnowledge}>
               <RefreshCw className={`h-4 w-4 ${loadingSelfKnowledge ? 'animate-spin' : ''}`} />
@@ -253,23 +253,25 @@ export function KnowledgeTab({
                 onClick={() => setShowAddKnowledge(!showAddKnowledge)}
               >
                 <Plus className={`h-4 w-4 transition-transform ${showAddKnowledge ? 'rotate-45' : ''}`} />
-                Teach Something New
+                Teach something new
                 <ChevronDown className={`h-4 w-4 ml-auto transition-transform ${showAddKnowledge ? 'rotate-180' : ''}`} />
               </button>
               {showAddKnowledge && (
                 <div className="p-4 border rounded-lg space-y-3 bg-muted/30">
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
-                      <Label>Subject</Label>
+                      <Label htmlFor="knowledge-subject">Subject</Label>
                       <Input
+                        id="knowledge-subject"
                         value={newKnowledge.subject}
                         onChange={(e: React.ChangeEvent<HTMLInputElement>) => setNewKnowledge({...newKnowledge, subject: e.target.value})}
                         placeholder="e.g., bcachefs pool, main server"
                       />
                     </div>
                     <div className="space-y-2">
-                      <Label>Content</Label>
+                      <Label htmlFor="knowledge-content">Content</Label>
                       <Input
+                        id="knowledge-content"
                         value={newKnowledge.content}
                         onChange={(e: React.ChangeEvent<HTMLInputElement>) => setNewKnowledge({...newKnowledge, content: e.target.value})}
                         placeholder="What is it? What does it do?"
@@ -277,8 +279,9 @@ export function KnowledgeTab({
                     </div>
                   </div>
                   <div className="space-y-2">
-                    <Label>Rationale (optional)</Label>
+                    <Label htmlFor="knowledge-rationale">Rationale (optional)</Label>
                     <Input
+                      id="knowledge-rationale"
                       value={newKnowledge.rationale}
                       onChange={(e: React.ChangeEvent<HTMLInputElement>) => setNewKnowledge({...newKnowledge, rationale: e.target.value})}
                       placeholder="Why this is worth remembering"
@@ -289,7 +292,7 @@ export function KnowledgeTab({
                     disabled={!newKnowledge.subject || !newKnowledge.content || addingKnowledge}
                   >
                     {addingKnowledge ? <RefreshCw className="h-4 w-4 mr-2 animate-spin" /> : <Plus className="h-4 w-4 mr-2" />}
-                    Save Knowledge
+                    Save knowledge
                   </Button>
                 </div>
               )}
@@ -303,7 +306,7 @@ export function KnowledgeTab({
               </div>
             ) : selfKnowledge.length === 0 ? (
               <div className="p-4 text-center text-muted-foreground border rounded-lg">
-                No self-knowledge yet. Teach Halbert something!
+                No self-knowledge yet. Teach Halbert something.
               </div>
             ) : (
               <div className="border rounded-lg divide-y max-h-96 overflow-y-auto">
@@ -365,7 +368,7 @@ export function KnowledgeTab({
             {/* Stats summary */}
             <div className="p-4 bg-muted/50 rounded-lg">
               <div className="flex items-center justify-between mb-2">
-                <h4 className="font-medium">Indexed Sources</h4>
+                <h4 className="font-medium">Indexed sources</h4>
                 <div className="flex items-center gap-2">
                   <Button
                     variant="outline"
@@ -381,21 +384,21 @@ export function KnowledgeTab({
                   </Button>
                   <Button variant="ghost" size="sm" onClick={onToggleDocList}>
                     {showDocList ? <ChevronUp className="h-4 w-4 mr-1" /> : <ChevronDown className="h-4 w-4 mr-1" />}
-                    {showDocList ? 'Hide' : 'View All'}
+                    {showDocList ? 'Hide' : 'View all'}
                   </Button>
                 </div>
               </div>
               <div className="grid grid-cols-4 gap-4 text-sm">
                 <div>
-                  <p className="text-muted-foreground">Total Documents</p>
+                  <p className="text-muted-foreground">Total documents</p>
                   <p className="font-medium">{ragStats?.total_docs?.toLocaleString() || 'Loading...'} docs</p>
                 </div>
                 <div>
-                  <p className="text-muted-foreground">Custom Added</p>
+                  <p className="text-muted-foreground">Custom added</p>
                   <p className="font-medium">{ragStats?.user_docs || 0} docs</p>
                 </div>
                 <div>
-                  <p className="text-muted-foreground">Last Indexed</p>
+                  <p className="text-muted-foreground">Last indexed</p>
                   <p className="font-medium text-xs">
                     {docFreshness?.last_indexed_at
                       ? new Date(docFreshness.last_indexed_at).toLocaleDateString()
@@ -453,11 +456,11 @@ export function KnowledgeTab({
                         {/* Core sources first */}
                         <tr className="bg-muted/30">
                           <td colSpan={2} className="p-2 text-xs font-medium text-muted-foreground">
-                            Core Knowledge Base
+                            Core knowledge base
                           </td>
                         </tr>
-                        {coreSources.map((source, i) => (
-                          <tr key={`core-${i}`} className="border-t">
+                        {coreSources.map((source) => (
+                          <tr key={`core-${source.name}`} className="border-t">
                             <td className="p-2">{source.name}</td>
                             <td className="p-2 text-right text-muted-foreground">{source.count.toLocaleString()}</td>
                           </tr>
@@ -467,11 +470,11 @@ export function KnowledgeTab({
                           <>
                             <tr className="border-t-2 border-muted bg-info-muted/50 dark:bg-info/20">
                               <td colSpan={2} className="p-2 text-xs font-medium text-muted-foreground">
-                                Custom Added ({customDocs.length})
+                                Custom added ({customDocs.length})
                               </td>
                             </tr>
-                            {customDocs.map((doc, i) => (
-                              <tr key={`custom-${i}`} className="border-t bg-info-muted/30 dark:bg-info/10">
+                            {customDocs.map((doc) => (
+                              <tr key={`custom-${doc.source || doc.url || doc.name}`} className="border-t bg-info-muted/30 dark:bg-info/10">
                                 <td className="p-2">
                                   <span className="font-medium">{doc.name}</span>
                                   {doc.url && (
@@ -499,7 +502,7 @@ export function KnowledgeTab({
               <div className="border-t pt-4 space-y-3">
                 <div className="flex items-center gap-2">
                   <Database className="h-4 w-4 text-info" />
-                  <span className="font-medium">Search Indexes</span>
+                  <span className="font-medium">Search indexes</span>
                   <Badge variant="secondary" className="text-xs">{ragIndexes.length} indexes</Badge>
                 </div>
                 <div className="grid gap-2">
@@ -532,7 +535,7 @@ export function KnowledgeTab({
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <Sparkles className="h-4 w-4 text-warning" />
-                    <span className="font-medium">Suggested Documentation</span>
+                    <span className="font-medium">Suggested documentation</span>
                     <Badge variant="secondary" className="text-xs">{docSuggestions.length} found</Badge>
                   </div>
                   <span className="text-xs text-muted-foreground">Based on your system</span>
@@ -664,7 +667,7 @@ export function KnowledgeTab({
                                 <ExternalLink className="h-3 w-3" />
                               </a>
                               <Badge variant="outline" className="text-xs">{repo.language || 'Multi'}</Badge>
-                              <span className="text-xs text-muted-foreground">⭐ {repo.stars.toLocaleString()}</span>
+                              <span className="text-xs text-muted-foreground">{repo.stars.toLocaleString()} stars</span>
                             </div>
                             <p className="text-xs text-muted-foreground truncate">
                               {repo.description || repo.reason}
@@ -682,11 +685,14 @@ export function KnowledgeTab({
                           </div>
                           <div className="flex items-center gap-1 ml-2">
                             {repo.has_docs && (
+                              /* noopener/noreferrer: without them the opened
+                               * tab gets a handle on this window through
+                               * window.opener. */
                               <Button
                                 size="sm"
                                 variant="ghost"
                                 className="h-7 px-2"
-                                onClick={() => window.open(repo.doc_url || repo.url, '_blank')}
+                                onClick={() => window.open(repo.doc_url || repo.url, '_blank', 'noopener,noreferrer')}
                               >
                                 <BookOpen className="h-3 w-3" />
                                 <span className="ml-1 text-xs">Docs</span>
@@ -720,26 +726,28 @@ export function KnowledgeTab({
                 onClick={() => setShowAddKnowledgeSource(!showAddKnowledgeSource)}
               >
                 <Plus className={`h-4 w-4 transition-transform ${showAddKnowledgeSource ? 'rotate-45' : ''}`} />
-                Add Custom Documentation
+                Add custom documentation
                 <ChevronDown className={`h-4 w-4 ml-auto transition-transform ${showAddKnowledgeSource ? 'rotate-180' : ''}`} />
               </button>
               {showAddKnowledgeSource && (
               <>
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <Label>URL</Label>
+                  <Label htmlFor="knowledge-source-url">URL</Label>
                   <Input
+                    id="knowledge-source-url"
                     value={newSourceUrl}
                     onChange={(e: React.ChangeEvent<HTMLInputElement>) => setNewSourceUrl(e.target.value)}
                     placeholder="https://docs.example.com/"
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label>Name (optional)</Label>
+                  <Label htmlFor="knowledge-source-name">Name (optional)</Label>
                   <Input
+                    id="knowledge-source-name"
                     value={newSourceName}
                     onChange={(e: React.ChangeEvent<HTMLInputElement>) => setNewSourceName(e.target.value)}
-                    placeholder="Example Documentation"
+                    placeholder="Example documentation"
                   />
                 </div>
               </div>
@@ -749,7 +757,7 @@ export function KnowledgeTab({
                   disabled={!newSourceUrl || addingSource}
                 >
                   {addingSource ? <RefreshCw className="h-4 w-4 mr-2 animate-spin" /> : <Plus className="h-4 w-4 mr-2" />}
-                  Add Source
+                  Add source
                 </Button>
                 {addSourceResult && (
                   <Badge variant={addSourceResult.success ? "default" : addSourceResult.alreadyExists ? "secondary" : "destructive"}>

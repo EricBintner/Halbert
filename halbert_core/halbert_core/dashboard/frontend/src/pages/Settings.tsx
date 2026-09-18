@@ -241,6 +241,18 @@ export function Settings() {
   const [toast, setToast] = useState<{ open: boolean, message: string, variant: 'success' | 'error' | 'info' }>({ 
     open: false, message: '', variant: 'info' 
   })
+
+  /* What the backend said went wrong, in a form that is safe to drop into a
+   * sentence. FastAPI's `detail` is a string for HTTPException but a list of
+   * objects for a validation error, so anything that is not a non-empty
+   * string falls back to the status code rather than printing [object
+   * Object] at the operator. */
+  const failureDetail = (body: unknown, status: number): string => {
+    const data = body as { error?: unknown; detail?: unknown } | null
+    if (typeof data?.error === 'string' && data.error) return data.error
+    if (typeof data?.detail === 'string' && data.detail) return data.detail
+    return `the server answered ${status}`
+  }
   
   // Component Library viewer state
 
@@ -483,7 +495,7 @@ export function Settings() {
       console.log('[Settings] triggerDeepScan completed, loading system profile...')
       // Reload the system profile to update the local display
       await loadSystemProfile()
-      setToast({ open: true, message: 'Deep scan complete! All sections updated.', variant: 'success' })
+      setToast({ open: true, message: 'Deep scan complete. All sections updated.', variant: 'success' })
     } catch (err) {
       console.error('Deep scan failed:', err)
       setToast({ open: true, message: 'Deep scan failed', variant: 'error' })
@@ -511,17 +523,30 @@ export function Settings() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newRule)
       })
-      const data = await res.json()
-      if (data.success) {
-        setAiRules(prev => [...prev, data.rule])
-        setNewRule({ rule: '', category: 'general', priority: 'high' })
-        setToast({ open: true, message: 'Rule added!', variant: 'success' })
+      /* Same silent-failure shape the knowledge handlers had: a refused save
+       * said nothing at all. */
+      const data = await res.json().catch(() => null)
+      if (!res.ok || !data?.success) {
+        setToast({
+          open: true,
+          message: `Rule not added: ${failureDetail(data, res.status)}. Nothing was recorded. Your text is still in the form, so you can send it again.`,
+          variant: 'error',
+        })
+        return
       }
+      setAiRules(prev => [...prev, data.rule])
+      setNewRule({ rule: '', category: 'general', priority: 'high' })
+      setToast({ open: true, message: 'Rule added', variant: 'success' })
     } catch (err) {
       console.error('Failed to add rule:', err)
-      setToast({ open: true, message: 'Failed to add rule', variant: 'error' })
+      setToast({
+        open: true,
+        message: 'Rule not added: the request never reached the backend. Nothing was recorded. Your text is still in the form, so you can send it again.',
+        variant: 'error',
+      })
+    } finally {
+      setAddingRule(false)
     }
-    setAddingRule(false)
   }
   
   const handleDeleteRule = async (ruleId: string) => {
@@ -529,12 +554,24 @@ export function Settings() {
       const res = await fetch(`${API_BASE}/settings/ai-rules/${ruleId}`, {
         method: 'DELETE'
       })
-      if (res.ok) {
-        setAiRules(prev => prev.filter(r => r.id !== ruleId))
-        setToast({ open: true, message: 'Rule deleted', variant: 'info' })
+      if (!res.ok) {
+        const data = await res.json().catch(() => null)
+        setToast({
+          open: true,
+          message: `Rule not deleted: ${failureDetail(data, res.status)}. The rule is still there. Try again, or check that the backend is running.`,
+          variant: 'error',
+        })
+        return
       }
+      setAiRules(prev => prev.filter(r => r.id !== ruleId))
+      setToast({ open: true, message: 'Rule deleted', variant: 'info' })
     } catch (err) {
       console.error('Failed to delete rule:', err)
+      setToast({
+        open: true,
+        message: 'Rule not deleted: the request never reached the backend. The rule is still there. Try again, or check that the backend is running.',
+        variant: 'error',
+      })
     }
   }
   
@@ -576,7 +613,7 @@ export function Settings() {
       if (data.success) {
         setAddSourceResult({ 
           success: true, 
-          message: 'Added successfully!',
+          message: 'Added',
           title: data.title 
         })
         setNewSourceUrl('')
@@ -727,18 +764,34 @@ export function Settings() {
           rationale: newKnowledge.rationale || undefined
         })
       })
-      const data = await res.json()
-      if (data.success) {
-        setNewKnowledge({ subject: '', content: '', rationale: '' })
-        setShowAddKnowledge(false)
-        loadSelfKnowledge()
-        setToast({ open: true, message: 'Knowledge saved!', variant: 'success' })
+      /* A refused save used to fall straight through this function without a
+       * word: nothing recorded, nothing said, and the operator left looking
+       * at a form that appeared to have worked. Check the response, say what
+       * happened, and leave the typed text exactly where it is -- it is the
+       * only copy, and clearing it here would throw their work away. */
+      const data = await res.json().catch(() => null)
+      if (!res.ok || !data?.success) {
+        setToast({
+          open: true,
+          message: `Knowledge not saved: ${failureDetail(data, res.status)}. Nothing was recorded. Your text is still in the form, so you can send it again.`,
+          variant: 'error',
+        })
+        return
       }
+      setNewKnowledge({ subject: '', content: '', rationale: '' })
+      setShowAddKnowledge(false)
+      loadSelfKnowledge()
+      setToast({ open: true, message: 'Knowledge saved', variant: 'success' })
     } catch (err) {
       console.error('Failed to add knowledge:', err)
-      setToast({ open: true, message: 'Failed to save knowledge', variant: 'error' })
+      setToast({
+        open: true,
+        message: 'Knowledge not saved: the request never reached the backend. Nothing was recorded. Your text is still in the form, so you can send it again.',
+        variant: 'error',
+      })
+    } finally {
+      setAddingKnowledge(false)
     }
-    setAddingKnowledge(false)
   }
   
   const handleDeleteKnowledge = async (id: string) => {
@@ -746,12 +799,27 @@ export function Settings() {
       const res = await fetch(`${API_BASE}/settings/knowledge/${encodeURIComponent(id)}`, {
         method: 'DELETE'
       })
-      if (res.ok) {
-        loadSelfKnowledge()
-        setToast({ open: true, message: 'Knowledge deleted', variant: 'info' })
+      /* Same silence on the way out: a refused delete left the entry sitting
+       * in the list, which reads as a rendering glitch rather than a
+       * failure. */
+      if (!res.ok) {
+        const data = await res.json().catch(() => null)
+        setToast({
+          open: true,
+          message: `Knowledge not deleted: ${failureDetail(data, res.status)}. The entry is still there. Try again, or check that the backend is running.`,
+          variant: 'error',
+        })
+        return
       }
+      loadSelfKnowledge()
+      setToast({ open: true, message: 'Knowledge deleted', variant: 'info' })
     } catch (err) {
       console.error('Failed to delete knowledge:', err)
+      setToast({
+        open: true,
+        message: 'Knowledge not deleted: the request never reached the backend. The entry is still there. Try again, or check that the backend is running.',
+        variant: 'error',
+      })
     }
   }
 
@@ -954,7 +1022,7 @@ export function Settings() {
         <VoiceEnrollmentModal
           onClose={() => setShowEnrollmentModal(false)}
           onEnrolled={() => {
-            setToast({ open: true, message: 'Speaker enrolled successfully!', variant: 'success' })
+            setToast({ open: true, message: 'Speaker enrolled', variant: 'success' })
             setShowEnrollmentModal(false)
           }}
         />

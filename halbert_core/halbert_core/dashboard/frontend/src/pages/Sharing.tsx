@@ -847,7 +847,7 @@ export function Sharing() {
                     <Badge
                       className={cn(
                         item.data.active && 'bg-success',
-                        !item.data.active && 'bg-slate-500',
+                        !item.data.active && 'bg-muted-foreground',
                       )}
                     >
                       {item.status}
