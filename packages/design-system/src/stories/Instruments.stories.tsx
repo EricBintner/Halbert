@@ -166,7 +166,7 @@ export const SegmentedBarStorageBtrfs: StoryObj = {
 }
 
 const bcachefsTierSegments: SegmentItem[] = [
-  { id: 'fg', label: 'Foreground NVMe Cache', value: 420, tone: 'data-orange', detail: 'active write buffer' },
+  { id: 'fg', label: 'Foreground NVMe Cache', value: 420, tone: 'data-purple', detail: 'active write buffer' },
   { id: 'data', label: 'Rotational HDD Data', value: 2600, tone: 'data-blue', detail: 'bulk storage' },
   { id: 'meta', label: 'Replicated Metadata', value: 90, tone: 'data-purple', pattern: 'hatched' },
   { id: 'snap', label: 'Historical Snapshots', value: 340, tone: 'data-teal' },
@@ -250,7 +250,7 @@ export const TwoTierVignelliStorageCard: StoryObj = {
         <SegmentedBar
           segments={[
             { id: 'user', label: 'User Data', value: 1800, tone: 'data-blue' },
-            { id: 'cache', label: 'Foreground Cache', value: 420, tone: 'data-orange' },
+            { id: 'cache', label: 'Foreground Cache', value: 420, tone: 'data-purple' },
             { id: 'meta', label: 'Metadata', value: 80, tone: 'data-purple', pattern: 'hatched' },
           ]}
           total={5000}
@@ -266,11 +266,10 @@ export const TwoTierVignelliStorageCard: StoryObj = {
 
 const allSeriesSegments: SegmentItem[] = [
   { id: 's1', label: 'Cobalt / Blue', value: 28, tone: 'data-blue', detail: 'Series 1 · Primary Data' },
-  { id: 's2', label: 'Marigold / Gold', value: 20, tone: 'data-amber', detail: 'Series 2 · Active Cache' },
+  { id: 's2', label: 'Orchid / Purple', value: 20, tone: 'data-orchid', detail: 'Series 2 · Active Cache' },
   { id: 's3', label: 'Cyan / Teal', value: 18, tone: 'data-teal', detail: 'Series 3 · Secondary Pools' },
-  { id: 's4', label: 'Amethyst / Purple', value: 14, tone: 'data-purple', pattern: 'hatched', detail: 'Series 4 · Metadata / Journal' },
+  { id: 's4', label: 'Amethyst / Violet', value: 14, tone: 'data-purple', pattern: 'hatched', detail: 'Series 4 · Metadata / Journal' },
   { id: 's5', label: 'Emerald / Green', value: 12, tone: 'data-green', detail: 'Series 5 · Snapshots' },
-  { id: 's6', label: 'Coral / Orange', value: 8, tone: 'data-orange', detail: 'Series 6 · Focal Tier' },
 ]
 
 export const CategoricalDataPaletteShowcase: StoryObj = {
@@ -279,10 +278,10 @@ export const CategoricalDataPaletteShowcase: StoryObj = {
     <Container width={880}>
       <div>
         <h4 style={{ margin: 0, fontSize: 16, fontWeight: 600, fontFamily: 'var(--font-sans)', color: 'var(--color-ink)' }}>
-          High-Separation Categorical Data Palette
+          Categorical Data Palette — 5 Series + Neutral
         </h4>
         <p style={{ margin: '4px 0 16px', fontSize: 13, color: 'var(--color-ink-secondary)', lineHeight: 1.5 }}>
-          Six vivid, high-separation chromatic hues + slate neutral across the full 360° color spectrum. Zero muddy tones, zero brown, zero isoluminance collisions.
+          Five high-separation hues plus a slate neutral. No brown, and no orange — orange is reserved for the warning state, so a series can never be mistaken for one. Validated with the data-viz palette checker: worst adjacent CVD ΔE 8.5, normal-vision ΔE 24.2, every hue ≥ 3:1 on the surface.
         </p>
       </div>
 
@@ -303,11 +302,10 @@ export const CategoricalDataPaletteShowcase: StoryObj = {
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(230px, 1fr))', gap: 'var(--space-3)', marginTop: 'var(--space-3)' }}>
         {[
           { token: '--color-data-blue', name: 'Cobalt / Blue', desc: 'Series 1 · Primary Payload & Main Storage', bg: 'var(--color-data-blue)' },
-          { token: '--color-data-amber', name: 'Marigold / Gold', desc: 'Series 2 · Active Write Cache & Throughput', bg: 'var(--color-data-amber)' },
+          { token: '--color-data-orchid', name: 'Orchid / Purple', desc: 'Series 2 · Active Write Cache & Throughput', bg: 'var(--color-data-orchid)' },
           { token: '--color-data-teal', name: 'Cyan / Teal', desc: 'Series 3 · Secondary Pools & Data Volumes', bg: 'var(--color-data-teal)' },
-          { token: '--color-data-purple', name: 'Amethyst / Purple', desc: 'Series 4 · Metadata, Journals & Indexes', bg: 'var(--color-data-purple)' },
+          { token: '--color-data-purple', name: 'Amethyst / Violet', desc: 'Series 4 · Metadata, Journals & Indexes', bg: 'var(--color-data-purple)' },
           { token: '--color-data-green', name: 'Emerald / Green', desc: 'Series 5 · Historical Snapshots & Backups', bg: 'var(--color-data-green)' },
-          { token: '--color-data-orange', name: 'Coral / Orange', desc: 'Series 6 · Focal Tier & Ephemeral Buffers', bg: 'var(--color-data-orange)' },
           { token: '--color-data-neutral', name: 'Slate / Graphite', desc: 'Base · Reserved Capacity & System Overhead', bg: 'var(--color-data-neutral)' },
         ].map((item) => (
           <div

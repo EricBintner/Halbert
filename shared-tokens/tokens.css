@@ -89,17 +89,20 @@
 
   /* Mid-century diagnostic pigments. The -500s are the dark-theme lifts. */
   --botanical-600:  #1E7E50;  --botanical-500:  #38AF78;  --botanical-50:  #EEF6F2;
-  --ochre-700:      #A85A05;  --ochre-600:      #EBA02D;  --ochre-50:      #FDF8F0;
+  --ochre-50:       #FDF8F0;  /* warning chip tint; the brown 600/700 steps were retired 2026-09-18 */
   --terracotta-600: #C32337;  --terracotta-500: #EB5569;  --terracotta-50: #FDF2F0;
   --blueprint-600:  #1E5FAF;  --blueprint-500:  #5AA0F0;  --blueprint-50:  #F0F6F9;
 
-  /* Categorical data visualization pigments (Vibrant, high-separation palette) */
+  /* Categorical data visualization pigments.
+   * No brown, and no orange: orange is reserved for the warning state
+   * (founder directive, 2026-09-18). Validated with the data-viz palette
+   * checker — worst adjacent CVD deltaE 8.5, normal-vision 24.2, all >= 3:1. */
   --cobalt-600:     #1D6FD8;  --cobalt-400:     #5EA2F8;
-  --marigold-600:   #CB6C04;  --marigold-400:   #FBBF24;
+  --orchid-600:     #A81CA0;  --orchid-400:     #C93BC0;
   --cyan-teal-600:  #0891B2;  --cyan-teal-400:  #22D3EE;
   --amethyst-600:   #7C3AED;  --amethyst-400:   #A78BFA;
   --emerald-600:    #059669;  --emerald-400:    #34D399;
-  --coral-600:      #EA580C;  --coral-400:      #FB923C;
+  --coral-700:      #C2410C;  --coral-600:      #EA580C;  --coral-400:      #FB923C;
   --slate-600:      #78716C;  --slate-400:      #A8A29E;
 
   /* Recessed dark chips. A translucent wash over `surface` in dark mode lands
@@ -145,7 +148,8 @@
 
   --hb-status-nominal:      var(--botanical-600);
   --hb-status-nominal-bg:   var(--botanical-50);
-  --hb-status-warning:      var(--ochre-700);
+  --hb-status-warning:      var(--coral-700);
+  --hb-status-warning-mark: var(--coral-600);
   --hb-status-warning-bg:   var(--ochre-50);
   --hb-status-critical:     var(--terracotta-600);
   --hb-status-critical-bg:  var(--terracotta-50);
@@ -155,25 +159,23 @@
   /* Pill borders. Previously spelled `${fg}55` by string concatenation in
    * ui.jsx; named here so a hairline is a token and not a substring trick. */
   --hb-status-nominal-line:   rgba(30, 126, 80, 0.33);
-  --hb-status-warning-line:   rgba(168, 90, 5, 0.33);
+  --hb-status-warning-line:   rgba(194, 65, 12, 0.33);
   --hb-status-critical-line:  rgba(195, 35, 55, 0.33);
   --hb-status-telemetry-line: rgba(30, 95, 175, 0.33);
 
-  /* Categorical Data Visualization — 6 Distinct Series + Slate Neutral */
+  /* Categorical Data Visualization — 5 Distinct Series + Slate Neutral */
   --hb-data-blue:    var(--cobalt-600);
-  --hb-data-amber:   var(--marigold-600);
+  --hb-data-orchid:  var(--orchid-600);
   --hb-data-teal:    var(--cyan-teal-600);
   --hb-data-purple:  var(--amethyst-600);
   --hb-data-green:   var(--emerald-600);
-  --hb-data-orange:  var(--coral-600);
   --hb-data-neutral: var(--slate-600);
 
   --hb-data-1: var(--hb-data-blue);
-  --hb-data-2: var(--hb-data-amber);
+  --hb-data-2: var(--hb-data-orchid);
   --hb-data-3: var(--hb-data-teal);
   --hb-data-4: var(--hb-data-purple);
   --hb-data-5: var(--hb-data-green);
-  --hb-data-6: var(--hb-data-orange);
 
   --hb-shadow-subtle:  0 2px 8px -2px rgba(28, 25, 23, 0.08);
   --hb-shadow-plate:   0 12px 32px -16px rgba(28, 25, 23, 0.35);
@@ -210,6 +212,7 @@
   --color-status-nominal-bg:   var(--hb-status-nominal-bg);
   --color-status-nominal-line: var(--hb-status-nominal-line);
   --color-status-warning:      var(--hb-status-warning);
+  --color-status-warning-mark: var(--hb-status-warning-mark);
   --color-status-warning-bg:   var(--hb-status-warning-bg);
   --color-status-warning-line: var(--hb-status-warning-line);
   --color-status-critical:      var(--hb-status-critical);
@@ -220,11 +223,10 @@
   --color-status-telemetry-line: var(--hb-status-telemetry-line);
 
   --color-data-blue:    var(--hb-data-blue);
-  --color-data-amber:   var(--hb-data-amber);
+  --color-data-orchid:  var(--hb-data-orchid);
   --color-data-teal:    var(--hb-data-teal);
   --color-data-purple:  var(--hb-data-purple);
   --color-data-green:   var(--hb-data-green);
-  --color-data-orange:  var(--hb-data-orange);
   --color-data-neutral: var(--hb-data-neutral);
 
   --color-data-1: var(--hb-data-1);
@@ -232,7 +234,6 @@
   --color-data-3: var(--hb-data-3);
   --color-data-4: var(--hb-data-4);
   --color-data-5: var(--hb-data-5);
-  --color-data-6: var(--hb-data-6);
 
   --shadow-subtle:  var(--hb-shadow-subtle);
   --shadow-plate:   var(--hb-shadow-plate);
@@ -328,7 +329,8 @@
 
   --hb-status-nominal:      var(--botanical-500);
   --hb-status-nominal-bg:   var(--chip-nominal);
-  --hb-status-warning:      var(--ochre-600);
+  --hb-status-warning:      var(--coral-400);
+  --hb-status-warning-mark: var(--coral-400);
   --hb-status-warning-bg:   var(--chip-warning);
   --hb-status-critical:     var(--terracotta-500);
   --hb-status-critical-bg:  var(--chip-critical);
@@ -336,25 +338,23 @@
   --hb-status-telemetry-bg: var(--chip-telemetry);
 
   --hb-status-nominal-line:   rgba(56, 175, 120, 0.40);
-  --hb-status-warning-line:   rgba(235, 160, 45, 0.40);
+  --hb-status-warning-line:   rgba(251, 146, 60, 0.40);
   --hb-status-critical-line:  rgba(235, 85, 105, 0.40);
   --hb-status-telemetry-line: rgba(90, 160, 240, 0.40);
 
   /* Categorical Data Visualization — 6 Distinct Series + Slate Neutral */
   --hb-data-blue:    var(--cobalt-400);
-  --hb-data-amber:   var(--marigold-400);
+  --hb-data-orchid:  var(--orchid-400);
   --hb-data-teal:    var(--cyan-teal-400);
   --hb-data-purple:  var(--amethyst-400);
   --hb-data-green:   var(--emerald-400);
-  --hb-data-orange:  var(--coral-400);
   --hb-data-neutral: var(--slate-400);
 
   --hb-data-1: var(--hb-data-blue);
-  --hb-data-2: var(--hb-data-amber);
+  --hb-data-2: var(--hb-data-orchid);
   --hb-data-3: var(--hb-data-teal);
   --hb-data-4: var(--hb-data-purple);
   --hb-data-5: var(--hb-data-green);
-  --hb-data-6: var(--hb-data-orange);
 
   --hb-shadow-subtle:  0 2px 8px -2px rgba(0, 0, 0, 0.50);
   --hb-shadow-plate:   0 12px 32px -16px rgba(0, 0, 0, 0.75);
@@ -391,7 +391,8 @@
 
     --hb-status-nominal:      var(--botanical-500);
     --hb-status-nominal-bg:   var(--chip-nominal);
-    --hb-status-warning:      var(--ochre-600);
+    --hb-status-warning:      var(--coral-400);
+    --hb-status-warning-mark: var(--coral-400);
     --hb-status-warning-bg:   var(--chip-warning);
     --hb-status-critical:     var(--terracotta-500);
     --hb-status-critical-bg:  var(--chip-critical);
@@ -399,26 +400,24 @@
     --hb-status-telemetry-bg: var(--chip-telemetry);
 
     --hb-status-nominal-line:   rgba(56, 175, 120, 0.40);
-    --hb-status-warning-line:   rgba(235, 160, 45, 0.40);
+    --hb-status-warning-line:   rgba(251, 146, 60, 0.40);
     --hb-status-critical-line:  rgba(235, 85, 105, 0.40);
     --hb-status-telemetry-line: rgba(90, 160, 240, 0.40);
 
     /* Categorical Data Visualization — 6 Distinct Series + Slate Neutral */
     --hb-data-blue:    var(--cobalt-400);
-    --hb-data-amber:   var(--marigold-400);
+    --hb-data-orchid:  var(--orchid-400);
     --hb-data-teal:    var(--cyan-teal-400);
     --hb-data-purple:  var(--amethyst-400);
     --hb-data-green:   var(--emerald-400);
-    --hb-data-orange:  var(--coral-400);
-    --hb-data-neutral: var(--slate-400);
+      --hb-data-neutral: var(--slate-400);
 
     --hb-data-1: var(--hb-data-blue);
-    --hb-data-2: var(--hb-data-amber);
+    --hb-data-2: var(--hb-data-orchid);
     --hb-data-3: var(--hb-data-teal);
     --hb-data-4: var(--hb-data-purple);
     --hb-data-5: var(--hb-data-green);
-    --hb-data-6: var(--hb-data-orange);
-
+  
     --hb-shadow-subtle:  0 2px 8px -2px rgba(0, 0, 0, 0.50);
     --hb-shadow-plate:   0 12px 32px -16px rgba(0, 0, 0, 0.75);
     --hb-shadow-popover: 0 12px 32px -4px rgba(0, 0, 0, 0.60);

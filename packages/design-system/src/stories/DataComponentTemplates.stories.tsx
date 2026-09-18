@@ -348,7 +348,7 @@ export const HostComputeVitalsTemplate: StoryObj = {
         detail="PCIe 4.0 x4 · Flush in progress"
         metrics="1.2 GB / 4.0 GB"
         status={<MetricStatus value="30.0%" tone="telemetry" />}
-        meter={<TactileMeter value={30.0} tone="data-amber" size="md" ticks={[25, 50, 75, 90]} />}
+        meter={<TactileMeter value={30.0} tone="data-orchid" size="md" ticks={[25, 50, 75, 90]} />}
         titleWidth={220}
         pathWidth={200}
         metricsWidth={180}
@@ -429,7 +429,7 @@ export const AcceleratorVramTemplate: StoryObj = {
         detail="TDP Limit: 450W · Peak: 385W"
         metrics="315.0W / 450.0W"
         status={<MetricStatus value="70.0%" tone="nominal" />}
-        meter={<TactileMeter value={70.0} tone="data-orange" size="md" />}
+        meter={<TactileMeter value={70.0} tone="data-purple" size="md" />}
         titleWidth={220}
         pathWidth={180}
         metricsWidth={180}

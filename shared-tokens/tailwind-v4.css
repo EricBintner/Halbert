@@ -52,6 +52,7 @@
   --color-status-nominal-bg: var(--hb-status-nominal-bg);
   --color-status-nominal-line: var(--hb-status-nominal-line);
   --color-status-warning: var(--hb-status-warning);
+  --color-status-warning-mark: var(--hb-status-warning-mark);
   --color-status-warning-bg: var(--hb-status-warning-bg);
   --color-status-warning-line: var(--hb-status-warning-line);
   --color-status-critical: var(--hb-status-critical);
@@ -63,11 +64,10 @@
 
   /* Categorical Data Visualization — 6 Distinct Series + Slate Neutral */
   --color-data-blue:    var(--hb-data-blue);
-  --color-data-amber:   var(--hb-data-amber);
+  --color-data-orchid:  var(--hb-data-orchid);
   --color-data-teal:    var(--hb-data-teal);
   --color-data-purple:  var(--hb-data-purple);
   --color-data-green:   var(--hb-data-green);
-  --color-data-orange:  var(--hb-data-orange);
   --color-data-neutral: var(--hb-data-neutral);
 
   --color-data-1: var(--hb-data-1);
@@ -75,7 +75,6 @@
   --color-data-3: var(--hb-data-3);
   --color-data-4: var(--hb-data-4);
   --color-data-5: var(--hb-data-5);
-  --color-data-6: var(--hb-data-6);
 
   /* Structure — `border-line`, `rounded-lg`, `shadow-plate` */
   --color-line: var(--hb-line);

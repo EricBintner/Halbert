@@ -15,13 +15,11 @@ export type TactileMeterTone =
   | 'data-3'
   | 'data-4'
   | 'data-5'
-  | 'data-6'
   | 'data-blue'
-  | 'data-amber'
+  | 'data-orchid'
   | 'data-teal'
   | 'data-purple'
   | 'data-green'
-  | 'data-orange'
   | 'data-neutral'
 
 export interface TactileMeterProps extends React.HTMLAttributes<HTMLDivElement> {
@@ -47,7 +45,7 @@ export interface TactileMeterProps extends React.HTMLAttributes<HTMLDivElement> 
    * - 'warning': warm goldenrod amber
    * - 'nominal': fresh botanical emerald
    * - 'neutral': calm slate graphite
-   * - categorical data series: 'data-blue', 'data-amber', 'data-teal', etc.
+   * - categorical data series: 'data-blue', 'data-orchid', 'data-teal', etc.
    */
   tone?: TactileMeterTone
   /** Track height variant (default: 'md'). */

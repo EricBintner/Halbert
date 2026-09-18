@@ -738,7 +738,7 @@ export function allocationSegments(
     ['data_bytes', 'Data', 'data-1'],
     ['metadata_bytes', 'Metadata', 'data-3'],
     ['cached_bytes', 'Cached', 'data-5'],
-    ['system_bytes', 'System', 'data-6'],
+    ['system_bytes', 'System', 'data-neutral'],
   ]
 
   const segments: SegmentItem[] = []

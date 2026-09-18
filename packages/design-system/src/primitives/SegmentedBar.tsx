@@ -15,13 +15,11 @@ export type SegmentTone =
   | 'data-3'
   | 'data-4'
   | 'data-5'
-  | 'data-6'
   | 'data-blue'
-  | 'data-amber'
+  | 'data-orchid'
   | 'data-teal'
   | 'data-purple'
   | 'data-green'
-  | 'data-orange'
 
 export interface SegmentItem {
   id: string

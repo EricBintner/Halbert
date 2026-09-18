@@ -88,7 +88,7 @@ export const DriveCassette = React.forwardRef<HTMLDivElement, DriveCassetteProps
   // Convert partitions to SegmentedBar slices if present
   const partitionSegments: SegmentItem[] = React.useMemo(() => {
     if (!partitions || partitions.length === 0) return []
-    const tonePalette: SegmentItem['tone'][] = ['data-blue', 'data-teal', 'data-amber', 'data-purple']
+    const tonePalette: SegmentItem['tone'][] = ['data-blue', 'data-teal', 'data-orchid', 'data-purple']
     return partitions.map((p, idx) => {
       const numMatch = p.size.match(/([\d.]+)\s*([A-Za-z]+)?/)
       let val = numMatch ? parseFloat(numMatch[1]) : 10

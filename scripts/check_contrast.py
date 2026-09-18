@@ -193,13 +193,20 @@ CHECKS: list[tuple[str, tuple[str, ...], float, str]] = [
     ("--color-status-critical",  ACCENT_SURFACES, AA_TEXT, "critical (AA)"),
     ("--color-status-telemetry", ACCENT_SURFACES, AA_TEXT, "telemetry (AA)"),
 
-    # Categorical data visualization series (3:1 graphical mark floor)
+    # Categorical data visualization series (3:1 graphical mark floor).
+    # Five slots, no brown and no orange: orange belongs to the warning state.
+    # Hue separation is not a contrast question — it is checked by the data-viz
+    # palette validator, which this gate deliberately does not duplicate.
     ("--color-data-1", ACCENT_SURFACES, AA_NON_TEXT, "data-1 (non-text 3:1)"),
     ("--color-data-2", ACCENT_SURFACES, AA_NON_TEXT, "data-2 (non-text 3:1)"),
     ("--color-data-3", ACCENT_SURFACES, AA_NON_TEXT, "data-3 (non-text 3:1)"),
     ("--color-data-4", ACCENT_SURFACES, AA_NON_TEXT, "data-4 (non-text 3:1)"),
     ("--color-data-5", ACCENT_SURFACES, AA_NON_TEXT, "data-5 (non-text 3:1)"),
-    ("--color-data-6", ACCENT_SURFACES, AA_NON_TEXT, "data-6 (non-text 3:1)"),
+
+    # The warning *mark* is a graphical object, so it owes 3:1, not 4.5:1 —
+    # which is what lets it be a true orange instead of a dark brown. Warning
+    # *text* keeps --color-status-warning above.
+    ("--color-status-warning-mark", ACCENT_SURFACES, AA_NON_TEXT, "warning mark (non-text 3:1)"),
 
     # The focus ring is the one boundary WCAG 1.4.11 / 2.4.13 genuinely
     # requires to stand alone. Decorative hairlines are NOT checked: a plate
