@@ -1905,3 +1905,130 @@
   width: 100%;
   height: 100%;
 }
+
+/* ------------------------------------------------------------- charts -- */
+/* The chart vocabulary. Every pigment resolves from shared-tokens; a status
+ * tone never borrows a categorical one, and no text is ever drawn on a mark. */
+
+.hb-chart { width: 100%; }
+.hb-chart__svg { display: block; width: 100%; height: auto; overflow: visible; }
+
+.hb-chart__axis       { stroke: var(--color-line-strong); stroke-width: 1; }
+.hb-chart__reference  { stroke: var(--color-line-strong); stroke-width: 1; stroke-dasharray: 3 3; }
+.hb-chart__tick       { font-family: var(--font-mono); font-size: 10px; fill: var(--color-ink-tertiary); }
+.hb-chart__caption    { font-family: var(--font-mono); font-size: 11px; fill: var(--color-ink-secondary); }
+.hb-chart__value      { font-family: var(--font-mono); font-size: 11px; font-weight: 700;
+                        fill: var(--color-ink); font-variant-numeric: tabular-nums; }
+.hb-chart__offline,
+.hb-chart__offline-inline { font-family: var(--font-mono); font-size: 10px;
+                            fill: var(--color-ink-tertiary); letter-spacing: .08em; }
+
+/* series pigments, shared by every chart that needs one */
+.hb-series--data-1,       .hb-series--data-blue   { color: var(--color-data-blue); }
+.hb-series--data-2,       .hb-series--data-orchid { color: var(--color-data-orchid); }
+.hb-series--data-3,       .hb-series--data-teal   { color: var(--color-data-teal); }
+.hb-series--data-4,       .hb-series--data-purple { color: var(--color-data-purple); }
+.hb-series--data-5,       .hb-series--data-green  { color: var(--color-data-green); }
+
+/* slope -------------------------------------------------------------- */
+.hb-slope__line { fill: none; stroke: var(--color-data-blue); stroke-width: 2.5;
+                  stroke-linecap: round; stroke-linejoin: round; }
+.hb-slope__node { fill: var(--color-data-blue); }
+.hb-slope__node--warning { fill: var(--color-status-warning-mark); }
+.hb-slope.is-offline .hb-slope__line,
+.hb-slope.is-offline .hb-slope__node { display: none; }
+
+/* dot plot ----------------------------------------------------------- */
+.hb-dotplot__rail { stroke: var(--color-line); stroke-width: 1; }
+.hb-dotplot__dot--telemetry { fill: var(--color-status-telemetry); }
+.hb-dotplot__dot--nominal   { fill: var(--color-status-nominal); }
+.hb-dotplot__dot--warning   { fill: var(--color-status-warning-mark); }
+.hb-dotplot__dot--critical  { fill: var(--color-status-critical); }
+.hb-dotplot__dot--neutral   { fill: var(--color-data-neutral); }
+.hb-dotplot__dot--data-1, .hb-dotplot__dot--data-blue   { fill: var(--color-data-blue); }
+.hb-dotplot__dot--data-2, .hb-dotplot__dot--data-orchid { fill: var(--color-data-orchid); }
+.hb-dotplot__dot--data-3, .hb-dotplot__dot--data-teal   { fill: var(--color-data-teal); }
+.hb-dotplot__dot--data-4, .hb-dotplot__dot--data-purple { fill: var(--color-data-purple); }
+.hb-dotplot__dot--data-5, .hb-dotplot__dot--data-green  { fill: var(--color-data-green); }
+.hb-dotplot__dot--data-neutral { fill: var(--color-data-neutral); }
+
+/* status matrix ------------------------------------------------------ */
+.hb-matrix__cell--nominal   { fill: var(--color-status-nominal); }
+.hb-matrix__cell--warning   { fill: var(--color-status-warning-mark); }
+.hb-matrix__cell--critical  { fill: var(--color-status-critical); }
+.hb-matrix__cell--telemetry { fill: var(--color-status-telemetry); }
+.hb-matrix__cell--neutral   { fill: var(--color-line-strong); }
+.hb-matrix__cell--data-1, .hb-matrix__cell--data-blue   { fill: var(--color-data-blue); }
+.hb-matrix__cell--data-2, .hb-matrix__cell--data-orchid { fill: var(--color-data-orchid); }
+.hb-matrix__cell--data-3, .hb-matrix__cell--data-teal   { fill: var(--color-data-teal); }
+.hb-matrix__cell--data-4, .hb-matrix__cell--data-purple { fill: var(--color-data-purple); }
+.hb-matrix__cell--data-5, .hb-matrix__cell--data-green  { fill: var(--color-data-green); }
+.hb-matrix__cell--data-neutral { fill: var(--color-data-neutral); }
+
+.hb-matrix__legend { list-style: none; margin: var(--space-3) 0 0; padding: 0;
+                     display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-4); }
+.hb-matrix__legend li { display: inline-flex; align-items: center; gap: var(--space-2); }
+.hb-matrix__swatch { width: 9px; height: 9px; border-radius: 1px; flex-shrink: 0;
+                     background-color: currentColor; }
+.hb-matrix__swatch.hb-matrix__cell--nominal   { background-color: var(--color-status-nominal); }
+.hb-matrix__swatch.hb-matrix__cell--warning   { background-color: var(--color-status-warning-mark); }
+.hb-matrix__swatch.hb-matrix__cell--critical  { background-color: var(--color-status-critical); }
+.hb-matrix__swatch.hb-matrix__cell--telemetry { background-color: var(--color-status-telemetry); }
+.hb-matrix__swatch.hb-matrix__cell--neutral   { background-color: var(--color-line-strong); }
+.hb-matrix__swatch.hb-matrix__cell--data-1,
+.hb-matrix__swatch.hb-matrix__cell--data-blue   { background-color: var(--color-data-blue); }
+.hb-matrix__swatch.hb-matrix__cell--data-2,
+.hb-matrix__swatch.hb-matrix__cell--data-orchid { background-color: var(--color-data-orchid); }
+.hb-matrix__swatch.hb-matrix__cell--data-3,
+.hb-matrix__swatch.hb-matrix__cell--data-teal   { background-color: var(--color-data-teal); }
+.hb-matrix__swatch.hb-matrix__cell--data-4,
+.hb-matrix__swatch.hb-matrix__cell--data-purple { background-color: var(--color-data-purple); }
+.hb-matrix__swatch.hb-matrix__cell--data-5,
+.hb-matrix__swatch.hb-matrix__cell--data-green  { background-color: var(--color-data-green); }
+.hb-matrix__legend-label { font-family: var(--font-mono); font-size: 11px; color: var(--color-ink-secondary); }
+.hb-matrix__legend-count { font-family: var(--font-mono); font-size: 11px; font-weight: 700;
+                           color: var(--color-ink); font-variant-numeric: tabular-nums; }
+
+/* range bar ---------------------------------------------------------- */
+.hb-range__total { fill: var(--color-surface-subtle); stroke: var(--color-line); stroke-width: 1; }
+.hb-range__ceiling { fill: none; stroke-width: 2; stroke-dasharray: 4 3; }
+.hb-range__ceiling--data-4, .hb-range__ceiling--data-purple { stroke: var(--color-data-purple); }
+.hb-range__ceiling--data-1, .hb-range__ceiling--data-blue   { stroke: var(--color-data-blue); }
+.hb-range__ceiling--data-3, .hb-range__ceiling--data-teal   { stroke: var(--color-data-teal); }
+.hb-range__used--data-4, .hb-range__used--data-purple { fill: var(--color-data-purple); }
+.hb-range__used--data-1, .hb-range__used--data-blue   { fill: var(--color-data-blue); }
+.hb-range__used--data-3, .hb-range__used--data-teal   { fill: var(--color-data-teal); }
+
+/* lifespans ---------------------------------------------------------- */
+.hb-lifespan__bar--open   { fill: var(--color-status-nominal); }
+.hb-lifespan__bar--closed { fill: var(--color-line-strong); }
+.hb-lifespan__cap { stroke: var(--color-data-neutral); stroke-width: 1.5; }
+
+/* estimate with interval --------------------------------------------- */
+.hb-estimate__threshold { stroke: var(--color-accent); stroke-width: 1.5; stroke-dasharray: 2 2; }
+.hb-estimate__whisker, .hb-estimate__cap { stroke-width: 2.5; }
+.hb-estimate__whisker--data-2, .hb-estimate__cap--data-2 { stroke: var(--color-data-orchid); }
+.hb-estimate__point--data-2 { fill: var(--color-data-orchid); }
+.hb-estimate__whisker--data-1, .hb-estimate__cap--data-1 { stroke: var(--color-data-blue); }
+.hb-estimate__point--data-1 { fill: var(--color-data-blue); }
+
+/* sparkline ---------------------------------------------------------- */
+.hb-spark { max-width: 160px; }
+.hb-spark__line { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round;
+                  vector-effect: non-scaling-stroke; }
+.hb-spark__area { stroke: none; opacity: .16; }
+.hb-spark__empty { stroke: var(--color-line-strong); stroke-width: 1; stroke-dasharray: 2 3; }
+.hb-spark__line--data-1, .hb-spark__line--data-blue   { stroke: var(--color-data-blue); }
+.hb-spark__area--data-1, .hb-spark__area--data-blue   { fill: var(--color-data-blue); }
+.hb-spark__end--data-1,  .hb-spark__end--data-blue    { fill: var(--color-data-blue); }
+.hb-spark__line--data-3, .hb-spark__line--data-teal   { stroke: var(--color-data-teal); }
+.hb-spark__area--data-3, .hb-spark__area--data-teal   { fill: var(--color-data-teal); }
+.hb-spark__end--data-3,  .hb-spark__end--data-teal    { fill: var(--color-data-teal); }
+
+/* waterfall ---------------------------------------------------------- */
+.hb-waterfall__bar--data-1, .hb-waterfall__bar--data-blue   { fill: var(--color-data-blue); }
+.hb-waterfall__bar--data-2, .hb-waterfall__bar--data-orchid { fill: var(--color-data-orchid); }
+.hb-waterfall__bar--data-3, .hb-waterfall__bar--data-teal   { fill: var(--color-data-teal); }
+.hb-waterfall__bar--data-4, .hb-waterfall__bar--data-purple { fill: var(--color-data-purple); }
+.hb-waterfall__bar--data-5, .hb-waterfall__bar--data-green  { fill: var(--color-data-green); }
+.hb-waterfall__bar--data-neutral { fill: var(--color-data-neutral); }

@@ -29,6 +29,9 @@ export {
 // Voice Mode (audio-reactive mark engine)
 export * from './voice'
 
+// Chart vocabulary — one form per data job
+export * from './charts'
+
 export { WhyChip } from './primitives/WhyChip'
 export type { WhyChipProps, ProvenanceRef } from './primitives/WhyChip'
 export { StatusLight } from './primitives/StatusLight'
